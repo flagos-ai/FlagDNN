@@ -1,0 +1,81 @@
+from typing import Generator
+
+import numpy as np
+import pytest
+import torch
+
+import flag_dnn
+
+from benchmark.performance_utils import Benchmark
+from flag_dnn.utils import shape_utils
+
+
+def torch_relu(x, y=None):
+    return torch.relu(x)
+
+
+def gems_relu_wrapper(x, y=None):
+    return flag_dnn.ops.relu(x)
+
+
+class ReluBenchmark(Benchmark):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def set_more_metrics(self):
+        return ["gbps"]
+
+    def set_more_shapes(self):
+        shapes = [
+            (1024,),
+            (5333,),
+            (65536,),
+            (100000,),
+            (1048576,),
+            (3000000,),
+            (4194304,),
+            (10000000,),
+            (16777216,),
+            (33554432,),
+            (50000000,),
+            (67108864,),
+            (134217728,),
+        ]
+        self.shapes = shapes
+        return None
+
+    def get_input_iter(self, cur_dtype) -> Generator:
+        for shape in self.shapes:
+            inp1 = torch.randn(shape, dtype=cur_dtype, device=self.device)
+            if inp1.numel() > 0:
+                yield inp1, None
+
+    def get_gbps(self, args, latency):
+        inp1 = args[0]
+        io_amount = shape_utils.size_in_bytes(inp1) + shape_utils.size_in_bytes(inp1)
+        return io_amount * 1e-9 / (latency * 1e-3)
+
+
+@pytest.mark.relu
+def test_perf_relu():
+    bench = ReluBenchmark(
+        op_name="relu",
+        torch_op=torch_relu,
+        gems_op=gems_relu_wrapper,
+        dtypes=[torch.float32],
+    )
+    bench.run()
+
+
+@pytest.mark.relu
+def test_perf_relu_fp64():
+    if not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+    bench = ReluBenchmark(
+        op_name="relu_fp64",
+        torch_op=torch_relu,
+        gems_op=gems_relu_wrapper,
+        dtypes=[torch.float64],
+    )
+    bench.run()
