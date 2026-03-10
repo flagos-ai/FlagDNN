@@ -16,8 +16,8 @@ DEFAULT_ITER_COUNT = 100
 # LEGACY_SHAPES are maintained for legacy benchmark SIZE settings and may be removed in the future.
 # Do not reference this elsewhere.
 LEGACY_SHAPES = [i * 64 for i in range(1, 22, 5)]
-LEGACY_NON_BLAS_SHAPES = [(1024, shape) for shape in LEGACY_SHAPES]
-LEGACY_BLAS_SHAPES = [(16, shape, shape, shape) for shape in LEGACY_SHAPES]
+LEGACY_NON_DNN_SHAPES = [(1024, shape) for shape in LEGACY_SHAPES]
+LEGACY_DNN_SHAPES = [(16, shape, shape, shape) for shape in LEGACY_SHAPES]
 
 # Default shapes settings
 DEFAULT_SHAPES = [
@@ -252,7 +252,7 @@ class BenchmarkResult:
             tuple(first_shape) if isinstance(first_shape, torch.Size) else None
         )
 
-        if to_record_shape in LEGACY_NON_BLAS_SHAPES:
+        if to_record_shape in LEGACY_NON_DNN_SHAPES:
             metrics.legacy_shape = to_record_shape[-1]
         elif (
             isinstance(to_record_shape, tuple)
