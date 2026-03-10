@@ -6,17 +6,17 @@ from pathlib import Path
 
 @functools.lru_cache(maxsize=None)  # this is the same as functools.cache in Python 3.9+
 def cache_dir_path() -> Path:
-    """Return the cache directory for generated files in flagblas."""
+    """Return the cache directory for generated files in flagdnn."""
     _cache_dir = os.environ.get("FLAGGEMS_CACHE_DIR")
     if _cache_dir is None:
-        _cache_dir = Path.home() / ".flagblas"
+        _cache_dir = Path.home() / ".flagdnn"
     else:
         _cache_dir = Path(_cache_dir)
     return _cache_dir
 
 
 def cache_dir() -> Path:
-    """Return cache directory for generated files in flagblas. Create it if it does not exist."""
+    """Return cache directory for generated files in flagdnn. Create it if it does not exist."""
     _cache_dir = cache_dir_path()
     os.makedirs(_cache_dir, exist_ok=True)
     return _cache_dir

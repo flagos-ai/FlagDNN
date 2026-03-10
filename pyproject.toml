@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "flag_dnn"
 version = "0.1.0"
-description = "flag-dnn is a deep neural network function library written in Triton."
+description = "FlagDNN is a deep neural network function library written in Triton."
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.8.0"
 license = { text = "Apache Software License" }
