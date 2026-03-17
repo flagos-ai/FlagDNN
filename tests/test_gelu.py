@@ -31,7 +31,8 @@ def test_accuracy_gelu(dtype, shape, approximate):
     ref_x = x.clone()
     ref_y = F.gelu(ref_x, approximate=approximate)
 
-    y = flag_dnn.ops.gelu(x, approximate=approximate)
+    with flag_dnn.use_dnn():
+        y = F.gelu(x, approximate=approximate)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -55,7 +56,8 @@ def test_accuracy_gelu_empty_tensor(dtype, approximate):
         rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
 
     ref_y = F.gelu(x, approximate=approximate)
-    y = flag_dnn.ops.gelu(x, approximate=approximate)
+    with flag_dnn.use_dnn():
+        y = F.gelu(x, approximate=approximate)
 
     assert y.shape == (0,)
     assert y.dtype == dtype
@@ -82,7 +84,8 @@ def test_accuracy_gelu_negative_values(dtype, approximate):
         rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
 
     ref_y = F.gelu(x, approximate=approximate)
-    y = flag_dnn.ops.gelu(x, approximate=approximate)
+    with flag_dnn.use_dnn():
+        y = F.gelu(x, approximate=approximate)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -106,7 +109,8 @@ def test_accuracy_gelu_positive_values(dtype, approximate):
         rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
 
     ref_y = F.gelu(x, approximate=approximate)
-    y = flag_dnn.ops.gelu(x, approximate=approximate)
+    with flag_dnn.use_dnn():
+        y = F.gelu(x, approximate=approximate)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -130,6 +134,7 @@ def test_accuracy_gelu_mixed_values(dtype, approximate):
         rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
 
     ref_y = F.gelu(x, approximate=approximate)
-    y = flag_dnn.ops.gelu(x, approximate=approximate)
+    with flag_dnn.use_dnn():
+        y = F.gelu(x, approximate=approximate)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)

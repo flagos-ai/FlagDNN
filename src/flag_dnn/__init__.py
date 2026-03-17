@@ -21,6 +21,11 @@ __version__ = "0.1.0"
 
 _FULL_CONFIG = (
     ("relu", relu),  
+    ("prelu", prelu),
+    ("leaky_relu", leaky_relu),
+    ("gelu", gelu),
+    ("silu", silu),
+    ("softmax", softmax),
     )
 
 FULL_CONFIG_BY_FUNC = {}

@@ -32,7 +32,8 @@ def test_accuracy_silu(dtype, shape, inplace):
     ref_x = x.clone() 
     ref_y = F.silu(ref_x, inplace=inplace)
 
-    y = flag_dnn.ops.silu(x, inplace=inplace)
+    with flag_dnn.use_dnn():
+        y = F.silu(x, inplace=inplace)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -58,7 +59,8 @@ def test_accuracy_silu_empty_tensor(dtype, inplace):
     ref_x = x.clone()
     ref_y = F.silu(ref_x, inplace=inplace)
     
-    y = flag_dnn.ops.silu(x, inplace=inplace)
+    with flag_dnn.use_dnn():
+        y = F.silu(x, inplace=inplace)
 
     assert y.shape == (0,)
     assert y.dtype == dtype
@@ -87,7 +89,8 @@ def test_accuracy_silu_negative_values(dtype, inplace):
     ref_x = x.clone()
     ref_y = F.silu(ref_x, inplace=inplace)
     
-    y = flag_dnn.ops.silu(x, inplace=inplace)
+    with flag_dnn.use_dnn():
+        y = F.silu(x, inplace=inplace)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -113,7 +116,8 @@ def test_accuracy_silu_positive_values(dtype, inplace):
     ref_x = x.clone()
     ref_y = F.silu(ref_x, inplace=inplace)
     
-    y = flag_dnn.ops.silu(x, inplace=inplace)
+    with flag_dnn.use_dnn():
+        y = F.silu(x, inplace=inplace)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -139,6 +143,7 @@ def test_accuracy_silu_mixed_values(dtype, inplace):
     ref_x = x.clone()
     ref_y = F.silu(ref_x, inplace=inplace)
     
-    y = flag_dnn.ops.silu(x, inplace=inplace)
+    with flag_dnn.use_dnn():
+        y = F.silu(x, inplace=inplace)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)

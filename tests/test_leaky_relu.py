@@ -34,7 +34,8 @@ def test_accuracy_leaky_relu(dtype, shape, inplace, negative_slope):
     ref_x = x.clone() 
     ref_y = F.leaky_relu(ref_x, negative_slope=negative_slope, inplace=inplace)
 
-    y = flag_dnn.ops.leaky_relu(x, negative_slope=negative_slope, inplace=inplace)
+    with flag_dnn.use_dnn():
+        y = F.leaky_relu(x, negative_slope=negative_slope, inplace=inplace)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -61,7 +62,8 @@ def test_accuracy_leaky_relu_empty_tensor(dtype, inplace, negative_slope):
     ref_x = x.clone()
     ref_y = F.leaky_relu(ref_x, negative_slope=negative_slope, inplace=inplace)
     
-    y = flag_dnn.ops.leaky_relu(x, negative_slope=negative_slope, inplace=inplace)
+    with flag_dnn.use_dnn():
+        y = F.leaky_relu(x, negative_slope=negative_slope, inplace=inplace)
 
     assert y.shape == (0,)
     assert y.dtype == dtype
@@ -91,7 +93,8 @@ def test_accuracy_leaky_relu_negative_values(dtype, inplace, negative_slope):
     ref_x = x.clone()
     ref_y = F.leaky_relu(ref_x, negative_slope=negative_slope, inplace=inplace)
     
-    y = flag_dnn.ops.leaky_relu(x, negative_slope=negative_slope, inplace=inplace)
+    with flag_dnn.use_dnn():
+        y = F.leaky_relu(x, negative_slope=negative_slope, inplace=inplace)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -118,7 +121,8 @@ def test_accuracy_leaky_relu_positive_values(dtype, inplace, negative_slope):
     ref_x = x.clone()
     ref_y = F.leaky_relu(ref_x, negative_slope=negative_slope, inplace=inplace)
     
-    y = flag_dnn.ops.leaky_relu(x, negative_slope=negative_slope, inplace=inplace)
+    with flag_dnn.use_dnn():
+        y = F.leaky_relu(x, negative_slope=negative_slope, inplace=inplace)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -145,6 +149,7 @@ def test_accuracy_leaky_relu_mixed_values(dtype, inplace, negative_slope):
     ref_x = x.clone()
     ref_y = F.leaky_relu(ref_x, negative_slope=negative_slope, inplace=inplace)
     
-    y = flag_dnn.ops.leaky_relu(x, negative_slope=negative_slope, inplace=inplace)
+    with flag_dnn.use_dnn():
+        y = F.leaky_relu(x, negative_slope=negative_slope, inplace=inplace)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)

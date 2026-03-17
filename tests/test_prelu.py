@@ -41,7 +41,8 @@ def test_accuracy_prelu(dtype, shape, mode):
     weight = torch.full((num_parameters,), 0.25, dtype=dtype, device=flag_dnn.device)
     
     ref_y = F.prelu(x, weight)
-    y = flag_dnn.ops.prelu(x, weight)
+    with flag_dnn.use_dnn():
+        y = F.prelu(x, weight)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -69,7 +70,8 @@ def test_accuracy_prelu_empty_tensor(dtype, mode):
     weight = torch.full((num_parameters,), 0.25, dtype=dtype, device=flag_dnn.device)
     
     ref_y = F.prelu(x, weight)
-    y = flag_dnn.ops.prelu(x, weight)
+    with flag_dnn.use_dnn():
+        y = F.prelu(x, weight)
 
     assert y.shape == shape
     assert y.dtype == dtype
@@ -100,7 +102,8 @@ def test_accuracy_prelu_negative_values(dtype, mode):
     weight = torch.randn(num_parameters, dtype=dtype, device=flag_dnn.device) * 0.1
     
     ref_y = F.prelu(x, weight)
-    y = flag_dnn.ops.prelu(x, weight)
+    with flag_dnn.use_dnn():
+        y = F.prelu(x, weight)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -127,7 +130,8 @@ def test_accuracy_prelu_positive_values(dtype, mode):
     weight = torch.randn(num_parameters, dtype=dtype, device=flag_dnn.device) * 0.1
     
     ref_y = F.prelu(x, weight)
-    y = flag_dnn.ops.prelu(x, weight)
+    with flag_dnn.use_dnn():
+        y = F.prelu(x, weight)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -154,6 +158,7 @@ def test_accuracy_prelu_mixed_values(dtype, mode):
     weight = torch.randn(num_parameters, dtype=dtype, device=flag_dnn.device) * 0.1
     
     ref_y = F.prelu(x, weight)
-    y = flag_dnn.ops.prelu(x, weight)
+    with flag_dnn.use_dnn():
+        y = F.prelu(x, weight)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)

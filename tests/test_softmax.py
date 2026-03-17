@@ -37,7 +37,8 @@ def test_accuracy_softmax(dtype, shape, dim):
     ref_dim = -1 if dim is None else dim
     
     ref_y = F.softmax(x, dim=ref_dim)
-    y = flag_dnn.ops.softmax(x, dim=dim)
+    with flag_dnn.use_dnn():
+        y = F.softmax(x, dim=dim)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -61,7 +62,8 @@ def test_accuracy_softmax_empty_tensor(dtype, dim):
         rtol, atol = 1e-5, 1e-5   
     
     ref_y = F.softmax(x, dim=dim)
-    y = flag_dnn.ops.softmax(x, dim=dim)
+    with flag_dnn.use_dnn():
+        y = F.softmax(x, dim=dim)
 
     assert y.shape == shape
     assert y.dtype == dtype
@@ -88,7 +90,8 @@ def test_accuracy_softmax_large_values(dtype, dim):
         rtol, atol = 1e-5, 1e-5   
     
     ref_y = F.softmax(x, dim=dim)
-    y = flag_dnn.ops.softmax(x, dim=dim)
+    with flag_dnn.use_dnn():
+        y = F.softmax(x, dim=dim)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -112,6 +115,7 @@ def test_accuracy_softmax_mixed_values(dtype, dim):
         rtol, atol = 1e-5, 1e-5   
     
     ref_y = F.softmax(x, dim=dim)
-    y = flag_dnn.ops.softmax(x, dim=dim)
+    with flag_dnn.use_dnn():
+        y = F.softmax(x, dim=dim)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
