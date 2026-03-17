@@ -1,3 +1,43 @@
+axpy:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+scal:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+        KERNEL_ID: kernel_id
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    kernel_id:
+      - 0
+      - 1
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
 relu:
   - gen: true
     param_map:
@@ -16,3 +56,98 @@ relu:
     stages:
       - 2
       - 3
+gelu:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+silu:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+leaky_relu:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+prelu:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+softmax:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096      # 针对大词表新增的大块读取
+      - 8192      # 极限显存吞吐块大小
+    warps:
+      - 4
+      - 8
+      - 16
+      - 32
+    stages:
+      - 2
+      - 3
+      - 4         # 增加流水线深度，有助于掩盖大块访存延迟
