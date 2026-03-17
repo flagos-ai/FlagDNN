@@ -20,6 +20,7 @@ runtime.replace_customized_ops(globals())
 __version__ = "0.1.0"
 
 _FULL_CONFIG = (
+    ("relu", relu),  
     )
 
 FULL_CONFIG_BY_FUNC = {}
