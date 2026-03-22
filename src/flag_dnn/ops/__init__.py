@@ -16,5 +16,12 @@ __all__ = [
     "leaky_relu",
     "prelu",
     "softmax",
+    "sum",
+    "mean",
+    "prod",
+    "cumsum",
+    "cumprod",
+    "eq",
+    "ne",
 
 ]

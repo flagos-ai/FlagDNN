@@ -26,6 +26,12 @@ _FULL_CONFIG = (
     ("gelu", gelu),
     ("silu", silu),
     ("softmax", softmax),
+    ("sum", sum),
+    ("mean", mean),
+    ("cumsum", cumsum),
+    ("cumprod", cumprod),
+    ("eq",  eq),
+    ("ne", ne),
     )
 
 FULL_CONFIG_BY_FUNC = {}
