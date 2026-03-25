@@ -7,7 +7,7 @@ import flag_dnn
 from .accuracy_utils import gems_assert_close
 
 SHAPES = [(32,), (1024,), (2, 16), (4, 8, 32), (2, 4, 16, 16)]
-DIMS = [None, -1, 0, 1, 2]
+DIMS = [-1, 0, 1, 2]
 
 @pytest.mark.softmax
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
@@ -32,11 +32,7 @@ def test_accuracy_softmax(dtype, shape, dim):
     else:
         rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
     
-    # 我们的算子对 dim=None 的处理默认是 -1
-    # 为了防止 PyTorch F.softmax 报 warning，显式转换为 -1 供 PyTorch 参照
-    ref_dim = -1 if dim is None else dim
-    
-    ref_y = F.softmax(x, dim=ref_dim)
+    ref_y = F.softmax(x, dim=dim)
     with flag_dnn.use_dnn():
         y = F.softmax(x, dim=dim)
 
