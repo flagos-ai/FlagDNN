@@ -11,15 +11,16 @@ from benchmark.performance_utils import Benchmark
 from flag_dnn.utils import shape_utils
 
 
-def torch_relu(x, y=None):
-    return F.relu(x)
+# 默认 negative_slope=0.01，直接调用 F.leaky_relu
+def torch_leaky_relu(x, y=None):
+    return F.leaky_relu(x)
 
 
-def gems_relu_wrapper(x, y=None):
-    return flag_dnn.ops.relu(x)
+def gems_leaky_relu_wrapper(x, y=None):
+    return flag_dnn.ops.leaky_relu(x)
 
 
-class ReluBenchmark(Benchmark):
+class LeakyReluBenchmark(Benchmark):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -54,51 +55,52 @@ class ReluBenchmark(Benchmark):
 
     def get_gbps(self, args, latency):
         inp1 = args[0]
+        # Leaky ReLU 是 Element-wise 操作，读取一次输入，写入一次输出
         io_amount = shape_utils.size_in_bytes(inp1) + shape_utils.size_in_bytes(inp1)
         return io_amount * 1e-9 / (latency * 1e-3)
 
 
-@pytest.mark.relu
-def test_perf_relu_fp16():
-    bench = ReluBenchmark(
-        op_name="relu_fp16",
-        torch_op=torch_relu,
-        gems_op=gems_relu_wrapper,
+@pytest.mark.leaky_relu
+def test_perf_leaky_relu_fp16():
+    bench = LeakyReluBenchmark(
+        op_name="leaky_relu_fp16",
+        torch_op=torch_leaky_relu,
+        gems_op=gems_leaky_relu_wrapper,
         dtypes=[torch.float16],
     )
     bench.run()
 
 
-@pytest.mark.relu
-def test_perf_relu_bf16():
-    bench = ReluBenchmark(
-        op_name="relu_bf16",
-        torch_op=torch_relu,
-        gems_op=gems_relu_wrapper,
+@pytest.mark.leaky_relu
+def test_perf_leaky_relu_bf16():
+    bench = LeakyReluBenchmark(
+        op_name="leaky_relu_bf16",
+        torch_op=torch_leaky_relu,
+        gems_op=gems_leaky_relu_wrapper,
         dtypes=[torch.bfloat16],
     )
     bench.run()
 
 
-@pytest.mark.relu
-def test_perf_relu_fp32():
-    bench = ReluBenchmark(
-        op_name="relu_fp32",
-        torch_op=torch_relu,
-        gems_op=gems_relu_wrapper,
+@pytest.mark.leaky_relu
+def test_perf_leaky_relu_fp32():
+    bench = LeakyReluBenchmark(
+        op_name="leaky_relu_fp32",
+        torch_op=torch_leaky_relu,
+        gems_op=gems_leaky_relu_wrapper,
         dtypes=[torch.float32],
     )
     bench.run()
 
 
-@pytest.mark.relu
-def test_perf_relu_fp64():
+@pytest.mark.leaky_relu
+def test_perf_leaky_relu_fp64():
     if not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
-    bench = ReluBenchmark(
-        op_name="relu_fp64",
-        torch_op=torch_relu,
-        gems_op=gems_relu_wrapper,
+    bench = LeakyReluBenchmark(
+        op_name="leaky_relu_fp64",
+        torch_op=torch_leaky_relu,
+        gems_op=gems_leaky_relu_wrapper,
         dtypes=[torch.float64],
     )
     bench.run()

@@ -1,0 +1,91 @@
+from typing import Generator
+
+import numpy as np
+import pytest
+import torch
+import torch.nn.functional as F
+
+import flag_dnn
+from benchmark.performance_utils import Benchmark
+from flag_dnn.utils import shape_utils
+
+
+def torch_avg_pool1d(x, kernel_size, stride, padding):
+    return F.avg_pool1d(x, kernel_size=kernel_size, stride=stride, padding=padding)
+
+def gems_avg_pool1d_wrapper(x, kernel_size, stride, padding):
+    return flag_dnn.ops.avg_pool1d(x, kernel_size=kernel_size, stride=stride, padding=padding)
+
+
+class AvgPool1dBenchmark(Benchmark):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def set_more_metrics(self):
+        return ["gbps"]
+
+    def set_more_shapes(self):
+        # 配置格式为: (shape, kernel_size, stride, padding)
+        configs = [
+            ((32, 128, 1024), 2, 2, 0),        
+            ((64, 256, 512), 2, 2, 0),         
+            ((32, 64, 4096), 3, 1, 1),         
+            ((16, 512, 1024), 5, 1, 2),        
+            ((8, 128, 16000), 10, 5, 0),       
+            ((1, 64, 48000), 100, 50, 0),      
+        ]
+        self.shapes = configs
+        return None
+
+    def get_input_iter(self, cur_dtype) -> Generator:
+        MAX_TENSOR_BYTES = 8 * 1024**3
+
+        for config in self.shapes:
+            shape, kernel_size, stride, padding = config
+            numel = np.prod(shape)
+            element_size = torch.tensor([], dtype=cur_dtype).element_size()
+            tensor_bytes = numel * element_size
+
+            if tensor_bytes > MAX_TENSOR_BYTES:
+                continue
+
+            inp = torch.randn(shape, dtype=cur_dtype, device=self.device)
+            if inp.numel() == 0:
+                continue
+                
+            yield inp, kernel_size, stride, padding
+
+    def get_gbps(self, args, latency):
+        inp, kernel_size, stride, padding = args
+        
+        L_in = inp.shape[-1]
+        L_out = (L_in + 2 * padding - kernel_size) // stride + 1
+        
+        out_numel = inp.shape[0] * inp.shape[1] * L_out
+                
+        io_amount = shape_utils.size_in_bytes(inp) + (out_numel * inp.element_size())
+        return io_amount * 1e-9 / (latency * 1e-3)
+
+
+@pytest.mark.avg_pool1d
+def test_perf_avg_pool1d_fp16():
+    bench = AvgPool1dBenchmark(op_name="avg_pool1d_fp16", torch_op=torch_avg_pool1d, gems_op=gems_avg_pool1d_wrapper, dtypes=[torch.float16])
+    bench.run()
+
+@pytest.mark.avg_pool1d
+def test_perf_avg_pool1d_bf16():
+    bench = AvgPool1dBenchmark(op_name="avg_pool1d_bf16", torch_op=torch_avg_pool1d, gems_op=gems_avg_pool1d_wrapper, dtypes=[torch.bfloat16])
+    bench.run()
+
+@pytest.mark.avg_pool1d
+def test_perf_avg_pool1d_fp32():
+    bench = AvgPool1dBenchmark(op_name="avg_pool1d_fp32", torch_op=torch_avg_pool1d, gems_op=gems_avg_pool1d_wrapper, dtypes=[torch.float32])
+    bench.run()
+
+@pytest.mark.avg_pool1d
+def test_perf_avg_pool1d_fp64():
+    if not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+    bench = AvgPool1dBenchmark(op_name="avg_pool1d_fp64", torch_op=torch_avg_pool1d, gems_op=gems_avg_pool1d_wrapper, dtypes=[torch.float64])
+    bench.run()

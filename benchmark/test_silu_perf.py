@@ -11,15 +11,15 @@ from benchmark.performance_utils import Benchmark
 from flag_dnn.utils import shape_utils
 
 
-def torch_relu(x, y=None):
-    return F.relu(x)
+def torch_silu(x, y=None):
+    return F.silu(x)
 
 
-def gems_relu_wrapper(x, y=None):
-    return flag_dnn.ops.relu(x)
+def gems_silu_wrapper(x, y=None):
+    return flag_dnn.ops.silu(x)
 
 
-class ReluBenchmark(Benchmark):
+class SiluBenchmark(Benchmark):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -54,51 +54,52 @@ class ReluBenchmark(Benchmark):
 
     def get_gbps(self, args, latency):
         inp1 = args[0]
+        # SiLU 同样是 Element-wise 操作，读取一次输入，写入一次输出
         io_amount = shape_utils.size_in_bytes(inp1) + shape_utils.size_in_bytes(inp1)
         return io_amount * 1e-9 / (latency * 1e-3)
 
 
-@pytest.mark.relu
-def test_perf_relu_fp16():
-    bench = ReluBenchmark(
-        op_name="relu_fp16",
-        torch_op=torch_relu,
-        gems_op=gems_relu_wrapper,
+@pytest.mark.silu
+def test_perf_silu_fp16():
+    bench = SiluBenchmark(
+        op_name="silu_fp16",
+        torch_op=torch_silu,
+        gems_op=gems_silu_wrapper,
         dtypes=[torch.float16],
     )
     bench.run()
 
 
-@pytest.mark.relu
-def test_perf_relu_bf16():
-    bench = ReluBenchmark(
-        op_name="relu_bf16",
-        torch_op=torch_relu,
-        gems_op=gems_relu_wrapper,
+@pytest.mark.silu
+def test_perf_silu_bf16():
+    bench = SiluBenchmark(
+        op_name="silu_bf16",
+        torch_op=torch_silu,
+        gems_op=gems_silu_wrapper,
         dtypes=[torch.bfloat16],
     )
     bench.run()
 
 
-@pytest.mark.relu
-def test_perf_relu_fp32():
-    bench = ReluBenchmark(
-        op_name="relu_fp32",
-        torch_op=torch_relu,
-        gems_op=gems_relu_wrapper,
+@pytest.mark.silu
+def test_perf_silu_fp32():
+    bench = SiluBenchmark(
+        op_name="silu_fp32",
+        torch_op=torch_silu,
+        gems_op=gems_silu_wrapper,
         dtypes=[torch.float32],
     )
     bench.run()
 
 
-@pytest.mark.relu
-def test_perf_relu_fp64():
+@pytest.mark.silu
+def test_perf_silu_fp64():
     if not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
-    bench = ReluBenchmark(
-        op_name="relu_fp64",
-        torch_op=torch_relu,
-        gems_op=gems_relu_wrapper,
+    bench = SiluBenchmark(
+        op_name="silu_fp64",
+        torch_op=torch_silu,
+        gems_op=gems_silu_wrapper,
         dtypes=[torch.float64],
     )
     bench.run()
