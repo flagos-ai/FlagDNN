@@ -112,9 +112,9 @@ def main():
 
         # 构建 yhrun 命令
         cmd = [
-            "yhrun", 
-            "-p", "h100x", 
-            "-G", "1", 
+            # "yhrun", 
+            # "-p", "h100x", 
+            # "-G", "1", 
             "python", "-m", "pytest", "-v", "-s", file_path
         ]
         

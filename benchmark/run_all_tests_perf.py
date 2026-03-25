@@ -155,9 +155,9 @@ def main():
 
         # 构建 yhrun 命令 (这里传的是完整的 file_path，如 benchmark/test_relu_perf.py)
         cmd = [
-            "yhrun", 
-            "-p", "h100x", 
-            "-G", "1", 
+            # "yhrun", 
+            # "-p", "h100x", 
+            # "-G", "1", 
             "python", "-m", "pytest", "-v", "-s", file_path
         ]
         
