@@ -14,9 +14,10 @@ FlagDNN 是一个使用 OpenAI 推出的[Triton 编程语言](https://github.com
 - 灵活的多后端支持机制
 - 支持常见深度学习算子（如 ReLU 等）
 
-
 ## 快速安装
+
 ### 安装依赖
+
 ```shell
 pip install -U scikit-build-core>=0.11 pybind11 ninja cmake
 ```
@@ -41,5 +42,4 @@ y = flag_dnn.ops.relu(x)
 ```
 
 
-
-本项目采用 [Apache License (version 2.0)](./LICENSE) 授权许可。
+本项目采用 [BSD 2-Clause License](./LICENSE) 授权许可。
