@@ -39,4 +39,4 @@ x = torch.randn(1024, device='cuda')
 y = flag_dnn.ops.relu(x)
 ```
 
-This project is licensed under the [BSD 2-Clause License](./LICENSE).
+This project is licensed under the [Apache (version 2.0) License](./LICENSE).
