@@ -12,10 +12,10 @@ from flag_dnn.ops.batch_norm import batch_norm
 from flag_dnn.ops.layer_norm import layer_norm
 from flag_dnn.ops.rms_norm import rms_norm
 from flag_dnn.ops.group_norm import group_norm
-# from flag_dnn.ops.max_pool2d import max_pool2d
-# from flag_dnn.ops.avg_pool2d import avg_pool2d
-# from flag_dnn.ops.adaptive_avg_pool2d import adaptive_avg_pool2d
-# from flag_dnn.ops.adaptive_max_pool2d import adaptive_max_pool2d
+from flag_dnn.ops.max_pool2d import max_pool2d
+from flag_dnn.ops.avg_pool2d import avg_pool2d
+from flag_dnn.ops.adaptive_avg_pool2d import adaptive_avg_pool2d
+from flag_dnn.ops.adaptive_max_pool2d import adaptive_max_pool2d
 from flag_dnn.ops.add import add
 from flag_dnn.ops.sub import sub
 from flag_dnn.ops.mul import mul
@@ -33,13 +33,13 @@ from flag_dnn.ops.cumprod import cumprod
 from flag_dnn.ops.eq import eq
 from flag_dnn.ops.ne import ne
 from flag_dnn.ops.max_pool1d import max_pool1d
-# from flag_dnn.ops.max_pool3d import max_pool3d
+from flag_dnn.ops.max_pool3d import max_pool3d
 from flag_dnn.ops.avg_pool1d import avg_pool1d
-# from flag_dnn.ops.avg_pool3d import avg_pool3d
+from flag_dnn.ops.avg_pool3d import avg_pool3d
 from flag_dnn.ops.adaptive_avg_pool1d import adaptive_avg_pool1d
-# from flag_dnn.ops.adaptive_avg_pool3d import adaptive_avg_pool3d
+from flag_dnn.ops.adaptive_avg_pool3d import adaptive_avg_pool3d
 from flag_dnn.ops.adaptive_max_pool1d import adaptive_max_pool1d
-# from flag_dnn.ops.adaptive_max_pool3d import adaptive_max_pool3d
+from flag_dnn.ops.adaptive_max_pool3d import adaptive_max_pool3d
 
 
 __all__ = [
