@@ -8,13 +8,22 @@ import triton.language as tl
 
 from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
+from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
+
 
 logger = logging.getLogger(__name__)
 
 
+@libentry()
+@libtuner(
+    configs=runtime.get_tuned_config("max_pool3d"),
+    key=["N", "C", "D", "H", "W"],
+    warmup=5,
+    rep=10,
+)
 @triton.jit
-def max_pool3d_kernel(
+def max_pool3d_kernel_1d(
     x_ptr, y_ptr, idx_ptr,
     N, C, D, H, W,
     OD, OH, OW,
@@ -31,25 +40,26 @@ def max_pool3d_kernel(
     num_elements = N * C * OD * OH * OW
     mask = offsets < num_elements
 
-    # 反推 3D 坐标 (n, c, od, oh, ow)
-    ow = offsets % OW
-    oh = (offsets // OW) % OH
-    od = (offsets // (OW * OH)) % OD
-    c = (offsets // (OW * OH * OD)) % C
-    n = offsets // (C * OW * OH * OD)
+    spatial_size = OD * OH * OW
+    spatial_idx = offsets % spatial_size
+    
+    ow = spatial_idx % OW
+    oh = (spatial_idx // OW) % OH
+    od = spatial_idx // (OW * OH)
+    
+    batch_channel_idx = offsets // spatial_size
+    c = batch_channel_idx % C
+    n = batch_channel_idx // C
 
-    # 输入基础偏移：每个元素所在的 batch 和 channel 起点
     x_base_idx = n * (C * D * H * W) + c * (D * H * W)
 
     d_start = od * STRIDE_D - pad_d
     h_start = oh * STRIDE_H - pad_h
     w_start = ow * STRIDE_W - pad_w
 
-    input_dtype = x_ptr.dtype.element_ty
-    max_val = tl.full([BLOCK_SIZE], -float('inf'), dtype=input_dtype)
+    max_val = tl.full([BLOCK_SIZE], -float('inf'), dtype=tl.float32)
     max_idx = tl.full([BLOCK_SIZE], -1, dtype=tl.int64)
 
-    # 3D 窗口，三层静态循环展开
     for kd in tl.static_range(KERNEL_D):
         for kh in tl.static_range(KERNEL_H):
             for kw in tl.static_range(KERNEL_W):
@@ -60,20 +70,85 @@ def max_pool3d_kernel(
                 valid = (id_ >= 0) & (id_ < D) & (ih >= 0) & (ih < H) & (iw >= 0) & (iw < W)
                 load_idx = x_base_idx + id_ * (H * W) + ih * W + iw
 
-                val = tl.load(x_ptr + load_idx, mask=mask & valid, other=-float('inf'))
+                # 统一转换为 float32 进行比较，避免 fp16/bf16 的精度截断问题
+                val = tl.load(x_ptr + load_idx, mask=mask & valid, other=-float('inf')).to(tl.float32)
 
                 update_mask = val > max_val
                 max_val = tl.where(update_mask, val, max_val)
                 
                 if RETURN_INDICES:
-                    # 3D 场景下的局部索引，即 D*H*W 展平后的绝对偏移
                     current_idx = id_ * (H * W) + ih * W + iw
                     max_idx = tl.where(update_mask, current_idx, max_idx)
 
-    tl.store(y_ptr + offsets, max_val, mask=mask)
-    
+    tl.store(y_ptr + offsets, max_val.to(x_ptr.dtype.element_ty), mask=mask)
     if RETURN_INDICES:
         tl.store(idx_ptr + offsets, max_idx, mask=mask)
+
+
+@libentry()
+@libtuner(
+    configs=runtime.get_tuned_config("max_pool3d"),
+    key=["OD", "OH", "OW"],
+    warmup=5,
+    rep=10,
+)
+@triton.jit
+def max_pool3d_kernel_2d(
+    x_ptr, y_ptr, idx_ptr,
+    N, C, D, H, W,
+    OD, OH, OW,
+    pad_d, pad_h, pad_w,
+    STRIDE_D: tl.constexpr, STRIDE_H: tl.constexpr, STRIDE_W: tl.constexpr,
+    DIL_D: tl.constexpr, DIL_H: tl.constexpr, DIL_W: tl.constexpr,
+    KERNEL_D: tl.constexpr, KERNEL_H: tl.constexpr, KERNEL_W: tl.constexpr,
+    RETURN_INDICES: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+):
+    pid_spatial = tle.program_id(0)
+    pid_batch_channel = tle.program_id(1)
+    
+    n = pid_batch_channel // C
+    c = pid_batch_channel % C
+    
+    offsets = pid_spatial * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    spatial_numel = OD * OH * OW
+    mask = offsets < spatial_numel
+
+    ow = offsets % OW
+    oh = (offsets // OW) % OH
+    od = offsets // (OW * OH)
+
+    x_base_idx = n * (C * D * H * W) + c * (D * H * W)
+    y_base_idx = n * (C * OD * OH * OW) + c * (OD * OH * OW)
+
+    d_start = od * STRIDE_D - pad_d
+    h_start = oh * STRIDE_H - pad_h
+    w_start = ow * STRIDE_W - pad_w
+
+    max_val = tl.full([BLOCK_SIZE], -float('inf'), dtype=tl.float32)
+    max_idx = tl.full([BLOCK_SIZE], -1, dtype=tl.int64)
+
+    for kd in tl.static_range(KERNEL_D):
+        for kh in tl.static_range(KERNEL_H):
+            for kw in tl.static_range(KERNEL_W):
+                id_ = d_start + kd * DIL_D
+                ih = h_start + kh * DIL_H
+                iw = w_start + kw * DIL_W
+
+                valid = (id_ >= 0) & (id_ < D) & (ih >= 0) & (ih < H) & (iw >= 0) & (iw < W)
+                load_idx = id_ * (H * W) + ih * W + iw
+
+                val = tl.load(x_ptr + x_base_idx + load_idx, mask=mask & valid, other=-float('inf')).to(tl.float32)
+
+                update_mask = val > max_val
+                max_val = tl.where(update_mask, val, max_val)
+                
+                if RETURN_INDICES:
+                    max_idx = tl.where(update_mask, load_idx, max_idx)
+
+    tl.store(y_ptr + y_base_idx + offsets, max_val.to(x_ptr.dtype.element_ty), mask=mask)
+    if RETURN_INDICES:
+        tl.store(idx_ptr + y_base_idx + offsets, max_idx, mask=mask)
 
 
 def max_pool3d(
@@ -110,7 +185,6 @@ def max_pool3d(
     OH = _out_size(H, padding[1], dilation[1], kernel_size[1], stride[1], ceil_mode)
     OW = _out_size(W, padding[2], dilation[2], kernel_size[2], stride[2], ceil_mode)
 
-    # ceil_mode 边缘丢弃
     if ceil_mode:
         if (OD - 1) * stride[0] >= D + padding[0]:
             OD -= 1
@@ -119,10 +193,12 @@ def max_pool3d(
         if (OW - 1) * stride[2] >= W + padding[2]:
             OW -= 1
 
-    x = input.contiguous()
-    y = torch.empty((N, C, OD, OH, OW), dtype=x.dtype, device=x.device)
-    
-    idx = torch.empty((N, C, OD, OH, OW), dtype=torch.int64, device=x.device) if return_indices else None
+    if not input.is_contiguous():
+        assert False, "input must be contiguous."
+        input = input.contiguous()
+
+    y = torch.empty((N, C, OD, OH, OW), dtype=input.dtype, device=input.device)
+    idx = torch.empty((N, C, OD, OH, OW), dtype=torch.int64, device=input.device) if return_indices else None
 
     M = N * C * OD * OH * OW
     if M == 0:
@@ -131,21 +207,36 @@ def max_pool3d(
             return out_y, (idx.squeeze(0) if is_4d else idx)
         return out_y
 
-    BLOCK_SIZE = 1024
-    grid = (triton.cdiv(M, BLOCK_SIZE),)
 
-    with torch_device_fn.device(x.device):
-        max_pool3d_kernel[grid](
-            x, y, idx,
-            N, C, D, H, W,
-            OD, OH, OW,
-            padding[0], padding[1], padding[2],
-            STRIDE_D=stride[0], STRIDE_H=stride[1], STRIDE_W=stride[2],
-            DIL_D=dilation[0], DIL_H=dilation[1], DIL_W=dilation[2],
-            KERNEL_D=kernel_size[0], KERNEL_H=kernel_size[1], KERNEL_W=kernel_size[2],
-            RETURN_INDICES=return_indices,
-            BLOCK_SIZE=BLOCK_SIZE
-        )
+    with torch_device_fn.device(input.device):
+        # 3D 情况下，体积小于等于 64 依然走 1D 高并发
+        if OD * OH * OW <= 64:
+            grid_1d = lambda meta: (triton.cdiv(M, meta['BLOCK_SIZE']), )
+            max_pool3d_kernel_1d[grid_1d](
+                input, y, idx,
+                N, C, D, H, W,
+                OD, OH, OW,
+                padding[0], padding[1], padding[2],
+                STRIDE_D=stride[0], STRIDE_H=stride[1], STRIDE_W=stride[2],
+                DIL_D=dilation[0], DIL_H=dilation[1], DIL_W=dilation[2],
+                KERNEL_D=kernel_size[0], KERNEL_H=kernel_size[1], KERNEL_W=kernel_size[2],
+                RETURN_INDICES=return_indices
+            )
+        else:
+            grid_2d = lambda meta: (
+                triton.cdiv(OD * OH * OW, meta['BLOCK_SIZE']), 
+                N * C
+            )
+            max_pool3d_kernel_2d[grid_2d](
+                input, y, idx,
+                N, C, D, H, W,
+                OD, OH, OW,
+                padding[0], padding[1], padding[2],
+                STRIDE_D=stride[0], STRIDE_H=stride[1], STRIDE_W=stride[2],
+                DIL_D=dilation[0], DIL_H=dilation[1], DIL_W=dilation[2],
+                KERNEL_D=kernel_size[0], KERNEL_H=kernel_size[1], KERNEL_W=kernel_size[2],
+                RETURN_INDICES=return_indices
+            )
 
     out_y = y.squeeze(0) if is_4d else y
     if return_indices:

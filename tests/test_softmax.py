@@ -1,13 +1,12 @@
 import pytest
 import torch
 import torch.nn.functional as F
-
 import flag_dnn
 
-from .accuracy_utils import gems_assert_close
 
 SHAPES = [(32,), (1024,), (2, 16), (4, 8, 32), (2, 4, 16, 16)]
 DIMS = [-1, 0, 1, 2]
+
 
 @pytest.mark.softmax
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])

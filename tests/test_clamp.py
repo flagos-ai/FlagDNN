@@ -1,9 +1,6 @@
 import pytest
 import torch
-
 import flag_dnn
-
-from .accuracy_utils import gems_assert_close
 
 
 SHAPES = [(32,), (1024,), (5333,), (16384,), (1024 * 1024,), (2, 3, 4, 5)]
@@ -39,7 +36,8 @@ def test_accuracy_clamp(dtype, shape, min_val, max_val):
 
     rtol, atol = _get_tolerances(dtype)
     ref_out = torch.clamp(x, min=min_val, max=max_val)
-    out = flag_dnn.ops.clamp(x, min=min_val, max=max_val)
+    with flag_dnn.use_dnn():
+        out = torch.clamp(x, min=min_val, max=max_val)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -57,7 +55,8 @@ def test_accuracy_clamp_mixed_values(dtype, shape, min_val, max_val):
 
     rtol, atol = _get_tolerances(dtype)
     ref_out = torch.clamp(x, min=min_val, max=max_val)
-    out = flag_dnn.ops.clamp(x, min=min_val, max=max_val)
+    with flag_dnn.use_dnn():
+        out = torch.clamp(x, min=min_val, max=max_val)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -75,7 +74,8 @@ def test_accuracy_clamp_positive_values(dtype, shape, min_val, max_val):
 
     rtol, atol = _get_tolerances(dtype)
     ref_out = torch.clamp(x, min=min_val, max=max_val)
-    out = flag_dnn.ops.clamp(x, min=min_val, max=max_val)
+    with flag_dnn.use_dnn():
+        out = torch.clamp(x, min=min_val, max=max_val)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -93,7 +93,8 @@ def test_accuracy_clamp_negative_values(dtype, shape, min_val, max_val):
 
     rtol, atol = _get_tolerances(dtype)
     ref_out = torch.clamp(x, min=min_val, max=max_val)
-    out = flag_dnn.ops.clamp(x, min=min_val, max=max_val)
+    with flag_dnn.use_dnn():
+        out = torch.clamp(x, min=min_val, max=max_val)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -110,7 +111,8 @@ def test_accuracy_clamp_empty_tensor(dtype, min_val, max_val):
 
     rtol, atol = _get_tolerances(dtype)
     ref_out = torch.clamp(x, min=min_val, max=max_val)
-    out = flag_dnn.ops.clamp(x, min=min_val, max=max_val)
+    with flag_dnn.use_dnn():
+        out = torch.clamp(x, min=min_val, max=max_val)
 
     assert out.shape == (0,)
     assert out.dtype == dtype
@@ -135,12 +137,16 @@ def test_accuracy_clamp_tensor_bounds_same_shape(dtype, shape):
     rtol, atol = _get_tolerances(dtype)
     
     ref_out = torch.clamp(x, min=min_t, max=max_t)
-    out = flag_dnn.ops.clamp(x, min=min_t, max=max_t)
+    with flag_dnn.use_dnn():
+        out = torch.clamp(x, min=min_t, max=max_t)
+        
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
     # 测试仅有 Tensor min
     ref_out_min = torch.clamp(x, min=min_t)
-    out_min = flag_dnn.ops.clamp(x, min=min_t)
+    with flag_dnn.use_dnn():
+        out_min = torch.clamp(x, min=min_t)
+
     torch.testing.assert_close(out_min, ref_out_min, rtol=rtol, atol=atol)
 
 
@@ -156,18 +162,19 @@ def test_accuracy_clamp_tensor_bounds_broadcast(dtype):
     max_scalar_t = torch.tensor(0.5, dtype=dtype, device=flag_dnn.device)
     
     rtol, atol = _get_tolerances(dtype)
-    torch.testing.assert_close(
-        flag_dnn.ops.clamp(x, min=min_scalar_t, max=max_scalar_t),
-        torch.clamp(x, min=min_scalar_t, max=max_scalar_t),
-        rtol=rtol, atol=atol
-    )
+
+    ref_out = torch.clamp(x, min=min_scalar_t, max=max_scalar_t)
+    with flag_dnn.use_dnn():
+        out = torch.clamp(x, min=min_scalar_t, max=max_scalar_t)
+
+    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
     # 2. 尾部维度广播 (例如 1D Tensor [32] 广播到 [4, 16, 32])
     min_1d_t = torch.randn(32, dtype=dtype, device=flag_dnn.device) - 1.0
     max_1d_t = min_1d_t + 2.0
     
-    torch.testing.assert_close(
-        flag_dnn.ops.clamp(x, min=min_1d_t, max=max_1d_t),
-        torch.clamp(x, min=min_1d_t, max=max_1d_t),
-        rtol=rtol, atol=atol
-    )
+    ref_out = torch.clamp(x, min=min_1d_t, max=max_1d_t)
+    with flag_dnn.use_dnn():
+        out = torch.clamp(x, min=min_1d_t, max=max_1d_t)
+
+    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)

@@ -14,7 +14,6 @@ from flag_dnn.utils import shape_utils
 def torch_prelu(x, weight):
     return F.prelu(x, weight)
 
-
 def gems_prelu_wrapper(x, weight):
     return flag_dnn.ops.prelu(x, weight)
 
@@ -98,46 +97,11 @@ class PreluBenchmark(Benchmark):
 
 
 @pytest.mark.prelu
-def test_perf_prelu_fp16():
+def test_perf_prelu():
     bench = PreluBenchmark(
-        op_name="prelu_fp16",
+        op_name="prelu",
         torch_op=torch_prelu,
         gems_op=gems_prelu_wrapper,
-        dtypes=[torch.float16],
-    )
-    bench.run()
-
-
-@pytest.mark.prelu
-def test_perf_prelu_bf16():
-    bench = PreluBenchmark(
-        op_name="prelu_bf16",
-        torch_op=torch_prelu,
-        gems_op=gems_prelu_wrapper,
-        dtypes=[torch.bfloat16],
-    )
-    bench.run()
-
-
-@pytest.mark.prelu
-def test_perf_prelu_fp32():
-    bench = PreluBenchmark(
-        op_name="prelu_fp32",
-        torch_op=torch_prelu,
-        gems_op=gems_prelu_wrapper,
-        dtypes=[torch.float32],
-    )
-    bench.run()
-
-
-@pytest.mark.prelu
-def test_perf_prelu_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = PreluBenchmark(
-        op_name="prelu_fp64",
-        torch_op=torch_prelu,
-        gems_op=gems_prelu_wrapper,
-        dtypes=[torch.float64],
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

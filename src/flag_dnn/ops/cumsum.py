@@ -9,52 +9,126 @@ from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import triton_lang_extension as tle
 
+
 logger = logging.getLogger(__name__)
 
 
 @triton.jit
-def cumsum_2d_kernel(
-    in_ptr, out_ptr,
-    M, N,
-    in_stride_m, in_stride_n,
-    out_stride_m, out_stride_n,
-    BLOCK_SIZE_N: tl.constexpr,
-):
-    pid_m = tle.program_id(0)
-    in_row_start_ptr = in_ptr + pid_m * in_stride_m
-    out_row_start_ptr = out_ptr + pid_m * out_stride_m
-    
-    offsets_n = tl.arange(0, BLOCK_SIZE_N)
-    
-    # 循环剥离,初始化 running_sum，让 Triton 自动且正确地推导出数据类型
-    cols = offsets_n
+def cumsum_global_pass1(in_ptr, out_ptr, sums_ptr, N, BLOCK_N: tl.constexpr):
+    pid = tle.program_id(0)
+    cols = pid * BLOCK_N + tl.arange(0, BLOCK_N)
     mask = cols < N
-    
-    # other=0：防止越界访问带来的 NaN 或垃圾值污染累加结果
-    val = tl.load(in_row_start_ptr + cols * in_stride_n, mask=mask, other=0)
-    val = val.to(out_ptr.dtype.element_ty)
-    
-    chunk_cumsum = tl.cumsum(val, axis=0)
-    tl.store(out_row_start_ptr + cols * out_stride_n, chunk_cumsum, mask=mask)
-    
-    # 初始化供下一个 Chunk 使用的 running_sum (降维成了一个标量)
-    running_sum = tl.sum(val, axis=0)
+    val = tl.load(in_ptr + cols, mask=mask, other=0.0).to(tl.float32)
+    c_sum = tl.cumsum(val, axis=0)
+    tl.store(out_ptr + cols, c_sum.to(out_ptr.dtype.element_ty), mask=mask)
+    if sums_ptr is not None:
+        tl.store(sums_ptr + pid, tl.sum(val, axis=0))
 
-    # 当 N 大于 BLOCK_SIZE_N 时触发
-    for n_offset in range(BLOCK_SIZE_N, N, BLOCK_SIZE_N):
-        cols = n_offset + offsets_n
+
+@triton.jit
+def cumsum_global_pass2(sums_ptr, num_blocks, BLOCK_N: tl.constexpr):
+    cols = tl.arange(0, BLOCK_N)
+    running_sum = 0.0
+    for i in range(0, num_blocks, BLOCK_N):
+        idx = i + cols
+        mask = idx < num_blocks
+        val = tl.load(sums_ptr + idx, mask=mask, other=0.0).to(tl.float32)
+        c_sum = tl.cumsum(val, axis=0) + running_sum
+        tl.store(sums_ptr + idx, c_sum, mask=mask)
+        running_sum += tl.sum(val, axis=0)
+
+
+@triton.jit
+def cumsum_global_pass3(out_ptr, sums_ptr, N, BLOCK_N: tl.constexpr):
+    pid = tle.program_id(0)
+    if pid > 0:
+        add_val = tl.load(sums_ptr + pid - 1).to(tl.float32)
+        cols = pid * BLOCK_N + tl.arange(0, BLOCK_N)
         mask = cols < N
-        
-        val = tl.load(in_row_start_ptr + cols * in_stride_n, mask=mask, other=0)
-        val = val.to(out_ptr.dtype.element_ty)
-        
-        # 计算当前 Chunk 的前缀和，并加上前面所有 Chunk 的总和
+        val = tl.load(out_ptr + cols, mask=mask, other=0.0).to(tl.float32)
+        val += add_val
+        tl.store(out_ptr + cols, val.to(out_ptr.dtype.element_ty), mask=mask)
+
+
+@triton.autotune(
+    configs=[
+        triton.Config({'BLOCK_M_POST': 16, 'BLOCK_N': 256}, num_warps=4, num_stages=4),
+        triton.Config({'BLOCK_M_POST': 32, 'BLOCK_N': 128}, num_warps=4, num_stages=4),
+        triton.Config({'BLOCK_M_POST': 64, 'BLOCK_N': 64}, num_warps=4, num_stages=4),
+        triton.Config({'BLOCK_M_POST': 128, 'BLOCK_N': 32}, num_warps=4, num_stages=5),
+        triton.Config({'BLOCK_M_POST': 8, 'BLOCK_N': 512}, num_warps=8, num_stages=3),
+    ],
+    key=['M_pre', 'N', 'M_post'],
+)
+@triton.jit
+def cumsum_inner_dim_kernel(
+    in_ptr, out_ptr,
+    M_pre, N, M_post,
+    BLOCK_N: tl.constexpr,
+    BLOCK_M_POST: tl.constexpr
+):
+    pid_pre = tle.program_id(0)
+    pid_post = tle.program_id(1)
+
+    offsets_post = pid_post * BLOCK_M_POST + tl.arange(0, BLOCK_M_POST)
+    mask_post = offsets_post < M_post
+
+    base_idx = pid_pre * (N * M_post) + offsets_post
+    running_sum = tl.zeros([BLOCK_M_POST], dtype=tl.float32)
+    offsets_n = tl.arange(0, BLOCK_N)
+
+    for n_offset in range(0, N, BLOCK_N):
+        cols = n_offset + offsets_n
+        mask_n = cols < N
+
+        idx = base_idx[None, :] + cols[:, None] * M_post
+        mask = mask_n[:, None] & mask_post[None, :]
+
+        val = tl.load(in_ptr + idx, mask=mask, other=0.0).to(tl.float32)
         chunk_cumsum = tl.cumsum(val, axis=0)
-        out_val = chunk_cumsum + running_sum
+        out_val = chunk_cumsum + running_sum[None, :]
         
-        tl.store(out_row_start_ptr + cols * out_stride_n, out_val, mask=mask)
+        tl.store(out_ptr + idx, out_val.to(out_ptr.dtype.element_ty), mask=mask)
+        running_sum += tl.sum(val, axis=0)
+
+
+@triton.autotune(
+    configs=[
+        triton.Config({'BLOCK_M_PRE': 4, 'BLOCK_N': 4096}, num_warps=8, num_stages=3),
+        triton.Config({'BLOCK_M_PRE': 8, 'BLOCK_N': 2048}, num_warps=8, num_stages=4),
+        triton.Config({'BLOCK_M_PRE': 16, 'BLOCK_N': 1024}, num_warps=4, num_stages=4),
+        triton.Config({'BLOCK_M_PRE': 32, 'BLOCK_N': 512}, num_warps=4, num_stages=5),
+        triton.Config({'BLOCK_M_PRE': 64, 'BLOCK_N': 256}, num_warps=4, num_stages=5),
+    ],
+    key=['M_pre', 'N'],
+)
+@triton.jit
+def cumsum_last_dim_kernel(
+    in_ptr, out_ptr,
+    M_pre, N,
+    BLOCK_M_PRE: tl.constexpr,
+    BLOCK_N: tl.constexpr
+):
+    pid_pre = tle.program_id(0)
+    offsets_pre = pid_pre * BLOCK_M_PRE + tl.arange(0, BLOCK_M_PRE)
+    mask_pre = offsets_pre < M_pre
+
+    running_sum = tl.zeros([BLOCK_M_PRE], dtype=tl.float32)
+    offsets_n = tl.arange(0, BLOCK_N)
+
+    for n_offset in range(0, N, BLOCK_N):
+        cols = n_offset + offsets_n
+        mask_n = cols < N
+
+        idx = cols[:, None] + offsets_pre[None, :] * N 
+        mask = mask_n[:, None] & mask_pre[None, :]
+
+        val = tl.load(in_ptr + idx, mask=mask, other=0.0).to(tl.float32)
+        chunk_cumsum = tl.cumsum(val, axis=0)
         
-        # 将当前 Chunk 的总和累积到 running_sum 中
+        out_val = chunk_cumsum + running_sum[None, :]
+        
+        tl.store(out_ptr + idx, out_val.to(out_ptr.dtype.element_ty), mask=mask)
         running_sum += tl.sum(val, axis=0)
 
 
@@ -65,73 +139,62 @@ def cumsum(
     dtype: Optional[torch.dtype] = None,
     out: Optional[torch.Tensor] = None
 ) -> torch.Tensor:
-    logger.debug("FLAG_DNN CUMSUM")
+    logger.debug("FLAG_DNN CUMSUM OPTIMIZED")
 
-    # 推导输出类型
-    dummy = torch.empty((0,), dtype=input.dtype, device=input.device)
-    out_dtype = torch.cumsum(dummy, dim=0, dtype=dtype).dtype
-
-    # 空张量边界处理
+    out_dtype = dtype if dtype is not None else input.dtype
+    
     if input.numel() == 0:
         if out is not None:
             if out.shape != input.shape:
                 out.resize_(input.shape)
             return out
-        return torch.empty(input.shape, dtype=out_dtype, device=input.device)
+        return torch.empty_like(input, dtype=out_dtype)
 
-    # 负数维度对齐与越界检查
     d = dim if dim >= 0 else dim + input.ndim
     if not (0 <= d < input.ndim):
-        raise IndexError(f"Dimension out of range (expected to be in range of [-{input.ndim}, {input.ndim-1}], but got {dim})")
+        raise IndexError(f"Dimension out of range: {dim}")
 
-    # 将要计算的维度置换到最后一维，确保内存连续性
-    keep_dims = [i for i in range(input.ndim) if i != d]
-    permuted_dims = keep_dims + [d]
-    
-    input_permuted = input.permute(*permuted_dims).contiguous()
-    
-    # 拍扁为 2D 矩阵 (M 行 N 列)
-    M = 1
-    for i in keep_dims:
-        M *= input.shape[i]
-    N = input.shape[d]
-    
-    input_c = input_permuted.view(M, N)
-    
-    # 分配一段连续的中间内存，避免在 Kernel 里做高维度的步长反推
-    out_c = torch.empty((M, N), dtype=out_dtype, device=input.device)
+    input_c = input.contiguous()
 
-    in_stride_m = input_c.stride(0)
-    in_stride_n = input_c.stride(1)
-    out_stride_m = out_c.stride(0)
-    out_stride_n = out_c.stride(1)
-
-    # 跨 Chunk 的 running_sum 传递
-    BLOCK_SIZE_N = 1024
-    grid = (M,)
-
-    # 6. 启动 Kernel
-    with torch_device_fn.device(input.device):
-        cumsum_2d_kernel[grid](
-            input_c, out_c,
-            M, N,
-            in_stride_m, in_stride_n,
-            out_stride_m, out_stride_n,
-            BLOCK_SIZE_N=BLOCK_SIZE_N
-        )
-
-    # 施加“逆排列”，恢复到原来的内存形状和维度布局
-    inverse_perm = [0] * input.ndim
-    for i, p in enumerate(permuted_dims):
-        inverse_perm[p] = i
-        
-    final_out = out_c.view(input_permuted.shape).permute(*inverse_perm)
-
-    # 处理 out 参数
     if out is not None:
-        if out.shape != input.shape:
-            out.resize_(input.shape)
-        out.copy_(final_out)
+        if out.shape != input_c.shape:
+            out.resize_(input_c.shape)
+        out_c = out.contiguous() if out.is_contiguous() else torch.empty_like(input_c, dtype=out_dtype)
+    else:
+        out_c = torch.empty_like(input_c, dtype=out_dtype)
+
+    M_pre, N, M_post = 1, input_c.shape[d], 1
+    for i in range(d): M_pre *= input_c.shape[i]
+    for i in range(d + 1, input_c.ndim): M_post *= input_c.shape[i]
+
+    with torch_device_fn.device(input.device):
+        if M_post == 1:
+            # 归约最后一维
+            if M_pre == 1 and N > 65536:
+                # 3-Pass 全局并行扫描
+                if input.dtype in (torch.float16, torch.bfloat16):
+                    BLOCK_N = 4096
+                else:
+                    BLOCK_N = 8192
+
+                grid_size = triton.cdiv(N, BLOCK_N)
+                sums = torch.empty((grid_size,), dtype=torch.float32, device=input.device)
+                
+                cumsum_global_pass1[(grid_size,)](input_c, out_c, sums, N, BLOCK_N=BLOCK_N)
+                cumsum_global_pass2[(1,)](sums, grid_size, BLOCK_N=4096)
+                cumsum_global_pass3[(grid_size,)](out_c, sums, N, BLOCK_N=BLOCK_N)
+            else:
+                # 触发多行 Batched Loop
+                grid = lambda meta: (triton.cdiv(M_pre, meta['BLOCK_M_PRE']),)
+                cumsum_last_dim_kernel[grid](input_c, out_c, M_pre, N)
+        else:
+            # 归约前置/中间维度
+            grid = lambda meta: (M_pre, triton.cdiv(M_post, meta['BLOCK_M_POST']))
+            cumsum_inner_dim_kernel[grid](input_c, out_c, M_pre, N, M_post)
+
+    if out is not None:
+        if out.data_ptr() != out_c.data_ptr():
+            out.copy_(out_c)
         return out
 
-    return final_out
+    return out_c.view(input.shape)

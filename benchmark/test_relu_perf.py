@@ -14,7 +14,6 @@ from flag_dnn.utils import shape_utils
 def torch_relu(x, y=None):
     return F.relu(x)
 
-
 def gems_relu_wrapper(x, y=None):
     return flag_dnn.ops.relu(x)
 
@@ -59,46 +58,11 @@ class ReluBenchmark(Benchmark):
 
 
 @pytest.mark.relu
-def test_perf_relu_fp16():
+def test_perf_relu():
     bench = ReluBenchmark(
-        op_name="relu_fp16",
+        op_name="relu",
         torch_op=torch_relu,
         gems_op=gems_relu_wrapper,
-        dtypes=[torch.float16],
-    )
-    bench.run()
-
-
-@pytest.mark.relu
-def test_perf_relu_bf16():
-    bench = ReluBenchmark(
-        op_name="relu_bf16",
-        torch_op=torch_relu,
-        gems_op=gems_relu_wrapper,
-        dtypes=[torch.bfloat16],
-    )
-    bench.run()
-
-
-@pytest.mark.relu
-def test_perf_relu_fp32():
-    bench = ReluBenchmark(
-        op_name="relu_fp32",
-        torch_op=torch_relu,
-        gems_op=gems_relu_wrapper,
-        dtypes=[torch.float32],
-    )
-    bench.run()
-
-
-@pytest.mark.relu
-def test_perf_relu_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = ReluBenchmark(
-        op_name="relu_fp64",
-        torch_op=torch_relu,
-        gems_op=gems_relu_wrapper,
-        dtypes=[torch.float64],
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

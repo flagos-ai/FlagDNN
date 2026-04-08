@@ -1,10 +1,7 @@
 import pytest
 import torch
 import torch.nn.functional as F
-
 import flag_dnn
-
-from .accuracy_utils import gems_assert_close
 
 
 SHAPES = [(32,), (1024,), (5333,), (16384,), (1024 * 1024,)]

@@ -13,7 +13,6 @@ from flag_dnn.utils import shape_utils
 def torch_abs(x):
     return torch.abs(x)
 
-
 def gems_abs_wrapper(x):
     return flag_dnn.ops.abs(x)
 
@@ -84,46 +83,11 @@ class AbsBenchmark(Benchmark):
 
 
 @pytest.mark.abs
-def test_perf_abs_fp16():
+def test_perf_abs():
     bench = AbsBenchmark(
-        op_name="abs_fp16", 
+        op_name="abs", 
         torch_op=torch_abs, 
         gems_op=gems_abs_wrapper, 
-        dtypes=[torch.float16]
-    )
-    bench.run()
-
-
-@pytest.mark.abs
-def test_perf_abs_bf16():
-    bench = AbsBenchmark(
-        op_name="abs_bf16", 
-        torch_op=torch_abs, 
-        gems_op=gems_abs_wrapper, 
-        dtypes=[torch.bfloat16]
-    )
-    bench.run()
-
-
-@pytest.mark.abs
-def test_perf_abs_fp32():
-    bench = AbsBenchmark(
-        op_name="abs_fp32", 
-        torch_op=torch_abs, 
-        gems_op=gems_abs_wrapper, 
-        dtypes=[torch.float32]
-    )
-    bench.run()
-
-
-@pytest.mark.abs
-def test_perf_abs_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = AbsBenchmark(
-        op_name="abs_fp64", 
-        torch_op=torch_abs, 
-        gems_op=gems_abs_wrapper, 
-        dtypes=[torch.float64]
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64]
     )
     bench.run()

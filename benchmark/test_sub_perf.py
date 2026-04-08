@@ -13,7 +13,6 @@ from flag_dnn.utils import shape_utils
 def torch_sub(x, y):
     return torch.sub(x, y)
 
-
 def gems_sub_wrapper(x, y):
     return flag_dnn.ops.sub(x, y)
 
@@ -82,46 +81,11 @@ class SubBenchmark(Benchmark):
 
 
 @pytest.mark.sub
-def test_perf_sub_fp16():
+def test_perf_sub():
     bench = SubBenchmark(
-        op_name="sub_fp16",
+        op_name="sub",
         torch_op=torch_sub,
         gems_op=gems_sub_wrapper,
-        dtypes=[torch.float16],
-    )
-    bench.run()
-
-
-@pytest.mark.sub
-def test_perf_sub_bf16():
-    bench = SubBenchmark(
-        op_name="sub_bf16",
-        torch_op=torch_sub,
-        gems_op=gems_sub_wrapper,
-        dtypes=[torch.bfloat16],
-    )
-    bench.run()
-
-
-@pytest.mark.sub
-def test_perf_sub_fp32():
-    bench = SubBenchmark(
-        op_name="sub_fp32",
-        torch_op=torch_sub,
-        gems_op=gems_sub_wrapper,
-        dtypes=[torch.float32],
-    )
-    bench.run()
-
-
-@pytest.mark.sub
-def test_perf_sub_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = SubBenchmark(
-        op_name="sub_fp64",
-        torch_op=torch_sub,
-        gems_op=gems_sub_wrapper,
-        dtypes=[torch.float64],
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

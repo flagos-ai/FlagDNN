@@ -29,11 +29,10 @@ class ProdBenchmark(Benchmark):
         return ["gbps"]
 
     def set_more_shapes(self):
-        # 注意: torch.prod 不支持传入 tuple 作为 dim, 所以移除了 (2, 3) 这类配置
         configs = [
             ((1024 * 1024 * 16,), None, False),       # 1D 超长向量
             ((32, 256, 1024), None, False),           # 3D 全局归约
-            ((1024, 1024), 1, False),                 # 典型方阵 Inner
+            ((1024, 1024 * 16), 1, False),            
             ((32, 1024, 1024), 2, False),             # NLP Seq_len 维度归约
             ((8, 128, 4096), 2, False),               # NLP 大词表/长序列
             ((1024, 1024), 0, False),                 # 跨步距 Outer 访存
@@ -78,23 +77,11 @@ class ProdBenchmark(Benchmark):
 
 
 @pytest.mark.prod
-def test_perf_prod_fp16():
-    bench = ProdBenchmark(op_name="prod_fp16", torch_op=torch_prod, gems_op=gems_prod_wrapper, dtypes=[torch.float16])
-    bench.run()
-
-@pytest.mark.prod
-def test_perf_prod_bf16():
-    bench = ProdBenchmark(op_name="prod_bf16", torch_op=torch_prod, gems_op=gems_prod_wrapper, dtypes=[torch.bfloat16])
-    bench.run()
-
-@pytest.mark.prod
-def test_perf_prod_fp32():
-    bench = ProdBenchmark(op_name="prod_fp32", torch_op=torch_prod, gems_op=gems_prod_wrapper, dtypes=[torch.float32])
-    bench.run()
-
-@pytest.mark.prod
-def test_perf_prod_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = ProdBenchmark(op_name="prod_fp64", torch_op=torch_prod, gems_op=gems_prod_wrapper, dtypes=[torch.float64])
+def test_perf_prod():
+    bench = ProdBenchmark(
+        op_name="prod", 
+        torch_op=torch_prod, 
+        gems_op=gems_prod_wrapper, 
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64]
+    )
     bench.run()

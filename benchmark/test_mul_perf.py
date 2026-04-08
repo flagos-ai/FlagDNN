@@ -13,7 +13,6 @@ from flag_dnn.utils import shape_utils
 def torch_mul(x, y):
     return torch.mul(x, y)
 
-
 def gems_mul_wrapper(x, y):
     return flag_dnn.ops.mul(x, y)
 
@@ -82,46 +81,11 @@ class MulBenchmark(Benchmark):
 
 
 @pytest.mark.mul
-def test_perf_mul_fp16():
+def test_perf_mul():
     bench = MulBenchmark(
-        op_name="mul_fp16",
+        op_name="mul",
         torch_op=torch_mul,
         gems_op=gems_mul_wrapper,
-        dtypes=[torch.float16],
-    )
-    bench.run()
-
-
-@pytest.mark.mul
-def test_perf_mul_bf16():
-    bench = MulBenchmark(
-        op_name="mul_bf16",
-        torch_op=torch_mul,
-        gems_op=gems_mul_wrapper,
-        dtypes=[torch.bfloat16],
-    )
-    bench.run()
-
-
-@pytest.mark.mul
-def test_perf_mul_fp32():
-    bench = MulBenchmark(
-        op_name="mul_fp32",
-        torch_op=torch_mul,
-        gems_op=gems_mul_wrapper,
-        dtypes=[torch.float32],
-    )
-    bench.run()
-
-
-@pytest.mark.mul
-def test_perf_mul_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = MulBenchmark(
-        op_name="mul_fp64",
-        torch_op=torch_mul,
-        gems_op=gems_mul_wrapper,
-        dtypes=[torch.float64],
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

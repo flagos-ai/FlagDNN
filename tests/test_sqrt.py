@@ -1,13 +1,9 @@
 import pytest
 import torch
-
 import flag_dnn
-
-from .accuracy_utils import gems_assert_close
 
 
 SHAPES = [(32,), (1024,), (5333,), (16384,), (1024 * 1024,), (2, 3, 4, 5)]
-
 
 def _get_non_negative_tensor(shape, dtype, device):
     """
@@ -35,7 +31,8 @@ def test_accuracy_sqrt(dtype, shape):
         rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
 
     ref_out = torch.sqrt(x)
-    out = flag_dnn.ops.sqrt(x)
+    with flag_dnn.use_dnn():
+        out = torch.sqrt(x)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -50,7 +47,8 @@ def test_accuracy_sqrt_empty_tensor(dtype):
     x = torch.randn(0, dtype=dtype, device=flag_dnn.device)
 
     ref_out = torch.sqrt(x)
-    out = flag_dnn.ops.sqrt(x)
+    with flag_dnn.use_dnn():
+        out = torch.sqrt(x)
 
     assert out.shape == (0,)
     assert out.dtype == dtype

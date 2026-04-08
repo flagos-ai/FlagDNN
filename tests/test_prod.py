@@ -1,7 +1,7 @@
 import pytest
 import torch
-
 import flag_dnn
+
 
 # (shape, dim, keepdim) 组合测试用例
 # 注意：prod 不支持 tuple 形式的多维度归约
@@ -45,12 +45,16 @@ def test_accuracy_prod(dtype, shape, dim, keepdim):
     # 绕过 PyTorch 原生 prod API 对 dim=None 和 keepdim 的限制
     if dim is None:
         ref_out = torch.prod(x)  # PyTorch 全局求积只能这么调用
+        with flag_dnn.use_dnn():
+            out = torch.prod(x)
+
         if keepdim:
             ref_out = ref_out.view([1] * x.ndim)  # 手动补齐 keepdim 的形状
+            out = out.view([1] * x.ndim)
     else:
         ref_out = torch.prod(x, dim=dim, keepdim=keepdim)
-
-    out = flag_dnn.ops.prod(x, dim=dim, keepdim=keepdim)
+        with flag_dnn.use_dnn():
+            out = torch.prod(x, dim=dim, keepdim=keepdim)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -68,7 +72,8 @@ def test_accuracy_prod_dtype_promotion(input_dtype, out_dtype):
         x = torch.randint(-2, 3, (10, 20), dtype=input_dtype, device=flag_dnn.device)
 
     ref_out = torch.prod(x, dim=1, dtype=out_dtype)
-    out = flag_dnn.ops.prod(x, dim=1, dtype=out_dtype)
+    with flag_dnn.use_dnn():
+        out = torch.prod(x, dim=1, dtype=out_dtype)
 
     assert out.dtype == out_dtype
     torch.testing.assert_close(out, ref_out, rtol=1e-3, atol=1e-3)
@@ -80,6 +85,7 @@ def test_accuracy_prod_empty_tensor():
     x = torch.empty((2, 0, 3), dtype=torch.float32, device=flag_dnn.device)
     
     ref_out = torch.prod(x, dim=1)
-    out = flag_dnn.ops.prod(x, dim=1)
+    with flag_dnn.use_dnn():
+        out = torch.prod(x, dim=1)
     
     torch.testing.assert_close(out, ref_out)

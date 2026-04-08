@@ -14,6 +14,14 @@ from flag_dnn.utils import triton_lang_extension as tle
 logger = logging.getLogger(__name__)
 
 
+@libentry()
+@libtuner(
+    configs=runtime.get_tuned_config("rms_norm"),
+    key=['N'],
+    strategy=["align32"],
+    warmup=5,
+    rep=10,
+)
 @triton.jit
 def rms_norm_kernel(
     x_ptr, y_ptr,
@@ -75,36 +83,36 @@ def rms_norm(
 
     assert input.ndim >= len(normalized_shape), "Input dimensions must be >= normalized_shape length"
 
-    x = input.contiguous()
-    y = torch.empty_like(x)
+    if not input.is_contiguous():
+        assert False, "input must be contiguous."
+        input = input.contiguous()
+    y = torch.empty_like(input)
 
-    # 计算 N (归一化维度的乘积) 和 M (前面所有独立维度的乘积)
     N = 1
+    tail_shape = input.shape[-len(normalized_shape):]
+    if tuple(normalized_shape) != tuple(tail_shape):
+        raise ValueError(f"The normalized_shape must match the last few dimensions of the input tensor.")
+
     for dim in normalized_shape:
         N *= dim
-    M = x.numel() // N
+
+    M = input.numel() // N
 
     if weight is None:
-        weight_ptr = x  # 传入一个 Dummy Pointer (内核里有 HAS_WEIGHT 拦截，不会真的去读)
+        weight_ptr = input
         has_weight = False
     else:
         weight_ptr = weight
         has_weight = True
 
     grid = (M,)
-    
-    BLOCK_SIZE = min(triton.next_power_of_2(N), 2048)
-    
-    num_warps = 4 if BLOCK_SIZE <= 1024 else 8
 
-    with torch_device_fn.device(x.device):
+    with torch_device_fn.device(input.device):
         rms_norm_kernel[grid](
-            x, y,
+            input, y,
             weight_ptr,
             M, N, eps,
-            BLOCK_SIZE=BLOCK_SIZE,
-            HAS_WEIGHT=has_weight,
-            num_warps=num_warps,
+            HAS_WEIGHT=has_weight
         )
 
     return y

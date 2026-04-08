@@ -8,11 +8,71 @@ import triton.language as tl
 
 from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
+from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
+
 
 logger = logging.getLogger(__name__)
 
 
+@libentry()
+@libtuner(
+    configs=runtime.get_tuned_config("adaptive_max_pool1d"),
+    key=["W"],
+    warmup=5,
+    rep=10,
+)
+@triton.jit
+def global_max_pool1d_kernel(
+    x_ptr, y_ptr, idx_ptr,
+    W,
+    RETURN_INDICES: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+):
+    nc_idx = tle.program_id(0)
+    x_base = x_ptr + nc_idx * W
+    input_dtype = x_ptr.dtype.element_ty
+
+    max_vals = tl.full([BLOCK_SIZE], -float('inf'), dtype=input_dtype)
+    max_idxs = tl.full([BLOCK_SIZE], -1, dtype=tl.int64)
+
+    for w_offset in range(0, W, BLOCK_SIZE):
+        offsets = w_offset + tl.arange(0, BLOCK_SIZE)
+        mask = offsets < W
+
+        # 读取并强制洗掉 other 带来的可能隐式提升
+        vals = tl.load(x_base + offsets, mask=mask, other=-float('inf'))
+        vals = tl.cast(vals, input_dtype)
+
+        # 向量化更新
+        update_mask = (vals > max_vals) & mask
+        max_vals = tl.where(update_mask, vals, max_vals)
+        if RETURN_INDICES:
+            max_idxs = tl.where(update_mask, offsets, max_idxs)
+
+    # Block 内部做唯一的一次规约降维
+    best_val = tl.max(max_vals, axis=0)
+    tl.store(y_ptr + nc_idx, best_val)
+
+    if RETURN_INDICES:
+        # 找到最大值在 Tensor 内部的局部偏移量 (0 ~ BLOCK_SIZE-1)
+        local_argmax = tl.argmax(max_vals, axis=0)
+        
+        # 利用 mask 提取对应的真实全局索引
+        extract_mask = tl.arange(0, BLOCK_SIZE) == local_argmax
+        zero_tensor = tl.full([BLOCK_SIZE], 0, dtype=tl.int64)
+        best_idx = tl.sum(tl.where(extract_mask, max_idxs, zero_tensor), axis=0)
+        
+        tl.store(idx_ptr + nc_idx, best_idx)
+
+
+@libentry()
+@libtuner(
+    configs=runtime.get_tuned_config("adaptive_max_pool1d"),
+    key=["N", "C", "W"],
+    warmup=5,
+    rep=10,
+)
 @triton.jit
 def adaptive_max_pool1d_kernel(
     x_ptr, y_ptr, idx_ptr,
@@ -90,13 +150,16 @@ def adaptive_max_pool1d(
 
     N, C, W = input.shape
 
-    x = input.contiguous()
-    y = torch.empty((N, C, OW), dtype=x.dtype, device=x.device)
+    if not input.is_contiguous():
+        assert False, "input must be contiguous."
+        input = input.contiguous()
+
+    y = torch.empty((N, C, OW), dtype=input.dtype, device=input.device)
     
     indices = None
-    idx_ptr = x # 若不需要返回索引，传入任意合法张量当占位符即可
+    idx_ptr = input
     if return_indices:
-        indices = torch.empty((N, C, OW), dtype=torch.int64, device=x.device)
+        indices = torch.empty((N, C, OW), dtype=torch.int64, device=input.device)
         idx_ptr = indices
 
     M = N * C * OW
@@ -107,21 +170,27 @@ def adaptive_max_pool1d(
             return y_out, idx_out
         return y_out
 
-    BLOCK_SIZE = 1024
-    grid = (triton.cdiv(M, BLOCK_SIZE),)
 
     # 计算 1D 维度最大可能窗口，给 Triton 的 range() 提供静态上限
     max_k_w = math.ceil(W / OW) + 1
 
-    with torch_device_fn.device(x.device):
-        adaptive_max_pool1d_kernel[grid](
-            x, y, idx_ptr,
-            N, C, W,
-            OW,
-            MAX_K_W=max_k_w,
-            RETURN_INDICES=return_indices,
-            BLOCK_SIZE=BLOCK_SIZE
-        )
+    with torch_device_fn.device(input.device):
+        if OW == 1:
+            grid_global = lambda meta: (N * C, )
+            global_max_pool1d_kernel[grid_global](
+                input, y, idx_ptr,
+                W,
+                RETURN_INDICES=return_indices
+            )
+        else:
+            grid = lambda meta: (triton.cdiv(M, meta['BLOCK_SIZE']), )
+            adaptive_max_pool1d_kernel[grid](
+                input, y, idx_ptr,
+                N, C, W,
+                OW,
+                MAX_K_W=max_k_w,
+                RETURN_INDICES=return_indices
+            )
 
     y_out = y.squeeze(0) if is_2d else y
     if return_indices:

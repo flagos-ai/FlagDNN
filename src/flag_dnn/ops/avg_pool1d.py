@@ -8,11 +8,20 @@ import triton.language as tl
 
 from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
+from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
+
 
 logger = logging.getLogger(__name__)
 
 
+@libentry()
+@libtuner(
+    configs=runtime.get_tuned_config("avg_pool1d"),
+    key=["N", "C", "W"],
+    warmup=5,
+    rep=10,
+)
 @triton.jit
 def avg_pool1d_kernel(
     x_ptr, y_ptr,
@@ -106,30 +115,31 @@ def avg_pool1d(
         if (OW - 1) * stride[0] >= W + padding[0]:
             OW -= 1
 
-    x = input.contiguous()
-    y = torch.empty((N, C, OW), dtype=x.dtype, device=x.device)
+    if not input.is_contiguous():
+        assert False, "input must be contiguous."
+        input = input.contiguous()
+
+    y = torch.empty((N, C, OW), dtype=input.dtype, device=input.device)
 
     M = N * C * OW
     if M == 0:
         return y.squeeze(0) if is_2d else y
 
-    BLOCK_SIZE = 1024
-    grid = (triton.cdiv(M, BLOCK_SIZE),)
+    grid = lambda meta: (triton.cdiv(M, meta['BLOCK_SIZE']), )
 
     # 动态分发累加精度：float64 原生保留，其他统统升级到 float32 运算
-    acc_dtype = tl.float64 if x.dtype == torch.float64 else tl.float32
+    acc_dtype = tl.float64 if input.dtype == torch.float64 else tl.float32
 
-    with torch_device_fn.device(x.device):
+    with torch_device_fn.device(input.device):
         avg_pool1d_kernel[grid](
-            x, y,
+            input, y,
             N, C, W,
             OW,
             padding[0],
             STRIDE_W=stride[0],
             KERNEL_W=kernel_size[0],
             COUNT_INCLUDE_PAD=count_include_pad,
-            ACC_DTYPE=acc_dtype,
-            BLOCK_SIZE=BLOCK_SIZE
+            ACC_DTYPE=acc_dtype
         )
 
     return y.squeeze(0) if is_2d else y

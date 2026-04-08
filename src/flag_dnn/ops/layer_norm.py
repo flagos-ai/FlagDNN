@@ -5,12 +5,23 @@ import torch
 import triton
 import triton.language as tl
 
+from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
+from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
+
 
 logger = logging.getLogger(__name__)
 
 
+@libentry()
+@libtuner(
+    configs=runtime.get_tuned_config("layer_norm"),
+    key=['N'],
+    strategy=["align32"],
+    warmup=5,
+    rep=10,
+)
 @triton.jit
 def layer_norm_kernel(
     x_ptr, y_ptr,
@@ -77,29 +88,31 @@ def layer_norm(
 
     assert input.ndim >= len(normalized_shape), "Input dimensions must be >= normalized_shape length"
 
-    x = input.contiguous()
-    y = torch.empty_like(x)
+    if not input.is_contiguous():
+        assert False, "input must be contiguous."
+        input = input.contiguous()
+
+    y = torch.empty_like(input)
 
     N = 1
+    tail_shape = input.shape[-len(normalized_shape):]
+    if tuple(normalized_shape) != tuple(tail_shape):
+        raise ValueError(f"The normalized_shape must match the last few dimensions of the input tensor.")
+
     for dim in normalized_shape:
         N *= dim
-    M = x.numel() // N
+
+    M = input.numel() // N
 
     grid = (M,)
     
-    BLOCK_SIZE = min(triton.next_power_of_2(N), 2048)
-
-    num_warps = 4 if BLOCK_SIZE <= 1024 else 8
-
-    with torch_device_fn.device(x.device):
+    with torch_device_fn.device(input.device):
         layer_norm_kernel[grid](
-            x, y,
+            input, y,
             weight, bias,
             M, N, eps,
-            BLOCK_SIZE=BLOCK_SIZE,
             HAS_WEIGHT=(weight is not None),
-            HAS_BIAS=(bias is not None),
-            num_warps=num_warps,
+            HAS_BIAS=(bias is not None)
         )
 
     return y

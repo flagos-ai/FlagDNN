@@ -15,7 +15,6 @@ from flag_dnn.utils import shape_utils
 def torch_softmax(x, y=None):
     return F.softmax(x, dim=-1)
 
-
 def gems_softmax_wrapper(x, y=None):
     return flag_dnn.ops.softmax(x, dim=-1)
 
@@ -87,46 +86,11 @@ class SoftmaxBenchmark(Benchmark):
 
 
 @pytest.mark.softmax
-def test_perf_softmax_fp16():
+def test_perf_softmax():
     bench = SoftmaxBenchmark(
-        op_name="softmax_fp16",
+        op_name="softmax",
         torch_op=torch_softmax,
         gems_op=gems_softmax_wrapper,
-        dtypes=[torch.float16],
-    )
-    bench.run()
-
-
-@pytest.mark.softmax
-def test_perf_softmax_bf16():
-    bench = SoftmaxBenchmark(
-        op_name="softmax_bf16",
-        torch_op=torch_softmax,
-        gems_op=gems_softmax_wrapper,
-        dtypes=[torch.bfloat16],
-    )
-    bench.run()
-
-
-@pytest.mark.softmax
-def test_perf_softmax_fp32():
-    bench = SoftmaxBenchmark(
-        op_name="softmax_fp32",
-        torch_op=torch_softmax,
-        gems_op=gems_softmax_wrapper,
-        dtypes=[torch.float32],
-    )
-    bench.run()
-
-
-@pytest.mark.softmax
-def test_perf_softmax_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = SoftmaxBenchmark(
-        op_name="softmax_fp64",
-        torch_op=torch_softmax,
-        gems_op=gems_softmax_wrapper,
-        dtypes=[torch.float64],
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

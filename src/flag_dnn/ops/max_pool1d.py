@@ -8,12 +8,20 @@ import triton.language as tl
 
 from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
+from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
 
 
 logger = logging.getLogger(__name__)
 
 
+@libentry()
+@libtuner(
+    configs=runtime.get_tuned_config("max_pool1d"),
+    key=["N", "C", "W"],
+    warmup=5,
+    rep=10,
+)
 @triton.jit
 def max_pool1d_kernel(
     x_ptr, y_ptr, idx_ptr,
@@ -77,7 +85,6 @@ def max_pool1d(
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
     logger.debug(f"FLAG_DNN MAX_POOL1D (kernel={kernel_size}, return_indices={return_indices})")
 
-    # 对齐 2D 代码的处理风格，将其转换为长度为 1 的 tuple 方便统一索引取值
     def _single(x):
         return (x,) if isinstance(x, int) else tuple(x)
 
@@ -104,10 +111,13 @@ def max_pool1d(
         if (OW - 1) * stride[0] >= W + padding[0]:
             OW -= 1
 
-    x = input.contiguous()
-    y = torch.empty((N, C, OW), dtype=x.dtype, device=x.device)
+    if not input.is_contiguous():
+        assert False, "input must be contiguous."
+        input = input.contiguous()
     
-    idx = torch.empty((N, C, OW), dtype=torch.int64, device=x.device) if return_indices else None
+    y = torch.empty((N, C, OW), dtype=input.dtype, device=input.device)
+    
+    idx = torch.empty((N, C, OW), dtype=torch.int64, device=input.device) if return_indices else None
 
     M = N * C * OW
     if M == 0:
@@ -116,20 +126,18 @@ def max_pool1d(
             return out_y, (idx.squeeze(0) if is_2d else idx)
         return out_y
 
-    BLOCK_SIZE = 1024
-    grid = (triton.cdiv(M, BLOCK_SIZE),)
+    grid = lambda meta: (triton.cdiv(M, meta['BLOCK_SIZE']), )
 
-    with torch_device_fn.device(x.device):
+    with torch_device_fn.device(input.device):
         max_pool1d_kernel[grid](
-            x, y, idx,
+            input, y, idx,
             N, C, W,
             OW,
             padding[0],
             STRIDE_W=stride[0],
             DIL_W=dilation[0],
             KERNEL_W=kernel_size[0],
-            RETURN_INDICES=return_indices,
-            BLOCK_SIZE=BLOCK_SIZE
+            RETURN_INDICES=return_indices
         )
 
     out_y = y.squeeze(0) if is_2d else y

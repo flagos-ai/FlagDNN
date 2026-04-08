@@ -10,12 +10,9 @@ from benchmark.performance_utils import Benchmark
 from flag_dnn.utils import shape_utils
 
 
-# 包装 PyTorch 的 add 算子
 def torch_add(x, y):
     return torch.add(x, y)
 
-
-# 包装 Gems 的 add 算子
 def gems_add_wrapper(x, y):
     return flag_dnn.ops.add(x, y)
 
@@ -89,46 +86,11 @@ class AddBenchmark(Benchmark):
 
 
 @pytest.mark.add
-def test_perf_add_fp16():
+def test_perf_add():
     bench = AddBenchmark(
-        op_name="add_fp16",
+        op_name="add",
         torch_op=torch_add,
         gems_op=gems_add_wrapper,
-        dtypes=[torch.float16],
-    )
-    bench.run()
-
-
-@pytest.mark.add
-def test_perf_add_bf16():
-    bench = AddBenchmark(
-        op_name="add_bf16",
-        torch_op=torch_add,
-        gems_op=gems_add_wrapper,
-        dtypes=[torch.bfloat16],
-    )
-    bench.run()
-
-
-@pytest.mark.add
-def test_perf_add_fp32():
-    bench = AddBenchmark(
-        op_name="add_fp32",
-        torch_op=torch_add,
-        gems_op=gems_add_wrapper,
-        dtypes=[torch.float32],
-    )
-    bench.run()
-
-
-@pytest.mark.add
-def test_perf_add_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = AddBenchmark(
-        op_name="add_fp64",
-        torch_op=torch_add,
-        gems_op=gems_add_wrapper,
-        dtypes=[torch.float64],
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

@@ -10,12 +10,9 @@ from benchmark.performance_utils import Benchmark
 from flag_dnn.utils import shape_utils
 
 
-# 包装 PyTorch 的 sqrt 算子
 def torch_sqrt(x):
     return torch.sqrt(x)
 
-
-# 包装 Gems 的 sqrt 算子
 def gems_sqrt_wrapper(x):
     return flag_dnn.ops.sqrt(x)
 
@@ -95,46 +92,11 @@ class SqrtBenchmark(Benchmark):
 
 
 @pytest.mark.sqrt
-def test_perf_sqrt_fp16():
+def test_perf_sqrt():
     bench = SqrtBenchmark(
-        op_name="sqrt_fp16",
+        op_name="sqrt",
         torch_op=torch_sqrt,
         gems_op=gems_sqrt_wrapper,
-        dtypes=[torch.float16],
-    )
-    bench.run()
-
-
-@pytest.mark.sqrt
-def test_perf_sqrt_bf16():
-    bench = SqrtBenchmark(
-        op_name="sqrt_bf16",
-        torch_op=torch_sqrt,
-        gems_op=gems_sqrt_wrapper,
-        dtypes=[torch.bfloat16],
-    )
-    bench.run()
-
-
-@pytest.mark.sqrt
-def test_perf_sqrt_fp32():
-    bench = SqrtBenchmark(
-        op_name="sqrt_fp32",
-        torch_op=torch_sqrt,
-        gems_op=gems_sqrt_wrapper,
-        dtypes=[torch.float32],
-    )
-    bench.run()
-
-
-@pytest.mark.sqrt
-def test_perf_sqrt_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = SqrtBenchmark(
-        op_name="sqrt_fp64",
-        torch_op=torch_sqrt,
-        gems_op=gems_sqrt_wrapper,
-        dtypes=[torch.float64],
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

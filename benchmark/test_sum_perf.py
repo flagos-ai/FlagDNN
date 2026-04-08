@@ -10,14 +10,11 @@ from benchmark.performance_utils import Benchmark
 from flag_dnn.utils import shape_utils
 
 
-# 包装 PyTorch 的 sum 算子
 def torch_sum(x, dim, keepdim):
     if dim is None:
         return torch.sum(x)
     return torch.sum(x, dim=dim, keepdim=keepdim)
 
-
-# 包装 Gems 的 sum 算子
 def gems_sum_wrapper(x, dim, keepdim):
     if dim is None:
         return flag_dnn.ops.sum(x)
@@ -99,46 +96,11 @@ class SumBenchmark(Benchmark):
 
 
 @pytest.mark.sum
-def test_perf_sum_fp16():
+def test_perf_sum():
     bench = SumBenchmark(
-        op_name="sum_fp16",
+        op_name="sum",
         torch_op=torch_sum,
         gems_op=gems_sum_wrapper,
-        dtypes=[torch.float16],
-    )
-    bench.run()
-
-
-@pytest.mark.sum
-def test_perf_sum_bf16():
-    bench = SumBenchmark(
-        op_name="sum_bf16",
-        torch_op=torch_sum,
-        gems_op=gems_sum_wrapper,
-        dtypes=[torch.bfloat16],
-    )
-    bench.run()
-
-
-@pytest.mark.sum
-def test_perf_sum_fp32():
-    bench = SumBenchmark(
-        op_name="sum_fp32",
-        torch_op=torch_sum,
-        gems_op=gems_sum_wrapper,
-        dtypes=[torch.float32],
-    )
-    bench.run()
-
-
-@pytest.mark.sum
-def test_perf_sum_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = SumBenchmark(
-        op_name="sum_fp64",
-        torch_op=torch_sum,
-        gems_op=gems_sum_wrapper,
-        dtypes=[torch.float64],
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

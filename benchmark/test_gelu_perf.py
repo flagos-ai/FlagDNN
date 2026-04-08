@@ -14,7 +14,6 @@ from flag_dnn.utils import shape_utils
 def torch_gelu(x, y=None):
     return F.gelu(x)
 
-
 def gems_gelu_wrapper(x, y=None):
     return flag_dnn.ops.gelu(x)
 
@@ -60,46 +59,11 @@ class GeluBenchmark(Benchmark):
 
 
 @pytest.mark.gelu
-def test_perf_gelu_fp16():
+def test_perf_gelu():
     bench = GeluBenchmark(
-        op_name="gelu_fp16",
+        op_name="gelu",
         torch_op=torch_gelu,
         gems_op=gems_gelu_wrapper,
-        dtypes=[torch.float16],
-    )
-    bench.run()
-
-
-@pytest.mark.gelu
-def test_perf_gelu_bf16():
-    bench = GeluBenchmark(
-        op_name="gelu_bf16",
-        torch_op=torch_gelu,
-        gems_op=gems_gelu_wrapper,
-        dtypes=[torch.bfloat16],
-    )
-    bench.run()
-
-
-@pytest.mark.gelu
-def test_perf_gelu_fp32():
-    bench = GeluBenchmark(
-        op_name="gelu_fp32",
-        torch_op=torch_gelu,
-        gems_op=gems_gelu_wrapper,
-        dtypes=[torch.float32],
-    )
-    bench.run()
-
-
-@pytest.mark.gelu
-def test_perf_gelu_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = GeluBenchmark(
-        op_name="gelu_fp64",
-        torch_op=torch_gelu,
-        gems_op=gems_gelu_wrapper,
-        dtypes=[torch.float64],
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

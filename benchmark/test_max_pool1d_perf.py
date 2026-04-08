@@ -14,7 +14,6 @@ def torch_max_pool1d(x, kernel_size, stride, padding):
     return F.max_pool1d(x, kernel_size=kernel_size, stride=stride, padding=padding)
 
 def gems_max_pool1d_wrapper(x, kernel_size, stride, padding):
-    # 假设 gems 提供了对应的 functional API
     return flag_dnn.ops.max_pool1d(x, kernel_size=kernel_size, stride=stride, padding=padding)
 
 
@@ -78,23 +77,11 @@ class MaxPool1dBenchmark(Benchmark):
 
 
 @pytest.mark.max_pool1d
-def test_perf_max_pool1d_fp16():
-    bench = MaxPool1dBenchmark(op_name="max_pool1d_fp16", torch_op=torch_max_pool1d, gems_op=gems_max_pool1d_wrapper, dtypes=[torch.float16])
-    bench.run()
-
-@pytest.mark.max_pool1d
-def test_perf_max_pool1d_bf16():
-    bench = MaxPool1dBenchmark(op_name="max_pool1d_bf16", torch_op=torch_max_pool1d, gems_op=gems_max_pool1d_wrapper, dtypes=[torch.bfloat16])
-    bench.run()
-
-@pytest.mark.max_pool1d
-def test_perf_max_pool1d_fp32():
-    bench = MaxPool1dBenchmark(op_name="max_pool1d_fp32", torch_op=torch_max_pool1d, gems_op=gems_max_pool1d_wrapper, dtypes=[torch.float32])
-    bench.run()
-
-@pytest.mark.max_pool1d
-def test_perf_max_pool1d_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = MaxPool1dBenchmark(op_name="max_pool1d_fp64", torch_op=torch_max_pool1d, gems_op=gems_max_pool1d_wrapper, dtypes=[torch.float64])
+def test_perf_max_pool1d():
+    bench = MaxPool1dBenchmark(
+        op_name="max_pool1d",
+        torch_op=torch_max_pool1d,
+        gems_op=gems_max_pool1d_wrapper,
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64]
+    )
     bench.run()

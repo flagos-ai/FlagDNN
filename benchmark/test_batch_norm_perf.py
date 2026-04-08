@@ -15,7 +15,6 @@ from flag_dnn.utils import shape_utils
 def torch_batch_norm(x, running_mean, running_var, weight, bias):
     return F.batch_norm(x, running_mean, running_var, weight, bias, training=True)
 
-
 def gems_batch_norm_wrapper(x, running_mean, running_var, weight, bias):
     return flag_dnn.ops.batch_norm(x, running_mean, running_var, weight, bias, training=True)
 
@@ -103,46 +102,11 @@ class BatchNormBenchmark(Benchmark):
 
 
 @pytest.mark.batch_norm
-def test_perf_batch_norm_fp16():
+def test_perf_batch_norm():
     bench = BatchNormBenchmark(
-        op_name="batch_norm_fp16",
+        op_name="batch_norm",
         torch_op=torch_batch_norm,
         gems_op=gems_batch_norm_wrapper,
-        dtypes=[torch.float16],
-    )
-    bench.run()
-
-
-@pytest.mark.batch_norm
-def test_perf_batch_norm_bf16():
-    bench = BatchNormBenchmark(
-        op_name="batch_norm_bf16",
-        torch_op=torch_batch_norm,
-        gems_op=gems_batch_norm_wrapper,
-        dtypes=[torch.bfloat16],
-    )
-    bench.run()
-
-
-@pytest.mark.batch_norm
-def test_perf_batch_norm_fp32():
-    bench = BatchNormBenchmark(
-        op_name="batch_norm_fp32",
-        torch_op=torch_batch_norm,
-        gems_op=gems_batch_norm_wrapper,
-        dtypes=[torch.float32],
-    )
-    bench.run()
-
-
-@pytest.mark.batch_norm
-def test_perf_batch_norm_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = BatchNormBenchmark(
-        op_name="batch_norm_fp64",
-        torch_op=torch_batch_norm,
-        gems_op=gems_batch_norm_wrapper,
-        dtypes=[torch.float64],
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

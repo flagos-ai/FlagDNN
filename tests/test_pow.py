@@ -1,9 +1,6 @@
 import pytest
 import torch
-
 import flag_dnn
-
-from .accuracy_utils import gems_assert_close
 
 
 SHAPES = [(32,), (1024,), (5333,), (16384,), (1024 * 1024,)]
@@ -45,7 +42,8 @@ def test_accuracy_pow_tensor(dtype, shape):
         rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
 
     ref_out = torch.pow(x, y)
-    out = flag_dnn.ops.pow(x, y)
+    with flag_dnn.use_dnn():
+        out = torch.pow(x, y)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -68,7 +66,8 @@ def test_accuracy_pow_empty_tensor(dtype):
         rtol, atol = 1e-5, 1e-5
 
     ref_out = torch.pow(x, y)
-    out = flag_dnn.ops.pow(x, y)
+    with flag_dnn.use_dnn():
+        out = torch.pow(x, y)
 
     assert out.shape == (0,)
     assert out.dtype == dtype
@@ -94,7 +93,8 @@ def test_accuracy_pow_scalar_exponent(dtype):
         rtol, atol = 1e-5, 1e-5
 
     ref_out = torch.pow(x, scalar_exp)
-    out = flag_dnn.ops.pow(x, scalar_exp)
+    with flag_dnn.use_dnn():
+        out = torch.pow(x, scalar_exp)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -117,7 +117,8 @@ def test_accuracy_pow_scalar_base(dtype):
         rtol, atol = 1e-5, 1e-5
 
     ref_out = torch.pow(scalar_base, y)
-    out = flag_dnn.ops.pow(scalar_base, y)
+    with flag_dnn.use_dnn():
+        out = torch.pow(scalar_base, y)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -140,6 +141,7 @@ def test_accuracy_pow_broadcast(dtype, input_shape, other_shape):
         rtol, atol = 1e-5, 1e-5
 
     ref_out = torch.pow(x, y)
-    out = flag_dnn.ops.pow(x, y)
+    with flag_dnn.use_dnn():
+        out = torch.pow(x, y)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)

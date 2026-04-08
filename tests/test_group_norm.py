@@ -1,9 +1,8 @@
 import pytest
 import torch
 import torch.nn.functional as F
-
 import flag_dnn
-from .accuracy_utils import gems_assert_close
+
 
 # (shape, num_groups) 必须保证 shape[1] % num_groups == 0
 SHAPES_AND_GROUPS = [
@@ -12,6 +11,7 @@ SHAPES_AND_GROUPS = [
     ((4, 16, 32, 32), 4),                     # 4D 张量，标准 CV 特征图
     ((2, 8, 16, 16, 16), 2),                  # 5D 张量，如 3D 卷积输出
 ]
+
 
 @pytest.mark.group_norm
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
@@ -39,7 +39,8 @@ def test_accuracy_group_norm(dtype, shape, num_groups, affine):
         bias = torch.randn(C, dtype=dtype, device=flag_dnn.device)
     
     ref_y = F.group_norm(x, num_groups, weight=weight, bias=bias)
-    y = flag_dnn.ops.group_norm(x, num_groups, weight=weight, bias=bias)
+    with flag_dnn.use_dnn():
+        y = F.group_norm(x, num_groups, weight=weight, bias=bias)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -70,7 +71,8 @@ def test_accuracy_group_norm_empty_tensor(dtype, affine):
         bias = torch.randn(C, dtype=dtype, device=flag_dnn.device)
     
     ref_y = F.group_norm(x, num_groups, weight=weight, bias=bias)
-    y = flag_dnn.ops.group_norm(x, num_groups, weight=weight, bias=bias)
+    with flag_dnn.use_dnn():
+        y = F.group_norm(x, num_groups, weight=weight, bias=bias)
 
     assert y.shape == shape
     assert y.dtype == dtype
@@ -112,7 +114,8 @@ def test_accuracy_group_norm_large_values(dtype, affine):
             bias = torch.randn(C, dtype=dtype, device=flag_dnn.device) * 100.0
     
     ref_y = F.group_norm(x, num_groups, weight=weight, bias=bias)
-    y = flag_dnn.ops.group_norm(x, num_groups, weight=weight, bias=bias)
+    with flag_dnn.use_dnn():
+        y = F.group_norm(x, num_groups, weight=weight, bias=bias)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -143,6 +146,7 @@ def test_accuracy_group_norm_mixed_values(dtype, affine):
         bias = torch.randn(C, dtype=dtype, device=flag_dnn.device)
     
     ref_y = F.group_norm(x, num_groups, weight=weight, bias=bias)
-    y = flag_dnn.ops.group_norm(x, num_groups, weight=weight, bias=bias)
+    with flag_dnn.use_dnn():
+        y = F.group_norm(x, num_groups, weight=weight, bias=bias)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)

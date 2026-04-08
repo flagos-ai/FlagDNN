@@ -1,7 +1,7 @@
 import pytest
 import torch
-
 import flag_dnn
+
 
 # (input_shape, other_spec) 的组合测试用例
 NE_CASES = [
@@ -19,8 +19,9 @@ NE_CASES = [
     ((1, 3, 1, 5), (2, 1, 4, 1)),
 ]
 
+
 @pytest.mark.ne
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.int32])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16, torch.int32])
 @pytest.mark.parametrize("input_shape, other_spec", NE_CASES)
 def test_accuracy_ne(dtype, input_shape, other_spec):
     # 初始化 input
@@ -40,10 +41,12 @@ def test_accuracy_ne(dtype, input_shape, other_spec):
                 mask = torch.rand(input_shape, device=flag_dnn.device) > 0.5
                 y = torch.where(mask, x, y)
     else:
-        y = other_spec
+        y = torch.tensor(other_spec, dtype=dtype).item()
+        # y = other_spec
 
     ref_out = torch.ne(x, y)
-    out = flag_dnn.ops.ne(x, y)
+    with flag_dnn.use_dnn():
+        out = torch.ne(x, y)
 
     # ne 操作返回必须是 bool 类型
     assert out.dtype == torch.bool
@@ -64,7 +67,8 @@ def test_accuracy_ne_with_out_param():
     custom_out.fill_(False) 
     
     torch.ne(x, y, out=ref_out)
-    flag_dnn.ops.ne(x, y, out=custom_out)
+    with flag_dnn.use_dnn():
+        torch.ne(x, y, out=custom_out)
     
     torch.testing.assert_close(custom_out, ref_out)
 
@@ -76,7 +80,8 @@ def test_accuracy_ne_dtype_promotion():
     y = torch.tensor([1.0, 2.5, 3.0], dtype=torch.float32, device=flag_dnn.device)
 
     ref_out = torch.ne(x, y)
-    out = flag_dnn.ops.ne(x, y)
+    with flag_dnn.use_dnn():
+        out = torch.ne(x, y)
 
     torch.testing.assert_close(out, ref_out)
 
@@ -88,7 +93,8 @@ def test_accuracy_ne_empty_tensor():
     y = torch.empty((1, 0, 1), dtype=torch.float32, device=flag_dnn.device)
     
     ref_out = torch.ne(x, y)
-    out = flag_dnn.ops.ne(x, y)
+    with flag_dnn.use_dnn():
+        out = torch.ne(x, y)
     
     assert out.shape == ref_out.shape
     assert out.shape == (2, 0, 3)

@@ -1,13 +1,12 @@
 import pytest
 import torch
 import torch.nn.functional as F
-
 import flag_dnn
 
-from .accuracy_utils import gems_assert_close
 
 # BatchNorm 要求至少 2D，通常是 (N, C), (N, C, L) 或 (N, C, H, W)
 SHAPES = [(32, 16), (4, 8, 32), (2, 4, 16, 16), (1, 64, 8, 8)]
+
 
 @pytest.mark.batch_norm
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
@@ -50,9 +49,10 @@ def test_accuracy_batch_norm(dtype, shape, training, affine):
         x, ref_running_mean, ref_running_var, weight=weight, bias=bias, training=training
     )
 
-    y = flag_dnn.ops.batch_norm(
-        x, test_running_mean, test_running_var, weight=weight, bias=bias, training=training
-    )
+    with flag_dnn.use_dnn():
+        y = F.batch_norm(
+            x, test_running_mean, test_running_var, weight=weight, bias=bias, training=training
+        )
 
     # 验证前向传播精度
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
@@ -78,7 +78,8 @@ def test_accuracy_batch_norm_empty_tensor(dtype):
     running_var = torch.ones(C, dtype=dtype, device=flag_dnn.device)
     
     ref_y = F.batch_norm(x, running_mean, running_var, training=False)
-    y = flag_dnn.ops.batch_norm(x, running_mean, running_var, training=False)
+    with flag_dnn.use_dnn():
+        y = F.batch_norm(x, running_mean, running_var, training=False)
 
     assert y.shape == shape
     assert y.dtype == dtype
@@ -118,7 +119,8 @@ def test_accuracy_batch_norm_large_values(dtype, training):
     ref_running_var, test_running_var = running_var.clone(), running_var.clone()
 
     ref_y = F.batch_norm(x, ref_running_mean, ref_running_var, training=training)
-    y = flag_dnn.ops.batch_norm(x, test_running_mean, test_running_var, training=training)
+    with flag_dnn.use_dnn():
+        y = F.batch_norm(x, test_running_mean, test_running_var, training=training)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -149,7 +151,8 @@ def test_accuracy_batch_norm_mixed_values(dtype, training):
     ref_running_var, test_running_var = running_var.clone(), running_var.clone()
 
     ref_y = F.batch_norm(x, ref_running_mean, ref_running_var, training=training)
-    y = flag_dnn.ops.batch_norm(x, test_running_mean, test_running_var, training=training)
+    with flag_dnn.use_dnn():
+        y = F.batch_norm(x, test_running_mean, test_running_var, training=training)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -182,7 +185,8 @@ def test_accuracy_batch_norm_small_variance(dtype):
 
     # 必须使用 training=True 才能触发根据输入动态计算方差的逻辑
     ref_y = F.batch_norm(x, running_mean.clone(), running_var.clone(), training=True)
-    y = flag_dnn.ops.batch_norm(x, running_mean.clone(), running_var.clone(), training=True)
+    with flag_dnn.use_dnn():
+        y = F.batch_norm(x, running_mean.clone(), running_var.clone(), training=True)
 
     # 只要输出不是 NaN 且能对齐 PyTorch 的结果，说明 eps 处理正确
     assert not torch.isnan(y).any(), "Output contains NaN due to division by zero!"

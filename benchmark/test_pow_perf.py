@@ -10,12 +10,9 @@ from benchmark.performance_utils import Benchmark
 from flag_dnn.utils import shape_utils
 
 
-# 包装 PyTorch 的 pow 算子
 def torch_pow(x, y):
     return torch.pow(x, y)
 
-
-# 包装 Gems 的 pow 算子
 def gems_pow_wrapper(x, y):
     return flag_dnn.ops.pow(x, y)
 
@@ -91,46 +88,11 @@ class PowBenchmark(Benchmark):
 
 
 @pytest.mark.pow
-def test_perf_pow_fp16():
+def test_perf_pow():
     bench = PowBenchmark(
-        op_name="pow_fp16",
+        op_name="pow",
         torch_op=torch_pow,
         gems_op=gems_pow_wrapper,
-        dtypes=[torch.float16],
-    )
-    bench.run()
-
-
-@pytest.mark.pow
-def test_perf_pow_bf16():
-    bench = PowBenchmark(
-        op_name="pow_bf16",
-        torch_op=torch_pow,
-        gems_op=gems_pow_wrapper,
-        dtypes=[torch.bfloat16],
-    )
-    bench.run()
-
-
-@pytest.mark.pow
-def test_perf_pow_fp32():
-    bench = PowBenchmark(
-        op_name="pow_fp32",
-        torch_op=torch_pow,
-        gems_op=gems_pow_wrapper,
-        dtypes=[torch.float32],
-    )
-    bench.run()
-
-
-@pytest.mark.pow
-def test_perf_pow_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = PowBenchmark(
-        op_name="pow_fp64",
-        torch_op=torch_pow,
-        gems_op=gems_pow_wrapper,
-        dtypes=[torch.float64],
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

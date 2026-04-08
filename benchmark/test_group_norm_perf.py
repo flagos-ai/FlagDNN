@@ -40,7 +40,27 @@ class GroupNormBenchmark(Benchmark):
             
             # 3. 1D 时序/音频特征 (Batch, Channels, Length)
             ((32, 128, 1024), 8),                    
-            ((16, 256, 4096), 16),                   
+            ((16, 256, 4096), 16),
+
+            # 4. 高分辨率目标检测与图像分割 (如 Mask R-CNN, FPN 结构)
+            # 特点：Batch Size 极小 (通常为 1-2)，分辨率大，常常是非方形特征图。
+            ((2, 256, 256, 256), 32),               # FPN 浅层高分辨特征图
+            ((2, 256, 800, 1088), 32),              # 真实场景中常见的不规则高分辨率输入 (H=800, W=1088)
+            ((1, 256, 128, 128), 32),               # 极端小 Batch 推理
+            
+            # 5. 现代高清生成模型 (如 Stable Diffusion XL / 视频生成)
+            # 特点：相比于基础 SD，SDXL 的起始 Latent 分辨率更大，通道数更深。
+            ((2, 320, 128, 128), 32),               # SDXL Base 分辨率 (生成 1024x1024 图像时的 Latent 尺寸)
+            ((1, 2560, 16, 16), 32),                # UNet 最深层极宽的通道数验证
+
+            # 6. 3D 视觉 / 视频理解 / 医疗影像 (Batch, Channels, Depth, Height, Width)
+            ((2, 128, 16, 56, 56), 32),             # 视频理解网络 (如 SlowFast/I3D)，16帧视频序列
+            ((1, 32, 128, 128, 128), 8),            # 3D 医疗影像分割 (如 V-Net 处理 CT/MRI 扫描)
+            
+            # 7. GroupNorm 的等价极端情况 (Edge Cases)
+            ((8, 64, 112, 112), 64),                # 当 num_groups == Channels 时，等价于 InstanceNorm
+            ((8, 64, 112, 112), 1),                 # 当 num_groups == 1 时，等价于对 (C, H, W) 做的 LayerNorm
+            ((128, 16, 8, 8), 4),                   # 小通道、小尺寸特征图               
         ]
         self.shapes = configs
         return None
@@ -70,23 +90,10 @@ class GroupNormBenchmark(Benchmark):
 
 
 @pytest.mark.group_norm
-def test_perf_group_norm_fp16():
-    bench = GroupNormBenchmark(op_name="group_norm_fp16", torch_op=torch_group_norm, gems_op=gems_group_norm_wrapper, dtypes=[torch.float16])
-    bench.run()
-
-@pytest.mark.group_norm
-def test_perf_group_norm_bf16():
-    bench = GroupNormBenchmark(op_name="group_norm_bf16", torch_op=torch_group_norm, gems_op=gems_group_norm_wrapper, dtypes=[torch.bfloat16])
-    bench.run()
-
-@pytest.mark.group_norm
-def test_perf_group_norm_fp32():
-    bench = GroupNormBenchmark(op_name="group_norm_fp32", torch_op=torch_group_norm, gems_op=gems_group_norm_wrapper, dtypes=[torch.float32])
-    bench.run()
-
-@pytest.mark.group_norm
-def test_perf_group_norm_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = GroupNormBenchmark(op_name="group_norm_fp64", torch_op=torch_group_norm, gems_op=gems_group_norm_wrapper, dtypes=[torch.float64])
+def test_perf_group_norm():
+    bench = GroupNormBenchmark(
+        op_name="group_norm",
+        torch_op=torch_group_norm,
+        gems_op=gems_group_norm_wrapper,
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64])
     bench.run()

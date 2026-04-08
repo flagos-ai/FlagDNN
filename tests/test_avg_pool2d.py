@@ -1,9 +1,8 @@
 import pytest
 import torch
 import torch.nn.functional as F
-
 import flag_dnn
-from .accuracy_utils import gems_assert_close
+
 
 # (shape, kernel_size, stride, padding)
 PARAMS = [
@@ -13,6 +12,7 @@ PARAMS = [
     ((2, 4, 32, 32), (3, 5), (2, 1), 0),    # 不对称核和步长
     ((16, 14, 14), 2, 2, 0),                # 3D 张量输入
 ]
+
 
 @pytest.mark.avg_pool2d
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
@@ -40,10 +40,11 @@ def test_accuracy_avg_pool2d(dtype, shape, kernel_size, stride, padding, ceil_mo
         ceil_mode=ceil_mode, count_include_pad=count_include_pad, divisor_override=divisor_override
     )
     
-    y = flag_dnn.ops.avg_pool2d(
-        x, kernel_size, stride=stride, padding=padding,
-        ceil_mode=ceil_mode, count_include_pad=count_include_pad, divisor_override=divisor_override
-    )
+    with flag_dnn.use_dnn():
+        y = F.avg_pool2d(
+            x, kernel_size, stride=stride, padding=padding,
+            ceil_mode=ceil_mode, count_include_pad=count_include_pad, divisor_override=divisor_override
+        )
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -56,7 +57,8 @@ def test_accuracy_avg_pool2d_empty_tensor(dtype):
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
     ref_y = F.avg_pool2d(x, 2, 2)
-    y = flag_dnn.ops.avg_pool2d(x, 2, 2)
+    with flag_dnn.use_dnn():
+        y = F.avg_pool2d(x, 2, 2)
 
     assert y.shape == ref_y.shape
     assert y.numel() == 0
@@ -78,7 +80,8 @@ def test_accuracy_avg_pool2d_large_values(dtype):
         rtol, atol = 1e-5, 1e-4
 
     ref_y = F.avg_pool2d(x, kernel_size=3, stride=1, padding=1)
-    y = flag_dnn.ops.avg_pool2d(x, kernel_size=3, stride=1, padding=1)
+    with flag_dnn.use_dnn():
+        y = F.avg_pool2d(x, kernel_size=3, stride=1, padding=1)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -102,6 +105,7 @@ def test_accuracy_avg_pool2d_mixed_values(dtype):
         rtol, atol = 1e-5, 1e-4
 
     ref_y = F.avg_pool2d(x, kernel_size=3, stride=2, padding=1)
-    y = flag_dnn.ops.avg_pool2d(x, kernel_size=3, stride=2, padding=1)
+    with flag_dnn.use_dnn():
+        y = F.avg_pool2d(x, kernel_size=3, stride=2, padding=1)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)

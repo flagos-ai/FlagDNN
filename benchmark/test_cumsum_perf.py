@@ -66,23 +66,11 @@ class CumsumBenchmark(Benchmark):
 
 
 @pytest.mark.cumsum
-def test_perf_cumsum_fp16():
-    bench = CumsumBenchmark(op_name="cumsum_fp16", torch_op=torch_cumsum, gems_op=gems_cumsum_wrapper, dtypes=[torch.float16])
-    bench.run()
-
-@pytest.mark.cumsum
-def test_perf_cumsum_bf16():
-    bench = CumsumBenchmark(op_name="cumsum_bf16", torch_op=torch_cumsum, gems_op=gems_cumsum_wrapper, dtypes=[torch.bfloat16])
-    bench.run()
-
-@pytest.mark.cumsum
-def test_perf_cumsum_fp32():
-    bench = CumsumBenchmark(op_name="cumsum_fp32", torch_op=torch_cumsum, gems_op=gems_cumsum_wrapper, dtypes=[torch.float32])
-    bench.run()
-
-@pytest.mark.cumsum
-def test_perf_cumsum_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = CumsumBenchmark(op_name="cumsum_fp64", torch_op=torch_cumsum, gems_op=gems_cumsum_wrapper, dtypes=[torch.float64])
+def test_perf_cumsum():
+    bench = CumsumBenchmark(
+        op_name="cumsum", 
+        torch_op=torch_cumsum, 
+        gems_op=gems_cumsum_wrapper, 
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64]
+    )
     bench.run()

@@ -69,23 +69,11 @@ class AvgPool1dBenchmark(Benchmark):
 
 
 @pytest.mark.avg_pool1d
-def test_perf_avg_pool1d_fp16():
-    bench = AvgPool1dBenchmark(op_name="avg_pool1d_fp16", torch_op=torch_avg_pool1d, gems_op=gems_avg_pool1d_wrapper, dtypes=[torch.float16])
-    bench.run()
-
-@pytest.mark.avg_pool1d
-def test_perf_avg_pool1d_bf16():
-    bench = AvgPool1dBenchmark(op_name="avg_pool1d_bf16", torch_op=torch_avg_pool1d, gems_op=gems_avg_pool1d_wrapper, dtypes=[torch.bfloat16])
-    bench.run()
-
-@pytest.mark.avg_pool1d
-def test_perf_avg_pool1d_fp32():
-    bench = AvgPool1dBenchmark(op_name="avg_pool1d_fp32", torch_op=torch_avg_pool1d, gems_op=gems_avg_pool1d_wrapper, dtypes=[torch.float32])
-    bench.run()
-
-@pytest.mark.avg_pool1d
-def test_perf_avg_pool1d_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = AvgPool1dBenchmark(op_name="avg_pool1d_fp64", torch_op=torch_avg_pool1d, gems_op=gems_avg_pool1d_wrapper, dtypes=[torch.float64])
+def test_perf_avg_pool1d():
+    bench = AvgPool1dBenchmark(
+        op_name="avg_pool1d", 
+        torch_op=torch_avg_pool1d, 
+        gems_op=gems_avg_pool1d_wrapper, 
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64]
+    )
     bench.run()

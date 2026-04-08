@@ -1,7 +1,7 @@
 import pytest
 import torch
-
 import flag_dnn
+
 
 # (shape, dim, keepdim) 的组合测试用例
 MEAN_CASES = [
@@ -44,7 +44,8 @@ def test_accuracy_mean(dtype, shape, dim, keepdim):
     rtol, atol = _get_tolerances(dtype)
     
     ref_out = torch.mean(x, dim=dim, keepdim=keepdim)
-    out = flag_dnn.ops.mean(x, dim=dim, keepdim=keepdim)
+    with flag_dnn.use_dnn():
+        out = torch.mean(x, dim=dim, keepdim=keepdim)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -62,7 +63,8 @@ def test_accuracy_mean_with_out_param():
     custom_out.fill_(-999.0)
     
     torch.mean(x, dim=1, out=ref_out)
-    flag_dnn.ops.mean(x, dim=1, out=custom_out)
+    with flag_dnn.use_dnn():
+        torch.mean(x, dim=1, out=custom_out)
     
     torch.testing.assert_close(custom_out, ref_out)
 
@@ -80,7 +82,8 @@ def test_accuracy_mean_dtype_promotion(input_dtype, out_dtype):
         x = torch.randint(-10, 10, (10, 20), dtype=input_dtype, device=flag_dnn.device)
 
     ref_out = torch.mean(x, dim=1, dtype=out_dtype)
-    out = flag_dnn.ops.mean(x, dim=1, dtype=out_dtype)
+    with flag_dnn.use_dnn():
+        out = torch.mean(x, dim=1, dtype=out_dtype)
 
     assert out.dtype == out_dtype
     torch.testing.assert_close(out, ref_out, rtol=1e-4, atol=1e-4)
@@ -93,12 +96,14 @@ def test_accuracy_mean_empty_tensor():
     x = torch.empty((2, 0, 3), dtype=torch.float32, device=flag_dnn.device)
     
     ref_out = torch.mean(x, dim=1)
-    out = flag_dnn.ops.mean(x, dim=1)
+    with flag_dnn.use_dnn():
+        out = torch.mean(x, dim=1)
     
     # 注意这里必须加 equal_nan=True，否则 NaN != NaN 会导致测试失败
     torch.testing.assert_close(out, ref_out, equal_nan=True)
 
     # 针对规约别的维度，但某个不相关维度是 0 的情况
     ref_out_2 = torch.mean(x, dim=2)
-    out_2 = flag_dnn.ops.mean(x, dim=2)
+    with flag_dnn.use_dnn():
+        out_2 = torch.mean(x, dim=2)
     torch.testing.assert_close(out_2, ref_out_2, equal_nan=True)

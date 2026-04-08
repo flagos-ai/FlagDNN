@@ -1,9 +1,8 @@
 import pytest
 import torch
 import torch.nn.functional as F
-
 import flag_dnn
-from .accuracy_utils import gems_assert_close
+
 
 # 定义常用的形状和它们对应的归一化形状 (shape, normalized_shape)
 SHAPES_AND_NORM_SHAPES = [
@@ -14,6 +13,7 @@ SHAPES_AND_NORM_SHAPES = [
     ((4, 8, 32), (8, 32)),                    # 3D 张量，归一化最后两维
     ((2, 4, 16, 16), (16, 16)),               # 4D 张量
 ]
+
 
 @pytest.mark.rms_norm
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
@@ -41,7 +41,8 @@ def test_accuracy_rms_norm(dtype, shape, normalized_shape, elementwise_affine):
     ref_y = F.rms_norm(x, normalized_shape, weight=weight)
     
     # 自定义算子调用
-    y = flag_dnn.ops.rms_norm(x, normalized_shape, weight=weight)
+    with flag_dnn.use_dnn():
+        y = F.rms_norm(x, normalized_shape, weight=weight)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -69,7 +70,8 @@ def test_accuracy_rms_norm_empty_tensor(dtype, elementwise_affine):
         weight = torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device)
     
     ref_y = F.rms_norm(x, normalized_shape, weight=weight)
-    y = flag_dnn.ops.rms_norm(x, normalized_shape, weight=weight)
+    with flag_dnn.use_dnn():
+        y = F.rms_norm(x, normalized_shape, weight=weight)
 
     assert y.shape == shape
     assert y.dtype == dtype
@@ -109,7 +111,8 @@ def test_accuracy_rms_norm_large_values(dtype, elementwise_affine):
             weight = torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device) * 10.0
     
     ref_y = F.rms_norm(x, normalized_shape, weight=weight)
-    y = flag_dnn.ops.rms_norm(x, normalized_shape, weight=weight)
+    with flag_dnn.use_dnn():
+        y = F.rms_norm(x, normalized_shape, weight=weight)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
 
@@ -139,6 +142,7 @@ def test_accuracy_rms_norm_mixed_values(dtype, elementwise_affine):
         weight = torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device)
     
     ref_y = F.rms_norm(x, normalized_shape, weight=weight)
-    y = flag_dnn.ops.rms_norm(x, normalized_shape, weight=weight)
+    with flag_dnn.use_dnn():
+        y = F.rms_norm(x, normalized_shape, weight=weight)
 
     torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)

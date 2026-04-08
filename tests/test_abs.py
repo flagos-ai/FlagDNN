@@ -1,16 +1,12 @@
 import pytest
 import torch
-
 import flag_dnn
-
-from .accuracy_utils import gems_assert_close
 
 
 SHAPES = [(32,), (1024,), (5333,), (16384,), (1024 * 1024,), (2, 3, 4, 5)]
 
 
 def _get_tolerances(dtype):
-    """辅助函数：根据数据类型获取容差"""
     if dtype == torch.bfloat16:
         return 1.6e-2, 1e-2
     elif dtype == torch.float16:
@@ -31,7 +27,8 @@ def test_accuracy_abs(dtype, shape):
 
     rtol, atol = _get_tolerances(dtype)
     ref_out = torch.abs(x)
-    out = flag_dnn.ops.abs(x)
+    with flag_dnn.use_dnn():
+        out = torch.abs(x)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -49,7 +46,8 @@ def test_accuracy_abs_mixed_values(dtype, shape):
 
     rtol, atol = _get_tolerances(dtype)
     ref_out = torch.abs(x)
-    out = flag_dnn.ops.abs(x)
+    with flag_dnn.use_dnn():
+        out = torch.abs(x)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -66,7 +64,8 @@ def test_accuracy_abs_positive_values(dtype, shape):
 
     rtol, atol = _get_tolerances(dtype)
     ref_out = torch.abs(x)
-    out = flag_dnn.ops.abs(x)
+    with flag_dnn.use_dnn():
+        out = torch.abs(x)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -83,7 +82,8 @@ def test_accuracy_abs_negative_values(dtype, shape):
 
     rtol, atol = _get_tolerances(dtype)
     ref_out = torch.abs(x)
-    out = flag_dnn.ops.abs(x)
+    with flag_dnn.use_dnn():
+        out = torch.abs(x)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -99,7 +99,8 @@ def test_accuracy_abs_empty_tensor(dtype):
 
     rtol, atol = _get_tolerances(dtype)
     ref_out = torch.abs(x)
-    out = flag_dnn.ops.abs(x)
+    with flag_dnn.use_dnn():
+        out = torch.abs(x)
 
     assert out.shape == (0,)
     assert out.dtype == dtype

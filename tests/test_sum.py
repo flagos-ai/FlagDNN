@@ -1,9 +1,6 @@
 import pytest
 import torch
-
 import flag_dnn
-
-from .accuracy_utils import gems_assert_close
 
 
 # (shape, dim, keepdim) 的组合测试用例
@@ -48,7 +45,8 @@ def test_accuracy_sum(dtype, shape, dim, keepdim):
     rtol, atol = _get_tolerances(dtype)
     
     ref_out = torch.sum(x, dim=dim, keepdim=keepdim)
-    out = flag_dnn.ops.sum(x, dim=dim, keepdim=keepdim)
+    with flag_dnn.use_dnn():
+        out = torch.sum(x, dim=dim, keepdim=keepdim)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -66,7 +64,8 @@ def test_accuracy_sum_dtype_promotion(input_dtype, out_dtype):
         x = torch.randint(-10, 10, (10, 20), dtype=input_dtype, device=flag_dnn.device)
 
     ref_out = torch.sum(x, dim=1, dtype=out_dtype)
-    out = flag_dnn.ops.sum(x, dim=1, dtype=out_dtype)
+    with flag_dnn.use_dnn():
+        out = torch.sum(x, dim=1, dtype=out_dtype)
 
     assert out.dtype == out_dtype
     # 整数必须精确相等
@@ -82,6 +81,7 @@ def test_accuracy_sum_empty_tensor():
     x = torch.randn((2, 0, 3), dtype=torch.float32, device=flag_dnn.device)
     
     ref_out = torch.sum(x, dim=2)
-    out = flag_dnn.ops.sum(x, dim=2)
+    with flag_dnn.use_dnn():
+        out = torch.sum(x, dim=2)
     
     torch.testing.assert_close(out, ref_out)

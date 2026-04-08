@@ -33,10 +33,10 @@ class MeanBenchmark(Benchmark):
         configs = [
             ((1024 * 1024 * 16,), None, False),       # 1D 超长向量 
             ((32, 256, 1024), None, False),           # 3D 全局归约
-            ((1024, 1024), 1, False),                 # 典型方阵 Inner
+            ((1024, 1024 * 16), 1, False),                 
             ((32, 1024, 1024), 2, False),             # NLP Seq_len 维度归约
             ((8, 128, 4096), 2, False),               # NLP 大词表/长序列
-            ((1024, 1024), 0, False),                 # 跨步距 Outer 访存
+            ((1024 * 16, 1024), 0, False),            # 跨步距 Outer 访存
             ((32, 1024, 1024), 0, False),             # Reduce Batch 维度
             ((32, 256, 56, 56), (2, 3), False),       # 全局平均池化 (GAP) 前置
             ((32, 256, 56, 56), 1, False),            # Reduce 通道维度
@@ -81,23 +81,10 @@ class MeanBenchmark(Benchmark):
 
 
 @pytest.mark.mean
-def test_perf_mean_fp16():
-    bench = MeanBenchmark(op_name="mean_fp16", torch_op=torch_mean, gems_op=gems_mean_wrapper, dtypes=[torch.float16])
-    bench.run()
-
-@pytest.mark.mean
-def test_perf_mean_bf16():
-    bench = MeanBenchmark(op_name="mean_bf16", torch_op=torch_mean, gems_op=gems_mean_wrapper, dtypes=[torch.bfloat16])
-    bench.run()
-
-@pytest.mark.mean
-def test_perf_mean_fp32():
-    bench = MeanBenchmark(op_name="mean_fp32", torch_op=torch_mean, gems_op=gems_mean_wrapper, dtypes=[torch.float32])
-    bench.run()
-
-@pytest.mark.mean
-def test_perf_mean_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = MeanBenchmark(op_name="mean_fp64", torch_op=torch_mean, gems_op=gems_mean_wrapper, dtypes=[torch.float64])
+def test_perf_mean():
+    bench = MeanBenchmark(
+        op_name="mean",
+        torch_op=torch_mean,
+        gems_op=gems_mean_wrapper,
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64])
     bench.run()

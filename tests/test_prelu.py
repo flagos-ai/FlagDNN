@@ -1,14 +1,13 @@
 import pytest
 import torch
 import torch.nn.functional as F
-
 import flag_dnn
 
-from .accuracy_utils import gems_assert_close
 
 # 专门为 PReLU 扩展了多维 Shape，以测试通道维度 (dim=1)
 SHAPES = [(32,), (1024,), (2, 16), (4, 8, 32), (2, 4, 16, 16)]
 MODES = ['single', 'channel']
+
 
 @pytest.mark.prelu
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])

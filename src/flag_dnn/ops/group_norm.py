@@ -14,13 +14,13 @@ from flag_dnn.utils import triton_lang_extension as tle
 logger = logging.getLogger(__name__)
 
 
-# @libentry()
-# @libtuner(
-#     configs=runtime.get_tuned_config("rms_norm"),
-#     key=["M", "N"],
-#     warmup=5,
-#     rep=10,
-# )
+@libentry()
+@libtuner(
+    configs=runtime.get_tuned_config("group_norm"),
+    key=["C", "HxW"],
+    warmup=5,
+    rep=10,
+)
 @triton.jit
 def group_norm_kernel(
     x_ptr, y_ptr,
@@ -115,21 +115,20 @@ def group_norm(
     C_per_group = C // num_groups
     group_size = C_per_group * HxW
 
-    x = input.contiguous()
-    y = torch.empty_like(x)
+    if not input.is_contiguous():
+        assert False, "input must be contiguous."
+        input = input.contiguous()
+        
+    y = torch.empty_like(input)
 
     # 开启 N * num_groups 个并行的线程块
     grid = (N * num_groups,)
     
-    # 动态设定 BLOCK_SIZE，最多封顶 2048 防止 Shared Memory 超载
-    BLOCK_SIZE = min(triton.next_power_of_2(group_size), 2048)
-
-    with torch_device_fn.device(x.device):
+    with torch_device_fn.device(input.device):
         group_norm_kernel[grid](
-            x, y,
+            input, y,
             weight, bias,
             N, C, HxW, num_groups, group_size, eps,
-            BLOCK_SIZE=BLOCK_SIZE,
             HAS_WEIGHT=(weight is not None),
             HAS_BIAS=(bias is not None),
         )

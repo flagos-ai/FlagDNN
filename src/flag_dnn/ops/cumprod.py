@@ -9,60 +9,134 @@ from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import triton_lang_extension as tle
 
+
 logger = logging.getLogger(__name__)
 
 
-# 自定义 Scan 的 Combine 函数 (乘法)
 @triton.jit
 def _prod_combine(a, b):
     return a * b
 
-@triton.jit
-def cumprod_2d_kernel(
-    in_ptr, out_ptr,
-    M, N,
-    in_stride_m, in_stride_n,
-    out_stride_m, out_stride_n,
-    BLOCK_SIZE_N: tl.constexpr,
-):
-    pid_m = tle.program_id(0)
-    in_row_start_ptr = in_ptr + pid_m * in_stride_m
-    out_row_start_ptr = out_ptr + pid_m * out_stride_m
 
-    offsets_n = tl.arange(0, BLOCK_SIZE_N)
-    
-    # 循环剥离
-    cols = offsets_n
+@triton.jit
+def cumprod_global_pass1(in_ptr, out_ptr, prods_ptr, N, BLOCK_N: tl.constexpr):
+    pid = tle.program_id(0)
+    cols = pid * BLOCK_N + tl.arange(0, BLOCK_N)
     mask = cols < N
-    
-    val = tl.load(in_row_start_ptr + cols * in_stride_n, mask=mask, other=1)
-    val = val.to(out_ptr.dtype.element_ty)
-    
-    # 使用 associative_scan 实现累乘
-    chunk_cumprod = tl.associative_scan(val, axis=0, combine_fn=_prod_combine)
-    tl.store(out_row_start_ptr + cols * out_stride_n, chunk_cumprod, mask=mask)
-    
-    # 记录当前 Chunk 的总乘积，传给下一个 Chunk
-    running_prod = tl.reduce(val, axis=0, combine_fn=_prod_combine)
-    
-    for n_offset in range(BLOCK_SIZE_N, N, BLOCK_SIZE_N):
-        cols = n_offset + offsets_n
+
+    val = tl.load(in_ptr + cols, mask=mask, other=1.0).to(tl.float32)
+    c_prod = tl.cumprod(val, axis=0)
+    tl.store(out_ptr + cols, c_prod.to(out_ptr.dtype.element_ty), mask=mask)
+    if prods_ptr is not None:
+        tl.store(prods_ptr + pid, tl.reduce(val, 0, _prod_combine))
+
+
+@triton.jit
+def cumprod_global_pass2(prods_ptr, num_blocks, BLOCK_N: tl.constexpr):
+    cols = tl.arange(0, BLOCK_N)
+    running_prod = 1.0
+    for i in range(0, num_blocks, BLOCK_N):
+        idx = i + cols
+        mask = idx < num_blocks
+        val = tl.load(prods_ptr + idx, mask=mask, other=1.0).to(tl.float32)
+        c_prod = tl.cumprod(val, axis=0) * running_prod
+        tl.store(prods_ptr + idx, c_prod, mask=mask)
+        running_prod *= tl.reduce(val, 0, _prod_combine)
+
+
+@triton.jit
+def cumprod_global_pass3(out_ptr, prods_ptr, N, BLOCK_N: tl.constexpr):
+    pid = tle.program_id(0)
+    if pid > 0:
+        mul_val = tl.load(prods_ptr + pid - 1).to(tl.float32)
+        cols = pid * BLOCK_N + tl.arange(0, BLOCK_N)
         mask = cols < N
+        val = tl.load(out_ptr + cols, mask=mask, other=1.0).to(tl.float32)
+        val *= mul_val
+        tl.store(out_ptr + cols, val.to(out_ptr.dtype.element_ty), mask=mask)
+
+
+@triton.autotune(
+    configs=[
+        triton.Config({'BLOCK_M_POST': 16, 'BLOCK_N': 256}, num_warps=4, num_stages=4),
+        triton.Config({'BLOCK_M_POST': 32, 'BLOCK_N': 128}, num_warps=4, num_stages=4),
+        triton.Config({'BLOCK_M_POST': 64, 'BLOCK_N': 64}, num_warps=4, num_stages=4),
+        triton.Config({'BLOCK_M_POST': 128, 'BLOCK_N': 32}, num_warps=4, num_stages=5),
+        triton.Config({'BLOCK_M_POST': 8, 'BLOCK_N': 512}, num_warps=8, num_stages=3),
+    ],
+    key=['M_pre', 'N', 'M_post'],
+)
+@triton.jit
+def cumprod_inner_dim_kernel(
+    in_ptr, out_ptr,
+    M_pre, N, M_post,
+    BLOCK_N: tl.constexpr,
+    BLOCK_M_POST: tl.constexpr
+):
+    pid_pre = tle.program_id(0)
+    pid_post = tle.program_id(1)
+
+    offsets_post = pid_post * BLOCK_M_POST + tl.arange(0, BLOCK_M_POST)
+    mask_post = offsets_post < M_post
+
+    base_idx = pid_pre * (N * M_post) + offsets_post
+
+    running_prod = tl.full([BLOCK_M_POST], 1.0, dtype=tl.float32)
+    offsets_n = tl.arange(0, BLOCK_N)
+
+    for n_offset in range(0, N, BLOCK_N):
+        cols = n_offset + offsets_n
+        mask_n = cols < N
+
+        idx = base_idx[None, :] + cols[:, None] * M_post
+        mask = mask_n[:, None] & mask_post[None, :]
+
+        val = tl.load(in_ptr + idx, mask=mask, other=1.0).to(tl.float32)
+        chunk_cumprod = tl.cumprod(val, axis=0)
+        out_val = chunk_cumprod * running_prod[None, :]
         
-        val = tl.load(in_row_start_ptr + cols * in_stride_n, mask=mask, other=1)
-        val = val.to(out_ptr.dtype.element_ty)
+        tl.store(out_ptr + idx, out_val.to(out_ptr.dtype.element_ty), mask=mask)
+        running_prod *= tl.reduce(val, 0, _prod_combine)
+
+
+@triton.autotune(
+    configs=[
+        triton.Config({'BLOCK_M_PRE': 4, 'BLOCK_N': 4096}, num_warps=8, num_stages=3),
+        triton.Config({'BLOCK_M_PRE': 8, 'BLOCK_N': 2048}, num_warps=8, num_stages=4),
+        triton.Config({'BLOCK_M_PRE': 16, 'BLOCK_N': 1024}, num_warps=4, num_stages=4),
+        triton.Config({'BLOCK_M_PRE': 32, 'BLOCK_N': 512}, num_warps=4, num_stages=5),
+        triton.Config({'BLOCK_M_PRE': 64, 'BLOCK_N': 256}, num_warps=4, num_stages=5),
+    ],
+    key=['M_pre', 'N'],
+)
+@triton.jit
+def cumprod_last_dim_kernel(
+    in_ptr, out_ptr,
+    M_pre, N,
+    BLOCK_M_PRE: tl.constexpr,
+    BLOCK_N: tl.constexpr
+):
+    pid_pre = tle.program_id(0)
+    offsets_pre = pid_pre * BLOCK_M_PRE + tl.arange(0, BLOCK_M_PRE)
+    mask_pre = offsets_pre < M_pre
+
+    running_prod = tl.full([BLOCK_M_PRE], 1.0, dtype=tl.float32)
+    offsets_n = tl.arange(0, BLOCK_N)
+
+    for n_offset in range(0, N, BLOCK_N):
+        cols = n_offset + offsets_n
+        mask_n = cols < N
+
+        idx = cols[:, None] + offsets_pre[None, :] * N 
+        mask = mask_n[:, None] & mask_pre[None, :]
+
+        val = tl.load(in_ptr + idx, mask=mask, other=1.0).to(tl.float32)
+        chunk_cumprod = tl.cumprod(val, axis=0)
         
-        # 算当前块内部的累乘
-        chunk_cumprod = tl.associative_scan(val, axis=0, combine_fn=_prod_combine)
+        out_val = chunk_cumprod * running_prod[None, :]
         
-        # 加上（乘以）前面所有块的累计乘积
-        out_val = chunk_cumprod * running_prod
-        
-        tl.store(out_row_start_ptr + cols * out_stride_n, out_val, mask=mask)
-        
-        # 更新 running_prod
-        chunk_prod = tl.reduce(val, axis=0, combine_fn=_prod_combine)
-        running_prod = running_prod * chunk_prod
+        tl.store(out_ptr + idx, out_val.to(out_ptr.dtype.element_ty), mask=mask)
+        running_prod *= tl.reduce(val, 0, _prod_combine)
 
 
 def cumprod(
@@ -72,76 +146,62 @@ def cumprod(
     dtype: Optional[torch.dtype] = None,
     out: Optional[torch.Tensor] = None
 ) -> torch.Tensor:
-    logger.debug("FLAG_DNN CUMPROD")
+    logger.debug("FLAG_DNN CUMPROD OPTIMIZED")
 
-    # 推导输出类型
-    dummy = torch.empty((0,), dtype=input.dtype, device=input.device)
-    out_dtype = torch.cumprod(dummy, dim=0, dtype=dtype).dtype
-
-    # 空张量边界处理
+    out_dtype = dtype if dtype is not None else input.dtype
+    
     if input.numel() == 0:
-        res = torch.empty_like(input, dtype=out_dtype)
         if out is not None:
-            if out.shape != res.shape:
-                out.resize_(res.shape)
-            out.copy_(res)
+            if out.shape != input.shape:
+                out.resize_(input.shape)
             return out
-        return res
+        return torch.empty_like(input, dtype=out_dtype)
 
-    # 维度处理与降维为 2D
     d = dim if dim >= 0 else dim + input.ndim
     if not (0 <= d < input.ndim):
-        raise IndexError(f"Dimension out of range (expected to be in range of [-{input.ndim}, {input.ndim-1}], but got {dim})")
+        raise IndexError(f"Dimension out of range: {dim}")
 
-    keep_dims = [i for i in range(input.ndim) if i != d]
-    permuted_dims = keep_dims + [d]
-    
-    # 将归约维度放到最后，并保证连续性
-    input_permuted = input.permute(*permuted_dims).contiguous()
-    
-    M = 1
-    for i in keep_dims:
-        M *= input.shape[i]
-    N = input.shape[d]
-    
-    input_c = input_permuted.view(M, N)
-    
-    # cumprod 保持原有形状
-    out_c = torch.empty_like(input_c, dtype=out_dtype)
+    input_c = input.contiguous()
 
-    in_stride_m = input_c.stride(0)
-    in_stride_n = input_c.stride(1)
-    out_stride_m = out_c.stride(0)
-    out_stride_n = out_c.stride(1)
-
-    BLOCK_SIZE_N = triton.next_power_of_2(N)
-    if BLOCK_SIZE_N > 4096:
-        BLOCK_SIZE_N = 4096
-
-    grid = (M,)
-
-    # 启动 Kernel
-    with torch_device_fn.device(input.device):
-        cumprod_2d_kernel[grid](
-            input_c, out_c,
-            M, N,
-            in_stride_m, in_stride_n,
-            out_stride_m, out_stride_n,
-            BLOCK_SIZE_N=BLOCK_SIZE_N
-        )
-
-    # 恢复目标形状
-    final_out = out_c.view(input_permuted.shape)
-    inverse_perm = [0] * input.ndim
-    for i, p in enumerate(permuted_dims):
-        inverse_perm[p] = i
-    final_out = final_out.permute(*inverse_perm)
-
-    # 处理 out 参数
     if out is not None:
-        if out.shape != input.shape:
-            out.resize_(input.shape)
-        out.copy_(final_out)
+        if out.shape != input_c.shape:
+            out.resize_(input_c.shape)
+        out_c = out.contiguous() if out.is_contiguous() else torch.empty_like(input_c, dtype=out_dtype)
+    else:
+        out_c = torch.empty_like(input_c, dtype=out_dtype)
+
+    M_pre, N, M_post = 1, input_c.shape[d], 1
+    for i in range(d): M_pre *= input_c.shape[i]
+    for i in range(d + 1, input_c.ndim): M_post *= input_c.shape[i]
+
+    with torch_device_fn.device(input.device):
+        if M_post == 1:
+            # 归约最后一维
+            if M_pre == 1 and N > 65536:
+                # 3-Pass 全局并行扫描
+                if input.dtype in (torch.float16, torch.bfloat16):
+                    BLOCK_N = 4096
+                else:
+                    BLOCK_N = 8192
+
+                grid_size = triton.cdiv(N, BLOCK_N)
+                prods = torch.empty((grid_size,), dtype=torch.float32, device=input.device)
+                
+                cumprod_global_pass1[(grid_size,)](input_c, out_c, prods, N, BLOCK_N=BLOCK_N)
+                cumprod_global_pass2[(1,)](prods, grid_size, BLOCK_N=4096)
+                cumprod_global_pass3[(grid_size,)](out_c, prods, N, BLOCK_N=BLOCK_N)
+            else:
+                # 触发多行 Batched Loop
+                grid = lambda meta: (triton.cdiv(M_pre, meta['BLOCK_M_PRE']),)
+                cumprod_last_dim_kernel[grid](input_c, out_c, M_pre, N)
+        else:
+            # 归约前置/中间维度
+            grid = lambda meta: (M_pre, triton.cdiv(M_post, meta['BLOCK_M_POST']))
+            cumprod_inner_dim_kernel[grid](input_c, out_c, M_pre, N, M_post)
+
+    if out is not None:
+        if out.data_ptr() != out_c.data_ptr():
+            out.copy_(out_c)
         return out
 
-    return final_out
+    return out_c.view(input.shape)

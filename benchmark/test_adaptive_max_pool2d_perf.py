@@ -10,14 +10,14 @@ from benchmark.performance_utils import Benchmark
 from flag_dnn.utils import shape_utils
 
 
-def torch_adaptive_max_pool1d(x, output_size):
-    return F.adaptive_max_pool1d(x, output_size=output_size)
+def torch_adaptive_max_pool2d(x, output_size):
+    return F.adaptive_max_pool2d(x, output_size=output_size)
 
-def gems_adaptive_max_pool1d_wrapper(x, output_size):
-    return flag_dnn.ops.adaptive_max_pool1d(x, output_size=output_size)
+def gems_adaptive_max_pool2d_wrapper(x, output_size):
+    return flag_dnn.ops.adaptive_max_pool2d(x, output_size=output_size)
 
 
-class AdaptiveMaxPool1dBenchmark(Benchmark):
+class AdaptiveMaxPool2dBenchmark(Benchmark):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -26,19 +26,19 @@ class AdaptiveMaxPool1dBenchmark(Benchmark):
         return ["gbps"]
 
     def set_more_shapes(self):
-        # 配置格式为: (shape, output_size)
+        # 配置格式为: ((N, C, H, W), (oH, oW))
         configs = [
-            # 1. 全局池化 (Global 1D Pooling)，提取序列最强特征，在分类任务中最常见
-            ((32, 256, 1024), 1),             
-            ((8, 512, 4096), 1),              
+            # 1. 全局池化 (Global 2D Pooling)，提取特征图最强特征，如 ResNet 等分类网络最后阶段
+            ((32, 2048, 7, 7), (1, 1)),
+            ((128, 512, 14, 14), (1, 1)),
             
-            # 2. 降维到指定的特征长度
-            ((32, 128, 1024), 32),            
-            ((64, 64, 512), 16),              
+            # 2. 空间降维到特定的宽高特征大小，常见于目标检测或特征金字塔
+            ((16, 256, 112, 112), (56, 56)),
+            ((32, 128, 64, 64), (32, 32)),
             
-            # 3. 对极长音频特征或文本序列做粗粒度压缩
-            ((4, 128, 16000), 100),           
-            ((1, 256, 48000), 256),           
+            # 3. 针对非对称尺寸的图像输入处理 (如长宽不等的特征图)
+            ((8, 64, 128, 256), (32, 64)),
+            ((4, 32, 1080, 1920), (270, 480)),
         ]
         self.shapes = configs
         return None
@@ -64,19 +64,20 @@ class AdaptiveMaxPool1dBenchmark(Benchmark):
     def get_gbps(self, args, latency):
         inp, output_size = args
         
-        # 对于 Adaptive Pooling, 输出的最后一个维度就是指定的 output_size
-        out_numel = inp.shape[0] * inp.shape[1] * output_size
+        # 对于 Adaptive Max Pool 2D, 输出的空间维度是 output_size (oH, oW)
+        # inp.shape[0] 是 N (batch), inp.shape[1] 是 C (channel)
+        out_numel = inp.shape[0] * inp.shape[1] * output_size[0] * output_size[1]
                 
         io_amount = shape_utils.size_in_bytes(inp) + (out_numel * inp.element_size())
         return io_amount * 1e-9 / (latency * 1e-3)
 
 
-@pytest.mark.adaptive_max_pool1d
-def test_perf_adaptive_max_pool1d():
-    bench = AdaptiveMaxPool1dBenchmark(
-        op_name="adaptive_max_pool1d", 
-        torch_op=torch_adaptive_max_pool1d, 
-        gems_op=gems_adaptive_max_pool1d_wrapper, 
+@pytest.mark.adaptive_max_pool2d
+def test_perf_adaptive_max_pool2d():
+    bench = AdaptiveMaxPool2dBenchmark(
+        op_name="adaptive_max_pool2d", 
+        torch_op=torch_adaptive_max_pool2d, 
+        gems_op=gems_adaptive_max_pool2d_wrapper, 
         dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64]
     )
     bench.run()

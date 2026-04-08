@@ -1,9 +1,8 @@
 import pytest
 import torch
 import torch.nn.functional as F
-
 import flag_dnn
-from .accuracy_utils import gems_assert_close
+
 
 # (shape, output_size)
 PARAMS = [
@@ -13,6 +12,7 @@ PARAMS = [
     ((2, 4, 32, 32), (None, 16)),             # 保持 H 尺寸不变
     ((16, 14, 14), (2, 2)),                   # 3D 张量输入
 ]
+
 
 @pytest.mark.adaptive_max_pool2d
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
@@ -26,7 +26,8 @@ def test_accuracy_adaptive_max_pool2d(dtype, shape, output_size, return_indices)
 
     # MaxPool 本身不做乘加，直接比较，所以可以要求绝对的零误差
     ref_out = F.adaptive_max_pool2d(x, output_size, return_indices=return_indices)
-    out = flag_dnn.ops.adaptive_max_pool2d(x, output_size, return_indices=return_indices)
+    with flag_dnn.use_dnn():
+        out = F.adaptive_max_pool2d(x, output_size, return_indices=return_indices)
 
     if return_indices:
         ref_y, ref_idx = ref_out
@@ -45,7 +46,8 @@ def test_accuracy_adaptive_max_pool2d_empty_tensor(dtype, return_indices):
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
     ref_out = F.adaptive_max_pool2d(x, (2, 2), return_indices=return_indices)
-    out = flag_dnn.ops.adaptive_max_pool2d(x, (2, 2), return_indices=return_indices)
+    with flag_dnn.use_dnn():
+        out = F.adaptive_max_pool2d(x, (2, 2), return_indices=return_indices)
 
     if return_indices:
         ref_y, ref_idx = ref_out

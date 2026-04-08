@@ -13,7 +13,6 @@ from flag_dnn.utils import shape_utils
 def torch_div(x, y):
     return torch.div(x, y)
 
-
 def gems_div_wrapper(x, y):
     return flag_dnn.ops.div(x, y)
 
@@ -83,46 +82,11 @@ class DivBenchmark(Benchmark):
 
 
 @pytest.mark.div
-def test_perf_div_fp16():
+def test_perf_div():
     bench = DivBenchmark(
-        op_name="div_fp16",
+        op_name="div",
         torch_op=torch_div,
         gems_op=gems_div_wrapper,
-        dtypes=[torch.float16],
-    )
-    bench.run()
-
-
-@pytest.mark.div
-def test_perf_div_bf16():
-    bench = DivBenchmark(
-        op_name="div_bf16",
-        torch_op=torch_div,
-        gems_op=gems_div_wrapper,
-        dtypes=[torch.bfloat16],
-    )
-    bench.run()
-
-
-@pytest.mark.div
-def test_perf_div_fp32():
-    bench = DivBenchmark(
-        op_name="div_fp32",
-        torch_op=torch_div,
-        gems_op=gems_div_wrapper,
-        dtypes=[torch.float32],
-    )
-    bench.run()
-
-
-@pytest.mark.div
-def test_perf_div_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = DivBenchmark(
-        op_name="div_fp64",
-        torch_op=torch_div,
-        gems_op=gems_div_wrapper,
-        dtypes=[torch.float64],
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

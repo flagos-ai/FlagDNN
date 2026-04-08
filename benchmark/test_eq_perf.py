@@ -10,12 +10,9 @@ from benchmark.performance_utils import Benchmark
 from flag_dnn.utils import shape_utils
 
 
-# 包装 PyTorch 的 eq 算子
 def torch_eq(x, y):
     return torch.eq(x, y)
 
-
-# 包装 Gems 的 eq 算子
 def gems_eq_wrapper(x, y):
     return flag_dnn.ops.eq(x, y)
 
@@ -85,46 +82,11 @@ class EqBenchmark(Benchmark):
 
 
 @pytest.mark.eq
-def test_perf_eq_fp16():
+def test_perf_eq():
     bench = EqBenchmark(
-        op_name="eq_fp16", 
+        op_name="eq", 
         torch_op=torch_eq, 
         gems_op=gems_eq_wrapper, 
-        dtypes=[torch.float16]
-    )
-    bench.run()
-
-
-@pytest.mark.eq
-def test_perf_eq_bf16():
-    bench = EqBenchmark(
-        op_name="eq_bf16", 
-        torch_op=torch_eq, 
-        gems_op=gems_eq_wrapper, 
-        dtypes=[torch.bfloat16]
-    )
-    bench.run()
-
-
-@pytest.mark.eq
-def test_perf_eq_fp32():
-    bench = EqBenchmark(
-        op_name="eq_fp32", 
-        torch_op=torch_eq, 
-        gems_op=gems_eq_wrapper, 
-        dtypes=[torch.float32]
-    )
-    bench.run()
-
-
-@pytest.mark.eq
-def test_perf_eq_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = EqBenchmark(
-        op_name="eq_fp64", 
-        torch_op=torch_eq, 
-        gems_op=gems_eq_wrapper, 
-        dtypes=[torch.float64]
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64]
     )
     bench.run()

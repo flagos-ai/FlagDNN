@@ -15,7 +15,6 @@ from flag_dnn.utils import shape_utils
 def torch_leaky_relu(x, y=None):
     return F.leaky_relu(x)
 
-
 def gems_leaky_relu_wrapper(x, y=None):
     return flag_dnn.ops.leaky_relu(x)
 
@@ -61,46 +60,11 @@ class LeakyReluBenchmark(Benchmark):
 
 
 @pytest.mark.leaky_relu
-def test_perf_leaky_relu_fp16():
+def test_perf_leaky_relu():
     bench = LeakyReluBenchmark(
-        op_name="leaky_relu_fp16",
+        op_name="leaky_relu",
         torch_op=torch_leaky_relu,
         gems_op=gems_leaky_relu_wrapper,
-        dtypes=[torch.float16],
-    )
-    bench.run()
-
-
-@pytest.mark.leaky_relu
-def test_perf_leaky_relu_bf16():
-    bench = LeakyReluBenchmark(
-        op_name="leaky_relu_bf16",
-        torch_op=torch_leaky_relu,
-        gems_op=gems_leaky_relu_wrapper,
-        dtypes=[torch.bfloat16],
-    )
-    bench.run()
-
-
-@pytest.mark.leaky_relu
-def test_perf_leaky_relu_fp32():
-    bench = LeakyReluBenchmark(
-        op_name="leaky_relu_fp32",
-        torch_op=torch_leaky_relu,
-        gems_op=gems_leaky_relu_wrapper,
-        dtypes=[torch.float32],
-    )
-    bench.run()
-
-
-@pytest.mark.leaky_relu
-def test_perf_leaky_relu_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = LeakyReluBenchmark(
-        op_name="leaky_relu_fp64",
-        torch_op=torch_leaky_relu,
-        gems_op=gems_leaky_relu_wrapper,
-        dtypes=[torch.float64],
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

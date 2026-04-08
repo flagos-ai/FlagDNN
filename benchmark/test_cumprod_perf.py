@@ -66,23 +66,11 @@ class CumprodBenchmark(Benchmark):
 
 
 @pytest.mark.cumprod
-def test_perf_cumprod_fp16():
-    bench = CumprodBenchmark(op_name="cumprod_fp16", torch_op=torch_cumprod, gems_op=gems_cumprod_wrapper, dtypes=[torch.float16])
-    bench.run()
-
-@pytest.mark.cumprod
-def test_perf_cumprod_bf16():
-    bench = CumprodBenchmark(op_name="cumprod_bf16", torch_op=torch_cumprod, gems_op=gems_cumprod_wrapper, dtypes=[torch.bfloat16])
-    bench.run()
-
-@pytest.mark.cumprod
-def test_perf_cumprod_fp32():
-    bench = CumprodBenchmark(op_name="cumprod_fp32", torch_op=torch_cumprod, gems_op=gems_cumprod_wrapper, dtypes=[torch.float32])
-    bench.run()
-
-@pytest.mark.cumprod
-def test_perf_cumprod_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = CumprodBenchmark(op_name="cumprod_fp64", torch_op=torch_cumprod, gems_op=gems_cumprod_wrapper, dtypes=[torch.float64])
+def test_perf_cumprod():
+    bench = CumprodBenchmark(
+        op_name="cumprod", 
+        torch_op=torch_cumprod, 
+        gems_op=gems_cumprod_wrapper, 
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64]
+    )
     bench.run()

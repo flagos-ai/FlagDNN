@@ -13,7 +13,6 @@ from flag_dnn.utils import shape_utils
 def torch_clamp(x, min_val, max_val):
     return torch.clamp(x, min_val, max_val)
 
-
 def gems_clamp_wrapper(x, min_val, max_val):
     return flag_dnn.ops.clamp(x, min_val, max_val)
 
@@ -116,46 +115,11 @@ class ClampBenchmark(Benchmark):
 
 
 @pytest.mark.clamp
-def test_perf_clamp_fp16():
+def test_perf_clamp():
     bench = ClampBenchmark(
-        op_name="clamp_fp16", 
+        op_name="clamp", 
         torch_op=torch_clamp, 
         gems_op=gems_clamp_wrapper, 
-        dtypes=[torch.float16]
-    )
-    bench.run()
-
-
-@pytest.mark.clamp
-def test_perf_clamp_bf16():
-    bench = ClampBenchmark(
-        op_name="clamp_bf16", 
-        torch_op=torch_clamp, 
-        gems_op=gems_clamp_wrapper, 
-        dtypes=[torch.bfloat16]
-    )
-    bench.run()
-
-
-@pytest.mark.clamp
-def test_perf_clamp_fp32():
-    bench = ClampBenchmark(
-        op_name="clamp_fp32", 
-        torch_op=torch_clamp, 
-        gems_op=gems_clamp_wrapper, 
-        dtypes=[torch.float32]
-    )
-    bench.run()
-
-
-@pytest.mark.clamp
-def test_perf_clamp_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = ClampBenchmark(
-        op_name="clamp_fp64", 
-        torch_op=torch_clamp, 
-        gems_op=gems_clamp_wrapper, 
-        dtypes=[torch.float64]
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64]
     )
     bench.run()

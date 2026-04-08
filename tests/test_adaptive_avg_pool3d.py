@@ -1,9 +1,8 @@
 import pytest
 import torch
 import torch.nn.functional as F
-
 import flag_dnn
-from .accuracy_utils import gems_assert_close
+
 
 # adaptive_avg_pool3d 参数格式：(shape, output_size)
 PARAMS = [
@@ -15,6 +14,7 @@ PARAMS = [
     ((3, 8, 14, 14), (4, 7, 7)),           # 4D 张量输入 (无 Batch 维度 N)
     ((1, 2, 8, 8, 8), (8, 8, 8)),          # output == input (原样输出)
 ]
+
 
 @pytest.mark.adaptive_avg_pool3d
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
@@ -28,7 +28,8 @@ def test_accuracy_adaptive_avg_pool3d(dtype, shape, output_size):
 
     ref_out = F.adaptive_avg_pool3d(x, output_size)
     
-    out = flag_dnn.ops.adaptive_avg_pool3d(x, output_size)
+    with flag_dnn.use_dnn():
+        out = F.adaptive_avg_pool3d(x, output_size)
 
     # 容差设置：精确对齐 bfloat16 和 float16 的累加特点
     if dtype == torch.bfloat16:
@@ -49,7 +50,8 @@ def test_accuracy_adaptive_avg_pool3d_empty_tensor(dtype):
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
     ref_out = F.adaptive_avg_pool3d(x, 2)
-    out = flag_dnn.ops.adaptive_avg_pool3d(x, 2)
+    with flag_dnn.use_dnn():
+        out = F.adaptive_avg_pool3d(x, 2)
 
     assert out.shape == ref_out.shape
     assert out.numel() == 0

@@ -1,9 +1,8 @@
 import pytest
 import torch
 import torch.nn.functional as F
-
 import flag_dnn
-from .accuracy_utils import gems_assert_close
+
 
 # (shape, kernel_size, stride, padding, dilation)
 PARAMS = [
@@ -14,6 +13,7 @@ PARAMS = [
     ((2, 3, 32, 32), 3, 2, 0, 2),             # 带空洞率 (Dilation)
     ((16, 14, 14), 2, 2, 0, 1),               # 3D 张量输入 (无 N 维度)
 ]
+
 
 @pytest.mark.max_pool2d
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
@@ -34,10 +34,11 @@ def test_accuracy_max_pool2d(dtype, shape, kernel_size, stride, padding, dilatio
     )
     
     # Triton 实现
-    out = flag_dnn.ops.max_pool2d(
-        x, kernel_size, stride=stride, padding=padding, dilation=dilation,
-        ceil_mode=ceil_mode, return_indices=return_indices
-    )
+    with flag_dnn.use_dnn():
+        out = F.max_pool2d(
+            x, kernel_size, stride=stride, padding=padding, dilation=dilation,
+            ceil_mode=ceil_mode, return_indices=return_indices
+        )
 
     # 容差设置：因为 MaxPool 只做选择不参与算术运算，应该完全一致，设 0 完全可以。
     # 为了防止某些架构底层的极小扰动，给一个 1e-6 的底线
@@ -60,7 +61,8 @@ def test_accuracy_max_pool2d_empty_tensor(dtype):
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
     ref_out = F.max_pool2d(x, 2, 2)
-    out = flag_dnn.ops.max_pool2d(x, 2, 2)
+    with flag_dnn.use_dnn():
+        out = F.max_pool2d(x, 2, 2)
 
     assert out.shape == ref_out.shape
     assert out.numel() == 0

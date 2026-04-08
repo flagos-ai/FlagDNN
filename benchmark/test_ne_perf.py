@@ -10,12 +10,9 @@ from benchmark.performance_utils import Benchmark
 from flag_dnn.utils import shape_utils
 
 
-# 包装 PyTorch 的 ne 算子
 def torch_ne(x, y):
     return torch.ne(x, y)
 
-
-# 包装 Gems 的 ne 算子
 def gems_ne_wrapper(x, y):
     return flag_dnn.ops.ne(x, y)
 
@@ -85,46 +82,11 @@ class NeBenchmark(Benchmark):
 
 
 @pytest.mark.ne
-def test_perf_ne_fp16():
+def test_perf_ne():
     bench = NeBenchmark(
-        op_name="ne_fp16", 
+        op_name="ne", 
         torch_op=torch_ne, 
         gems_op=gems_ne_wrapper, 
-        dtypes=[torch.float16]
-    )
-    bench.run()
-
-
-@pytest.mark.ne
-def test_perf_ne_bf16():
-    bench = NeBenchmark(
-        op_name="ne_bf16", 
-        torch_op=torch_ne, 
-        gems_op=gems_ne_wrapper, 
-        dtypes=[torch.bfloat16]
-    )
-    bench.run()
-
-
-@pytest.mark.ne
-def test_perf_ne_fp32():
-    bench = NeBenchmark(
-        op_name="ne_fp32", 
-        torch_op=torch_ne, 
-        gems_op=gems_ne_wrapper, 
-        dtypes=[torch.float32]
-    )
-    bench.run()
-
-
-@pytest.mark.ne
-def test_perf_ne_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = NeBenchmark(
-        op_name="ne_fp64", 
-        torch_op=torch_ne, 
-        gems_op=gems_ne_wrapper, 
-        dtypes=[torch.float64]
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64]
     )
     bench.run()

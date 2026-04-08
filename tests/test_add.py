@@ -1,9 +1,6 @@
 import pytest
 import torch
-
 import flag_dnn
-
-from .accuracy_utils import gems_assert_close
 
 
 SHAPES = [(32,), (1024,), (5333,), (16384,), (1024 * 1024,)]
@@ -34,7 +31,8 @@ def test_accuracy_add(dtype, shape):
         rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
 
     ref_out = torch.add(x, y)
-    out = flag_dnn.ops.add(x, y)
+    with flag_dnn.use_dnn():
+        out = torch.add(x, y)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -50,7 +48,8 @@ def test_accuracy_add_empty_tensor(dtype):
     y = torch.randn(0, dtype=dtype, device=flag_dnn.device)
 
     ref_out = torch.add(x, y)
-    out = flag_dnn.ops.add(x, y)
+    with flag_dnn.use_dnn():
+        out = torch.add(x, y)
 
     assert out.shape == (0,)
     assert out.dtype == dtype
@@ -76,7 +75,8 @@ def test_accuracy_add_scalar(dtype):
         rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
 
     ref_out = torch.add(x, scalar)
-    out = flag_dnn.ops.add(x, scalar)
+    with flag_dnn.use_dnn():
+        out = torch.add(x, scalar)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -100,7 +100,8 @@ def test_accuracy_add_alpha(dtype):
         rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
 
     ref_out = torch.add(x, y, alpha=alpha)
-    out = flag_dnn.ops.add(x, y, alpha=alpha)
+    with flag_dnn.use_dnn():
+        out = torch.add(x, y, alpha=alpha)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
 
@@ -124,6 +125,7 @@ def test_accuracy_add_broadcast(dtype, input_shape, other_shape):
         rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
 
     ref_out = torch.add(x, y)
-    out = flag_dnn.ops.add(x, y)
+    with flag_dnn.use_dnn():
+        out = torch.add(x, y)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)

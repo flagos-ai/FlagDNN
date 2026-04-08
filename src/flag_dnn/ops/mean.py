@@ -7,42 +7,234 @@ import triton.language as tl
 
 from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
+from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
+
 
 logger = logging.getLogger(__name__)
 
 
+@triton.autotune(
+    configs=[
+        triton.Config({'BLOCK_M': 1, 'BLOCK_N': 8192}, num_warps=8),
+        triton.Config({'BLOCK_M': 2, 'BLOCK_N': 4096}, num_warps=8),
+        triton.Config({'BLOCK_M': 4, 'BLOCK_N': 2048}, num_warps=8),
+        triton.Config({'BLOCK_M': 8, 'BLOCK_N': 1024}, num_warps=8),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64}, num_warps=4),
+        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 32}, num_warps=4),
+        triton.Config({'BLOCK_M': 512, 'BLOCK_N': 16}, num_warps=4),
+        triton.Config({'BLOCK_M': 1024, 'BLOCK_N': 8}, num_warps=8),
+        triton.Config({'BLOCK_M': 2048, 'BLOCK_N': 4}, num_warps=8),
+        triton.Config({'BLOCK_M': 16, 'BLOCK_N': 1024}, num_warps=8),
+        triton.Config({'BLOCK_M': 32, 'BLOCK_N': 512}, num_warps=8),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 256}, num_warps=8),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128}, num_warps=8),
+        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64}, num_warps=8),
+        triton.Config({'BLOCK_M': 16, 'BLOCK_N': 512}, num_warps=4),
+        triton.Config({'BLOCK_M': 32, 'BLOCK_N': 256}, num_warps=4),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 128}, num_warps=4),
+    ],
+    key=['M', 'N']
+)
 @triton.jit
-def mean_2d_kernel(
-    in_ptr, out_ptr,
+def _mean_kernel_2d_loop(
+    x_ptr, out_ptr,
     M, N,
-    in_stride_m, in_stride_n,
-    BLOCK_SIZE_N: tl.constexpr,
+    stride_xm, stride_xn,
+    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr
 ):
     pid_m = tle.program_id(0)
-    row_start_ptr = in_ptr + pid_m * in_stride_m
-    offsets_n = tl.arange(0, BLOCK_SIZE_N)
     
-    # 累加器，统一使用 float32 防止中间计算溢出
-    acc = tl.zeros((BLOCK_SIZE_N,), dtype=tl.float32)
-    
-    # 循环读取并累加
-    for n_offset in range(0, N, BLOCK_SIZE_N):
-        cols = n_offset + offsets_n
-        mask = cols < N
+    m_offsets = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    m_mask = m_offsets < M
+
+    acc = tl.zeros((BLOCK_M,), dtype=tl.float32)
+
+    for n in range(0, N, BLOCK_N):
+        n_offsets = n + tl.arange(0, BLOCK_N)
+        n_mask = n_offsets < N
         
-        # other=0 安全兜底，防止类型污染
-        val = tl.load(row_start_ptr + cols * in_stride_n, mask=mask, other=0)
-        acc += val.to(tl.float32)
+        mask = m_mask[:, None] & n_mask[None, :]
+        x_ptrs = x_ptr + m_offsets[:, None] * stride_xm + n_offsets[None, :] * stride_xn
         
-    # Block 内求和
-    row_sum = tl.sum(acc, axis=0)
+        x = tl.load(x_ptrs, mask=mask, other=0.0)
+        x = x.to(tl.float32)
+            
+        acc += tl.sum(x, axis=1)
+
+    out_ptrs = out_ptr + m_offsets
+    # 写入前计算平均值
+    tl.store(out_ptrs, acc / N, mask=m_mask)
+
+
+@triton.autotune(
+    configs=[
+        triton.Config({'BLOCK_M': 1, 'BLOCK_N': 8192}, num_warps=8),
+        triton.Config({'BLOCK_M': 2, 'BLOCK_N': 4096}, num_warps=8),
+        triton.Config({'BLOCK_M': 4, 'BLOCK_N': 2048}, num_warps=8),
+        triton.Config({'BLOCK_M': 8, 'BLOCK_N': 1024}, num_warps=8),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64}, num_warps=4),
+        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 32}, num_warps=4),
+        triton.Config({'BLOCK_M': 512, 'BLOCK_N': 16}, num_warps=4),
+        triton.Config({'BLOCK_M': 1024, 'BLOCK_N': 8}, num_warps=8),
+        triton.Config({'BLOCK_M': 2048, 'BLOCK_N': 4}, num_warps=8),
+        triton.Config({'BLOCK_M': 16, 'BLOCK_N': 1024}, num_warps=8),
+        triton.Config({'BLOCK_M': 32, 'BLOCK_N': 512}, num_warps=8),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 256}, num_warps=8),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128}, num_warps=8),
+        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64}, num_warps=8),
+        triton.Config({'BLOCK_M': 16, 'BLOCK_N': 512}, num_warps=4),
+        triton.Config({'BLOCK_M': 32, 'BLOCK_N': 256}, num_warps=4),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 128}, num_warps=4),
+    ],
+    key=['M', 'N']
+)
+@triton.jit
+def _mean_kernel_3d_loop(
+    x_ptr, out_ptr,
+    M, N, I, 
+    stride_xo, stride_xr, stride_xi,
+    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr
+):
+    pid_m = tle.program_id(0)
     
-    # 求均值，N 会隐式提升为 float32 与 row_sum 进行计算
-    row_mean = row_sum / N
+    m_offsets = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    m_mask = m_offsets < M
+
+    o_idx = m_offsets // I
+    i_idx = m_offsets % I
+    base_ptrs = x_ptr + (o_idx * stride_xo + i_idx * stride_xi)
+
+    acc = tl.zeros((BLOCK_M,), dtype=tl.float32)
+
+    for n in range(0, N, BLOCK_N):
+        n_offsets = n + tl.arange(0, BLOCK_N)
+        n_mask = n_offsets < N
+        
+        mask = m_mask[:, None] & n_mask[None, :]
+        x_ptrs = base_ptrs[:, None] + n_offsets[None, :] * stride_xr
+        
+        x = tl.load(x_ptrs, mask=mask, other=0.0)
+        x = x.to(tl.float32)
+
+        acc += tl.sum(x, axis=1)
+
+    out_ptrs = out_ptr + m_offsets
+    # 写入前计算平均值
+    tl.store(out_ptrs, acc / N, mask=m_mask)
+
+
+@triton.autotune(
+    configs=[
+        triton.Config({'BLOCK_M': 1, 'BLOCK_N': 8192}, num_warps=8),
+        triton.Config({'BLOCK_M': 2, 'BLOCK_N': 4096}, num_warps=8),
+        triton.Config({'BLOCK_M': 4, 'BLOCK_N': 2048}, num_warps=8),
+        triton.Config({'BLOCK_M': 8, 'BLOCK_N': 1024}, num_warps=8),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64}, num_warps=4),
+        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 32}, num_warps=4),
+        triton.Config({'BLOCK_M': 512, 'BLOCK_N': 16}, num_warps=4),
+        triton.Config({'BLOCK_M': 1024, 'BLOCK_N': 8}, num_warps=8),
+        triton.Config({'BLOCK_M': 2048, 'BLOCK_N': 4}, num_warps=8),
+        triton.Config({'BLOCK_M': 16, 'BLOCK_N': 1024}, num_warps=8),
+        triton.Config({'BLOCK_M': 32, 'BLOCK_N': 512}, num_warps=8),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 256}, num_warps=8),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128}, num_warps=8),
+        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64}, num_warps=8),
+        triton.Config({'BLOCK_M': 16, 'BLOCK_N': 512}, num_warps=4),
+        triton.Config({'BLOCK_M': 32, 'BLOCK_N': 256}, num_warps=4),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 128}, num_warps=4),
+    ],
+    key=['M', 'N'],
+    reset_to_zero=['out_ptr']
+)
+@triton.jit
+def _mean_kernel_2d_atomic(
+    x_ptr, out_ptr,
+    M, N,
+    stride_xm, stride_xn,
+    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr
+):
+    pid = tle.program_id(0)
+    num_pid_n = (N + BLOCK_N - 1) // BLOCK_N
     
-    # 存入目标地址
-    tl.store(out_ptr + pid_m, row_mean.to(out_ptr.dtype.element_ty))
+    pid_m = pid // num_pid_n
+    pid_n = pid % num_pid_n
+
+    m_offsets = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    n_offsets = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+
+    m_mask = m_offsets < M
+    n_mask = n_offsets < N
+
+    mask = m_mask[:, None] & n_mask[None, :]
+    x_ptrs = x_ptr + m_offsets[:, None] * stride_xm + n_offsets[None, :] * stride_xn
+
+    x = tl.load(x_ptrs, mask=mask, other=0.0)
+    x = x.to(tl.float32)
+
+    # 累加前直接除以 N，根据分配律等价于总体求均值
+    sum_vals = tl.sum(x, axis=1) / N
+    
+    out_ptrs = out_ptr + m_offsets
+    tl.atomic_add(out_ptrs, sum_vals, mask=m_mask)
+
+
+@triton.autotune(
+    configs=[
+        triton.Config({'BLOCK_M': 1, 'BLOCK_N': 8192}, num_warps=8),
+        triton.Config({'BLOCK_M': 2, 'BLOCK_N': 4096}, num_warps=8),
+        triton.Config({'BLOCK_M': 4, 'BLOCK_N': 2048}, num_warps=8),
+        triton.Config({'BLOCK_M': 8, 'BLOCK_N': 1024}, num_warps=8),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64}, num_warps=4),
+        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 32}, num_warps=4),
+        triton.Config({'BLOCK_M': 512, 'BLOCK_N': 16}, num_warps=4),
+        triton.Config({'BLOCK_M': 1024, 'BLOCK_N': 8}, num_warps=8),
+        triton.Config({'BLOCK_M': 2048, 'BLOCK_N': 4}, num_warps=8),
+        triton.Config({'BLOCK_M': 16, 'BLOCK_N': 1024}, num_warps=8),
+        triton.Config({'BLOCK_M': 32, 'BLOCK_N': 512}, num_warps=8),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 256}, num_warps=8),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128}, num_warps=8),
+        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64}, num_warps=8),
+        triton.Config({'BLOCK_M': 16, 'BLOCK_N': 512}, num_warps=4),
+        triton.Config({'BLOCK_M': 32, 'BLOCK_N': 256}, num_warps=4),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 128}, num_warps=4),
+    ],
+    key=['M', 'N'],
+    reset_to_zero=['out_ptr']
+)
+@triton.jit
+def _mean_kernel_3d_atomic(
+    x_ptr, out_ptr,
+    M, N, I, 
+    stride_xo, stride_xr, stride_xi,
+    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr
+):
+    pid = tle.program_id(0)
+    num_pid_n = (N + BLOCK_N - 1) // BLOCK_N
+    
+    pid_m = pid // num_pid_n
+    pid_n = pid % num_pid_n
+
+    m_offsets = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    n_offsets = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+
+    m_mask = m_offsets < M
+    n_mask = n_offsets < N
+
+    o_idx = m_offsets // I
+    i_idx = m_offsets % I
+
+    mask = m_mask[:, None] & n_mask[None, :]
+    x_ptrs = x_ptr + (o_idx[:, None] * stride_xo + n_offsets[None, :] * stride_xr + i_idx[:, None] * stride_xi)
+
+    x = tl.load(x_ptrs, mask=mask, other=0.0)
+    x = x.to(tl.float32)
+
+    # 累加前直接除以 N
+    sum_vals = tl.sum(x, axis=1) / N
+    
+    out_ptrs = out_ptr + m_offsets
+    tl.atomic_add(out_ptrs, sum_vals, mask=m_mask)
 
 
 def mean(
@@ -54,79 +246,113 @@ def mean(
     out: Optional[torch.Tensor] = None
 ) -> torch.Tensor:
     logger.debug("FLAG_DNN MEAN")
+    target_dtype = dtype if dtype is not None else input.dtype
 
-    # 计算出正确的输出形状
-    out_shape = []
+    if target_dtype in (torch.int8, torch.int16, torch.bool):
+        target_dtype = torch.float32
+
+    ndim = input.ndim
     if dim is None:
-        if keepdim:
-            out_shape = [1] * input.ndim
+        dims = list(range(ndim))
+    elif isinstance(dim, int):
+        dims = [dim]
     else:
-        dims = (dim,) if isinstance(dim, int) else dim
-        dims = tuple(d if d >= 0 else d + input.ndim for d in dims)
+        dims = list(dim)
         
-        # 重复的 dim 报错
-        if len(set(dims)) != len(dims):
-            raise RuntimeError("dim appears multiple times in the list of dims")
+    dims = [d if d >= 0 else d + ndim for d in dims]
+    dims = sorted(dims)
 
-        for i in range(input.ndim):
-            if i in dims:
-                if keepdim:
-                    out_shape.append(1)
+    out_shape = []
+    for i in range(ndim):
+        if i in dims:
+            if keepdim:
+                out_shape.append(1)
+        else:
+            out_shape.append(input.shape[i])
+            
+    if not out_shape and not keepdim:
+        out_shape = []
+
+    acc_dtype = torch.float32
+
+    is_reduce_at_end = (dims == list(range(ndim - len(dims), ndim)))
+    
+    is_consecutive = True
+    for j in range(len(dims) - 1):
+        if dims[j] + 1 != dims[j+1]:
+            is_consecutive = False
+            break
+
+    def _launch_kernel(M, N, input_view, is_3d=False, I_dim=1):
+        if M == 0 or N == 0:
+            val = float('nan') if N == 0 else 0.0
+            return torch.full(out_shape, val, dtype=target_dtype, device=input.device)
+        
+        out_buffer = torch.zeros((M,), dtype=acc_dtype, device=input.device)
+        
+        use_atomic = (M <= 32) and (N > 65536)
+        
+        if not is_3d:
+            if use_atomic:
+                def grid_2d_atomic(meta):
+                    return (triton.cdiv(M, meta['BLOCK_M']) * triton.cdiv(N, meta['BLOCK_N']), )
+                _mean_kernel_2d_atomic[grid_2d_atomic](
+                    input_view, out_buffer, M, N,
+                    input_view.stride(0), input_view.stride(1)
+                )
             else:
-                out_shape.append(input.shape[i])
-    out_shape = tuple(out_shape)
+                def grid_2d_loop(meta):
+                    return (triton.cdiv(M, meta['BLOCK_M']), )
+                _mean_kernel_2d_loop[grid_2d_loop](
+                    input_view, out_buffer, M, N,
+                    input_view.stride(0), input_view.stride(1)
+                )
+        else:
+            if use_atomic:
+                def grid_3d_atomic(meta):
+                    return (triton.cdiv(M, meta['BLOCK_M']) * triton.cdiv(N, meta['BLOCK_N']), )
+                _mean_kernel_3d_atomic[grid_3d_atomic](
+                    input_view, out_buffer, M, N, I_dim,
+                    input_view.stride(0), input_view.stride(1), input_view.stride(2)
+                )
+            else:
+                def grid_3d_loop(meta):
+                    return (triton.cdiv(M, meta['BLOCK_M']), )
+                _mean_kernel_3d_loop[grid_3d_loop](
+                    input_view, out_buffer, M, N, I_dim,
+                    input_view.stride(0), input_view.stride(1), input_view.stride(2)
+                )
+                
+        return out_buffer
 
-    # 类型推导与合法性校验
-    dummy_input = input.new_empty((0,))
-    out_dtype = torch.mean(dummy_input, dtype=dtype).dtype
 
-    # 处理 out 参数及显存分配
-    if out is None:
-        out = torch.empty(out_shape, dtype=out_dtype, device=input.device)
-    else:
-        assert out.shape == out_shape, f"out shape {out.shape} mismatch with expected shape {out_shape}"
-        # 原地操作时，类型以传入的 out 张量为准
-        out_dtype = out.dtype
+    with torch_device_fn.device(input.device):
+        if is_reduce_at_end:
+            M, N = 1, 1
+            for i in range(ndim - len(dims)): M *= input.shape[i]
+            for i in range(ndim - len(dims), ndim): N *= input.shape[i]
+            out_buffer = _launch_kernel(M, N, input.reshape(M, N), is_3d=False)
+        elif is_consecutive:
+            dim_min, dim_max = dims[0], dims[-1]
+            O, R, I_dim = 1, 1, 1
+            for j in range(dim_min): O *= input.shape[j]
+            for j in range(dim_min, dim_max + 1): R *= input.shape[j]
+            for j in range(dim_max + 1, ndim): I_dim *= input.shape[j]
+            M, N = O * I_dim, R
+            out_buffer = _launch_kernel(M, N, input.reshape(O, R, I_dim), is_3d=True, I_dim=I_dim)
+        else:
+            kept_dims = [i for i in range(ndim) if i not in dims]
+            M, N = 1, 1
+            for d in kept_dims: M *= input.shape[d]
+            for d in dims: N *= input.shape[d]
+            input_view = input.permute(*kept_dims, *dims).reshape(M, N)
+            out_buffer = _launch_kernel(M, N, input_view, is_3d=False)
 
-    # 空张量边界处理 (必须返回 NaN)
-    if input.numel() == 0:
-        out.fill_(float('nan'))
+    out_buffer = out_buffer.to(target_dtype).reshape(out_shape)
+
+    if out is not None:
+        out.resize_(out_shape)
+        out.copy_(out_buffer)
         return out
 
-    # 高维规约转 2D 矩阵规约
-    if dim is None:
-        M = 1
-        N = input.numel()
-        input_c = input.contiguous().view(M, N)
-    else:
-        keep_dims = [i for i in range(input.ndim) if i not in dims]
-        permuted_dims = keep_dims + list(dims)
-    
-        input_permuted = input.permute(*permuted_dims).contiguous()
-        
-        M = 1
-        for d in keep_dims:
-            M *= input.shape[d]
-        N = 1
-        for d in dims:
-            N *= input.shape[d]
-            
-        input_c = input_permuted.view(M, N)
-
-    in_stride_m = input_c.stride(0)
-    in_stride_n = input_c.stride(1)
-
-    BLOCK_SIZE_N = 1024
-    grid = (M,)
-
-    # 启动 Kernel
-    with torch_device_fn.device(input.device):
-        mean_2d_kernel[grid](
-            input_c,
-            out.view(-1),
-            M, N,
-            in_stride_m, in_stride_n,
-            BLOCK_SIZE_N=BLOCK_SIZE_N
-        )
-
-    return out
+    return out_buffer

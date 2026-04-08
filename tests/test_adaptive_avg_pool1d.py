@@ -1,9 +1,8 @@
 import pytest
 import torch
 import torch.nn.functional as F
-
 import flag_dnn
-from .accuracy_utils import gems_assert_close
+
 
 # adaptive_avg_pool1d 参数格式：(shape, output_size)
 PARAMS = [
@@ -14,6 +13,7 @@ PARAMS = [
     ((4, 5, 20), 1),               # 全局平均池化 (Global Average Pooling)
     ((16, 14), 5),                 # 2D 张量输入 (无 Batch(N) 维度)
 ]
+
 
 @pytest.mark.adaptive_avg_pool1d
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
@@ -27,7 +27,8 @@ def test_accuracy_adaptive_avg_pool1d(dtype, shape, output_size):
 
     ref_out = F.adaptive_avg_pool1d(x, output_size)
  
-    out = flag_dnn.ops.adaptive_avg_pool1d(x, output_size)
+    with flag_dnn.use_dnn():
+        out = F.adaptive_avg_pool1d(x, output_size)
 
     # 容差设置：精确对齐 bfloat16 和 float16 的累加特点
     if dtype == torch.bfloat16:
@@ -47,7 +48,8 @@ def test_accuracy_adaptive_avg_pool1d_empty_tensor(dtype):
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
     ref_out = F.adaptive_avg_pool1d(x, 2)
-    out = flag_dnn.ops.adaptive_avg_pool1d(x, 2)
+    with flag_dnn.use_dnn():
+        out = F.adaptive_avg_pool1d(x, 2)
 
     assert out.shape == ref_out.shape
     assert out.numel() == 0

@@ -14,7 +14,6 @@ from flag_dnn.utils import shape_utils
 def torch_silu(x, y=None):
     return F.silu(x)
 
-
 def gems_silu_wrapper(x, y=None):
     return flag_dnn.ops.silu(x)
 
@@ -54,52 +53,17 @@ class SiluBenchmark(Benchmark):
 
     def get_gbps(self, args, latency):
         inp1 = args[0]
-        # SiLU 同样是 Element-wise 操作，读取一次输入，写入一次输出
+        # Element-wise 操作，读取一次输入，写入一次输出
         io_amount = shape_utils.size_in_bytes(inp1) + shape_utils.size_in_bytes(inp1)
         return io_amount * 1e-9 / (latency * 1e-3)
 
 
 @pytest.mark.silu
-def test_perf_silu_fp16():
+def test_perf_silu():
     bench = SiluBenchmark(
-        op_name="silu_fp16",
+        op_name="silu",
         torch_op=torch_silu,
         gems_op=gems_silu_wrapper,
-        dtypes=[torch.float16],
-    )
-    bench.run()
-
-
-@pytest.mark.silu
-def test_perf_silu_bf16():
-    bench = SiluBenchmark(
-        op_name="silu_bf16",
-        torch_op=torch_silu,
-        gems_op=gems_silu_wrapper,
-        dtypes=[torch.bfloat16],
-    )
-    bench.run()
-
-
-@pytest.mark.silu
-def test_perf_silu_fp32():
-    bench = SiluBenchmark(
-        op_name="silu_fp32",
-        torch_op=torch_silu,
-        gems_op=gems_silu_wrapper,
-        dtypes=[torch.float32],
-    )
-    bench.run()
-
-
-@pytest.mark.silu
-def test_perf_silu_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = SiluBenchmark(
-        op_name="silu_fp64",
-        torch_op=torch_silu,
-        gems_op=gems_silu_wrapper,
-        dtypes=[torch.float64],
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

@@ -13,7 +13,6 @@ from flag_dnn.utils import shape_utils
 def torch_neg(x):
     return torch.neg(x)
 
-
 def gems_neg_wrapper(x):
     return flag_dnn.ops.neg(x)
 
@@ -61,46 +60,11 @@ class NegBenchmark(Benchmark):
 
 
 @pytest.mark.neg
-def test_perf_neg_fp16():
+def test_perf_neg():
     bench = NegBenchmark(
-        op_name="neg_fp16", 
-        torch_op=torch_neg, 
-        gems_op=gems_neg_wrapper, 
-        dtypes=[torch.float16]
-    )
-    bench.run()
-
-
-@pytest.mark.neg
-def test_perf_neg_bf16():
-    bench = NegBenchmark(
-        op_name="neg_bf16", 
-        torch_op=torch_neg, 
-        gems_op=gems_neg_wrapper, 
-        dtypes=[torch.bfloat16]
-    )
-    bench.run()
-
-
-@pytest.mark.neg
-def test_perf_neg_fp32():
-    bench = NegBenchmark(
-        op_name="neg_fp32", 
-        torch_op=torch_neg, 
-        gems_op=gems_neg_wrapper, 
-        dtypes=[torch.float32]
-    )
-    bench.run()
-
-
-@pytest.mark.neg
-def test_perf_neg_fp64():
-    if not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-    bench = NegBenchmark(
-        op_name="neg_fp64", 
-        torch_op=torch_neg, 
-        gems_op=gems_neg_wrapper, 
-        dtypes=[torch.float64]
+        op_name="neg",
+        torch_op=torch_neg,
+        gems_op=gems_neg_wrapper,
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64]
     )
     bench.run()
