@@ -39,7 +39,9 @@ def test_accuracy_prelu(dtype, shape, mode):
     else:
         num_parameters = shape[1]  # PyTorch 约定 dim=1 是通道维度
 
-    weight = torch.full((num_parameters,), 0.25, dtype=dtype, device=flag_dnn.device)
+    weight = torch.full(
+        (num_parameters,), 0.25, dtype=dtype, device=flag_dnn.device
+    )
 
     ref_y = F.prelu(x, weight)
     with flag_dnn.use_dnn():
@@ -70,7 +72,9 @@ def test_accuracy_prelu_empty_tensor(dtype, mode):
         rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
 
     num_parameters = shape[1] if mode == "channel" else 1
-    weight = torch.full((num_parameters,), 0.25, dtype=dtype, device=flag_dnn.device)
+    weight = torch.full(
+        (num_parameters,), 0.25, dtype=dtype, device=flag_dnn.device
+    )
 
     ref_y = F.prelu(x, weight)
     with flag_dnn.use_dnn():
@@ -104,7 +108,9 @@ def test_accuracy_prelu_negative_values(dtype, mode):
 
     num_parameters = shape[1] if mode == "channel" else 1
     # 随机生成 weight 而不是全 0.25，更能测出计算的准确性
-    weight = torch.randn(num_parameters, dtype=dtype, device=flag_dnn.device) * 0.1
+    weight = (
+        torch.randn(num_parameters, dtype=dtype, device=flag_dnn.device) * 0.1
+    )
 
     ref_y = F.prelu(x, weight)
     with flag_dnn.use_dnn():
@@ -134,7 +140,9 @@ def test_accuracy_prelu_positive_values(dtype, mode):
         rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
 
     num_parameters = shape[1] if mode == "channel" else 1
-    weight = torch.randn(num_parameters, dtype=dtype, device=flag_dnn.device) * 0.1
+    weight = (
+        torch.randn(num_parameters, dtype=dtype, device=flag_dnn.device) * 0.1
+    )
 
     ref_y = F.prelu(x, weight)
     with flag_dnn.use_dnn():
@@ -162,7 +170,9 @@ def test_accuracy_prelu_mixed_values(dtype, mode):
         rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
 
     num_parameters = shape[1] if mode == "channel" else 1
-    weight = torch.randn(num_parameters, dtype=dtype, device=flag_dnn.device) * 0.1
+    weight = (
+        torch.randn(num_parameters, dtype=dtype, device=flag_dnn.device) * 0.1
+    )
 
     ref_y = F.prelu(x, weight)
     with flag_dnn.use_dnn():

@@ -56,7 +56,9 @@ class BackendArchEvent:
             heuristic_module = self.arch_module
         except Exception:  # noqa E722
             sys.path.insert(0, str(self.current_arch_path))
-            heuristic_module = importlib.import_module("heuristics_config_utils")
+            heuristic_module = importlib.import_module(
+                "heuristics_config_utils"
+            )
             sys.path.remove(str(self.current_arch_path))
         if hasattr(heuristic_module, "HEURISTICS_CONFIGS"):
             return heuristic_module.HEURISTICS_CONFIGS
@@ -71,7 +73,9 @@ class BackendArchEvent:
             return
         arch_map = vendor_module.ARCH_MAP
         arch_string = os.environ.get("ARCH", "")
-        arch_string_num = arch_string.split("_")[-1][0] if arch_string else arch_string
+        arch_string_num = (
+            arch_string.split("_")[-1][0] if arch_string else arch_string
+        )
         if not arch_string_num:
             try:
                 if not torch_device_object.is_available():
@@ -96,7 +100,11 @@ class BackendArchEvent:
         archs = {}
         for p in path.iterdir():
             name = str(p).split("/")[-1]
-            if p.is_dir() and name not in excluded and not name.startswith("_"):
+            if (
+                p.is_dir()
+                and name not in excluded
+                and not name.startswith("_")
+            ):
                 archs.update({name: str(p)})
         return archs
 

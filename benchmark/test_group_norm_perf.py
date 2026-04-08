@@ -56,8 +56,14 @@ class GroupNormBenchmark(Benchmark):
             ),  # SDXL Base 分辨率 (生成 1024x1024 图像时的 Latent 尺寸)
             ((1, 2560, 16, 16), 32),  # UNet 最深层极宽的通道数验证
             # 6. 3D 视觉 / 视频理解 / 医疗影像 (Batch, Channels, Depth, Height, Width)
-            ((2, 128, 16, 56, 56), 32),  # 视频理解网络 (如 SlowFast/I3D)，16帧视频序列
-            ((1, 32, 128, 128, 128), 8),  # 3D 医疗影像分割 (如 V-Net 处理 CT/MRI 扫描)
+            (
+                (2, 128, 16, 56, 56),
+                32,
+            ),  # 视频理解网络 (如 SlowFast/I3D)，16帧视频序列
+            (
+                (1, 32, 128, 128, 128),
+                8,
+            ),  # 3D 医疗影像分割 (如 V-Net 处理 CT/MRI 扫描)
             # 7. GroupNorm 的等价极端情况 (Edge Cases)
             (
                 (8, 64, 112, 112),

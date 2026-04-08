@@ -11,7 +11,9 @@ from flag_dnn.utils import shape_utils
 
 
 def torch_max_pool1d(x, kernel_size, stride, padding):
-    return F.max_pool1d(x, kernel_size=kernel_size, stride=stride, padding=padding)
+    return F.max_pool1d(
+        x, kernel_size=kernel_size, stride=stride, padding=padding
+    )
 
 
 def gems_max_pool1d_wrapper(x, kernel_size, stride, padding):
@@ -73,7 +75,9 @@ class MaxPool1dBenchmark(Benchmark):
         # 输出的 numel = Batch * Channels * L_out
         out_numel = inp.shape[0] * inp.shape[1] * L_out
 
-        io_amount = shape_utils.size_in_bytes(inp) + (out_numel * inp.element_size())
+        io_amount = (
+            shape_utils.size_in_bytes(inp) + out_numel * inp.element_size()
+        )
         return io_amount * 1e-9 / (latency * 1e-3)
 
 

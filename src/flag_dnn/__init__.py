@@ -143,10 +143,16 @@ class use_dnn:
     When 'include' is not None, use_dnn will not process 'exclude'.
     """
 
-    def __init__(self, exclude=None, include=None, record=False, once=False, path=None):
+    def __init__(
+        self, exclude=None, include=None, record=False, once=False, path=None
+    ):
         self.lib = torch.library.Library("aten", "IMPL")
-        self.exclude = exclude if isinstance(exclude, (list, tuple, set, str)) else []
-        self.include = include if isinstance(include, (list, tuple, set, str)) else []
+        self.exclude = (
+            exclude if isinstance(exclude, (list, tuple, set, str)) else []
+        )
+        self.include = (
+            include if isinstance(include, (list, tuple, set, str)) else []
+        )
         self.registrar = Register
         self.record = record
         self.once = once

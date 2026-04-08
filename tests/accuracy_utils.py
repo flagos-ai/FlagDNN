@@ -127,12 +127,25 @@ UT_SHAPES_2D = list(itertools.product(sizes_2d_nr, sizes_2d_nc))
 POINTWISE_SHAPES = (
     [(2, 19, 7)]
     if QUICK_MODE
-    else [(), (1,), (1024, 1024), (20, 320, 15), (16, 128, 64, 60), (16, 7, 57, 32, 29)]
+    else [
+        (),
+        (1,),
+        (1024, 1024),
+        (20, 320, 15),
+        (16, 128, 64, 60),
+        (16, 7, 57, 32, 29),
+    ]
 )
 SPECIAL_SHAPES = (
     [(2, 19, 7)]
     if QUICK_MODE
-    else [(1,), (1024, 1024), (20, 320, 15), (16, 128, 64, 1280), (16, 7, 57, 32, 29)]
+    else [
+        (1,),
+        (1024, 1024),
+        (20, 320, 15),
+        (16, 128, 64, 1280),
+        (16, 7, 57, 32, 29),
+    ]
 )
 
 FP8_QUANT_SHAPES = {
@@ -144,7 +157,9 @@ FP8_QUANT_SHAPES = {
 }
 
 DISTRIBUTION_SHAPES = [(20, 320, 15)]
-REDUCTION_SHAPES = [(2, 32)] if QUICK_MODE else [(1, 2), (4096, 256), (200, 40999, 3)]
+REDUCTION_SHAPES = (
+    [(2, 32)] if QUICK_MODE else [(1, 2), (4096, 256), (200, 40999, 3)]
+)
 REDUCTION_SMALL_SHAPES = (
     [(1, 32)] if QUICK_MODE else [(1, 2), (4096, 256), (200, 2560, 3)]
 )
@@ -260,9 +275,13 @@ FLOAT_DTYPES = (
     else PRIMARY_FLOAT_DTYPES
 )
 
-ALL_FLOAT_DTYPES = FLOAT_DTYPES + [torch.float64] if fp64_is_supported else FLOAT_DTYPES
+ALL_FLOAT_DTYPES = (
+    FLOAT_DTYPES + [torch.float64] if fp64_is_supported else FLOAT_DTYPES
+)
 INT_DTYPES = [torch.int16, torch.int32]
-ALL_INT_DTYPES = INT_DTYPES + [torch.int64] if int64_is_supported else INT_DTYPES
+ALL_INT_DTYPES = (
+    INT_DTYPES + [torch.int64] if int64_is_supported else INT_DTYPES
+)
 BOOL_TYPES = [torch.bool]
 COMPLEX_DTYPES = [torch.complex32, torch.complex64]
 
@@ -287,13 +306,19 @@ def to_reference(inp, upcast=False):
 
 
 def to_cpu(res, ref):
-    if TO_CPU and isinstance(res, torch.Tensor) and isinstance(ref, torch.Tensor):
+    if (
+        TO_CPU
+        and isinstance(res, torch.Tensor)
+        and isinstance(ref, torch.Tensor)
+    ):
         res = res.to("cpu")
         assert ref.device == torch.device("cpu")
     return res
 
 
-def gems_assert_close(res, ref, dtype, equal_nan=False, reduce_dim=1, atol=1e-4):
+def gems_assert_close(
+    res, ref, dtype, equal_nan=False, reduce_dim=1, atol=1e-4
+):
     res = to_cpu(res, ref)
     flag_dnn.testing.assert_close(
         res, ref, dtype, equal_nan=equal_nan, reduce_dim=reduce_dim, atol=atol

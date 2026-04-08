@@ -126,8 +126,22 @@ def clamp_broadcast_tensor_kernel(
     idx0 = rem1 // s1
 
     # 计算物理偏移并加载数据
-    x_off = idx0 * sx0 + idx1 * sx1 + idx2 * sx2 + idx3 * sx3 + idx4 * sx4 + idx5 * sx5
-    y_off = idx0 * sy0 + idx1 * sy1 + idx2 * sy2 + idx3 * sy3 + idx4 * sy4 + idx5 * sy5
+    x_off = (
+        idx0 * sx0
+        + idx1 * sx1
+        + idx2 * sx2
+        + idx3 * sx3
+        + idx4 * sx4
+        + idx5 * sx5
+    )
+    y_off = (
+        idx0 * sy0
+        + idx1 * sy1
+        + idx2 * sy2
+        + idx3 * sy3
+        + idx4 * sy4
+        + idx5 * sy5
+    )
 
     x = tl.load(x_ptr + x_off, mask=mask)
     # 统一转换到 float32 进行数值比较，防止低精度截断

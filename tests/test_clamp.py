@@ -70,13 +70,18 @@ def test_accuracy_clamp_mixed_values(dtype, shape, min_val, max_val):
     "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
 )
 @pytest.mark.parametrize("shape", SHAPES)
-@pytest.mark.parametrize("min_val, max_val", [(0.1, 0.5), (0.5, None), (None, 0.2)])
+@pytest.mark.parametrize(
+    "min_val, max_val", [(0.1, 0.5), (0.5, None), (None, 0.2)]
+)
 def test_accuracy_clamp_positive_values(dtype, shape, min_val, max_val):
     """细粒度测试：纯正数的情况"""
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
 
-    x = torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device)) + 0.1
+    x = (
+        torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device))
+        + 0.1
+    )
 
     rtol, atol = _get_tolerances(dtype)
     ref_out = torch.clamp(x, min=min_val, max=max_val)
@@ -91,13 +96,18 @@ def test_accuracy_clamp_positive_values(dtype, shape, min_val, max_val):
     "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
 )
 @pytest.mark.parametrize("shape", SHAPES)
-@pytest.mark.parametrize("min_val, max_val", [(-0.5, -0.1), (-0.5, None), (None, -0.2)])
+@pytest.mark.parametrize(
+    "min_val, max_val", [(-0.5, -0.1), (-0.5, None), (None, -0.2)]
+)
 def test_accuracy_clamp_negative_values(dtype, shape, min_val, max_val):
     """细粒度测试：纯负数的情况"""
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
 
-    x = -torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device)) - 0.1
+    x = (
+        -torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device))
+        - 0.1
+    )
 
     rtol, atol = _get_tolerances(dtype)
     ref_out = torch.clamp(x, min=min_val, max=max_val)

@@ -95,14 +95,18 @@ def broadcast_shapes(shapes: Iterable[Shape]) -> Shape:
     return shape
 
 
-def broadcasted_stride(shape: Shape, stride: Stride, new_shape: Shape) -> Stride:
+def broadcasted_stride(
+    shape: Shape, stride: Stride, new_shape: Shape
+) -> Stride:
     assert broadcastable_to(shape, new_shape)
     r1 = len(shape)
     r2 = len(new_shape)
     d = r2 - r1
     new_stride = [0 for _ in range(r2)]
     for i in range(r1):
-        new_stride[d + i] = 0 if (shape[i] == 1 and new_shape[d + i] > 1) else stride[i]
+        new_stride[d + i] = (
+            0 if (shape[i] == 1 and new_shape[d + i] > 1) else stride[i]
+        )
     return tuple(new_stride)
 
 

@@ -20,16 +20,22 @@ PARAMS = [
 )
 @pytest.mark.parametrize("shape, output_size", PARAMS)
 @pytest.mark.parametrize("return_indices", [False, True])
-def test_accuracy_adaptive_max_pool2d(dtype, shape, output_size, return_indices):
+def test_accuracy_adaptive_max_pool2d(
+    dtype, shape, output_size, return_indices
+):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
 
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
     # MaxPool 本身不做乘加，直接比较，所以可以要求绝对的零误差
-    ref_out = F.adaptive_max_pool2d(x, output_size, return_indices=return_indices)
+    ref_out = F.adaptive_max_pool2d(
+        x, output_size, return_indices=return_indices
+    )
     with flag_dnn.use_dnn():
-        out = F.adaptive_max_pool2d(x, output_size, return_indices=return_indices)
+        out = F.adaptive_max_pool2d(
+            x, output_size, return_indices=return_indices
+        )
 
     if return_indices:
         ref_y, ref_idx = ref_out

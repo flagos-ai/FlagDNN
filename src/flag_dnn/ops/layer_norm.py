@@ -67,11 +67,15 @@ def layer_norm_kernel(
 
         # 仿射变换
         if HAS_WEIGHT:
-            weight = tl.load(weight_ptr + cols, mask=mask, other=0.0).to(tl.float32)
+            weight = tl.load(weight_ptr + cols, mask=mask, other=0.0).to(
+                tl.float32
+            )
             x_hat = x_hat * weight
 
         if HAS_BIAS:
-            bias = tl.load(bias_ptr + cols, mask=mask, other=0.0).to(tl.float32)
+            bias = tl.load(bias_ptr + cols, mask=mask, other=0.0).to(
+                tl.float32
+            )
             x_hat = x_hat + bias
 
         y = x_hat.to(x_ptr.dtype.element_ty)

@@ -5,4 +5,6 @@ try:
 except AttributeError:
     import triton
 
-    get_device_properties = triton.runtime.driver.active.utils.get_device_properties
+    get_device_properties = (
+        triton.runtime.driver.active.utils.get_device_properties
+    )

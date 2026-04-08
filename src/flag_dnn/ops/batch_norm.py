@@ -43,9 +43,15 @@ def batch_norm_inference_kernel(
     mean = tl.load(mean_ptr + c_idx, mask=mask).to(tl.float32)
     var = tl.load(var_ptr + c_idx, mask=mask).to(tl.float32)
     weight = (
-        tl.load(weight_ptr + c_idx, mask=mask).to(tl.float32) if HAS_WEIGHT else 1.0
+        tl.load(weight_ptr + c_idx, mask=mask).to(tl.float32)
+        if HAS_WEIGHT
+        else 1.0
     )
-    bias = tl.load(bias_ptr + c_idx, mask=mask).to(tl.float32) if HAS_BIAS else 0.0
+    bias = (
+        tl.load(bias_ptr + c_idx, mask=mask).to(tl.float32)
+        if HAS_BIAS
+        else 0.0
+    )
 
     rstd = 1.0 / tl.sqrt(var + eps)
     y = (x - mean) * rstd * weight + bias
@@ -210,7 +216,9 @@ def batch_norm(
     with torch_device_fn.device(input.device):
         if not training:
             # 根据总元素数计算一维 Grid 大小
-            grid = lambda meta: (triton.cdiv(total_elements, meta["BLOCK_SIZE"]),)
+            grid = lambda meta: (
+                triton.cdiv(total_elements, meta["BLOCK_SIZE"]),
+            )
 
             batch_norm_inference_kernel[grid](
                 input,

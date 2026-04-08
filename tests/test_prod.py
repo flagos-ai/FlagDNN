@@ -71,9 +71,14 @@ def test_accuracy_prod(dtype, shape, dim, keepdim):
 def test_accuracy_prod_dtype_promotion(input_dtype, out_dtype):
     """测试带有 dtype 参数的计算，防止数据类型溢出"""
     if input_dtype.is_floating_point:
-        x = torch.randn((10, 20), dtype=input_dtype, device=flag_dnn.device) * 0.5
+        x = (
+            torch.randn((10, 20), dtype=input_dtype, device=flag_dnn.device)
+            * 0.5
+        )
     else:
-        x = torch.randint(-2, 3, (10, 20), dtype=input_dtype, device=flag_dnn.device)
+        x = torch.randint(
+            -2, 3, (10, 20), dtype=input_dtype, device=flag_dnn.device
+        )
 
     ref_out = torch.prod(x, dim=1, dtype=out_dtype)
     with flag_dnn.use_dnn():

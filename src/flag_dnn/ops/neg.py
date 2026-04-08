@@ -43,7 +43,9 @@ def neg_kernel(
     tl.store(out_ptr + offsets, res.to(out_ptr.dtype.element_ty), mask=mask)
 
 
-def neg(input: torch.Tensor, *, out: Optional[torch.Tensor] = None) -> torch.Tensor:
+def neg(
+    input: torch.Tensor, *, out: Optional[torch.Tensor] = None
+) -> torch.Tensor:
     logger.debug("FLAG_DNN NEG")
 
     if not input.is_contiguous():

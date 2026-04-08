@@ -57,7 +57,9 @@ def test_accuracy_mean_with_out_param():
 
     # 预先分配好一个符合预期的 out tensor
     ref_out = torch.empty((10,), dtype=torch.float32, device=flag_dnn.device)
-    custom_out = torch.empty((10,), dtype=torch.float32, device=flag_dnn.device)
+    custom_out = torch.empty(
+        (10,), dtype=torch.float32, device=flag_dnn.device
+    )
 
     # 填充一些脏数据验证是否会被覆盖
     custom_out.fill_(-999.0)
@@ -82,7 +84,9 @@ def test_accuracy_mean_dtype_promotion(input_dtype, out_dtype):
     if input_dtype.is_floating_point:
         x = torch.randn((10, 20), dtype=input_dtype, device=flag_dnn.device)
     else:
-        x = torch.randint(-10, 10, (10, 20), dtype=input_dtype, device=flag_dnn.device)
+        x = torch.randint(
+            -10, 10, (10, 20), dtype=input_dtype, device=flag_dnn.device
+        )
 
     ref_out = torch.mean(x, dim=1, dtype=out_dtype)
     with flag_dnn.use_dnn():

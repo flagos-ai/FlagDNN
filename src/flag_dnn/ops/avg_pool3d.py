@@ -52,7 +52,8 @@ def avg_pool3d_gap_kernel(
     avg_val = total_sum / divisor
 
     tl.store(
-        y_ptr + pid + tl.zeros([1], dtype=tl.int32), avg_val.to(x_ptr.dtype.element_ty)
+        y_ptr + pid + tl.zeros([1], dtype=tl.int32),
+        avg_val.to(x_ptr.dtype.element_ty),
     )
 
 
@@ -126,13 +127,18 @@ def avg_pool3d_kernel_1d(
                 iw = w_start + kw
 
                 valid = (
-                    (id_ >= 0) & (id_ < D) & (ih >= 0) & (ih < H) & (iw >= 0) & (iw < W)
+                    (id_ >= 0)
+                    & (id_ < D)
+                    & (ih >= 0)
+                    & (ih < H)
+                    & (iw >= 0)
+                    & (iw < W)
                 )
                 load_idx = x_base_idx + id_ * (H * W) + ih * W + iw
 
-                val = tl.load(x_ptr + load_idx, mask=mask & valid, other=0.0).to(
-                    ACC_DTYPE
-                )
+                val = tl.load(
+                    x_ptr + load_idx, mask=mask & valid, other=0.0
+                ).to(ACC_DTYPE)
                 sum_val += val
 
     if HAS_DIVISOR_OVERRIDE:
@@ -240,7 +246,12 @@ def avg_pool3d_kernel_2d(
                 iw = w_start + kw
 
                 valid = (
-                    (id_ >= 0) & (id_ < D) & (ih >= 0) & (ih < H) & (iw >= 0) & (iw < W)
+                    (id_ >= 0)
+                    & (id_ < D)
+                    & (ih >= 0)
+                    & (ih < H)
+                    & (iw >= 0)
+                    & (iw < W)
                 )
                 load_idx = id_ * (H * W) + ih * W + iw
 
@@ -284,7 +295,9 @@ def avg_pool3d_kernel_2d(
     avg_val = sum_val / divisor
 
     tl.store(
-        y_ptr + y_base_idx + offsets, avg_val.to(x_ptr.dtype.element_ty), mask=mask
+        y_ptr + y_base_idx + offsets,
+        avg_val.to(x_ptr.dtype.element_ty),
+        mask=mask,
     )
 
 
@@ -308,7 +321,10 @@ def avg_pool3d(
     stride = _triple(stride) if stride is not None else kernel_size
     padding = _triple(padding)
 
-    assert input.ndim in [4, 5], "Input must be 4D (C, D, H, W) or 5D (N, C, D, H, W)"
+    assert input.ndim in [
+        4,
+        5,
+    ], "Input must be 4D (C, D, H, W) or 5D (N, C, D, H, W)"
     is_4d = input.ndim == 4
     if is_4d:
         input = input.unsqueeze(0)
@@ -371,15 +387,27 @@ def avg_pool3d(
                 )
                 gap_divisor = pool_d * pool_h * pool_w
             else:
-                valid_d = min(-padding[0] + kernel_size[0], D) - max(-padding[0], 0)
-                valid_h = min(-padding[1] + kernel_size[1], H) - max(-padding[1], 0)
-                valid_w = min(-padding[2] + kernel_size[2], W) - max(-padding[2], 0)
+                valid_d = min(-padding[0] + kernel_size[0], D) - max(
+                    -padding[0], 0
+                )
+                valid_h = min(-padding[1] + kernel_size[1], H) - max(
+                    -padding[1], 0
+                )
+                valid_w = min(-padding[2] + kernel_size[2], W) - max(
+                    -padding[2], 0
+                )
                 gap_divisor = valid_d * valid_h * valid_w
 
             grid_gap = lambda meta: (N * C,)
             spatial_size = D * H * W
             avg_pool3d_gap_kernel[grid_gap](
-                input, y, N, C, spatial_size, DIVISOR=gap_divisor, ACC_DTYPE=acc_dtype
+                input,
+                y,
+                N,
+                C,
+                spatial_size,
+                DIVISOR=gap_divisor,
+                ACC_DTYPE=acc_dtype,
             )
         elif OD * OH * OW <= 64:
             grid_1d = lambda meta: (triton.cdiv(M, meta["BLOCK_SIZE"]),)

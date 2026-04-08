@@ -37,7 +37,9 @@ def test_accuracy_rms_norm(dtype, shape, normalized_shape, elementwise_affine):
 
     weight = None
     if elementwise_affine:
-        weight = torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device)
+        weight = torch.randn(
+            normalized_shape, dtype=dtype, device=flag_dnn.device
+        )
 
     # PyTorch 官方 API 调用
     ref_y = F.rms_norm(x, normalized_shape, weight=weight)
@@ -71,7 +73,9 @@ def test_accuracy_rms_norm_empty_tensor(dtype, elementwise_affine):
 
     weight = None
     if elementwise_affine:
-        weight = torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device)
+        weight = torch.randn(
+            normalized_shape, dtype=dtype, device=flag_dnn.device
+        )
 
     ref_y = F.rms_norm(x, normalized_shape, weight=weight)
     with flag_dnn.use_dnn():
@@ -98,9 +102,15 @@ def test_accuracy_rms_norm_large_values(dtype, elementwise_affine):
     # 相比于 LayerNorm 的均值平移，RMSNorm 对大数值的平方和极度敏感
     # 在 FP16/BF16 下更容易溢出，因此需严控数据范围
     if dtype in [torch.float16, torch.bfloat16]:
-        x = torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 5.0 + 20.0
+        x = (
+            torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 5.0
+            + 20.0
+        )
     else:
-        x = torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 100.0 + 1000.0
+        x = (
+            torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 100.0
+            + 1000.0
+        )
 
     if dtype == torch.bfloat16:
         rtol, atol = 5e-2, 5e-2  # BF16 宽容度加大
@@ -113,11 +123,16 @@ def test_accuracy_rms_norm_large_values(dtype, elementwise_affine):
     if elementwise_affine:
         if dtype in [torch.float16, torch.bfloat16]:
             weight = (
-                torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device) * 2.0
+                torch.randn(
+                    normalized_shape, dtype=dtype, device=flag_dnn.device
+                )
+                * 2.0
             )
         else:
             weight = (
-                torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device)
+                torch.randn(
+                    normalized_shape, dtype=dtype, device=flag_dnn.device
+                )
                 * 10.0
             )
 
@@ -152,7 +167,9 @@ def test_accuracy_rms_norm_mixed_values(dtype, elementwise_affine):
 
     weight = None
     if elementwise_affine:
-        weight = torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device)
+        weight = torch.randn(
+            normalized_shape, dtype=dtype, device=flag_dnn.device
+        )
 
     ref_y = F.rms_norm(x, normalized_shape, weight=weight)
     with flag_dnn.use_dnn():

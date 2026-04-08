@@ -93,7 +93,10 @@ def parse_perf_output(stdout_text):
                         "speedup": float(parts[3]),
                     }
                     # 如果日志中有 GBPS 数据，也一并提取
-                    if len(parts) >= 6 and parts[4].replace(".", "", 1).isdigit():
+                    if (
+                        len(parts) >= 6
+                        and parts[4].replace(".", "", 1).isdigit()
+                    ):
                         record["torch_gbps"] = float(parts[4])
                         record["gems_gbps"] = float(parts[5])
 
@@ -112,7 +115,9 @@ def main():
     os.makedirs(LOG_DIR, exist_ok=True)
 
     # 收集并过滤测试文件
-    all_test_files = sorted(glob.glob(os.path.join(TEST_DIR, "test_*_perf.py")))
+    all_test_files = sorted(
+        glob.glob(os.path.join(TEST_DIR, "test_*_perf.py"))
+    )
     if not all_test_files:
         print(f"未在 {TEST_DIR} 目录下找到任何 test_*_perf.py 文件。")
         return
@@ -129,10 +134,14 @@ def main():
         print("🔍 未设置过滤，将执行所有性能测试。")
 
     if not test_files:
-        print("过滤后没有需要执行的测试文件，请检查 TARGET_OPERATORS 是否拼写正确。")
+        print(
+            "过滤后没有需要执行的测试文件，请检查 TARGET_OPERATORS 是否拼写正确。"
+        )
         return
 
-    print(f"🚀 共发现 {len(test_files)} 个待测性能文件，开始提交 yhrun 任务...\n")
+    print(
+        f"🚀 共发现 {len(test_files)} 个待测性能文件，开始提交 yhrun 任务...\n"
+    )
     print("-" * 60)
 
     summary = {
@@ -155,7 +164,9 @@ def main():
         log_file = os.path.join(LOG_DIR, f"{file_name}.log")
 
         print(
-            f"[{idx}/{len(test_files)}] 正在测速: {file_name:<25}", end="", flush=True
+            f"[{idx}/{len(test_files)}] 正在测速: {file_name:<25}",
+            end="",
+            flush=True,
         )
 
         # 构建 yhrun 命令 (这里传的是完整的 file_path，如 benchmark/test_relu_perf.py)
@@ -218,7 +229,9 @@ def main():
         )
 
     # 生成报告与控制台汇总
-    summary["total_duration_seconds"] = round(time.time() - start_time_total, 2)
+    summary["total_duration_seconds"] = round(
+        time.time() - start_time_total, 2
+    )
 
     with open(REPORT_FILE, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=4, ensure_ascii=False)
@@ -232,7 +245,9 @@ def main():
     print(
         f"总计脚本: {summary['total']} | 通过: {summary['passed']} | 异常: {summary['failed'] + summary['errored_or_interrupted']}"
     )
-    print(f"共收集到 {len(all_perf_data)} 条性能数据记录，已保存至 {DATA_FILE}")
+    print(
+        f"共收集到 {len(all_perf_data)} 条性能数据记录，已保存至 {DATA_FILE}"
+    )
     print(f"总耗时: {summary['total_duration_seconds']} 秒")
 
 

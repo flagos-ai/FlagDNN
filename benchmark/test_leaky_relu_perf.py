@@ -1,6 +1,5 @@
 from typing import Generator
 
-import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F
@@ -56,7 +55,9 @@ class LeakyReluBenchmark(Benchmark):
     def get_gbps(self, args, latency):
         inp1 = args[0]
         # Leaky ReLU 是 Element-wise 操作，读取一次输入，写入一次输出
-        io_amount = shape_utils.size_in_bytes(inp1) + shape_utils.size_in_bytes(inp1)
+        io_amount = shape_utils.size_in_bytes(
+            inp1
+        ) + shape_utils.size_in_bytes(inp1)
         return io_amount * 1e-9 / (latency * 1e-3)
 
 

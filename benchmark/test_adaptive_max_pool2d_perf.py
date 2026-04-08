@@ -65,9 +65,13 @@ class AdaptiveMaxPool2dBenchmark(Benchmark):
 
         # 对于 Adaptive Max Pool 2D, 输出的空间维度是 output_size (oH, oW)
         # inp.shape[0] 是 N (batch), inp.shape[1] 是 C (channel)
-        out_numel = inp.shape[0] * inp.shape[1] * output_size[0] * output_size[1]
+        out_numel = (
+            inp.shape[0] * inp.shape[1] * output_size[0] * output_size[1]
+        )
 
-        io_amount = shape_utils.size_in_bytes(inp) + (out_numel * inp.element_size())
+        io_amount = shape_utils.size_in_bytes(inp) + (
+            out_numel * inp.element_size()
+        )
         return io_amount * 1e-9 / (latency * 1e-3)
 
 

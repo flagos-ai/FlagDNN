@@ -86,7 +86,9 @@ def test_accuracy_avg_pool2d_empty_tensor(dtype):
 
 
 @pytest.mark.avg_pool2d
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float16, torch.bfloat16]
+)
 def test_accuracy_avg_pool2d_large_values(dtype):
     # 测试大数值累加是否会因为溢出导致结果不一致
     shape = (2, 3, 32, 32)
@@ -109,7 +111,9 @@ def test_accuracy_avg_pool2d_large_values(dtype):
 
 
 @pytest.mark.avg_pool2d
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float16, torch.bfloat16]
+)
 def test_accuracy_avg_pool2d_mixed_values(dtype):
     # 测试大数吃小数（极端比例混合）时的精度表现
     shape = (2, 3, 32, 32)

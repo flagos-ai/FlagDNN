@@ -65,7 +65,9 @@ def rms_norm_kernel(
 
         # 权重缩放 (如果传入了 weight)
         if HAS_WEIGHT:
-            weight = tl.load(weight_ptr + cols, mask=mask, other=0.0).to(tl.float32)
+            weight = tl.load(weight_ptr + cols, mask=mask, other=0.0).to(
+                tl.float32
+            )
             x_hat = x_hat * weight
 
         y = x_hat.to(x_ptr.dtype.element_ty)
@@ -115,6 +117,8 @@ def rms_norm(
     grid = (M,)
 
     with torch_device_fn.device(input.device):
-        rms_norm_kernel[grid](input, y, weight_ptr, M, N, eps, HAS_WEIGHT=has_weight)
+        rms_norm_kernel[grid](
+            input, y, weight_ptr, M, N, eps, HAS_WEIGHT=has_weight
+        )
 
     return y

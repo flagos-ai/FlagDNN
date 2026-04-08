@@ -11,7 +11,9 @@ from flag_dnn.utils import shape_utils
 
 
 def torch_avg_pool3d(x, kernel_size, stride, padding):
-    return F.avg_pool3d(x, kernel_size=kernel_size, stride=stride, padding=padding)
+    return F.avg_pool3d(
+        x, kernel_size=kernel_size, stride=stride, padding=padding
+    )
 
 
 def gems_avg_pool3d_wrapper(x, kernel_size, stride, padding):
@@ -36,7 +38,8 @@ class AvgPool3dBenchmark(Benchmark):
         return ["gbps"]
 
     def set_more_shapes(self):
-        # 针对 3D Avg Pooling 定制的典型测试集。输入格式为 (Batch, Channels, Depth, Height, Width)
+        # 针对 3D Avg Pooling 定制的典型测试集。
+        # 输入格式为 (Batch, Channels, Depth, Height, Width)
         # 配置格式为: (shape, kernel_size, stride, padding)
         configs = [
             # 1. 3D 全局平均池化 (GAP，常见于 3D ResNet 分类头)
@@ -87,7 +90,9 @@ class AvgPool3dBenchmark(Benchmark):
         # 输出的 numel = Batch * Channels * D_out * H_out * W_out
         out_numel = inp.shape[0] * inp.shape[1] * D_out * H_out * W_out
 
-        io_amount = shape_utils.size_in_bytes(inp) + (out_numel * inp.element_size())
+        io_amount = (
+            shape_utils.size_in_bytes(inp) + out_numel * inp.element_size()
+        )
         return io_amount * 1e-9 / (latency * 1e-3)
 
 

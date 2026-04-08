@@ -63,7 +63,9 @@ def global_max_pool1d_kernel(
         # 利用 mask 提取对应的真实全局索引
         extract_mask = tl.arange(0, BLOCK_SIZE) == local_argmax
         zero_tensor = tl.full([BLOCK_SIZE], 0, dtype=tl.int64)
-        best_idx = tl.sum(tl.where(extract_mask, max_idxs, zero_tensor), axis=0)
+        best_idx = tl.sum(
+            tl.where(extract_mask, max_idxs, zero_tensor), axis=0
+        )
 
         tl.store(idx_ptr + nc_idx, best_idx)
 
@@ -167,7 +169,9 @@ def adaptive_max_pool1d(
     indices = None
     idx_ptr = input
     if return_indices:
-        indices = torch.empty((N, C, OW), dtype=torch.int64, device=input.device)
+        indices = torch.empty(
+            (N, C, OW), dtype=torch.int64, device=input.device
+        )
         idx_ptr = indices
 
     M = N * C * OW

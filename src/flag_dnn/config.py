@@ -62,7 +62,9 @@ def load_enable_config_from_yaml(yaml_path, key="include"):
     """
     yaml_path = Path(yaml_path)
     if not yaml_path.is_file():
-        warnings.warn(f"load_enable_config_from_yaml: yaml not found: {yaml_path}")
+        warnings.warn(
+            f"load_enable_config_from_yaml: yaml not found: {yaml_path}"
+        )
         return []
 
     try:
@@ -141,7 +143,9 @@ def resolve_user_setting(user_setting_info, user_setting_type="include"):
 
     # Iterate through candidate YAML paths and try to load the operator list
     for yaml_path in yaml_candidates:
-        operator_list = load_enable_config_from_yaml(yaml_path, user_setting_type)
+        operator_list = load_enable_config_from_yaml(
+            yaml_path, user_setting_type
+        )
         if operator_list:
             return operator_list
         else:

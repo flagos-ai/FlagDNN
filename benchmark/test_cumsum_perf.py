@@ -62,7 +62,9 @@ class CumsumBenchmark(Benchmark):
         # cumsum 输出大小和输入大小完全一致
         out_numel = inp.numel()
 
-        io_amount = shape_utils.size_in_bytes(inp) + (out_numel * inp.element_size())
+        io_amount = (
+            shape_utils.size_in_bytes(inp) + out_numel * inp.element_size()
+        )
         return io_amount * 1e-9 / (latency * 1e-3)
 
 

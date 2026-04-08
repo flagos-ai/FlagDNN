@@ -52,7 +52,9 @@ class BenchConfig:
         self.record_log = False
         self.user_desired_dtypes = None
         self.user_desired_metrics = None
-        self.shape_file = os.path.join(os.path.dirname(__file__), "core_shapes.yaml")
+        self.shape_file = os.path.join(
+            os.path.dirname(__file__), "core_shapes.yaml"
+        )
         self.query = False
 
 
@@ -163,7 +165,11 @@ def pytest_configure(config):
     Config.repetition = int(iter_value)
 
     types_str = config.getoption("--dtypes")
-    dtypes = [getattr(torch, dtype) for dtype in types_str] if types_str else types_str
+    dtypes = (
+        [getattr(torch, dtype) for dtype in types_str]
+        if types_str
+        else types_str
+    )
     Config.user_desired_dtypes = dtypes
 
     metrics = config.getoption("--metrics")
@@ -179,7 +185,9 @@ def pytest_configure(config):
             for arg in config.invocation_params.args
         ]
 
-        log_file = "result_{}.log".format("_".join(cmd_args)).replace("_-", "-")
+        log_file = "result_{}.log".format("_".join(cmd_args)).replace(
+            "_-", "-"
+        )
 
         for h in list(recordLogger.handlers):
             recordLogger.removeHandler(h)
@@ -190,7 +198,9 @@ def pytest_configure(config):
 
                 warnings.warn(f"Failed to close handler: {e}")
 
-        handler = logging.FileHandler(log_file, mode="w", encoding="utf-8", delay=False)
+        handler = logging.FileHandler(
+            log_file, mode="w", encoding="utf-8", delay=False
+        )
         handler.setLevel(logging.INFO)
         handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
         recordLogger.addHandler(handler)
@@ -246,7 +256,9 @@ def extract_and_log_op_attributes(request):
             continue
         op_specified_shapes = mark.kwargs.get("recommended_shapes")
         shape_desc = mark.kwargs.get("shape_desc", "M, N")
-        rec_core_shapes = get_recommended_shapes(mark.name, op_specified_shapes)
+        rec_core_shapes = get_recommended_shapes(
+            mark.name, op_specified_shapes
+        )
 
         if rec_core_shapes:
             attri = OperationAttribute(

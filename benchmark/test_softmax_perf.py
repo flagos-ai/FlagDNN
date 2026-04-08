@@ -46,7 +46,12 @@ class SoftmaxBenchmark(Benchmark):
             (4, 32, 4096, 4096),  # LLM 4K Context 注意力
             (1, 32, 8192, 8192),  # LLM 8K 长文本 注意力 (重点考验极限归约能力)
             # 5. 极端长序列/极限压力测试
-            (2, 8, 32768, 32768),  # 32K 超长上下文的单次 Attention 矩阵理论大小
+            (
+                2,
+                8,
+                32768,
+                32768,
+            ),  # 32K 超长上下文的单次 Attention 矩阵理论大小
         ]
         self.shapes = shapes
         return None
@@ -78,7 +83,9 @@ class SoftmaxBenchmark(Benchmark):
 
         # 优秀的 Online Softmax Kernel 会融合操作，实现一次读取、一次写入
         # GBPS = (读入 x + 写出 y) / 延迟
-        io_amount = shape_utils.size_in_bytes(inp1) + shape_utils.size_in_bytes(inp1)
+        io_amount = shape_utils.size_in_bytes(
+            inp1
+        ) + shape_utils.size_in_bytes(inp1)
         return io_amount * 1e-9 / (latency * 1e-3)
 
 

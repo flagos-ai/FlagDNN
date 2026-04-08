@@ -84,7 +84,12 @@ def max_pool3d_kernel_1d(
                 iw = w_start + kw * DIL_W
 
                 valid = (
-                    (id_ >= 0) & (id_ < D) & (ih >= 0) & (ih < H) & (iw >= 0) & (iw < W)
+                    (id_ >= 0)
+                    & (id_ < D)
+                    & (ih >= 0)
+                    & (ih < H)
+                    & (iw >= 0)
+                    & (iw < W)
                 )
                 load_idx = x_base_idx + id_ * (H * W) + ih * W + iw
 
@@ -172,7 +177,12 @@ def max_pool3d_kernel_2d(
                 iw = w_start + kw * DIL_W
 
                 valid = (
-                    (id_ >= 0) & (id_ < D) & (ih >= 0) & (ih < H) & (iw >= 0) & (iw < W)
+                    (id_ >= 0)
+                    & (id_ < D)
+                    & (ih >= 0)
+                    & (ih < H)
+                    & (iw >= 0)
+                    & (iw < W)
                 )
                 load_idx = id_ * (H * W) + ih * W + iw
 
@@ -189,7 +199,9 @@ def max_pool3d_kernel_2d(
                     max_idx = tl.where(update_mask, load_idx, max_idx)
 
     tl.store(
-        y_ptr + y_base_idx + offsets, max_val.to(x_ptr.dtype.element_ty), mask=mask
+        y_ptr + y_base_idx + offsets,
+        max_val.to(x_ptr.dtype.element_ty),
+        mask=mask,
     )
     if RETURN_INDICES:
         tl.store(idx_ptr + y_base_idx + offsets, max_idx, mask=mask)
@@ -216,7 +228,10 @@ def max_pool3d(
     padding = _triple(padding)
     dilation = _triple(dilation)
 
-    assert input.ndim in [4, 5], "Input must be 4D (C, D, H, W) or 5D (N, C, D, H, W)"
+    assert input.ndim in [
+        4,
+        5,
+    ], "Input must be 4D (C, D, H, W) or 5D (N, C, D, H, W)"
     is_4d = input.ndim == 4
     if is_4d:
         input = input.unsqueeze(0)
@@ -227,9 +242,15 @@ def max_pool3d(
         out = (L + 2 * pad - dil * (k - 1) - 1) / s + 1
         return math.ceil(out) if ceil else math.floor(out)
 
-    OD = _out_size(D, padding[0], dilation[0], kernel_size[0], stride[0], ceil_mode)
-    OH = _out_size(H, padding[1], dilation[1], kernel_size[1], stride[1], ceil_mode)
-    OW = _out_size(W, padding[2], dilation[2], kernel_size[2], stride[2], ceil_mode)
+    OD = _out_size(
+        D, padding[0], dilation[0], kernel_size[0], stride[0], ceil_mode
+    )
+    OH = _out_size(
+        H, padding[1], dilation[1], kernel_size[1], stride[1], ceil_mode
+    )
+    OW = _out_size(
+        W, padding[2], dilation[2], kernel_size[2], stride[2], ceil_mode
+    )
 
     if ceil_mode:
         if (OD - 1) * stride[0] >= D + padding[0]:

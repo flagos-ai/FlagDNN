@@ -55,7 +55,9 @@ def test_accuracy_adaptive_avg_pool2d_empty_tensor(dtype):
 
 
 @pytest.mark.adaptive_avg_pool2d
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float16, torch.bfloat16]
+)
 def test_accuracy_adaptive_avg_pool2d_large_values(dtype):
     shape = (2, 3, 32, 32)
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 1000.0
@@ -75,7 +77,9 @@ def test_accuracy_adaptive_avg_pool2d_large_values(dtype):
 
 
 @pytest.mark.adaptive_avg_pool2d
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float16, torch.bfloat16]
+)
 def test_accuracy_adaptive_avg_pool2d_mixed_values(dtype):
     shape = (2, 3, 32, 32)
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)

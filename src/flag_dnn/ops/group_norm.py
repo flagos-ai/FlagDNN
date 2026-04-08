@@ -55,7 +55,9 @@ def group_norm_kernel(
     for offset in range(0, group_size, BLOCK_SIZE):
         cols = offset + tl.arange(0, BLOCK_SIZE)
         mask = cols < group_size
-        x = tl.load(x_ptr + group_base_idx + cols, mask=mask, other=0.0).to(tl.float32)
+        x = tl.load(x_ptr + group_base_idx + cols, mask=mask, other=0.0).to(
+            tl.float32
+        )
         sum_ += tl.sum(x, axis=0)
     mean = sum_ / group_size
 
@@ -64,7 +66,9 @@ def group_norm_kernel(
     for offset in range(0, group_size, BLOCK_SIZE):
         cols = offset + tl.arange(0, BLOCK_SIZE)
         mask = cols < group_size
-        x = tl.load(x_ptr + group_base_idx + cols, mask=mask, other=0.0).to(tl.float32)
+        x = tl.load(x_ptr + group_base_idx + cols, mask=mask, other=0.0).to(
+            tl.float32
+        )
         # 用 mask 屏蔽无效区域的平方和计算
         x_centered = tl.where(mask, x - mean, 0.0)
         var_sum += tl.sum(x_centered * x_centered, axis=0)
@@ -88,10 +92,14 @@ def group_norm_kernel(
             c_idx = c_base + (cols // HxW)
 
             if HAS_WEIGHT:
-                w = tl.load(weight_ptr + c_idx, mask=mask, other=0.0).to(tl.float32)
+                w = tl.load(weight_ptr + c_idx, mask=mask, other=0.0).to(
+                    tl.float32
+                )
                 x_hat = x_hat * w
             if HAS_BIAS:
-                b = tl.load(bias_ptr + c_idx, mask=mask, other=0.0).to(tl.float32)
+                b = tl.load(bias_ptr + c_idx, mask=mask, other=0.0).to(
+                    tl.float32
+                )
                 x_hat = x_hat + b
 
         y = x_hat.to(x_orig.dtype)

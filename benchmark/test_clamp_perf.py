@@ -66,10 +66,14 @@ class ClampBenchmark(Benchmark):
             # 动态计算所需的总显存
             bytes_x = np.prod(shape_x) * element_size
             bytes_min = (
-                np.prod(shape_min) * element_size if shape_min is not None else 0
+                np.prod(shape_min) * element_size
+                if shape_min is not None
+                else 0
             )
             bytes_max = (
-                np.prod(shape_max) * element_size if shape_max is not None else 0
+                np.prod(shape_max) * element_size
+                if shape_max is not None
+                else 0
             )
 
             # 总内存 = x读 + out写 + min读 + max读
@@ -90,7 +94,8 @@ class ClampBenchmark(Benchmark):
             else:
                 # 偏移到负数区间，降低与 max_val 冲突的概率
                 min_val = (
-                    torch.randn(shape_min, dtype=cur_dtype, device=self.device) - 2.0
+                    torch.randn(shape_min, dtype=cur_dtype, device=self.device)
+                    - 2.0
                 )
 
             # 生成 max 参数 (如果 shape 为 None，则给 float 标量)
@@ -99,7 +104,8 @@ class ClampBenchmark(Benchmark):
             else:
                 # 偏移到正数区间
                 max_val = (
-                    torch.randn(shape_max, dtype=cur_dtype, device=self.device) + 2.0
+                    torch.randn(shape_max, dtype=cur_dtype, device=self.device)
+                    + 2.0
                 )
 
             yield (x, min_val, max_val)

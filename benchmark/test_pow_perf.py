@@ -68,9 +68,9 @@ class PowBenchmark(Benchmark):
             x = torch.rand(shape_x, dtype=cur_dtype, device=self.device) + 0.1
 
             # 2. 指数 y 必须受限，防止 fp16 下指数爆炸：将指数控制在 [-2.0, 3.0] 之间
-            y = torch.empty(shape_y, dtype=cur_dtype, device=self.device).uniform_(
-                -2.0, 3.0
-            )
+            y = torch.empty(
+                shape_y, dtype=cur_dtype, device=self.device
+            ).uniform_(-2.0, 3.0)
 
             if x.numel() == 0 or y.numel() == 0:
                 continue
@@ -85,7 +85,9 @@ class PowBenchmark(Benchmark):
         out_bytes = np.prod(out_shape) * x.element_size()
 
         io_amount = (
-            shape_utils.size_in_bytes(x) + shape_utils.size_in_bytes(y) + out_bytes
+            shape_utils.size_in_bytes(x)
+            + shape_utils.size_in_bytes(y)
+            + out_bytes
         )
         return io_amount * 1e-9 / (latency * 1e-3)
 

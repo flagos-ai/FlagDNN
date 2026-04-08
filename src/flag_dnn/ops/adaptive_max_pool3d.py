@@ -71,7 +71,9 @@ def global_max_pool3d_kernel(
         local_argmax = tl.argmax(max_vals, axis=0)
         extract_mask = tl.arange(0, BLOCK_SIZE) == local_argmax
         zero_tensor = tl.full([BLOCK_SIZE], 0, dtype=tl.int64)
-        best_idx = tl.sum(tl.where(extract_mask, max_idxs, zero_tensor), axis=0)
+        best_idx = tl.sum(
+            tl.where(extract_mask, max_idxs, zero_tensor), axis=0
+        )
         tl.store(idx_ptr + nc_idx, best_idx)
 
 
@@ -155,7 +157,9 @@ def adaptive_max_pool3d_kernel(
                 load_idx = x_base_idx + spatial_idx
 
                 val = tl.load(
-                    x_ptr + load_idx, mask=valid_mask & in_window, other=-float("inf")
+                    x_ptr + load_idx,
+                    mask=valid_mask & in_window,
+                    other=-float("inf"),
                 )
 
                 is_new_max = val > max_val
@@ -172,14 +176,19 @@ def adaptive_max_pool3d_kernel(
 
 def adaptive_max_pool3d(
     input: torch.Tensor,
-    output_size: Union[int, Tuple[Optional[int], Optional[int], Optional[int]]],
+    output_size: Union[
+        int, Tuple[Optional[int], Optional[int], Optional[int]]
+    ],
     return_indices: bool = False,
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
     logger.debug(
         f"FLAG_DNN ADAPTIVE_MAX_POOL3D (output_size={output_size}, return_indices={return_indices})"
     )
 
-    assert input.ndim in [4, 5], "Input must be 4D (C, D, H, W) or 5D (N, C, D, H, W)"
+    assert input.ndim in [
+        4,
+        5,
+    ], "Input must be 4D (C, D, H, W) or 5D (N, C, D, H, W)"
     is_4d = input.ndim == 4
     if is_4d:
         input = input.unsqueeze(0)
@@ -189,7 +198,9 @@ def adaptive_max_pool3d(
     if isinstance(output_size, int):
         OD = OH = OW = output_size
     else:
-        assert len(output_size) == 3, "output_size must be an int or a tuple of 3 ints"
+        assert (
+            len(output_size) == 3
+        ), "output_size must be an int or a tuple of 3 ints"
         OD = output_size[0] if output_size[0] is not None else D
         OH = output_size[1] if output_size[1] is not None else H
         OW = output_size[2] if output_size[2] is not None else W

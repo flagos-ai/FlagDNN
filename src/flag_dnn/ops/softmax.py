@@ -130,7 +130,9 @@ def online_softmax_kernel(
 
 
 def softmax(
-    input: torch.Tensor, dim: Optional[int] = None, dtype: Optional[torch.dtype] = None
+    input: torch.Tensor,
+    dim: Optional[int] = None,
+    dtype: Optional[torch.dtype] = None,
 ) -> torch.Tensor:
     logger.debug(f"FLAG_DNN SOFTMAX (dim={dim}, dtype={dtype})")
 

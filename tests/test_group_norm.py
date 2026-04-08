@@ -99,9 +99,15 @@ def test_accuracy_group_norm_large_values(dtype, affine):
 
     # 控制大数值溢出范围
     if dtype in [torch.float16, torch.bfloat16]:
-        x = torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 10.0 + 50.0
+        x = (
+            torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 10.0
+            + 50.0
+        )
     else:
-        x = torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 500.0 + 5000.0
+        x = (
+            torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 500.0
+            + 5000.0
+        )
 
     if dtype == torch.bfloat16:
         rtol, atol = 5e-2, 5e-2

@@ -67,7 +67,10 @@ def gelu(x: torch.Tensor, approximate: str = "none") -> torch.Tensor:
     logger.debug("FLAG_DNN GELU")
 
     assert x.is_contiguous(), "x must be contiguous"
-    assert approximate in ["none", "tanh"], "approximate must be 'none' or 'tanh'"
+    assert approximate in [
+        "none",
+        "tanh",
+    ], "approximate must be 'none' or 'tanh'"
 
     # 预分配输出显存
     y = torch.empty_like(x)

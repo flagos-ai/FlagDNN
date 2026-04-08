@@ -14,7 +14,9 @@ class PersistantModel(object):
         self.lock: Final[threading.Lock] = threading.Lock()
 
     @staticmethod
-    def parse_config(config: triton.Config) -> Dict[str, Union[int, float, str]]:
+    def parse_config(
+        config: triton.Config,
+    ) -> Dict[str, Union[int, float, str]]:
         return {
             k: v
             for k, v in config.all_kwargs().items()

@@ -63,9 +63,9 @@ def max_pool1d_kernel(
         valid = (iw >= 0) & (iw < W)
         load_idx = x_base_idx + iw
 
-        val = tl.load(x_ptr + load_idx, mask=mask & valid, other=-float("inf")).to(
-            tl.float32
-        )
+        val = tl.load(
+            x_ptr + load_idx, mask=mask & valid, other=-float("inf")
+        ).to(tl.float32)
 
         update_mask = val > max_val
         max_val = tl.where(update_mask, val, max_val)
@@ -112,7 +112,9 @@ def max_pool1d(
         out = (L + 2 * pad - dil * (k - 1) - 1) / s + 1
         return math.ceil(out) if ceil else math.floor(out)
 
-    OW = _out_size(W, padding[0], dilation[0], kernel_size[0], stride[0], ceil_mode)
+    OW = _out_size(
+        W, padding[0], dilation[0], kernel_size[0], stride[0], ceil_mode
+    )
 
     # ceil_mode 边缘丢弃
     if ceil_mode:

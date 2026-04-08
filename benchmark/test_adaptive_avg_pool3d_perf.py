@@ -78,7 +78,9 @@ class AdaptiveAvgPool3dBenchmark(Benchmark):
 
         out_numel = inp.shape[0] * inp.shape[1] * out_d * out_h * out_w
 
-        io_amount = shape_utils.size_in_bytes(inp) + (out_numel * inp.element_size())
+        io_amount = shape_utils.size_in_bytes(inp) + (
+            out_numel * inp.element_size()
+        )
         return io_amount * 1e-9 / (latency * 1e-3)
 
 

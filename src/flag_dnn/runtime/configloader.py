@@ -26,7 +26,9 @@ class ConfigLoader(object):
             self.vendor_primitive_yaml_config = self.get_vendor_tune_config()
             self.default_primitive_yaml_config = self.get_default_tune_config()
             self.vendor_heuristics_config = self.get_vendor_heuristics_config()
-            self.default_heuristics_config = self.get_default_heuristics_config()
+            self.default_heuristics_config = (
+                self.get_default_heuristics_config()
+            )
             try:
                 if backend.BackendArchEvent().has_arch:
                     self.arch_specialized_yaml_config = (
@@ -78,7 +80,10 @@ class ConfigLoader(object):
         return backend.get_tune_config(self.device.vendor_name)
 
     def get_heuristics_config(self, op_name):
-        if self.arch_heuristics_config and op_name in self.arch_heuristics_config:
+        if (
+            self.arch_heuristics_config
+            and op_name in self.arch_heuristics_config
+        ):
             return self.arch_heuristics_config[op_name]
         elif op_name in self.vendor_heuristics_config:
             return self.vendor_heuristics_config[op_name]
@@ -198,7 +203,9 @@ class ConfigLoader(object):
             current_config = copy.deepcopy(self.triton_config_default)
             for default_param in current_config:
                 if default_param in single_config:
-                    current_config[default_param] = single_config[default_param]
+                    current_config[default_param] = single_config[
+                        default_param
+                    ]
 
             if self.device.vendor_name in ["hygon"]:
                 configs.append(

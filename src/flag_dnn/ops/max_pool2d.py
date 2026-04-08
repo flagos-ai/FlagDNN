@@ -74,9 +74,9 @@ def max_pool2d_kernel_1d(
             valid = (ih >= 0) & (ih < H) & (iw >= 0) & (iw < W)
             load_idx = x_base_idx + ih * W + iw
 
-            val = tl.load(x_ptr + load_idx, mask=mask & valid, other=-float("inf")).to(
-                tl.float32
-            )
+            val = tl.load(
+                x_ptr + load_idx, mask=mask & valid, other=-float("inf")
+            ).to(tl.float32)
 
             update_mask = val > max_val
             max_val = tl.where(update_mask, val, max_val)
@@ -150,7 +150,9 @@ def max_pool2d_kernel_2d(
             load_idx = ih * W + iw
 
             val = tl.load(
-                x_ptr + x_base_idx + load_idx, mask=mask & valid, other=-float("inf")
+                x_ptr + x_base_idx + load_idx,
+                mask=mask & valid,
+                other=-float("inf"),
             ).to(tl.float32)
 
             update_mask = val > max_val
@@ -161,7 +163,9 @@ def max_pool2d_kernel_2d(
                 max_idx = tl.where(update_mask, current_idx, max_idx)
 
     tl.store(
-        y_ptr + y_base_idx + offsets, max_val.to(x_ptr.dtype.element_ty), mask=mask
+        y_ptr + y_base_idx + offsets,
+        max_val.to(x_ptr.dtype.element_ty),
+        mask=mask,
     )
     if RETURN_INDICES:
         tl.store(idx_ptr + y_base_idx + offsets, max_idx, mask=mask)
@@ -199,8 +203,12 @@ def max_pool2d(
         out = (L + 2 * pad - dil * (k - 1) - 1) / s + 1
         return math.ceil(out) if ceil else math.floor(out)
 
-    OH = _out_size(H, padding[0], dilation[0], kernel_size[0], stride[0], ceil_mode)
-    OW = _out_size(W, padding[1], dilation[1], kernel_size[1], stride[1], ceil_mode)
+    OH = _out_size(
+        H, padding[0], dilation[0], kernel_size[0], stride[0], ceil_mode
+    )
+    OW = _out_size(
+        W, padding[1], dilation[1], kernel_size[1], stride[1], ceil_mode
+    )
 
     if ceil_mode:
         if (OH - 1) * stride[0] >= H + padding[0]:
@@ -252,7 +260,10 @@ def max_pool2d(
             )
         else:
             # 否则使用 2D，严格按空间划分
-            grid_2d = lambda meta: (triton.cdiv(OH * OW, meta["BLOCK_SIZE"]), N * C)
+            grid_2d = lambda meta: (
+                triton.cdiv(OH * OW, meta["BLOCK_SIZE"]),
+                N * C,
+            )
             max_pool2d_kernel_2d[grid_2d](
                 input,
                 y,

@@ -171,8 +171,22 @@ def pow_broadcast_tensor_kernel(
     idx0 = rem1 // s1
 
     # 计算物理偏移并加载数据
-    x_off = idx0 * sx0 + idx1 * sx1 + idx2 * sx2 + idx3 * sx3 + idx4 * sx4 + idx5 * sx5
-    y_off = idx0 * sy0 + idx1 * sy1 + idx2 * sy2 + idx3 * sy3 + idx4 * sy4 + idx5 * sy5
+    x_off = (
+        idx0 * sx0
+        + idx1 * sx1
+        + idx2 * sx2
+        + idx3 * sx3
+        + idx4 * sx4
+        + idx5 * sx5
+    )
+    y_off = (
+        idx0 * sy0
+        + idx1 * sy1
+        + idx2 * sy2
+        + idx3 * sy3
+        + idx4 * sy4
+        + idx5 * sy5
+    )
 
     x = tl.load(x_ptr + x_off, mask=mask)
     y = tl.load(y_ptr + y_off, mask=mask)
@@ -250,7 +264,9 @@ def pow(
             )
 
             # 填充到 6 维
-            f_shape, f_sx, f_sy = pad_to_max_dims(c_shape, c_sx, c_sy, max_dims=6)
+            f_shape, f_sx, f_sy = pad_to_max_dims(
+                c_shape, c_sx, c_sy, max_dims=6
+            )
 
             pow_broadcast_tensor_kernel[grid](
                 input,
@@ -262,8 +278,12 @@ def pow(
                 *f_sy,  # 传入 sy0 到 sy5
             )
         elif input_is_tensor:
-            pow_scalar_exponent_kernel[grid](input, out, n_elements, float(exponent))
+            pow_scalar_exponent_kernel[grid](
+                input, out, n_elements, float(exponent)
+            )
         else:
-            pow_scalar_base_kernel[grid](exponent, out, n_elements, float(input))
+            pow_scalar_base_kernel[grid](
+                exponent, out, n_elements, float(input)
+            )
 
     return out

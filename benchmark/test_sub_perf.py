@@ -77,7 +77,9 @@ class SubBenchmark(Benchmark):
         out_bytes = np.prod(out_shape) * x.element_size()
 
         io_amount = (
-            shape_utils.size_in_bytes(x) + shape_utils.size_in_bytes(y) + out_bytes
+            shape_utils.size_in_bytes(x)
+            + shape_utils.size_in_bytes(y)
+            + out_bytes
         )
         return io_amount * 1e-9 / (latency * 1e-3)
 

@@ -42,15 +42,21 @@ class LayerNormBenchmark(Benchmark):
             ((32, 256, 56, 56), (56, 56)),  # 对空间维度归一化
             # 4. LLM 推理阶段 (Decode Phase)
             # 特点：SeqLen = 1，Batch Size 较大
-            ((128, 1, 4096), (4096,)),  # Llama-7B/8B 或 Qwen-7B 批量生成 (Batch=128)
-            ((256, 1, 2048), (2048,)),  # 较小模型 (如 Gemma-2B) 的高吞吐批量解码
+            ((128, 1, 4096), (4096,)),  # Llama-7B/8B, Qwen-7B
+            (
+                (256, 1, 2048),
+                (2048,),
+            ),  # 较小模型 (如 Gemma-2B) 的高吞吐批量解码
             ((32, 1, 8192), (8192,)),  # Llama-70B 级别大模型的解码
             # 5. 主流开源 LLM / 基础模型 (Prefill / Training 阶段)
             (
                 (4, 8192, 2048),
                 (2048,),
             ),  # 小规模模型长文本预填充 (如 Qwen 1.5B, 8K 上下文)
-            ((2, 32768, 4096), (4096,)),  # 长上下文场景 (如 Llama-3-8B 处理 32K Token)
+            (
+                (2, 32768, 4096),
+                (4096,),
+            ),  # 长上下文场景 (如 Llama-3-8B 处理 32K Token)
             (
                 (1, 128000, 4096),
                 (4096,),
@@ -60,11 +66,11 @@ class LayerNormBenchmark(Benchmark):
             (
                 (16, 256, 1152),
                 (1152,),
-            ),  # DiT-XL (Diffusion Transformer, 如 Sora 的基础架构), 16x16=256 个 Patch
+            ),  # DiT-XL (Diffusion Transformer)
             (
                 (2048, 49, 96),
                 (96,),
-            ),  # Swin Transformer 窗口注意力前置的 LN: (B*NumWindows, WindowArea, C), 7x7窗口
+            ),  # Swin Transformer
             (
                 (32, 56, 56, 96),
                 (96,),

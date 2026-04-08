@@ -21,17 +21,23 @@ PARAMS = [
 )
 @pytest.mark.parametrize("shape, output_size", PARAMS)
 @pytest.mark.parametrize("return_indices", [False, True])
-def test_accuracy_adaptive_max_pool1d(dtype, shape, output_size, return_indices):
+def test_accuracy_adaptive_max_pool1d(
+    dtype, shape, output_size, return_indices
+):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
 
     # 使用 randn 生成测试数据
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
-    ref_out = F.adaptive_max_pool1d(x, output_size, return_indices=return_indices)
+    ref_out = F.adaptive_max_pool1d(
+        x, output_size, return_indices=return_indices
+    )
 
     with flag_dnn.use_dnn():
-        out = F.adaptive_max_pool1d(x, output_size, return_indices=return_indices)
+        out = F.adaptive_max_pool1d(
+            x, output_size, return_indices=return_indices
+        )
 
     # 容差设置：Max Pool 仅拷贝数据无数学运算，因此要求严苛的精确匹配
     rtol, atol = 1e-5, 1e-5

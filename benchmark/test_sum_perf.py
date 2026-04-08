@@ -45,8 +45,16 @@ class SumBenchmark(Benchmark):
             ((1024, 1024), 0, False),  # 考验跨步距 (Strided) 访存
             ((32, 1024, 1024), 0, False),  # Reduce Batch 维度
             # 4. 视觉任务 (CV) 中的典型归约
-            ((32, 256, 56, 56), (2, 3), False),  # 类似全局平均池化 (GAP) 的前置求和
-            ((32, 256, 56, 56), 1, False),  # Reduce 通道维度 (Channel Reduction)
+            (
+                (32, 256, 56, 56),
+                (2, 3),
+                False,
+            ),  # 类似全局平均池化 (GAP) 的前置求和
+            (
+                (32, 256, 56, 56),
+                1,
+                False,
+            ),  # Reduce 通道维度 (Channel Reduction)
             ((1, 16, 2048, 2048), (2, 3), False),  # 高分辨率空间维度归约
             # 5. 保留维度 (keepdim=True) 测试
             ((64, 512, 512), 2, True),
@@ -88,7 +96,9 @@ class SumBenchmark(Benchmark):
                 out_numel //= inp.shape[d]
 
         # GBPS 计算：读入输入 x + 写出输出 y
-        io_amount = shape_utils.size_in_bytes(inp) + (out_numel * inp.element_size())
+        io_amount = shape_utils.size_in_bytes(inp) + (
+            out_numel * inp.element_size()
+        )
         return io_amount * 1e-9 / (latency * 1e-3)
 
 

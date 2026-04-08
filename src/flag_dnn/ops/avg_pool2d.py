@@ -71,7 +71,9 @@ def avg_pool2d_kernel_1d(
             valid = (ih >= 0) & (ih < H) & (iw >= 0) & (iw < W)
             load_idx = x_base_idx + ih * W + iw
 
-            val = tl.load(x_ptr + load_idx, mask=mask & valid, other=0.0).to(tl.float32)
+            val = tl.load(x_ptr + load_idx, mask=mask & valid, other=0.0).to(
+                tl.float32
+            )
             sum_val += val
 
     if DIVISOR_OVERRIDE > 0:
@@ -189,7 +191,9 @@ def avg_pool2d_kernel_2d(
     avg_val = sum_val / divisor
 
     tl.store(
-        y_ptr + y_base_idx + offsets, avg_val.to(x_ptr.dtype.element_ty), mask=mask
+        y_ptr + y_base_idx + offsets,
+        avg_val.to(x_ptr.dtype.element_ty),
+        mask=mask,
     )
 
 
@@ -267,7 +271,10 @@ def avg_pool2d(
                 DIVISOR_OVERRIDE=div_over,
             )
         else:
-            grid_2d = lambda meta: (triton.cdiv(OH * OW, meta["BLOCK_SIZE"]), N * C)
+            grid_2d = lambda meta: (
+                triton.cdiv(OH * OW, meta["BLOCK_SIZE"]),
+                N * C,
+            )
             avg_pool2d_kernel_2d[grid_2d](
                 input,
                 y,

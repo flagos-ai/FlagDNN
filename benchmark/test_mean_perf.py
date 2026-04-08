@@ -77,7 +77,9 @@ class MeanBenchmark(Benchmark):
             for d in dims:
                 out_numel //= inp.shape[d]
 
-        io_amount = shape_utils.size_in_bytes(inp) + (out_numel * inp.element_size())
+        io_amount = (
+            shape_utils.size_in_bytes(inp) + out_numel * inp.element_size()
+        )
         return io_amount * 1e-9 / (latency * 1e-3)
 
 

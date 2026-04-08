@@ -36,7 +36,10 @@ def pytest_addoption(parser):
     parser.addoption(
         (
             "--mode"
-            if not (flag_dnn.vendor_name == "kunlunxin" and torch.__version__ < "2.5")
+            if not (
+                flag_dnn.vendor_name == "kunlunxin"
+                and torch.__version__ < "2.5"
+            )
             else "--fg_mode"
         ),  # TODO: fix pytest-* common --mode args,
         action="store",
@@ -114,7 +117,9 @@ def pytest_configure(config):
             for arg in config.invocation_params.args
         ]
         logging.basicConfig(
-            filename="result_{}.log".format("_".join(cmd_args)).replace("_-", "-"),
+            filename="result_{}.log".format("_".join(cmd_args)).replace(
+                "_-", "-"
+            ),
             filemode="w",
             level=logging.INFO,
             format="[%(levelname)s] %(message)s",
@@ -129,7 +134,8 @@ def pytest_runtest_teardown(item, nextitem):
         op_marks = [
             mark.name
             for mark in all_marks
-            if mark.name not in BUILTIN_MARKS and mark.name not in REGISTERED_MARKERS
+            if mark.name not in BUILTIN_MARKS
+            and mark.name not in REGISTERED_MARKERS
         ]
         if len(op_marks) > 0:
             params = str(item.callspec.params)
@@ -153,7 +159,11 @@ test_results = {}
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_protocol(item, nextitem):
-    test_results[item.nodeid] = {"params": None, "result": None, "opname": None}
+    test_results[item.nodeid] = {
+        "params": None,
+        "result": None,
+        "opname": None,
+    }
     param_values = {}
     request = item._request
     if hasattr(request, "node") and hasattr(request.node, "callspec"):
@@ -163,7 +173,14 @@ def pytest_runtest_protocol(item, nextitem):
     # get all mark
     all_marks = [mark.name for mark in item.iter_markers()]
     # exclude marks，such as parametrize、skipif and so on
-    exclude_marks = {"parametrize", "skip", "skipif", "xfail", "usefixtures", "inplace"}
+    exclude_marks = {
+        "parametrize",
+        "skip",
+        "skipif",
+        "xfail",
+        "usefixtures",
+        "inplace",
+    }
     operator_marks = [mark for mark in all_marks if mark not in exclude_marks]
     test_results[item.nodeid]["opname"] = operator_marks
 

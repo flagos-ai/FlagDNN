@@ -58,7 +58,10 @@ class ProdBenchmark(Benchmark):
                 continue
 
             # 对于 Prod, 为了防止极端的 Inf 或 0 溢出导致硬件性能偏差，改用正态分布范围限制
-            inp = torch.rand(shape, dtype=cur_dtype, device=self.device) * 2.0 - 1.0
+            inp = (
+                torch.rand(shape, dtype=cur_dtype, device=self.device) * 2.0
+                - 1.0
+            )
             if inp.numel() == 0:
                 continue
 
@@ -73,7 +76,9 @@ class ProdBenchmark(Benchmark):
         else:
             out_numel = inp.numel() // inp.shape[dim]
 
-        io_amount = shape_utils.size_in_bytes(inp) + (out_numel * inp.element_size())
+        io_amount = (
+            shape_utils.size_in_bytes(inp) + out_numel * inp.element_size()
+        )
         return io_amount * 1e-9 / (latency * 1e-3)
 
 

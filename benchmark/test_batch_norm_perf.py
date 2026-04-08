@@ -13,7 +13,9 @@ from flag_dnn.utils import shape_utils
 
 # Batch Norm 通常在推理阶段 (training=False) 主要表现为 Element-wise 的仿射变换
 def torch_batch_norm(x, running_mean, running_var, weight, bias):
-    return F.batch_norm(x, running_mean, running_var, weight, bias, training=True)
+    return F.batch_norm(
+        x, running_mean, running_var, weight, bias, training=True
+    )
 
 
 def gems_batch_norm_wrapper(x, running_mean, running_var, weight, bias):
@@ -79,9 +81,15 @@ class BatchNormBenchmark(Benchmark):
             running_mean = torch.zeros(
                 num_channels, dtype=cur_dtype, device=self.device
             )
-            running_var = torch.ones(num_channels, dtype=cur_dtype, device=self.device)
-            weight = torch.ones(num_channels, dtype=cur_dtype, device=self.device)
-            bias = torch.zeros(num_channels, dtype=cur_dtype, device=self.device)
+            running_var = torch.ones(
+                num_channels, dtype=cur_dtype, device=self.device
+            )
+            weight = torch.ones(
+                num_channels, dtype=cur_dtype, device=self.device
+            )
+            bias = torch.zeros(
+                num_channels, dtype=cur_dtype, device=self.device
+            )
 
             yield inp, running_mean, running_var, weight, bias
 

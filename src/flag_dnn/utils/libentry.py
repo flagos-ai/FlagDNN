@@ -90,7 +90,9 @@ class ConfigCache(Cache):
     def __contains__(self, key: Tuple[Union[int, float, str], ...]) -> bool:
         return self.get(key) is not None
 
-    def __getitem__(self, key: Tuple[Union[int, float, str], ...]) -> triton.Config:
+    def __getitem__(
+        self, key: Tuple[Union[int, float, str], ...]
+    ) -> triton.Config:
         ret: Optional[triton.Config] = self.get(key)
         if ret is None:
             raise KeyError(f"Key {key} not found in ConfigCache.")
@@ -101,7 +103,9 @@ class ConfigCache(Cache):
     ) -> None:
         self.set(key, config)
 
-    def get(self, key: Tuple[Union[int, float, str], ...]) -> Optional[triton.Config]:
+    def get(
+        self, key: Tuple[Union[int, float, str], ...]
+    ) -> Optional[triton.Config]:
         return self.model.get_config(self.table_name, key)
 
     def set(
@@ -136,14 +140,22 @@ class BenchmarkCache(Cache):
             )
         return ret
 
-    def __setitem__(self, config: triton.Config, benchmark: Tuple[float]) -> None:
+    def __setitem__(
+        self, config: triton.Config, benchmark: Tuple[float]
+    ) -> None:
         return self.set(config, benchmark)
 
-    def get(self, config: triton.Config) -> Optional[Tuple[float, float, float]]:
+    def get(
+        self, config: triton.Config
+    ) -> Optional[Tuple[float, float, float]]:
         return self.model.get_benchmark(self.table_name, self.key, config)
 
-    def set(self, config: triton.Config, benchmark: Tuple[float, float, float]) -> None:
-        return self.model.put_benchmark(self.table_name, self.key, config, benchmark)
+    def set(
+        self, config: triton.Config, benchmark: Tuple[float, float, float]
+    ) -> None:
+        return self.model.put_benchmark(
+            self.table_name, self.key, config, benchmark
+        )
 
 
 class LibCache(object):
@@ -159,7 +171,9 @@ class LibCache(object):
         self.volumn: Dict = {}
         if db_url is None:
             try:
-                device_name: str = torch_device_fn.get_device_name().replace(" ", "_")
+                device_name: str = torch_device_fn.get_device_name().replace(
+                    " ", "_"
+                )
             except AttributeError:
                 device_name: str = vendor_module.vendor_info.device_name
             cache_file_name: str = (
@@ -181,7 +195,9 @@ class LibCache(object):
     def __getitem__(self, key: str) -> ConfigCache: ...
 
     @overload
-    def __getitem__(self, key: Tuple[Union[int, float, str]]) -> BenchmarkCache: ...
+    def __getitem__(
+        self, key: Tuple[Union[int, float, str]]
+    ) -> BenchmarkCache: ...
 
     def __getitem__(
         self, key: Union[str, Tuple[Union[int, float, str], ...]]
@@ -191,7 +207,9 @@ class LibCache(object):
         elif isinstance(key, tuple):
             return self.get_benchmark(*key)
         else:
-            assert False, f"the type of key '{key.__class__.__name__}' is unacceptable"
+            assert (
+                False
+            ), f"the type of key '{key.__class__.__name__}' is unacceptable"
 
     def get_benchmark(
         self, table: str, key: Tuple[Union[int, float, str], ...]
@@ -288,11 +306,14 @@ class LibTuner(triton.runtime.Autotuner):
             self.keys
         ), f"the length of strategy {len(strategy)} must match the length of keys {len(self.keys)}"
         strategy: List[Callable[[Any], Any]] = [
-            LibTuner.get_strategy(s) if isinstance(s, str) else s for s in strategy
+            LibTuner.get_strategy(s) if isinstance(s, str) else s
+            for s in strategy
         ]
         self.strategy: List[Callable[[Any], Any]] = strategy
         self.config_table_name: str = f"{self.__name__}_{self.kernel_hash}"
-        self.benchmark_table_name: str = f"{self.__name__}_{self.cache_key}_benchmark"
+        self.benchmark_table_name: str = (
+            f"{self.__name__}_{self.cache_key}_benchmark"
+        )
         self.cache: BenchmarkCache = libcache[self.config_table_name]
 
     @cached_property
@@ -311,7 +332,9 @@ class LibTuner(triton.runtime.Autotuner):
     @cached_property
     def configs_hash(self) -> str:
         return hashlib.md5(
-            ",".join(map(lambda config: str(config), self.configs)).encode("utf-8")
+            ",".join(map(lambda config: str(config), self.configs)).encode(
+                "utf-8"
+            )
         ).hexdigest()[:32]
 
     def get_key(self, args):
@@ -324,7 +347,9 @@ class LibTuner(triton.runtime.Autotuner):
                     enumerate(self.keys),
                 )
             )
-        key += tuple(str(arg.dtype) for arg in args.values() if hasattr(arg, "dtype"))
+        key += tuple(
+            str(arg.dtype) for arg in args.values() if hasattr(arg, "dtype")
+        )
         return key
 
     @staticmethod
@@ -424,7 +449,9 @@ class LibTuner(triton.runtime.Autotuner):
             _args = {k: v for k, v in all_args.items() if k in self.arg_names}
             key = self.get_key(_args)
             if key not in self.cache:
-                cache: BenchmarkCache = libcache[self.benchmark_table_name, key]
+                cache: BenchmarkCache = libcache[
+                    self.benchmark_table_name, key
+                ]
                 # prune configs
                 used_cached_result = False
                 pruned_configs = self.prune_configs(kwargs)
@@ -464,7 +491,10 @@ class LibTuner(triton.runtime.Autotuner):
         else:
             config = self.configs[0]
         self.best_config = config
-        if os.getenv("TRITON_PRINT_AUTOTUNING", None) == "1" and not used_cached_result:
+        if (
+            os.getenv("TRITON_PRINT_AUTOTUNING", None) == "1"
+            and not used_cached_result
+        ):
             print(
                 f"Triton autotuning for function {self.base_fn.__name__} finished after "
                 f"{self.bench_time:.2f}s; key info: {key}, best config selected: {self.best_config};"
@@ -674,7 +704,11 @@ class LibEntry(triton.KernelInterface):
                     "TensorDescriptor",
                     tuple(arg.shape) if hasattr(arg, "shape") else None,
                     tuple(arg.strides) if hasattr(arg, "strides") else None,
-                    tuple(arg.block_shape) if hasattr(arg, "block_shape") else None,
+                    (
+                        tuple(arg.block_shape)
+                        if hasattr(arg, "block_shape")
+                        else None
+                    ),
                     arg.padding if hasattr(arg, "padding") else None,
                     # Add other relevant attributes
                 )

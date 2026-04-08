@@ -9,7 +9,13 @@ PARAMS = [
     ((2, 3, 8, 32, 32), 2, 2, 0, 1),  # 标准 2x2x2 降采样
     ((1, 8, 4, 16, 16), 3, 1, 1, 1),  # 保持原图尺寸 (Padding=1)
     ((2, 4, 5, 15, 15), 3, 2, 1, 1),  # 奇数尺寸的步长跨越
-    ((1, 2, 8, 16, 16), (2, 3, 5), (1, 2, 1), 0, 1),  # 不对称的 Kernel 和 Stride
+    (
+        (1, 2, 8, 16, 16),
+        (2, 3, 5),
+        (1, 2, 1),
+        0,
+        1,
+    ),  # 不对称的 Kernel 和 Stride
     ((2, 3, 6, 16, 16), 3, 2, 0, 2),  # 带空洞率 (Dilation)
     ((4, 5, 14, 14), 2, 2, 0, 1),  # 4D 张量输入 (无 Batch 维度 N)
 ]
@@ -19,11 +25,20 @@ PARAMS = [
 @pytest.mark.parametrize(
     "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
 )
-@pytest.mark.parametrize("shape, kernel_size, stride, padding, dilation", PARAMS)
+@pytest.mark.parametrize(
+    "shape, kernel_size, stride, padding, dilation", PARAMS
+)
 @pytest.mark.parametrize("ceil_mode", [False, True])
 @pytest.mark.parametrize("return_indices", [False, True])
 def test_accuracy_max_pool3d(
-    dtype, shape, kernel_size, stride, padding, dilation, ceil_mode, return_indices
+    dtype,
+    shape,
+    kernel_size,
+    stride,
+    padding,
+    dilation,
+    ceil_mode,
+    return_indices,
 ):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")

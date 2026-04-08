@@ -75,7 +75,9 @@ def prelu(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
 
     if multi_channel:
         # 如果是多通道模式，PyTorch 规定 dim=1 为通道维度
-        assert x.dim() >= 2, "当 num_parameters > 1 时，输入张量必须至少有 2 个维度"
+        assert (
+            x.dim() >= 2
+        ), "当 num_parameters > 1 时，输入张量必须至少有 2 个维度"
         assert (
             num_parameters == x.shape[1]
         ), f"权重数量 ({num_parameters}) 必须等于通道数 ({x.shape[1]})"

@@ -68,7 +68,9 @@ def global_max_pool2d_kernel(
         # 利用 mask 提取对应的真实全局索引
         extract_mask = tl.arange(0, BLOCK_SIZE) == local_argmax
         zero_tensor = tl.full([BLOCK_SIZE], 0, dtype=tl.int64)
-        best_idx = tl.sum(tl.where(extract_mask, max_idxs, zero_tensor), axis=0)
+        best_idx = tl.sum(
+            tl.where(extract_mask, max_idxs, zero_tensor), axis=0
+        )
 
         tl.store(idx_ptr + nc_idx, best_idx)
 
@@ -137,7 +139,9 @@ def adaptive_max_pool2d_kernel(
             load_idx = x_base_idx + ih * W + iw
 
             # 加载时超出边界的填充负无穷大
-            val = tl.load(x_ptr + load_idx, mask=mask & in_window, other=-float("inf"))
+            val = tl.load(
+                x_ptr + load_idx, mask=mask & in_window, other=-float("inf")
+            )
 
             is_new_max = val > max_val
             update_mask = is_new_max & in_window & mask
@@ -187,7 +191,9 @@ def adaptive_max_pool2d(
     indices = None
     idx_ptr = input
     if return_indices:
-        indices = torch.empty((N, C, OH, OW), dtype=torch.int64, device=input.device)
+        indices = torch.empty(
+            (N, C, OH, OW), dtype=torch.int64, device=input.device
+        )
         idx_ptr = indices
 
     M = N * C * OH * OW

@@ -571,10 +571,15 @@ def adaptive_avg_pool3d(
     if isinstance(output_size, int):
         OD = OH = OW = output_size
     else:
-        assert len(output_size) == 3, "output_size must be an int or a tuple of 3 ints"
+        assert (
+            len(output_size) == 3
+        ), "output_size must be an int or a tuple of 3 ints"
         OD, OH, OW = output_size
 
-    assert input.ndim in [4, 5], "Input must be 4D (C, D, H, W) or 5D (N, C, D, H, W)"
+    assert input.ndim in [
+        4,
+        5,
+    ], "Input must be 4D (C, D, H, W) or 5D (N, C, D, H, W)"
     is_4d = input.ndim == 4
     if is_4d:
         input = input.unsqueeze(0)
@@ -636,10 +641,14 @@ def adaptive_avg_pool3d(
                     _global_large_dhw_small_nc_meta(NC, DHW)
                 )
                 acc_torch_dtype = (
-                    torch.float64 if input.dtype == torch.float64 else torch.float32
+                    torch.float64
+                    if input.dtype == torch.float64
+                    else torch.float32
                 )
-                partial_buf, counter_buf, counter_base = _get_global_pool3d_fused_bufs(
-                    input.device, acc_torch_dtype, NC, split_k
+                partial_buf, counter_buf, counter_base = (
+                    _get_global_pool3d_fused_bufs(
+                        input.device, acc_torch_dtype, NC, split_k
+                    )
                 )
 
                 grid = (NC, split_k)
@@ -673,7 +682,9 @@ def adaptive_avg_pool3d(
                 )
 
         elif OD_OH_OW <= 8:
-            block_d, block_h, block_w, num_warps = _small_od_oh_ow_meta(OD, OH, OW)
+            block_d, block_h, block_w, num_warps = _small_od_oh_ow_meta(
+                OD, OH, OW
+            )
 
             if is_divisible:
                 k_d = D // OD
@@ -736,7 +747,8 @@ def adaptive_avg_pool3d(
             grid = lambda meta: (
                 NC,
                 triton.cdiv(OD, meta["BLOCK_D"]),
-                triton.cdiv(OH, meta["BLOCK_H"]) * triton.cdiv(OW, meta["BLOCK_W"]),
+                triton.cdiv(OH, meta["BLOCK_H"])
+                * triton.cdiv(OW, meta["BLOCK_W"]),
             )
             adaptive_avg_pool3d_divisible_large_kernel[grid](
                 input,
@@ -763,7 +775,8 @@ def adaptive_avg_pool3d(
             grid = lambda meta: (
                 NC,
                 triton.cdiv(OD, meta["BLOCK_D"]),
-                triton.cdiv(OH, meta["BLOCK_H"]) * triton.cdiv(OW, meta["BLOCK_W"]),
+                triton.cdiv(OH, meta["BLOCK_H"])
+                * triton.cdiv(OW, meta["BLOCK_W"]),
             )
             adaptive_avg_pool3d_general_large_kernel[grid](
                 input,

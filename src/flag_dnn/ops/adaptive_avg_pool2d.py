@@ -143,9 +143,9 @@ def global_avg_pool2d_split_finalize_kernel(
     offs = tl.arange(0, BLOCK_SIZE)
     mask = offs < SPLIT_K
 
-    vals = tl.load(partial_ptr + pid_nc * SPLIT_K + offs, mask=mask, other=0).to(
-        ACC_DTYPE
-    )
+    vals = tl.load(
+        partial_ptr + pid_nc * SPLIT_K + offs, mask=mask, other=0
+    ).to(ACC_DTYPE)
 
     total = tl.sum(vals, axis=0)
     avg_val = total / HW
@@ -531,7 +531,9 @@ def adaptive_avg_pool2d(
                     _global_large_hw_small_nc_meta(NC, HW)
                 )
                 partial_dtype = (
-                    torch.float64 if input.dtype == torch.float64 else torch.float32
+                    torch.float64
+                    if input.dtype == torch.float64
+                    else torch.float32
                 )
                 partial = _get_global_pool2d_partial(
                     input.device, partial_dtype, NC, split_k

@@ -116,13 +116,17 @@ class Benchmark:
         # Validate user-specified metrics
         if user_desired_metrics:
             invalid_metrics = [
-                metric for metric in user_desired_metrics if metric not in self.metrics
+                metric
+                for metric in user_desired_metrics
+                if metric not in self.metrics
             ]
             if invalid_metrics:
                 raise ValueError(
                     f"Invalid metrics: {', '.join(invalid_metrics)} for operation: '{self.op_name}'"
                 )
-            unsatisfied_metrics = check_metric_dependencies(user_desired_metrics)
+            unsatisfied_metrics = check_metric_dependencies(
+                user_desired_metrics
+            )
             if unsatisfied_metrics:
                 raise ValueError(
                     f"Unsatisfied metric dependencies: {', '.join(unsatisfied_metrics)}"
@@ -149,7 +153,9 @@ class Benchmark:
             dtype in self.dtypes for dtype in user_desired_dtypes
         ):
             invalid_dtypes = [
-                dtype for dtype in user_desired_dtypes if dtype not in self.dtypes
+                dtype
+                for dtype in user_desired_dtypes
+                if dtype not in self.dtypes
             ]
             raise ValueError(
                 f"Given dtype(s) '{', '.join(str(dtype) for dtype in invalid_dtypes)}'"
@@ -164,7 +170,9 @@ class Benchmark:
         import os
 
         if not os.path.isfile(shape_file_path):
-            raise FileNotFoundError(f"Shape file '{shape_file_path}' does not exist.")
+            raise FileNotFoundError(
+                f"Shape file '{shape_file_path}' does not exist."
+            )
         try:
             with open(shape_file_path, "r") as file:
                 yaml_config = yaml.safe_load(file)
@@ -196,7 +204,9 @@ class Benchmark:
                     import math
 
                     self.shapes = [
-                        shape for shape in self.shapes if math.prod(shape) < 1024 * 1024
+                        shape
+                        for shape in self.shapes
+                        if math.prod(shape) < 1024 * 1024
                     ]
 
             # merge shapes from subclass If subclass has `set_more_shapes`, call it to merge shapes
@@ -214,7 +224,9 @@ class Benchmark:
 
                 # self.shapes = additional_shapes
                 if additional_shapes:
-                    self.shapes = list(dict.fromkeys(self.shapes + additional_shapes))
+                    self.shapes = list(
+                        dict.fromkeys(self.shapes + additional_shapes)
+                    )
         except yaml.YAMLError as e:
             raise ValueError(
                 f"Shape file '{shape_file_path}' is not a valid YAML file. Error: {e}"
@@ -237,7 +249,9 @@ class Benchmark:
             return None
 
         parsed_args = [deep_parse(arg) for arg in args]
-        parsed_kwargs = {key: deep_parse(value) for key, value in kwargs.items()}
+        parsed_kwargs = {
+            key: deep_parse(value) for key, value in kwargs.items()
+        }
         if parsed_args and parsed_kwargs:
             return parsed_args, parsed_kwargs
         return parsed_args if parsed_args else parsed_kwargs
@@ -266,7 +280,9 @@ class Benchmark:
             out = fn()
             dout = torch.randn_like(out)
             # fn = lambda: out.backward(dout, retain_graph=True)
-            xs = list(filter(lambda x: torch.is_tensor(x) and x.requires_grad, args))
+            xs = list(
+                filter(lambda x: torch.is_tensor(x) and x.requires_grad, args)
+            )
             fn = lambda: torch.autograd.grad(
                 (out,), xs, grad_outputs=(dout,), retain_graph=True
             )
@@ -401,7 +417,9 @@ class Benchmark:
                         metric.gbps_base = self.get_gbps(
                             args, latency=metric.latency_base
                         )
-                        metric.gbps = self.get_gbps(args, latency=metric.latency)
+                        metric.gbps = self.get_gbps(
+                            args, latency=metric.latency
+                        )
                     if "tflops" in self.to_bench_metrics:
                         metric.tflops = (
                             self.get_tflops(self.torch_op, *args, **kwargs)
@@ -465,7 +483,9 @@ class GenericBenchmarkFilterShapes(GenericBenchmark):
     def set_more_shapes(self):
         shapes = super().set_more_shapes()
         if self.exclude_dims is not None:
-            return [shape for shape in shapes if len(shape) != self.exclude_dims]
+            return [
+                shape for shape in shapes if len(shape) != self.exclude_dims
+            ]
         return shapes
 
 
@@ -525,7 +545,9 @@ def generate_tensor_input(shape, dtype, device):
             device="cpu",
         ).to(device)
     elif dtype in BOOL_DTYPES:
-        return torch.randint(0, 2, size=shape, dtype=dtype, device="cpu").to(device)
+        return torch.randint(0, 2, size=shape, dtype=dtype, device="cpu").to(
+            device
+        )
     elif dtype in COMPLEX_DTYPES:
         return torch.randn(shape, dtype=dtype, device=device)
 

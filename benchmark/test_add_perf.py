@@ -82,7 +82,9 @@ class AddBenchmark(Benchmark):
 
         # GBPS 计算：读 x + 读 y + 写 out
         io_amount = (
-            shape_utils.size_in_bytes(x) + shape_utils.size_in_bytes(y) + out_bytes
+            shape_utils.size_in_bytes(x)
+            + shape_utils.size_in_bytes(y)
+            + out_bytes
         )
         return io_amount * 1e-9 / (latency * 1e-3)
 

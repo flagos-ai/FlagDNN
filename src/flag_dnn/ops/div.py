@@ -10,4 +10,6 @@ def div(
     rounding_mode: Optional[str] = None,
     out: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    return binary(input, other, out=out, op_type="div", rounding_mode=rounding_mode)
+    return binary(
+        input, other, out=out, op_type="div", rounding_mode=rounding_mode
+    )

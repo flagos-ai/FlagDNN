@@ -17,13 +17,16 @@ except AttributeError:
         # TODO: fix frontend issues and cleanup
         # conditions can be simplified
         # scale is ((2**23 - 1) / 2**23) * 2**(N_BITS - 1)
-        if tl.constexpr(x.dtype == tl.uint32) or tl.constexpr(x.dtype == tl.int32):
+        if tl.constexpr(x.dtype == tl.uint32) or tl.constexpr(
+            x.dtype == tl.int32
+        ):
             # maximum value such that `MAX_INT * scale < 1.0` (with float rounding)
             x = x.to(tl.int32, bitcast=True)
             scale = 4.6566127342e-10
         else:
             tl.static_assert(
-                tl.constexpr(x.dtype == tl.uint64) or tl.constexpr(x.dtype == tl.int64)
+                tl.constexpr(x.dtype == tl.uint64)
+                or tl.constexpr(x.dtype == tl.int64)
             )
             x = x.to(tl.int64, bitcast=True)
             scale = 1.0842020432385337e-19
@@ -42,7 +45,10 @@ def philox_backend_seed_offset(increment, generator=None):
     state_copy = generator.get_state()
     # TODO[kunlunxin]: we will upgrade torch version in 2025.04
     if flag_dnn.vendor_name in ("kunlunxin", "aipu"):
-        c0, c1 = state_copy.view(torch.int64)[-2], state_copy.view(torch.int64)[-1]
+        c0, c1 = (
+            state_copy.view(torch.int64)[-2],
+            state_copy.view(torch.int64)[-1],
+        )
     else:
         c0, c1 = state_copy.view(torch.int64)
 

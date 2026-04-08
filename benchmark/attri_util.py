@@ -82,7 +82,9 @@ class BenchmarkMetrics:
     error_msg: Optional[str] = None
 
 
-ALL_AVAILABLE_METRICS = set(map(lambda x: x.name, fields(BenchmarkMetrics))) - {
+ALL_AVAILABLE_METRICS = set(
+    map(lambda x: x.name, fields(BenchmarkMetrics))
+) - {
     "legacy_shape",
     "shape_detail",
 }
@@ -129,7 +131,9 @@ def get_recommended_shapes(
     op_name: str, op_specified_shapes: Optional[List[Tuple[int, ...]]]
 ):
     def _shapes_sort(shapes):
-        shapes = [shape if isinstance(shape, tuple) else (shape,) for shape in shapes]
+        shapes = [
+            shape if isinstance(shape, tuple) else (shape,) for shape in shapes
+        ]
         return sorted(shapes, key=lambda x: torch.tensor(x).prod().item())
 
     if op_specified_shapes:
@@ -169,7 +173,9 @@ class OperationAttribute:
 def custom_json_encoder(obj):
     if isinstance(obj, torch.dtype):
         return str(obj)
-    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+    raise TypeError(
+        f"Object of type {obj.__class__.__name__} is not JSON serializable"
+    )
 
 
 @dataclass
@@ -205,7 +211,9 @@ class BenchmarkResult:
         header_break = "-" * len(header_col_names) + "\n"
         header = header_title + header_col_names + header_break
 
-        metrics_lines = "".join(self._format_metrics(ele) for ele in self.result)
+        metrics_lines = "".join(
+            self._format_metrics(ele) for ele in self.result
+        )
         return header + metrics_lines
 
     def _format_metrics(self, metrics: BenchmarkMetrics) -> str:
@@ -214,17 +222,29 @@ class BenchmarkResult:
         #     metrics.legacy_shape if metrics.legacy_shape is not None else "N/A"
         # )
         latency_base_str = (
-            f"{metrics.latency_base:.6f}" if metrics.latency_base is not None else "N/A"
+            f"{metrics.latency_base:.6f}"
+            if metrics.latency_base is not None
+            else "N/A"
         )
-        latency_str = f"{metrics.latency:.6f}" if metrics.latency is not None else "N/A"
-        speedup_str = f"{metrics.speedup:.3f}" if metrics.speedup is not None else "N/A"
+        latency_str = (
+            f"{metrics.latency:.6f}" if metrics.latency is not None else "N/A"
+        )
+        speedup_str = (
+            f"{metrics.speedup:.3f}" if metrics.speedup is not None else "N/A"
+        )
         torch_gbps_str = (
-            f"{metrics.gbps_base:.3f}" if metrics.gbps_base is not None else "N/A"
+            f"{metrics.gbps_base:.3f}"
+            if metrics.gbps_base is not None
+            else "N/A"
         )
-        gems_gbps_str = f"{metrics.gbps:.3f}" if metrics.gbps is not None else "N/A"
+        gems_gbps_str = (
+            f"{metrics.gbps:.3f}" if metrics.gbps is not None else "N/A"
+        )
         if metrics.tflops and metrics.tflops != 0.0:
             tflops_str = (
-                f"{metrics.tflops:.3f}" if metrics.tflops is not None else "N/A"
+                f"{metrics.tflops:.3f}"
+                if metrics.tflops is not None
+                else "N/A"
             )
         shape_detail_str = (
             metrics.shape_detail if metrics.shape_detail is not None else "N/A"
@@ -246,7 +266,9 @@ class BenchmarkResult:
 
     def gen_legacy_shape(self, metrics: BenchmarkMetrics) -> Optional[int]:
         first_shape = (
-            metrics.shape_detail[0] if isinstance(metrics.shape_detail, list) else None
+            metrics.shape_detail[0]
+            if isinstance(metrics.shape_detail, list)
+            else None
         )
         to_record_shape = (
             tuple(first_shape) if isinstance(first_shape, torch.Size) else None

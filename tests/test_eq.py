@@ -21,20 +21,25 @@ EQ_CASES = [
 
 @pytest.mark.eq
 @pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16, torch.int32]
+    "dtype",
+    [torch.float32, torch.float64, torch.float16, torch.bfloat16, torch.int32],
 )
 @pytest.mark.parametrize("input_shape, other_spec", EQ_CASES)
 def test_accuracy_eq(dtype, input_shape, other_spec):
     # 初始化 input
     if dtype == torch.int32:
-        x = torch.randint(-5, 5, input_shape, dtype=dtype, device=flag_dnn.device)
+        x = torch.randint(
+            -5, 5, input_shape, dtype=dtype, device=flag_dnn.device
+        )
     else:
         x = torch.randn(input_shape, dtype=dtype, device=flag_dnn.device)
 
     # 初始化 other
     if isinstance(other_spec, tuple):
         if dtype == torch.int32:
-            y = torch.randint(-5, 5, other_spec, dtype=dtype, device=flag_dnn.device)
+            y = torch.randint(
+                -5, 5, other_spec, dtype=dtype, device=flag_dnn.device
+            )
         else:
             y = torch.randn(other_spec, dtype=dtype, device=flag_dnn.device)
             # 为了制造相等的条件，随机将一部分 y 赋值为 x 的对应切片 (如果形状允许)
@@ -78,7 +83,9 @@ def test_accuracy_eq_with_out_param():
 def test_accuracy_eq_dtype_promotion():
     """测试数据类型提升 (Type Promotion)"""
     x = torch.tensor([1, 2, 3], dtype=torch.int32, device=flag_dnn.device)
-    y = torch.tensor([1.0, 2.5, 3.0], dtype=torch.float32, device=flag_dnn.device)
+    y = torch.tensor(
+        [1.0, 2.5, 3.0], dtype=torch.float32, device=flag_dnn.device
+    )
 
     ref_out = torch.eq(x, y)
     with flag_dnn.use_dnn():

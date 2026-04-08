@@ -46,7 +46,9 @@ def sqrt_kernel(
     tl.store(out_ptr + offsets, res.to(out_ptr.dtype.element_ty), mask=mask)
 
 
-def sqrt(input: torch.Tensor, *, out: Optional[torch.Tensor] = None) -> torch.Tensor:
+def sqrt(
+    input: torch.Tensor, *, out: Optional[torch.Tensor] = None
+) -> torch.Tensor:
     logger.debug("FLAG_DNN SQRT")
 
     if not input.is_contiguous():

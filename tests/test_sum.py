@@ -64,7 +64,9 @@ def test_accuracy_sum_dtype_promotion(input_dtype, out_dtype):
     if input_dtype.is_floating_point:
         x = torch.randn((10, 20), dtype=input_dtype, device=flag_dnn.device)
     else:
-        x = torch.randint(-10, 10, (10, 20), dtype=input_dtype, device=flag_dnn.device)
+        x = torch.randint(
+            -10, 10, (10, 20), dtype=input_dtype, device=flag_dnn.device
+        )
 
     ref_out = torch.sum(x, dim=1, dtype=out_dtype)
     with flag_dnn.use_dnn():

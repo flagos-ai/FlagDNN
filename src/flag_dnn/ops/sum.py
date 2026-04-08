@@ -64,7 +64,11 @@ def _sum_kernel_2d_loop(
         n_mask = n_offsets < N
 
         mask = m_mask[:, None] & n_mask[None, :]
-        x_ptrs = x_ptr + m_offsets[:, None] * stride_xm + n_offsets[None, :] * stride_xn
+        x_ptrs = (
+            x_ptr
+            + m_offsets[:, None] * stride_xm
+            + n_offsets[None, :] * stride_xn
+        )
 
         x = tl.load(x_ptrs, mask=mask, other=0.0)
         x = x.to(tl.float32)
@@ -193,7 +197,9 @@ def _sum_kernel_2d_atomic(
     n_mask = n_offsets < N
 
     mask = m_mask[:, None] & n_mask[None, :]
-    x_ptrs = x_ptr + m_offsets[:, None] * stride_xm + n_offsets[None, :] * stride_xn
+    x_ptrs = (
+        x_ptr + m_offsets[:, None] * stride_xm + n_offsets[None, :] * stride_xn
+    )
 
     x = tl.load(x_ptrs, mask=mask, other=0.0)
     x = x.to(tl.float32)
@@ -322,7 +328,9 @@ def sum(
 
     def _launch_kernel(M, N, input_view, is_3d=False, I_dim=1):
         if M == 0 or N == 0:
-            return torch.zeros(out_shape, dtype=target_dtype, device=input.device)
+            return torch.zeros(
+                out_shape, dtype=target_dtype, device=input.device
+            )
 
         out_buffer = torch.zeros((M,), dtype=acc_dtype, device=input.device)
 

@@ -103,7 +103,9 @@ class IndentedBuffer:
             self._lines.append("")
 
     def tpl(self, format_str, **kwargs):
-        assert isinstance(format_str, str), "format_str must be string of type."
+        assert isinstance(
+            format_str, str
+        ), "format_str must be string of type."
         format_str = format_str.format(**kwargs)
         lines = format_str.strip().splitlines()
         for line in lines:
@@ -164,7 +166,9 @@ class NameSpace:
         if not num:
             num = self._base_count[base]
 
-        while candidate in self._used_names or self._is_illegal_name(candidate):
+        while candidate in self._used_names or self._is_illegal_name(
+            candidate
+        ):
             num += 1
             candidate = f"{base}_{num}"
 
@@ -194,7 +198,8 @@ def write_atomic(
     if make_dirs:
         path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = (
-        path.parent / f".{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
+        path.parent
+        / f".{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
     )
     with tmp_path.open("wt", encoding=encoding) as f:
         f.write(content)

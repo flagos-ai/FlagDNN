@@ -19,11 +19,20 @@ PARAMS = [
 @pytest.mark.parametrize(
     "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
 )
-@pytest.mark.parametrize("shape, kernel_size, stride, padding, dilation", PARAMS)
+@pytest.mark.parametrize(
+    "shape, kernel_size, stride, padding, dilation", PARAMS
+)
 @pytest.mark.parametrize("ceil_mode", [False, True])
 @pytest.mark.parametrize("return_indices", [False, True])
 def test_accuracy_max_pool1d(
-    dtype, shape, kernel_size, stride, padding, dilation, ceil_mode, return_indices
+    dtype,
+    shape,
+    kernel_size,
+    stride,
+    padding,
+    dilation,
+    ceil_mode,
+    return_indices,
 ):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")

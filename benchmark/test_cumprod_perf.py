@@ -52,7 +52,10 @@ class CumprodBenchmark(Benchmark):
                 continue
 
             # 使用 rand() * 0.5 + 0.75 使得生成的值在 0.75~1.25 之间，避免极端的 Inf 和 0
-            inp = torch.rand(shape, dtype=cur_dtype, device=self.device) * 0.5 + 0.75
+            inp = (
+                torch.rand(shape, dtype=cur_dtype, device=self.device) * 0.5
+                + 0.75
+            )
             if inp.numel() == 0:
                 continue
 
@@ -60,9 +63,12 @@ class CumprodBenchmark(Benchmark):
 
     def get_gbps(self, args, latency):
         inp = args[0]
-        out_numel = inp.numel()  # cumprod 输出与输入相等
+        # cumprod 输出与输入相等
+        out_numel = inp.numel()
 
-        io_amount = shape_utils.size_in_bytes(inp) + (out_numel * inp.element_size())
+        io_amount = (
+            shape_utils.size_in_bytes(inp) + out_numel * inp.element_size()
+        )
         return io_amount * 1e-9 / (latency * 1e-3)
 
 

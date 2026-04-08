@@ -22,7 +22,9 @@ SHAPES_AND_NORM_SHAPES = [
 )
 @pytest.mark.parametrize("shape, normalized_shape", SHAPES_AND_NORM_SHAPES)
 @pytest.mark.parametrize("elementwise_affine", [False, True])
-def test_accuracy_layer_norm(dtype, shape, normalized_shape, elementwise_affine):
+def test_accuracy_layer_norm(
+    dtype, shape, normalized_shape, elementwise_affine
+):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
 
@@ -39,8 +41,12 @@ def test_accuracy_layer_norm(dtype, shape, normalized_shape, elementwise_affine)
     # 构建仿射变换参数
     weight, bias = None, None
     if elementwise_affine:
-        weight = torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device)
-        bias = torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device)
+        weight = torch.randn(
+            normalized_shape, dtype=dtype, device=flag_dnn.device
+        )
+        bias = torch.randn(
+            normalized_shape, dtype=dtype, device=flag_dnn.device
+        )
 
     ref_y = F.layer_norm(x, normalized_shape, weight=weight, bias=bias)
     with flag_dnn.use_dnn():
@@ -72,8 +78,12 @@ def test_accuracy_layer_norm_empty_tensor(dtype, elementwise_affine):
 
     weight, bias = None, None
     if elementwise_affine:
-        weight = torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device)
-        bias = torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device)
+        weight = torch.randn(
+            normalized_shape, dtype=dtype, device=flag_dnn.device
+        )
+        bias = torch.randn(
+            normalized_shape, dtype=dtype, device=flag_dnn.device
+        )
 
     ref_y = F.layer_norm(x, normalized_shape, weight=weight, bias=bias)
     with flag_dnn.use_dnn():
@@ -100,9 +110,15 @@ def test_accuracy_layer_norm_large_values(dtype, elementwise_affine):
     # 专门测试大数值，验证方差计算时是否发生了严重的精度丢失
     # 由于 16 位浮点数的尾数限制，这里的大数值设计需要针对 dtype 区分
     if dtype in [torch.float16, torch.bfloat16]:
-        x = torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 10.0 + 100.0
+        x = (
+            torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 10.0
+            + 100.0
+        )
     else:
-        x = torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 100.0 + 1000.0
+        x = (
+            torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 100.0
+            + 1000.0
+        )
 
     # 针对大数值平移，适当放宽低精度类型的阈值
     if dtype == torch.bfloat16:
@@ -117,19 +133,28 @@ def test_accuracy_layer_norm_large_values(dtype, elementwise_affine):
         # 权重和偏置也需要适配大数值场景，避免乘加溢出
         if dtype in [torch.float16, torch.bfloat16]:
             weight = (
-                torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device) * 2.0
+                torch.randn(
+                    normalized_shape, dtype=dtype, device=flag_dnn.device
+                )
+                * 2.0
             )
             bias = (
-                torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device)
+                torch.randn(
+                    normalized_shape, dtype=dtype, device=flag_dnn.device
+                )
                 * 10.0
             )
         else:
             weight = (
-                torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device)
+                torch.randn(
+                    normalized_shape, dtype=dtype, device=flag_dnn.device
+                )
                 * 10.0
             )
             bias = (
-                torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device)
+                torch.randn(
+                    normalized_shape, dtype=dtype, device=flag_dnn.device
+                )
                 * 100.0
             )
 
@@ -163,8 +188,12 @@ def test_accuracy_layer_norm_mixed_values(dtype, elementwise_affine):
 
     weight, bias = None, None
     if elementwise_affine:
-        weight = torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device)
-        bias = torch.randn(normalized_shape, dtype=dtype, device=flag_dnn.device)
+        weight = torch.randn(
+            normalized_shape, dtype=dtype, device=flag_dnn.device
+        )
+        bias = torch.randn(
+            normalized_shape, dtype=dtype, device=flag_dnn.device
+        )
 
     ref_y = F.layer_norm(x, normalized_shape, weight=weight, bias=bias)
     with flag_dnn.use_dnn():

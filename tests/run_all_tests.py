@@ -88,7 +88,9 @@ def main():
         print("🔍 未设置过滤，将执行所有测试。")
 
     if not test_files:
-        print("过滤后没有需要执行的测试文件，请检查 TARGET_OPERATORS 是否拼写正确。")
+        print(
+            "过滤后没有需要执行的测试文件，请检查 TARGET_OPERATORS 是否拼写正确。"
+        )
         return
 
     print(f"🚀 共发现 {len(test_files)} 个待测文件，开始提交 yhrun 任务...\n")
@@ -111,7 +113,9 @@ def main():
         log_file = os.path.join(LOG_DIR, f"{file_name}.log")
 
         print(
-            f"[{idx}/{len(test_files)}] 正在测试: {file_name:<30}", end="", flush=True
+            f"[{idx}/{len(test_files)}] 正在测试: {file_name:<30}",
+            end="",
+            flush=True,
         )
 
         # 构建 yhrun 命令
@@ -169,7 +173,9 @@ def main():
         )
 
     # 生成报告与控制台汇总
-    summary["total_duration_seconds"] = round(time.time() - start_time_total, 2)
+    summary["total_duration_seconds"] = round(
+        time.time() - start_time_total, 2
+    )
 
     with open(REPORT_FILE, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=4, ensure_ascii=False)

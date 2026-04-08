@@ -27,7 +27,9 @@ def get_heuristic_config(op_name):
 
 def replace_customized_ops(_globals):
     event = backend.BackendArchEvent()
-    arch_specialization_operators = event.get_arch_ops() if event.has_arch else None
+    arch_specialization_operators = (
+        event.get_arch_ops() if event.has_arch else None
+    )
     backend_customization_operators = backend.get_current_device_extend_op(
         device.vendor_name
     )

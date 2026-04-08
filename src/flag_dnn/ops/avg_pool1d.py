@@ -75,7 +75,9 @@ def avg_pool1d_kernel(
         load_idx = x_base_idx + iw
 
         # 加载时转为累加精度 (fp32 或 fp64)，越界区域补 0.0
-        val = tl.load(x_ptr + load_idx, mask=mask & valid, other=0.0).to(ACC_DTYPE)
+        val = tl.load(x_ptr + load_idx, mask=mask & valid, other=0.0).to(
+            ACC_DTYPE
+        )
         sum_val += val
 
     # 计算平均值并转回原数据类型

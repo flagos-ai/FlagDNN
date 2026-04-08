@@ -65,7 +65,9 @@ class Register:
             # fallback: scan provided config and match by func name or op name
             for config_item in self.config:
                 op_name, func = config_item[0], config_item[1]
-                func_name = func.__name__ if hasattr(func, "__name__") else str(func)
+                func_name = (
+                    func.__name__ if hasattr(func, "__name__") else str(func)
+                )
                 if (
                     func_name not in self.include_ops
                     and op_name not in self.include_ops

@@ -68,7 +68,11 @@ def _prod_kernel_2d_loop(
         n_mask = n_offsets < N
 
         mask = m_mask[:, None] & n_mask[None, :]
-        x_ptrs = x_ptr + m_offsets[:, None] * stride_xm + n_offsets[None, :] * stride_xn
+        x_ptrs = (
+            x_ptr
+            + m_offsets[:, None] * stride_xm
+            + n_offsets[None, :] * stride_xn
+        )
 
         x = tl.load(x_ptrs, mask=mask, other=1.0)
         x = x.to(tl.float32)
@@ -168,7 +172,9 @@ def _prod_kernel_2d_split_stage1(
     n_mask = n_offsets < N
     mask = m_mask[:, None] & n_mask[None, :]
 
-    x_ptrs = x_ptr + m_offsets[:, None] * stride_xm + n_offsets[None, :] * stride_xn
+    x_ptrs = (
+        x_ptr + m_offsets[:, None] * stride_xm + n_offsets[None, :] * stride_xn
+    )
     x = tl.load(x_ptrs, mask=mask, other=1.0)
     x = x.to(tl.float32)
 
@@ -235,7 +241,15 @@ def _prod_kernel_3d_split_stage1(
 )
 @triton.jit
 def _prod_kernel_3d_inner_parallel(
-    x_ptr, out_ptr, O, R, I, stride_xo, stride_xr, stride_xi, BLOCK_I: tl.constexpr
+    x_ptr,
+    out_ptr,
+    O,
+    R,
+    I,
+    stride_xo,
+    stride_xr,
+    stride_xi,
+    BLOCK_I: tl.constexpr,
 ):
     pid_o = tle.program_id(0)  # 对应 O 维
     pid_i = tle.program_id(1)  # 对应 I 维分块
@@ -305,7 +319,9 @@ def prod(
 
     def _launch_kernel_split_n(M, N, input_view, is_3d=False, I_dim=1):
         if M == 0:
-            return torch.empty(out_shape, dtype=target_dtype, device=input.device)
+            return torch.empty(
+                out_shape, dtype=target_dtype, device=input.device
+            )
 
         if input.dtype in (torch.float16, torch.bfloat16):
             BLOCK_N_SPLIT = 16384
@@ -351,7 +367,9 @@ def prod(
             )
 
         # stage2: 再把 partial 做一次普通 reduce
-        out_buffer = torch.empty((M,), dtype=acc_dtype, device=input_view.device)
+        out_buffer = torch.empty(
+            (M,), dtype=acc_dtype, device=input_view.device
+        )
 
         def grid_2d_loop(meta):
             return (triton.cdiv(M, meta["BLOCK_M"]),)
@@ -369,10 +387,14 @@ def prod(
 
     def _launch_kernel(M, N, input_view, is_3d=False, I_dim=1, O_dim=1):
         if M == 0:
-            return torch.empty(out_shape, dtype=target_dtype, device=input.device)
+            return torch.empty(
+                out_shape, dtype=target_dtype, device=input.device
+            )
 
         # full-reduce: M很小、N很大，走 split-N
-        use_split_n = (M <= 4 and N >= (1 << 18)) or (M <= 32 and N >= (1 << 20))
+        use_split_n = (M <= 4 and N >= (1 << 18)) or (
+            M <= 32 and N >= (1 << 20)
+        )
 
         # 非尾维归约专用：I 连续且比较大，R 适中
         # use_inner_parallel = (
@@ -385,7 +407,9 @@ def prod(
         use_inner_parallel = False
 
         if use_split_n:
-            return _launch_kernel_split_n(M, N, input_view, is_3d=is_3d, I_dim=I_dim)
+            return _launch_kernel_split_n(
+                M, N, input_view, is_3d=is_3d, I_dim=I_dim
+            )
 
         out_buffer = torch.ones((M,), dtype=acc_dtype, device=input.device)
 
@@ -395,7 +419,12 @@ def prod(
                 return (triton.cdiv(M, meta["BLOCK_M"]),)
 
             _prod_kernel_2d_loop[grid_2d_loop](
-                input_view, out_buffer, M, N, input_view.stride(0), input_view.stride(1)
+                input_view,
+                out_buffer,
+                M,
+                N,
+                input_view.stride(0),
+                input_view.stride(1),
             )
         else:
             if use_inner_parallel:
@@ -450,7 +479,12 @@ def prod(
                 I_dim *= input.shape[j]
             M, N = O * I_dim, R
             out_buffer = _launch_kernel(
-                M, N, input.reshape(O, R, I_dim), is_3d=True, I_dim=I_dim, O_dim=O
+                M,
+                N,
+                input.reshape(O, R, I_dim),
+                is_3d=True,
+                I_dim=I_dim,
+                O_dim=O,
             )
 
     out = out_buffer.to(target_dtype).reshape(out_shape)

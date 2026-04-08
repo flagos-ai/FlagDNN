@@ -66,7 +66,10 @@ def test_accuracy_neg_positive_values(dtype, shape):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
 
-    x = torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device)) + 0.1
+    x = (
+        torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device))
+        + 0.1
+    )
 
     rtol, atol = _get_tolerances(dtype)
     ref_out = torch.neg(x)
@@ -86,7 +89,10 @@ def test_accuracy_neg_negative_values(dtype, shape):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
 
-    x = -torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device)) - 0.1
+    x = (
+        -torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device))
+        - 0.1
+    )
 
     rtol, atol = _get_tolerances(dtype)
     ref_out = torch.neg(x)

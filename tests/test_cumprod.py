@@ -29,7 +29,10 @@ def test_accuracy_cumprod(dtype, shape, dim):
         x = torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 0.1 + 1.0
     else:
         # 只有 1 和 -1，避开 int64 溢出
-        x = torch.randint(0, 2, shape, dtype=dtype, device=flag_dnn.device) * 2 - 1
+        x = (
+            torch.randint(0, 2, shape, dtype=dtype, device=flag_dnn.device) * 2
+            - 1
+        )
 
     # 动态宽容度策略：应对 fp16/bf16 的累乘误差墙
     rtol, atol = 1e-3, 1e-3

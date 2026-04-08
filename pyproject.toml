@@ -52,3 +52,9 @@ build.verbose = true
 logging.level = "INFO"
 wheel.install-dir = "flag_dnn"
 build-dir = "build/{cache_tag}"
+
+[tool.black]
+line-length = 79
+
+[tool.flake8]
+max-line-length = 79
