@@ -42,7 +42,7 @@ def _next_power_of_2(x: int) -> int:
     return 1 << (x - 1).bit_length()
 
 
-_GLOBAL_POOL2D_PARTIAL_CACHE = {}
+_GLOBAL_POOL2D_PARTIAL_CACHE: dict = {}
 
 
 def _get_global_pool2d_partial(device, dtype, nc, split_k):
@@ -539,7 +539,7 @@ def adaptive_avg_pool2d(
                     input.device, partial_dtype, NC, split_k
                 )
 
-                grid = (NC, split_k)
+                grid = (NC, split_k)  # type: ignore[assignment]
                 global_avg_pool2d_split_partial_kernel[grid](
                     input,
                     partial,
@@ -566,7 +566,10 @@ def adaptive_avg_pool2d(
                 )
             # 3) 其余走原来的 global kernel
             else:
-                grid = lambda meta: (NC,)
+
+                def grid(meta):  # type: ignore[assignment]
+                    return (NC,)
+
                 global_avg_pool2d_kernel[grid](
                     input,
                     y,
@@ -626,11 +629,14 @@ def adaptive_avg_pool2d(
         elif is_divisible:
             k_h = H // OH
             k_w = W // OW
-            grid = lambda meta: (
-                N * C,
-                triton.cdiv(OH, meta["BLOCK_H"]),
-                triton.cdiv(OW, meta["BLOCK_W"]),
-            )
+
+            def grid(meta):  # type: ignore[assignment]
+                return (
+                    N * C,
+                    triton.cdiv(OH, meta["BLOCK_H"]),
+                    triton.cdiv(OW, meta["BLOCK_W"]),
+                )
+
             adaptive_avg_pool2d_divisible_large_kernel[grid](
                 input,
                 y,
@@ -648,11 +654,14 @@ def adaptive_avg_pool2d(
         else:
             max_k_h = _exact_max_window(H, OH)
             max_k_w = _exact_max_window(W, OW)
-            grid = lambda meta: (
-                N * C,
-                triton.cdiv(OH, meta["BLOCK_H"]),
-                triton.cdiv(OW, meta["BLOCK_W"]),
-            )
+
+            def grid(meta):  # type: ignore[assignment]
+                return (
+                    N * C,
+                    triton.cdiv(OH, meta["BLOCK_H"]),
+                    triton.cdiv(OW, meta["BLOCK_W"]),
+                )
+
             adaptive_avg_pool2d_general_large_kernel[grid](
                 input,
                 y,

@@ -191,30 +191,54 @@ def clamp(
         and has_max
         and is_min_tensor
         and is_max_tensor
-        and min.shape != max.shape
+        and min.shape != max.shape  # type: ignore[union-attr]
     ):
         raise RuntimeError(
-            "Not supported when 'min' and 'max' are both Tensors but with different shapes"
+            "Not supported when 'min' and 'max'"
+            " are both Tensors but with"
+            " different shapes"
         )
 
     need_broadcast = False
-    if has_min and is_min_tensor and (input.shape != min.shape):
+    if (
+        has_min
+        and is_min_tensor
+        and input.shape != min.shape  # type: ignore[union-attr]
+    ):
         need_broadcast = True
-    if has_max and is_max_tensor and (input.shape != max.shape):
+    if (
+        has_max
+        and is_max_tensor
+        and input.shape != max.shape  # type: ignore[union-attr]
+    ):
         need_broadcast = True
 
     # 形状推导 (Broadcasting)
     # 动态计算 input, min, max 广播后的最终全局形状
     out_shape = input.shape
     if need_broadcast and has_min:
-        out_shape = torch.broadcast_shapes(out_shape, min.shape)
+        out_shape = torch.broadcast_shapes(
+            out_shape,
+            min.shape,  # type: ignore[union-attr]
+        )
     if need_broadcast and has_max:
-        out_shape = torch.broadcast_shapes(out_shape, max.shape)
+        out_shape = torch.broadcast_shapes(
+            out_shape,
+            max.shape,  # type: ignore[union-attr]
+        )
 
     # 类型推导 (Type Promotion)
     dummy_input = input.new_empty((0,))
-    dummy_min = min if not is_min_tensor else min.new_empty((0,))
-    dummy_max = max if not is_max_tensor else max.new_empty((0,))
+    dummy_min = (
+        min
+        if not is_min_tensor
+        else min.new_empty((0,))  # type: ignore[union-attr]
+    )
+    dummy_max = (
+        max
+        if not is_max_tensor
+        else max.new_empty((0,))  # type: ignore[union-attr]
+    )
     out_dtype = torch.clamp(dummy_input, min=dummy_min, max=dummy_max).dtype
 
     # 输出内存分配
@@ -233,9 +257,11 @@ def clamp(
     # 处理 min 指针与常量
     min_val = 0.0
     if has_min:
-        if is_min_tensor and (input.shape != min.shape):
+        if is_min_tensor and (
+            input.shape != min.shape  # type: ignore[union-attr]
+        ):
             input_exp = input.expand(out_shape)
-            min_exp = min.expand(out_shape)
+            min_exp = min.expand(out_shape)  # type: ignore[union-attr]
             min_c_shape, min_c_sx, min_c_sy = collapse_dims(
                 out_shape, input_exp.stride(), min_exp.stride()
             )
@@ -248,9 +274,11 @@ def clamp(
     # 处理 max 指针与常量
     max_val = 0.0
     if has_max:
-        if is_max_tensor and (input.shape != max.shape):
+        if is_max_tensor and (
+            input.shape != max.shape  # type: ignore[union-attr]
+        ):
             input_exp = input.expand(out_shape)
-            max_exp = max.expand(out_shape)
+            max_exp = max.expand(out_shape)  # type: ignore[union-attr]
             max_c_shape, max_c_sx, max_c_sy = collapse_dims(
                 out_shape, input_exp.stride(), max_exp.stride()
             )
@@ -260,7 +288,8 @@ def clamp(
         elif not is_max_tensor:
             max_val = float(max)
 
-    grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+    def grid(meta):
+        return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
     # 启动 Kernel
     with torch_device_fn.device(input.device):

@@ -51,7 +51,8 @@ def _maybe_move_to_cpu(res, ref):
     except RuntimeError:
         pass
 
-    # torch.isclose allocates an auxiliary tensor roughly the size of the inputs,
+    # torch.isclose allocates an auxiliary tensor
+    # roughly the size of the inputs,
     # so ensure we have enough headroom; otherwise compare on CPU.
     HUGE_TENSOR_BYTES = 1 << 30  # 1 GiB
     if (free_mem is not None and required >= free_mem) or (

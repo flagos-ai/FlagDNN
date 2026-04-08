@@ -18,7 +18,7 @@ ops_module = None
 fused_module = None
 heuristic_config_module = None
 vendor_extra_lib_imported = False
-device_fn_cache = {}
+device_fn_cache: dict = {}
 customized_ops = None
 
 
@@ -41,7 +41,8 @@ class BackendArchEvent:
         self.arch = self.get_arch()
         if self.has_arch:
             self.supported_archs = self._get_supported_archs()
-            # current_arch_path is like FlagGems/src/flag_dnn/runtime/backend/_nvidia/hopper
+            # current_arch_path is like
+            # FlagGems/src/flag_dnn/runtime/backend/_nvidia/hopper
             self.current_arch_path = self.supported_archs.get(self.arch)
             self.arch_module = self.get_arch_module()
             self.autotune_configs = self.get_autotune_configs()
@@ -86,7 +87,8 @@ class BackendArchEvent:
                 self.has_arch = False
         if arch_string_num not in arch_map:
             print(
-                f"[INFO] : FlagGems Unsupported GPU arch {arch_string} specialization"
+                f"[INFO] : FlagGems Unsupported "
+                f"GPU arch {arch_string} specialization"
             )
         else:
             self.has_arch = True
@@ -150,8 +152,10 @@ def import_vendor_extra_lib(vendor_name=None):
         ops_module = importlib.import_module(f"_{vendor_name}.ops")
     except ModuleNotFoundError:
         print(
-            f"[Note] No specialized common operators were found in"
-            f"the {vendor_name} implementation, and general common operators are used by default."
+            f"[Note] No specialized common operators"
+            f" were found in the {vendor_name}"
+            f" implementation, and general common"
+            f" operators are used by default."
         )
     except Exception as e:
         raise RuntimeError(f"Import vendor extra lib failed: {e}")
@@ -160,8 +164,10 @@ def import_vendor_extra_lib(vendor_name=None):
         fused_module = importlib.import_module(f"_{vendor_name}.fused")
     except ModuleNotFoundError:
         print(
-            f"[Note] No specialized fused operators were found in"
-            f"the {vendor_name} implementation, and general fused operators are used by default."
+            f"[Note] No specialized fused operators"
+            f" were found in the {vendor_name}"
+            f" implementation, and general fused"
+            f" operators are used by default."
         )
     except Exception as e:
         raise RuntimeError(f"Import vendor extra lib failed: {e}")
@@ -236,9 +242,8 @@ def get_vendor_module(vendor_name, query=False):
         sys.path.append(current_dir_path)
         return importlib.import_module(vendor_name)
 
-    if (
-        query
-    ):  # The purpose of a query is to provide the user with the instance that he wants to import
+    if query:
+        # Provide the user the requested instance
         return get_module(vendor_name)
 
     global vendor_module

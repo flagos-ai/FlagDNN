@@ -1,10 +1,11 @@
 import os
 from dataclasses import dataclass
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 
-# Metadata template,  Each vendor needs to specialize instances of this template
+# Metadata template, Each vendor needs to specialize
+# instances of this template
 @dataclass
 class VendorInfoBase:
     vendor_name: str

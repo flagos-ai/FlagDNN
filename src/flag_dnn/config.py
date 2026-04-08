@@ -2,7 +2,7 @@ import os
 import warnings
 from pathlib import Path
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 # Optional imports used inside helper functions to avoid hard dependencies at
 # module import time.
@@ -19,7 +19,7 @@ aten_patch_list = []
 os.environ["FLAGDNN_SOURCE_DIR"] = str(Path(__file__).parent.resolve())
 
 try:
-    from flag_dnn import c_operators
+    from flag_dnn import c_operators  # type: ignore[attr-defined]
 
     has_c_extension = True
 except ImportError:
@@ -37,7 +37,7 @@ if use_env_c_extension and not has_c_extension:
 
 if has_c_extension and use_env_c_extension:
     try:
-        from flag_dnn import aten_patch
+        from flag_dnn import aten_patch  # type: ignore[attr-defined]
 
         aten_patch_list = aten_patch.get_registered_ops()
         use_c_extension = True
@@ -71,13 +71,15 @@ def load_enable_config_from_yaml(yaml_path, key="include"):
         data = yaml.safe_load(yaml_path.read_text())
     except Exception as err:
         warnings.warn(
-            f"load_enable_config_from_yaml: unexpected error reading {yaml_path}: {err}"
+            f"load_enable_config_from_yaml: "
+            f"unexpected error reading {yaml_path}: {err}"
         )
         return []
 
     if key not in ("include", "exclude"):
         warnings.warn(
-            f"load_enable_config_from_yaml: key must be 'include' or 'exclude', got: {key}"
+            f"load_enable_config_from_yaml: key must be "
+            f"'include' or 'exclude', got: {key}"
         )
         return []
 
@@ -89,7 +91,9 @@ def load_enable_config_from_yaml(yaml_path, key="include"):
         return operator_list
 
     warnings.warn(
-        f"load_enable_config_from_yaml: yaml {yaml_path} must be a mapping with 'include'/'exclude' lists"
+        f"load_enable_config_from_yaml: yaml "
+        f"{yaml_path} must be a mapping with "
+        f"'include'/'exclude' lists"
     )
     return []
 
@@ -114,13 +118,16 @@ def resolve_user_setting(user_setting_info, user_setting_type="include"):
     Resolve user setting for include/exclude operator lists.
 
     Args:
-        user_setting_info: Can be a list/tuple/set of operators, "default", None, or a path to a YAML file.
+        user_setting_info: Can be a list/tuple/set
+            of operators, "default", None, or a path
+            to a YAML file.
         user_setting_type: Either "include" or "exclude".
 
     Returns:
         List of operators based on the user setting.
     """
-    # If user_setting_info is a list, tuple, or set, use it directly as the operator list (deduplicated)
+    # If user_setting_info is a list, tuple, or set,
+    # use it directly as the operator list (deduplicated)
     if isinstance(user_setting_info, (list, tuple, set)):
         return list(set(user_setting_info))
 
@@ -150,12 +157,14 @@ def resolve_user_setting(user_setting_info, user_setting_type="include"):
             return operator_list
         else:
             warnings.warn(
-                f"resolve_user_setting: {user_setting_type} yaml not found: {yaml_path}"
+                f"resolve_user_setting: {user_setting_type}"
+                f" yaml not found: {yaml_path}"
             )
 
     # If no operators found in any YAML, warn and return empty list
     warnings.warn(
-        f"resolve_user_setting: no {user_setting_type} ops found; returning empty list"
+        f"resolve_user_setting: no {user_setting_type}"
+        f" ops found; returning empty list"
     )
     return []
 

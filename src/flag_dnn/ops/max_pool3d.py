@@ -217,7 +217,9 @@ def max_pool3d(
     return_indices: bool = False,
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
     logger.debug(
-        f"FLAG_DNN MAX_POOL3D (kernel={kernel_size}, return_indices={return_indices})"
+        f"FLAG_DNN MAX_POOL3D "
+        f"(kernel={kernel_size}, "
+        f"return_indices={return_indices})"
     )
 
     def _triple(x):
@@ -243,21 +245,36 @@ def max_pool3d(
         return math.ceil(out) if ceil else math.floor(out)
 
     OD = _out_size(
-        D, padding[0], dilation[0], kernel_size[0], stride[0], ceil_mode
+        D,
+        padding[0],
+        dilation[0],  # type: ignore[index]
+        kernel_size[0],
+        stride[0],
+        ceil_mode,  # type: ignore[index]
     )
     OH = _out_size(
-        H, padding[1], dilation[1], kernel_size[1], stride[1], ceil_mode
+        H,
+        padding[1],
+        dilation[1],  # type: ignore[index]
+        kernel_size[1],
+        stride[1],
+        ceil_mode,  # type: ignore[index]
     )
     OW = _out_size(
-        W, padding[2], dilation[2], kernel_size[2], stride[2], ceil_mode
+        W,
+        padding[2],
+        dilation[2],  # type: ignore[index]
+        kernel_size[2],
+        stride[2],
+        ceil_mode,  # type: ignore[index]
     )
 
     if ceil_mode:
-        if (OD - 1) * stride[0] >= D + padding[0]:
+        if (OD - 1) * stride[0] >= D + padding[0]:  # type: ignore[index]
             OD -= 1
-        if (OH - 1) * stride[1] >= H + padding[1]:
+        if (OH - 1) * stride[1] >= H + padding[1]:  # type: ignore[index]
             OH -= 1
-        if (OW - 1) * stride[2] >= W + padding[2]:
+        if (OW - 1) * stride[2] >= W + padding[2]:  # type: ignore[index]
             OW -= 1
 
     if not input.is_contiguous():
@@ -281,7 +298,10 @@ def max_pool3d(
     with torch_device_fn.device(input.device):
         # 3D 情况下，体积小于等于 64 依然走 1D 高并发
         if OD * OH * OW <= 64:
-            grid_1d = lambda meta: (triton.cdiv(M, meta["BLOCK_SIZE"]),)
+
+            def grid_1d(meta):
+                return (triton.cdiv(M, meta["BLOCK_SIZE"]),)
+
             max_pool3d_kernel_1d[grid_1d](
                 input,
                 y,
@@ -294,25 +314,28 @@ def max_pool3d(
                 OD,
                 OH,
                 OW,
-                padding[0],
-                padding[1],
-                padding[2],
-                STRIDE_D=stride[0],
-                STRIDE_H=stride[1],
-                STRIDE_W=stride[2],
-                DIL_D=dilation[0],
-                DIL_H=dilation[1],
-                DIL_W=dilation[2],
-                KERNEL_D=kernel_size[0],
-                KERNEL_H=kernel_size[1],
-                KERNEL_W=kernel_size[2],
+                padding[0],  # type: ignore[index]
+                padding[1],  # type: ignore[index]
+                padding[2],  # type: ignore[index]
+                STRIDE_D=stride[0],  # type: ignore[index]
+                STRIDE_H=stride[1],  # type: ignore[index]
+                STRIDE_W=stride[2],  # type: ignore[index]
+                DIL_D=dilation[0],  # type: ignore[index]
+                DIL_H=dilation[1],  # type: ignore[index]
+                DIL_W=dilation[2],  # type: ignore[index]
+                KERNEL_D=kernel_size[0],  # type: ignore[index]
+                KERNEL_H=kernel_size[1],  # type: ignore[index]
+                KERNEL_W=kernel_size[2],  # type: ignore[index]
                 RETURN_INDICES=return_indices,
             )
         else:
-            grid_2d = lambda meta: (
-                triton.cdiv(OD * OH * OW, meta["BLOCK_SIZE"]),
-                N * C,
-            )
+
+            def grid_2d(meta):
+                return (
+                    triton.cdiv(OD * OH * OW, meta["BLOCK_SIZE"]),
+                    N * C,
+                )
+
             max_pool3d_kernel_2d[grid_2d](
                 input,
                 y,
@@ -325,18 +348,18 @@ def max_pool3d(
                 OD,
                 OH,
                 OW,
-                padding[0],
-                padding[1],
-                padding[2],
-                STRIDE_D=stride[0],
-                STRIDE_H=stride[1],
-                STRIDE_W=stride[2],
-                DIL_D=dilation[0],
-                DIL_H=dilation[1],
-                DIL_W=dilation[2],
-                KERNEL_D=kernel_size[0],
-                KERNEL_H=kernel_size[1],
-                KERNEL_W=kernel_size[2],
+                padding[0],  # type: ignore[index]
+                padding[1],  # type: ignore[index]
+                padding[2],  # type: ignore[index]
+                STRIDE_D=stride[0],  # type: ignore[index]
+                STRIDE_H=stride[1],  # type: ignore[index]
+                STRIDE_W=stride[2],  # type: ignore[index]
+                DIL_D=dilation[0],  # type: ignore[index]
+                DIL_H=dilation[1],  # type: ignore[index]
+                DIL_W=dilation[2],  # type: ignore[index]
+                KERNEL_D=kernel_size[0],  # type: ignore[index]
+                KERNEL_H=kernel_size[1],  # type: ignore[index]
+                KERNEL_W=kernel_size[2],  # type: ignore[index]
                 RETURN_INDICES=return_indices,
             )
 

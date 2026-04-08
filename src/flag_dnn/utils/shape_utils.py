@@ -44,8 +44,8 @@ def broadcast(s1: Shape, s2: Shape) -> Shape:
             s[d + i] = s2[i]
         else:
             raise ValueError(f"Unbroadcastable {_s1} and {_s2}")
-    s = tuple(s)
-    return s
+    s = tuple(s)  # type: ignore[assignment]
+    return s  # type: ignore[return-value]
 
 
 def broadcastable(s1: Shape, s2: Shape) -> bool:
@@ -86,11 +86,13 @@ def broadcastable_to(s1: Shape, s2: Shape) -> bool:
     return True
 
 
-def broadcast_shapes(shapes: Iterable[Shape]) -> Shape:
-    if len(shapes) == 0:
-        return ()
-    shape = shapes[0]
-    for s in shapes[1:]:
+def broadcast_shapes(  # type: ignore[return-value]
+    shapes: Iterable[Shape],
+) -> Shape:
+    if len(shapes) == 0:  # type: ignore[arg-type]
+        return ()  # type: ignore[return-value]
+    shape = shapes[0]  # type: ignore[index]
+    for s in shapes[1:]:  # type: ignore[index]
         shape = broadcast(shape, s)
     return shape
 
@@ -107,7 +109,7 @@ def broadcasted_stride(
         new_stride[d + i] = (
             0 if (shape[i] == 1 and new_shape[d + i] > 1) else stride[i]
         )
-    return tuple(new_stride)
+    return tuple(new_stride)  # type: ignore[return-value]
 
 
 def volume(shape: Shape) -> int:
@@ -131,7 +133,7 @@ def unravel_index(linear_offset: int, shape: Shape) -> MultiIndex:
         i = linear_offset % s
         linear_offset = linear_offset // s
         multi_index.append(i)
-    return tuple(reversed(multi_index))
+    return tuple(reversed(multi_index))  # type: ignore[return-value]
 
 
 def c_contiguous_stride(shape: Shape) -> Stride:
@@ -140,7 +142,7 @@ def c_contiguous_stride(shape: Shape) -> Stride:
     for size in reversed(shape):
         strides.append(s)
         s *= max(size, 1)  # treat size 0 as size 1
-    return tuple(reversed(strides))
+    return tuple(reversed(strides))  # type: ignore[return-value]
 
 
 def f_contiguous_stride(shape: Shape) -> Stride:
@@ -149,7 +151,7 @@ def f_contiguous_stride(shape: Shape) -> Stride:
     for size in shape:
         strides.append(s)
         s *= max(size, 1)  # treat size 0 as size 1
-    return tuple(strides)
+    return tuple(strides)  # type: ignore[return-value]
 
 
 def ordered_stride(shape: Shape, order: Perm) -> Stride:
@@ -158,7 +160,7 @@ def ordered_stride(shape: Shape, order: Perm) -> Stride:
     for i in order:
         strides[i] = s
         s *= max(shape[i], 1)  # treat size 0 as size 1
-    return tuple(strides)
+    return tuple(strides)  # type: ignore[return-value]
 
 
 def stride_order(strides):
@@ -294,19 +296,27 @@ def add_on_kernel(
 
 def check_tensor_attributes(data_list, is_tensor_list):
     """
-    Checks if each element in data_list is a tensor and validates whether the corresponding
-    boolean value in is_tensor_list is correct.
+    Checks if each element in data_list is a tensor
+    and validates whether the corresponding boolean
+    value in is_tensor_list is correct.
     Parameters:
-    - data_list: A list containing tensor and non-tensor objects.
-    - is_tensor_list: A list of boolean values indicating whether the corresponding element in data_list is a tensor.
+    - data_list: A list containing tensor and
+      non-tensor objects.
+    - is_tensor_list: A list of boolean values
+      indicating whether the corresponding element
+      in data_list is a tensor.
     Returns:
-    - True if all elements' types match their corresponding boolean values in is_tensor_list.
-    - Raise Error otherwise, and prints the index and element that do not match.
+    - True if all elements' types match their
+      corresponding boolean values in
+      is_tensor_list.
+    - Raise Error otherwise, and prints the index
+      and element that do not match.
     """
     # Check if both lists have the same length
     if len(data_list) != len(is_tensor_list):
         raise ValueError(
-            "Error: The lists of inputs and is_tensor must have the same length."
+            "Error: The lists of inputs and"
+            " is_tensor must have the same length."
         )
 
     for i, (data, is_tensor) in enumerate(zip(data_list, is_tensor_list)):
@@ -314,7 +324,9 @@ def check_tensor_attributes(data_list, is_tensor_list):
 
         if actual_is_tensor != is_tensor:
             raise ValueError(
-                f"Element at index {i} is incorrect. Expected {is_tensor}, but got {actual_is_tensor}."
+                f"Element at index {i} is incorrect."
+                f" Expected {is_tensor},"
+                f" but got {actual_is_tensor}."
             )
 
     return True
@@ -324,47 +336,70 @@ _initial_missing = object()
 
 
 def offset_calculator(inp, idx, strides, dim, isInp):
-    """
-    Calculate the flat index(a.k.a offset) for a given ravel index in a multi-dimensional array.
-    The formula can be seen in:
-        - https://numpy.org/doc/stable/reference/arrays.ndarray.html#internal-memory-layout-of-an-ndarray
-        - https://numpy.org/devdocs/user/basics.indexing.html#single-element-indexing
+    """Calculate the flat index (a.k.a offset) for a
+    given ravel index in a multi-dimensional array.
 
+    The formula can be seen in:
+        - https://numpy.org/doc/stable/reference/
+          arrays.ndarray.html
+          #internal-memory-layout-of-an-ndarray
+        - https://numpy.org/devdocs/user/
+          basics.indexing.html
+          #single-element-indexing
 
     Parameters:
-        inp (tensor):               The input multi-dimensional array from which the offset is calculated.
-        idx (tensor):               The linear index for which the offset is to be calculated.
-        strides (list of int):      A list containing the stride lengths for each dimension of the input array.
-        dim (int):                  The specific dimension for which the index offset needs to be calculated.
-        isInp (bool):               A flag indicating whether the tensor 'inp' is the parameter 'self'
-                                    in scatter/gather/index_* operators or not.
+        inp (tensor): The input multi-dimensional
+            array from which the offset is
+            calculated.
+        idx (tensor): The linear index for which
+            the offset is to be calculated.
+        strides (list of int): A list containing
+            the stride lengths for each dimension
+            of the input array.
+        dim (int): The specific dimension for which
+            the index offset needs to be calculated.
+        isInp (bool): A flag indicating whether the
+            tensor 'inp' is the parameter 'self' in
+            scatter/gather/index_* operators or not.
 
-                                    In operators such as scatter/gather and index_*, when the input tensor 'inp'
-                                    is the 'self' tensor to be processed, we may need to modify its offsets later.
-                                    For instance, in the scatter operator, the offset is calculated using the formula:
+            In operators such as scatter/gather and
+            index_*, when the input tensor 'inp' is
+            the 'self' tensor to be processed, we
+            may need to modify its offsets later.
+            For instance, in the scatter operator,
+            the offset is calculated using the
+            formula:
 
-                                        inp_offset = origin_offset - stride[dim] * n_dim + stride[dim] * index.
+                inp_offset = origin_offset
+                - stride[dim] * n_dim
+                + stride[dim] * index.
 
-                                    In this case, we return the fixed part of the formula:
+            In this case, we return the fixed part
+            of the formula:
 
-                                        origin_offset - stride[dim] * n_dim,
+                origin_offset - stride[dim] * n_dim
 
-                                    to facilitate subsequent modifications.
-                                    For other types of input 'inp', we return the complete calculation result
-                                    of origin_offsets directly.
-
+            to facilitate subsequent modifications.
+            For other types of input 'inp', we
+            return the complete calculation result
+            of origin_offsets directly.
 
     Returns:
-    The calculated offset. If isInp is True, the fixed offset is returned; otherwise, the origin offset is returned.
-
+        The calculated offset. If isInp is True,
+        the fixed offset is returned; otherwise,
+        the origin offset is returned.
 
     Note:
-    The function includes a comment suggesting the potential optimization of division and modulus operations,
-    which may be beneficial if this function is called frequently.
-    See also:
-        - https://ridiculousfish.com/blog/posts/labor-of-division-episode-i.html
-        - Division by Invariant Integers Using Multiplication,
-            Torbjörn Granlund and Peter L. Montgomery, 1994.
+        The function includes a comment suggesting
+        the potential optimization of division and
+        modulus operations, which may be beneficial
+        if this function is called frequently.
+        See also:
+        - https://ridiculousfish.com/blog/posts/
+          labor-of-division-episode-i.html
+        - Division by Invariant Integers Using
+          Multiplication, Torbjorn Granlund and
+          Peter L. Montgomery, 1994.
     """
     ndim = inp.ndim
     shape = list(inp.shape)
@@ -374,10 +409,13 @@ def offset_calculator(inp, idx, strides, dim, isInp):
         add_on = torch.zeros_like(inp, dtype=torch.int32, device=inp.device)
         N = idx.size(idx.ndim - 1)
         M = idx.numel() // N
-        grid = lambda meta: (
-            triton.cdiv(M, meta["BLOCK_M"]),
-            triton.cdiv(N, meta["BLOCK_N"]),
-        )
+
+        def grid(meta):
+            return (
+                triton.cdiv(M, meta["BLOCK_M"]),
+                triton.cdiv(N, meta["BLOCK_N"]),
+            )
+
         add_on_kernel[grid](idx, add_on, shape[d], strides[d], M, N)
 
         offsets = torch.add(offsets, add_on)
@@ -402,7 +440,8 @@ def offsetCalculator(inp, idx, strides, dim, isInp):
         # FIXME: Should we write a fast div/mod
         # to boost the '%' and '//'? (Since they may be run many times)
         # See also:
-        #   - https://ridiculousfish.com/blog/posts/labor-of-division-episode-i.html
+        #   - https://ridiculousfish.com/blog/posts/
+        #     labor-of-division-episode-i.html
         #   - Division by Invariant Integers Using Multiplication,
         #     Torbjörn Granlund and Peter L. Montgomery, 1994.
     return (offsets) if not isInp else (offsets - idx_dim)

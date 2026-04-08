@@ -6,7 +6,8 @@ config_loader = ConfigLoader()
 device = DeviceDetector()
 
 """
-The dependency order of the sub-directory is strict, and changing the order arbitrarily may cause errors.
+The dependency order of the sub-directory is strict,
+and changing the order arbitrarily may cause errors.
 """
 
 # torch_device_fn is like 'torch.cuda' object

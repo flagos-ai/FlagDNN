@@ -83,7 +83,9 @@ def parse_perf_output(stdout_text):
         # 匹配 SUCCESS 行并提取数据
         if line.startswith("SUCCESS") and current_op:
             parts = line.split()
-            # 确保切分后的列数足够 (至少包含 SUCCESS, Torch Latency, Gems Latency, Gems Speedup)
+            # 确保切分后的列数足够
+            # (至少包含 SUCCESS, Torch Latency,
+            # Gems Latency, Gems Speedup)
             if len(parts) >= 4:
                 try:
                     record = {
@@ -243,7 +245,9 @@ def main():
     print("-" * 60)
     print("📊 性能测试执行完毕！")
     print(
-        f"总计脚本: {summary['total']} | 通过: {summary['passed']} | 异常: {summary['failed'] + summary['errored_or_interrupted']}"
+        f"总计脚本: {summary['total']} | "
+        f"通过: {summary['passed']} | "
+        f"异常: {summary['failed'] + summary['errored_or_interrupted']}"
     )
     print(
         f"共收集到 {len(all_perf_data)} 条性能数据记录，已保存至 {DATA_FILE}"

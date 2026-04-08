@@ -311,7 +311,9 @@ def avg_pool3d(
     divisor_override: Optional[int] = None,
 ) -> torch.Tensor:
     logger.debug(
-        f"FLAG_DNN AVG_POOL3D (kernel={kernel_size}, divisor={divisor_override})"
+        f"FLAG_DNN AVG_POOL3D "
+        f"(kernel={kernel_size}, "
+        f"divisor={divisor_override})"
     )
 
     def _triple(x):
@@ -335,16 +337,34 @@ def avg_pool3d(
         out = (L + 2 * pad - k) / s + 1
         return math.ceil(out) if ceil else math.floor(out)
 
-    OD = _out_size(D, padding[0], kernel_size[0], stride[0], ceil_mode)
-    OH = _out_size(H, padding[1], kernel_size[1], stride[1], ceil_mode)
-    OW = _out_size(W, padding[2], kernel_size[2], stride[2], ceil_mode)
+    OD = _out_size(
+        D,
+        padding[0],
+        kernel_size[0],  # type: ignore[index]
+        stride[0],
+        ceil_mode,  # type: ignore[index]
+    )
+    OH = _out_size(
+        H,
+        padding[1],
+        kernel_size[1],  # type: ignore[index]
+        stride[1],
+        ceil_mode,  # type: ignore[index]
+    )
+    OW = _out_size(
+        W,
+        padding[2],
+        kernel_size[2],  # type: ignore[index]
+        stride[2],
+        ceil_mode,  # type: ignore[index]
+    )
 
     if ceil_mode:
-        if (OD - 1) * stride[0] >= D + padding[0]:
+        if (OD - 1) * stride[0] >= D + padding[0]:  # type: ignore[index]
             OD -= 1
-        if (OH - 1) * stride[1] >= H + padding[1]:
+        if (OH - 1) * stride[1] >= H + padding[1]:  # type: ignore[index]
             OH -= 1
-        if (OW - 1) * stride[2] >= W + padding[2]:
+        if (OW - 1) * stride[2] >= W + padding[2]:  # type: ignore[index]
             OW -= 1
 
     if not input.is_contiguous():
@@ -367,38 +387,55 @@ def avg_pool3d(
             OD == 1
             and OH == 1
             and OW == 1
-            and (-padding[0] + kernel_size[0] >= D)
-            and (-padding[1] + kernel_size[1] >= H)
-            and (-padding[2] + kernel_size[2] >= W)
+            and (-padding[0] + kernel_size[0] >= D)  # type: ignore[index]
+            and (-padding[1] + kernel_size[1] >= H)  # type: ignore[index]
+            and (-padding[2] + kernel_size[2] >= W)  # type: ignore[index]
         )
 
         if is_gap_full_coverage:
             if has_divisor_override:
                 gap_divisor = divisor_override
             elif count_include_pad:
-                pool_d = min(-padding[0] + kernel_size[0], D + padding[0]) - (
+                pool_d = min(
+                    -padding[0] + kernel_size[0],  # type: ignore[index]
+                    D + padding[0],  # type: ignore[index]
+                ) - (
                     -padding[0]
-                )
-                pool_h = min(-padding[1] + kernel_size[1], H + padding[1]) - (
+                )  # type: ignore[index]
+                pool_h = min(
+                    -padding[1] + kernel_size[1],  # type: ignore[index]
+                    H + padding[1],  # type: ignore[index]
+                ) - (
                     -padding[1]
-                )
-                pool_w = min(-padding[2] + kernel_size[2], W + padding[2]) - (
+                )  # type: ignore[index]
+                pool_w = min(
+                    -padding[2] + kernel_size[2],  # type: ignore[index]
+                    W + padding[2],  # type: ignore[index]
+                ) - (
                     -padding[2]
-                )
+                )  # type: ignore[index]
                 gap_divisor = pool_d * pool_h * pool_w
             else:
-                valid_d = min(-padding[0] + kernel_size[0], D) - max(
+                valid_d = min(
+                    -padding[0] + kernel_size[0], D  # type: ignore[index]
+                ) - max(
                     -padding[0], 0
-                )
-                valid_h = min(-padding[1] + kernel_size[1], H) - max(
+                )  # type: ignore[index]
+                valid_h = min(
+                    -padding[1] + kernel_size[1], H  # type: ignore[index]
+                ) - max(
                     -padding[1], 0
-                )
-                valid_w = min(-padding[2] + kernel_size[2], W) - max(
+                )  # type: ignore[index]
+                valid_w = min(
+                    -padding[2] + kernel_size[2], W  # type: ignore[index]
+                ) - max(
                     -padding[2], 0
-                )
+                )  # type: ignore[index]
                 gap_divisor = valid_d * valid_h * valid_w
 
-            grid_gap = lambda meta: (N * C,)
+            def grid_gap(meta):
+                return (N * C,)
+
             spatial_size = D * H * W
             avg_pool3d_gap_kernel[grid_gap](
                 input,
@@ -410,7 +447,10 @@ def avg_pool3d(
                 ACC_DTYPE=acc_dtype,
             )
         elif OD * OH * OW <= 64:
-            grid_1d = lambda meta: (triton.cdiv(M, meta["BLOCK_SIZE"]),)
+
+            def grid_1d(meta):
+                return (triton.cdiv(M, meta["BLOCK_SIZE"]),)
+
             avg_pool3d_kernel_1d[grid_1d](
                 input,
                 y,
@@ -422,25 +462,28 @@ def avg_pool3d(
                 OD,
                 OH,
                 OW,
-                padding[0],
-                padding[1],
-                padding[2],
-                STRIDE_D=stride[0],
-                STRIDE_H=stride[1],
-                STRIDE_W=stride[2],
-                KERNEL_D=kernel_size[0],
-                KERNEL_H=kernel_size[1],
-                KERNEL_W=kernel_size[2],
+                padding[0],  # type: ignore[index]
+                padding[1],  # type: ignore[index]
+                padding[2],  # type: ignore[index]
+                STRIDE_D=stride[0],  # type: ignore[index]
+                STRIDE_H=stride[1],  # type: ignore[index]
+                STRIDE_W=stride[2],  # type: ignore[index]
+                KERNEL_D=kernel_size[0],  # type: ignore[index]
+                KERNEL_H=kernel_size[1],  # type: ignore[index]
+                KERNEL_W=kernel_size[2],  # type: ignore[index]
                 COUNT_INCLUDE_PAD=count_include_pad,
                 HAS_DIVISOR_OVERRIDE=has_divisor_override,
                 DIVISOR_OVERRIDE=div_override_val,
                 ACC_DTYPE=acc_dtype,
             )
         else:
-            grid_2d = lambda meta: (
-                triton.cdiv(OD * OH * OW, meta["BLOCK_SIZE"]),
-                N * C,
-            )
+
+            def grid_2d(meta):
+                return (
+                    triton.cdiv(OD * OH * OW, meta["BLOCK_SIZE"]),
+                    N * C,
+                )
+
             avg_pool3d_kernel_2d[grid_2d](
                 input,
                 y,
@@ -452,15 +495,15 @@ def avg_pool3d(
                 OD,
                 OH,
                 OW,
-                padding[0],
-                padding[1],
-                padding[2],
-                STRIDE_D=stride[0],
-                STRIDE_H=stride[1],
-                STRIDE_W=stride[2],
-                KERNEL_D=kernel_size[0],
-                KERNEL_H=kernel_size[1],
-                KERNEL_W=kernel_size[2],
+                padding[0],  # type: ignore[index]
+                padding[1],  # type: ignore[index]
+                padding[2],  # type: ignore[index]
+                STRIDE_D=stride[0],  # type: ignore[index]
+                STRIDE_H=stride[1],  # type: ignore[index]
+                STRIDE_W=stride[2],  # type: ignore[index]
+                KERNEL_D=kernel_size[0],  # type: ignore[index]
+                KERNEL_H=kernel_size[1],  # type: ignore[index]
+                KERNEL_W=kernel_size[2],  # type: ignore[index]
                 COUNT_INCLUDE_PAD=count_include_pad,
                 HAS_DIVISOR_OVERRIDE=has_divisor_override,
                 DIVISOR_OVERRIDE=div_override_val,

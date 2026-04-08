@@ -32,7 +32,7 @@ def emit_record_logger(message: str) -> None:
         if getattr(handler, "stream", None) is None:
             handler.acquire()
             try:
-                handler.stream = handler._open()
+                handler.stream = handler._open()  # type: ignore[attr-defined]
             finally:
                 handler.release()
     recordLogger.info(message)
@@ -109,7 +109,9 @@ def pytest_addoption(parser):
         choices=ALL_AVAILABLE_METRICS,
         help=(
             "Specify the metrics we want to benchmark. "
-            "If not specified, the metric items will vary according to the specified operation's category and name."
+            "If not specified, the metric items will "
+            "vary according to the specified "
+            "operation's category and name."
         ),
     )
 
@@ -124,7 +126,9 @@ def pytest_addoption(parser):
         ],
         help=(
             "Specify the data types for benchmarks. "
-            "If not specified, the dtype items will vary according to the specified operation's category and name."
+            "If not specified, the dtype items will "
+            "vary according to the specified "
+            "operation's category and name."
         ),
     )
 
@@ -133,7 +137,11 @@ def pytest_addoption(parser):
         action="store",
         default=os.path.join(os.path.dirname(__file__), "core_shapes.yaml"),
         required=False,
-        help="Specify the shape file name for benchmarks. If not specified, a default shape list will be used.",
+        help=(
+            "Specify the shape file name for "
+            "benchmarks. If not specified, a "
+            "default shape list will be used."
+        ),
     )
 
     parser.addoption(
@@ -227,7 +235,9 @@ def setup_once(request):
         print("\nThis is query mode; all benchmark functions will be skipped.")
     # else:
     #     note_info = (
-    #         "\n\nNote: The 'size' field below is for backward compatibility with previous versions of the benchmark. "
+    #         "\n\nNote: The 'size' field below is for "
+    #         "backward compatibility with previous "
+    #         "versions of the benchmark. "
     #         "\nThis field will be removed in a future release."
     #     )
     #     print(note_info)
@@ -250,7 +260,8 @@ def extract_and_log_op_attributes(request):
     print("")
     op_attributes = []
 
-    # Extract the 'recommended_shapes' attribute from the pytest marker decoration.
+    # Extract the 'recommended_shapes' attribute
+    # from the pytest marker decoration.
     for mark in request.node.iter_markers():
         if mark.name in BUILTIN_MARKS:
             continue

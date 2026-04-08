@@ -7,7 +7,7 @@ from typing import Any, Generator, List, Optional, Tuple
 import pytest
 import torch
 import triton
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 import flag_dnn
 
@@ -122,14 +122,18 @@ class Benchmark:
             ]
             if invalid_metrics:
                 raise ValueError(
-                    f"Invalid metrics: {', '.join(invalid_metrics)} for operation: '{self.op_name}'"
+                    f"Invalid metrics: "
+                    f"{', '.join(invalid_metrics)}"
+                    f" for operation: "
+                    f"'{self.op_name}'"
                 )
             unsatisfied_metrics = check_metric_dependencies(
                 user_desired_metrics
             )
             if unsatisfied_metrics:
                 raise ValueError(
-                    f"Unsatisfied metric dependencies: {', '.join(unsatisfied_metrics)}"
+                    "Unsatisfied metric dependencies"
+                    f": {', '.join(unsatisfied_metrics)}"
                 )
 
         self.to_bench_metrics = user_desired_metrics or self.metrics
@@ -144,7 +148,10 @@ class Benchmark:
                     self.to_bench_metrics.append(metric)
 
     def set_more_metrics(self):
-        """Base method (optional to override in subclasses). Returns additional shapes if applicable."""
+        """Base method (optional to override).
+
+        Returns additional shapes if applicable.
+        """
         return []
 
     def set_dtypes(self, user_desired_dtypes: Optional[List[torch.dtype]]):
@@ -158,8 +165,10 @@ class Benchmark:
                 if dtype not in self.dtypes
             ]
             raise ValueError(
-                f"Given dtype(s) '{', '.join(str(dtype) for dtype in invalid_dtypes)}'"
-                f"can't be supported by this op '{self.op_name}'"
+                "Given dtype(s) '"
+                f"{', '.join(str(dtype) for dtype in invalid_dtypes)}'"
+                f" can't be supported by"
+                f" this op '{self.op_name}'"
             )
         self.to_bench_dtypes = (
             user_desired_dtypes if user_desired_dtypes else self.dtypes
@@ -169,13 +178,15 @@ class Benchmark:
         # Validate user-spicified shapes files
         import os
 
-        if not os.path.isfile(shape_file_path):
+        if not os.path.isfile(shape_file_path):  # type: ignore[arg-type]
             raise FileNotFoundError(
                 f"Shape file '{shape_file_path}' does not exist."
             )
         try:
             with open(shape_file_path, "r") as file:
-                yaml_config = yaml.safe_load(file)
+                yaml_config = yaml.safe_load(  # type: ignore[call-overload]
+                    file
+                )
                 if self.op_name in yaml_config:
                     self.shapes = yaml_config[self.op_name].get(
                         "shapes", self.DEFAULT_SHAPES
@@ -209,7 +220,8 @@ class Benchmark:
                         if math.prod(shape) < 1024 * 1024
                     ]
 
-            # merge shapes from subclass If subclass has `set_more_shapes`, call it to merge shapes
+            # merge shapes from subclass; if subclass has
+            # `set_more_shapes`, call it to merge shapes
             if (
                 hasattr(self, "set_more_shapes")
                 and callable(getattr(self, "set_more_shapes"))
@@ -229,11 +241,15 @@ class Benchmark:
                     )
         except yaml.YAMLError as e:
             raise ValueError(
-                f"Shape file '{shape_file_path}' is not a valid YAML file. Error: {e}"
+                f"Shape file '{shape_file_path}' is not"
+                f" a valid YAML file. Error: {e}"
             )
 
     def set_more_shapes(self) -> Optional[List[List[int]]]:
-        """Base method (optional to override in subclasses). Returns additional shapes if applicable."""
+        """Base method (optional to override).
+
+        Returns additional shapes if applicable.
+        """
         return None
 
     def record_shapes(self, *args, **kwargs):
@@ -275,17 +291,27 @@ class Benchmark:
         self.gems_op = gems_op
 
     def get_latency(self, op, *args, **kwargs):
-        fn = lambda: op(*args, **kwargs)
+        def fn():
+            return op(*args, **kwargs)
+
         if self.is_backward:
             out = fn()
             dout = torch.randn_like(out)
-            # fn = lambda: out.backward(dout, retain_graph=True)
             xs = list(
-                filter(lambda x: torch.is_tensor(x) and x.requires_grad, args)
+                filter(
+                    lambda x: (torch.is_tensor(x) and x.requires_grad),
+                    args,
+                )
             )
-            fn = lambda: torch.autograd.grad(
-                (out,), xs, grad_outputs=(dout,), retain_graph=True
-            )
+
+            def fn():  # noqa: F811
+                return torch.autograd.grad(
+                    (out,),
+                    xs,
+                    grad_outputs=(dout,),
+                    retain_graph=True,
+                )
+
         if Config.mode == BenchMode.OPERATOR:
             for i in range(Config.warm_up):
                 fn()
@@ -330,11 +356,13 @@ class Benchmark:
         )
 
     def get_tflops(self, op, *args, **kwargs):
-        """This method is currently not really implemented and serves as a placeholder.
-        A proper implementation will be developed in the future."""
+        """Not really implemented; serves as a
+        placeholder for future development."""
         from torch.utils.flop_counter import FlopCounterMode
 
-        fn = lambda: op(*args, **kwargs)
+        def fn():
+            return op(*args, **kwargs)
+
         with FlopCounterMode(display=False) as flop_counter:
             fn()
         return flop_counter.get_total_flops()
@@ -370,7 +398,7 @@ class Benchmark:
         if self.is_backward:
             args = [
                 (
-                    a.clone().requires_grad_()
+                    a.clone().requires_grad_()  # type: ignore[union-attr]
                     if torch.is_tensor(a) and torch.is_floating_point(a)
                     else a
                 )
@@ -427,7 +455,8 @@ class Benchmark:
                             / 1e12
                             * 1e3
                         )
-                        # utilization = metric.tflops / metric.latency / 1e12 * 1e3
+                        # utilization = metric.tflops
+                        #   / metric.latency / 1e12 * 1e3
                 except Exception as e:
                     metric.error_msg = str(e)
                     pytest.fail(str(e))  # raise exception again
@@ -449,12 +478,18 @@ class GenericBenchmark(Benchmark):
     """
     A generic benchmark class for most of the operations.
 
-    This class extends the Benchmark base class. It allows users to specify custom
-    input functions and shapes, making it suitable for a wide range of tensor
-    operations including both unary and binary operations.
+    This class extends the Benchmark base class.
+    It allows users to specify custom input functions
+    and shapes, making it suitable for a wide range
+    of tensor operations including both unary and
+    binary operations.
 
     Usage example:
-        benchmark = GenericBenchmark(op_name="add", torch_op=torch.add, input_fn=binary_input_fn)
+        benchmark = GenericBenchmark(
+            op_name="add",
+            torch_op=torch.add,
+            input_fn=binary_input_fn,
+        )
         benchmark.run()
     """
 

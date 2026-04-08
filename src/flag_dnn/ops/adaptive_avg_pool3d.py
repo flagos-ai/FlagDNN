@@ -1,6 +1,6 @@
 import logging
 import math
-from typing import Tuple, Union, Optional
+from typing import Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -142,7 +142,7 @@ def global_avg_pool3d_fused_kernel(
         tl.store(y_ptr + pid_nc, avg_val.to(y_ptr.dtype.element_ty))
 
 
-_GLOBAL_POOL3D_FUSED_CACHE = {}
+_GLOBAL_POOL3D_FUSED_CACHE: dict = {}
 
 
 def _get_global_pool3d_fused_bufs(device, acc_dtype, nc, split_k):
@@ -162,7 +162,8 @@ def _get_global_pool3d_fused_bufs(device, acc_dtype, nc, split_k):
     counter_buf = state["counter"]
     counter_base = state["counter_base"]
 
-    # Avoid a per-call device memset in the hot path. Reset only on rare wraparound.
+    # Avoid a per-call device memset in the hot path.
+    # Reset only on rare wraparound.
     max_base = torch.iinfo(torch.int32).max - split_k
     if counter_base > max_base:
         counter_buf.zero_()
@@ -635,7 +636,8 @@ def adaptive_avg_pool3d(
                     num_warps=num_warps,
                     num_stages=1,
                 )
-            # Small NC, large DHW: split-K keeps the GPU busy for global pooling.
+            # Small NC, large DHW: split-K keeps
+            # the GPU busy for global pooling.
             elif _should_use_global_pool3d_fused(NC, DHW):
                 split_k, block_size, num_warps, num_stages = (
                     _global_large_dhw_small_nc_meta(NC, DHW)
@@ -651,7 +653,7 @@ def adaptive_avg_pool3d(
                     )
                 )
 
-                grid = (NC, split_k)
+                grid = (NC, split_k)  # type: ignore[assignment]
                 global_avg_pool3d_fused_kernel[grid](
                     input,
                     y,
@@ -669,7 +671,10 @@ def adaptive_avg_pool3d(
                 )
             # General case: autotuned global kernel
             else:
-                grid = lambda meta: (NC,)
+
+                def grid(meta):  # type: ignore[assignment]
+                    return (NC,)
+
                 global_avg_pool3d_kernel[grid](
                     input,
                     y,
@@ -744,12 +749,15 @@ def adaptive_avg_pool3d(
             k_d = D // OD
             k_h = H // OH
             k_w = W // OW
-            grid = lambda meta: (
-                NC,
-                triton.cdiv(OD, meta["BLOCK_D"]),
-                triton.cdiv(OH, meta["BLOCK_H"])
-                * triton.cdiv(OW, meta["BLOCK_W"]),
-            )
+
+            def grid(meta):  # type: ignore[assignment]
+                return (
+                    NC,
+                    triton.cdiv(OD, meta["BLOCK_D"]),
+                    triton.cdiv(OH, meta["BLOCK_H"])
+                    * triton.cdiv(OW, meta["BLOCK_W"]),
+                )
+
             adaptive_avg_pool3d_divisible_large_kernel[grid](
                 input,
                 y,
@@ -772,12 +780,15 @@ def adaptive_avg_pool3d(
             max_k_d = _exact_max_window(D, OD)
             max_k_h = _exact_max_window(H, OH)
             max_k_w = _exact_max_window(W, OW)
-            grid = lambda meta: (
-                NC,
-                triton.cdiv(OD, meta["BLOCK_D"]),
-                triton.cdiv(OH, meta["BLOCK_H"])
-                * triton.cdiv(OW, meta["BLOCK_W"]),
-            )
+
+            def grid(meta):  # type: ignore[assignment]
+                return (
+                    NC,
+                    triton.cdiv(OD, meta["BLOCK_D"]),
+                    triton.cdiv(OH, meta["BLOCK_H"])
+                    * triton.cdiv(OW, meta["BLOCK_W"]),
+                )
+
             adaptive_avg_pool3d_general_large_kernel[grid](
                 input,
                 y,

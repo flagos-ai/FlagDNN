@@ -3,10 +3,48 @@ flag_dnn - DNN operations implemented with Triton
 """
 
 import torch
-from packaging import version
 from flag_dnn import runtime
-from flag_dnn import testing
-from flag_dnn.ops import *
+from flag_dnn import testing  # noqa: F401
+from flag_dnn.ops import (
+    abs,
+    adaptive_avg_pool1d,
+    adaptive_avg_pool2d,
+    adaptive_avg_pool3d,
+    adaptive_max_pool1d,
+    adaptive_max_pool2d,
+    adaptive_max_pool3d,
+    add,
+    avg_pool1d,
+    avg_pool2d,
+    avg_pool3d,
+    batch_norm,
+    clamp,
+    cumprod,
+    cumsum,
+    div,
+    eq,
+    gelu,
+    group_norm,
+    layer_norm,
+    leaky_relu,
+    max_pool1d,
+    max_pool2d,
+    max_pool3d,
+    mean,
+    mul,
+    ne,
+    neg,
+    pow,
+    prelu,
+    prod,
+    relu,
+    rms_norm,
+    silu,
+    softmax,
+    sqrt,
+    sub,
+    sum,
+)
 from flag_dnn.config import aten_patch_list, resolve_user_setting
 from flag_dnn.runtime.register import Register
 
@@ -34,7 +72,7 @@ _FULL_CONFIG = (
     ("ne", ne),
 )
 
-FULL_CONFIG_BY_FUNC = {}
+FULL_CONFIG_BY_FUNC: dict = {}
 for _item in _FULL_CONFIG:
     if not _item or len(_item) < 2:
         continue
@@ -60,8 +98,10 @@ def enable(
             - list/tuple/set of function names (e.g., ["masked_fill", "mul"]).
             - str path to a YAML file ending with .yml/.yaml containing an
               `exclude:` list.
-            - "default" or None: auto-load vendor/arch-specific
-              runtime/backend/_<vendor>/[<arch>/]enable_configs.yaml if present.
+            - "default" or None: auto-load
+              vendor/arch-specific
+              runtime/backend/_<vendor>/[<arch>/]
+              enable_configs.yaml if present.
         registrar: Registrar class; defaults to `Register`.
         record: Whether to enable FlagDNN logging.
         once: When True, log only once.
@@ -98,8 +138,10 @@ def only_enable(
             - list/tuple/set of function names (e.g., ["rms_norm", "softmax"]).
             - str path to a YAML file ending with .yml/.yaml (expects a list or
               an `include:` key).
-            - "default" or None: auto-load vendor/arch-specific
-                runtime/backend/_<vendor>/[<arch>/]only_enable_configs.yaml if present.
+            - "default" or None: auto-load
+              vendor/arch-specific
+              runtime/backend/_<vendor>/[<arch>/]
+              only_enable_configs.yaml if present.
         registrar: Registrar class; defaults to `Register`.
         record: Whether to enable Flag logging.
         once: When True, log only once.
@@ -122,7 +164,8 @@ def only_enable(
     include_ops = resolve_user_setting(include, "include")
     if not include_ops:
         warnings.warn(
-            "only_enable failed: No include entries resolved from list or yaml."
+            "only_enable failed: No include entries"
+            " resolved from list or yaml."
         )
         return
 

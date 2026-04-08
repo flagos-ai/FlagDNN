@@ -32,7 +32,11 @@ from flag_dnn.utils.type_utils import (
 
 # ------------------ Operation Description ---------------------------
 def _type_name(type) -> str:
-    "Render typename as string, work for both (bool, int, float, str) and torch.dtype object"
+    """Render typename as string.
+
+    Works for both (bool, int, float, str)
+    and torch.dtype object.
+    """
     if type in (bool, int, float, str):
         return type.__name__
     if isinstance(type, torch.dtype):
@@ -95,7 +99,10 @@ class FunctionSchema:
 
         if promotion_methods is None:
             raise ValueError(
-                "No type promotion method provided! You must provide type promotion method for each output!"
+                "No type promotion method"
+                " provided! You must provide type"
+                " promotion method for"
+                " each output!"
             )
         else:
             self._promotion_methods = self.canonicalize_promotion_methods(
@@ -132,7 +139,10 @@ class FunctionSchema:
                 self._is_tensor = [item is None for item in dtypes]
         else:
             raise ValueError(
-                "Cannot create FunctionSchema when none of (num_inputs, is_tensor, dtypes) is specified."
+                "Cannot create FunctionSchema"
+                " when none of (num_inputs,"
+                " is_tensor, dtypes) is"
+                " specified."
             )
 
         if num_outputs is not None:
@@ -258,7 +268,9 @@ class KernelGenerator:
         code.writeline("@libentry()")
         num_non_tensor_args = self.fx.num_non_tensor_args()
         if num_non_tensor_args > 0:
-            # we do not specialize non tensor args since they are passed into the inlined function
+            # we do not specialize non tensor args
+            # since they are passed into the
+            # inlined function
             # which means that their values may not deserve specialization
             non_specialize_arg_names = [
                 f"val{i}" for i in range(num_non_tensor_args)
@@ -290,13 +302,16 @@ class KernelGenerator:
             for i in range(schema.num_inputs()):
                 if schema.is_tensor(i):
                     code.writeline(
-                        f"in{input_tensor_index}_ptr: tl.tensor, # of tl.pointer_type"
+                        f"in{input_tensor_index}"
+                        "_ptr: tl.tensor,"
+                        " # of tl.pointer_type"
                     )
                     input_tensor_index += 1
                 else:
                     if schema.input_type(i) is not None:
                         code.writeline(
-                            f"val{non_tensor_index}: {_type_name(schema.input_type(i))},"
+                            f"val{non_tensor_index}: "
+                            f"{_type_name(schema.input_type(i))},"
                         )
                     else:
                         code.writeline(f"val{non_tensor_index},")
@@ -305,7 +320,9 @@ class KernelGenerator:
             # signature: output ptrs
             for i in range(schema.num_outputs()):
                 code.writeline(
-                    f"out{output_tensor_index}_ptr: tl.tensor, # of tl.pointer_type"
+                    f"out{output_tensor_index}"
+                    "_ptr: tl.tensor,"
+                    " # of tl.pointer_type"
                 )
                 output_tensor_index += 1
 
@@ -371,13 +388,16 @@ class KernelGenerator:
             for i in range(schema.num_inputs()):
                 if schema.is_tensor(i):
                     code.writeline(
-                        f"in{input_tensor_index}_ptr: tl.tensor, # of tl.pointer_type"
+                        f"in{input_tensor_index}"
+                        "_ptr: tl.tensor,"
+                        " # of tl.pointer_type"
                     )
                     input_tensor_index += 1
                 else:
                     if schema.input_type(i) is not None:
                         code.writeline(
-                            f"val{non_tensor_index}: {_type_name(schema.input_type(i))},"
+                            f"val{non_tensor_index}: "
+                            f"{_type_name(schema.input_type(i))},"
                         )
                     else:
                         code.writeline(f"val{non_tensor_index},")
@@ -386,7 +406,9 @@ class KernelGenerator:
             # signature: output ptrs
             for i in range(schema.num_outputs()):
                 code.writeline(
-                    f"out{output_tensor_index}_ptr: tl.tensor, # of tl.pointer_type"
+                    f"out{output_tensor_index}"
+                    "_ptr: tl.tensor,"
+                    " # of tl.pointer_type"
                 )
                 output_tensor_index += 1
 
@@ -443,7 +465,9 @@ class KernelGenerator:
         for i in range(schema.num_input_tensors()):
             code.writeline(
                 f"in{i} = tl.load(in{i}_ptr).to(in{i}_ptr.type.element_ty) "
-                "# workaround the bug on bool, we should use the pointer's dtype)"
+                "# workaround the bug on bool,"
+                " we should use the pointer's"
+                " dtype)"
             )
         code.newline()
 
@@ -475,7 +499,9 @@ class KernelGenerator:
 
         # reconstruct pid multi index
         code.writeline(
-            "# pid multi index recontruction: we use c ordering, right axes changes fastest"
+            "# pid multi index recontruction:"
+            " we use c ordering,"
+            " right axes changes fastest"
         )
         for i in reversed(range(ndim)):
             if i > 0:
@@ -489,7 +515,8 @@ class KernelGenerator:
         code.writeline("# tile offsets")
         for i in range(ndim):
             # Or else: AssertionError: Block pointers only support 32 bit
-            # `offsets/block_shape`, add a `.to(tl.int32)` or use regular indexing
+            # `offsets/block_shape`, add a
+            # `.to(tl.int32)` or use regular indexing
             # for 64 bit support
             code.writeline(
                 f"offset{i} = (tile_id{i} * tile_size{i}).to(tl.int32)"
@@ -506,11 +533,19 @@ class KernelGenerator:
             )
             code.writeline(
                 f"in{i}_bptr = tl.make_block_ptr("
-                f"in{i}_ptr, ({shape}), ({strides}), ({offsets}), ({tile_sizes}), order=({order}))"
+                f"in{i}_ptr, ({shape}),"
+                f" ({strides}), ({offsets}),"
+                f" ({tile_sizes}),"
+                f" order=({order}))"
             )
             code.writeline(
-                f"in{i} = tl.load(in{i}_bptr, boundary_check=({order})).to(in{i}_ptr.type.element_ty) "
-                "# workaround the bug on bool, we should use the original pointer's dtype(instead of block pointer's)"
+                f"in{i} = tl.load(in{i}_bptr,"
+                f" boundary_check=({order}))"
+                f".to(in{i}_ptr"
+                ".type.element_ty) "
+                "# workaround: use original"
+                " pointer's dtype"
+                " (not block pointer's)"
             )
         code.newline()
 
@@ -533,7 +568,9 @@ class KernelGenerator:
 
         # stores
         code.writeline(
-            "# stores, note that store to block pointer does not automatically cast the value to the pointer's dtype"
+            "# stores, note that store to block"
+            " pointer does not automatically cast"
+            " the value to the pointer's dtype"
         )
         for i in range(schema.num_output_tensors()):
             strides = _tuple_content(
@@ -544,10 +581,16 @@ class KernelGenerator:
             )
             code.writeline(
                 f"out{i}_bptr = tl.make_block_ptr("
-                f"out{i}_ptr, ({shape}), ({strides}), ({offsets}), ({tile_sizes}), order=({order}))"
+                f"out{i}_ptr, ({shape}),"
+                f" ({strides}), ({offsets}),"
+                f" ({tile_sizes}),"
+                f" order=({order}))"
             )
             code.writeline(
-                f"tl.store(out{i}_bptr, out{i}.to(out{i}_bptr.type.element_ty), boundary_check=({order}))"
+                f"tl.store(out{i}_bptr,"
+                f" out{i}.to(out{i}_bptr"
+                ".type.element_ty),"
+                f" boundary_check=({order}))"
             )
 
     def gen_body_gsl_with_bptr(self, code):
@@ -563,7 +606,9 @@ class KernelGenerator:
 
         # reconstruct pid multi index
         code.writeline(
-            "# pid multi index recontruction: we use c ordering, right axes changes fastest"
+            "# pid multi index recontruction:"
+            " we use c ordering,"
+            " right axes changes fastest"
         )
         for i in reversed(range(ndim)):
             if i > 0:
@@ -576,7 +621,9 @@ class KernelGenerator:
         # offsets
         for i in range(ndim):
             code.writeline(
-                f"offsets{i} = tile_id{i} * tile_size{i} + tl.arange(0, tile_size{i})"
+                f"offsets{i} = tile_id{i}"
+                f" * tile_size{i}"
+                f" + tl.arange(0, tile_size{i})"
             )
 
         # masks
@@ -595,7 +642,10 @@ class KernelGenerator:
             )
             offset_combine = " + ".join(offsets)
             code.writeline(
-                f"in{i} = tl.load(in{i}_ptr + {offset_combine}, mask=mask).to(in{i}_ptr.type.element_ty)"
+                f"in{i} = tl.load("
+                f"in{i}_ptr + {offset_combine},"
+                " mask=mask)"
+                f".to(in{i}_ptr.type.element_ty)"
             )
 
         code.newline()
@@ -625,7 +675,9 @@ class KernelGenerator:
             )
             offset_combine = " + ".join(offsets)
             code.writeline(
-                f"in{i} = tl.store(out{i}_ptr + {offset_combine}, out{i}, mask=mask)"
+                f"in{i} = tl.store("
+                f"out{i}_ptr + {offset_combine},"
+                f" out{i}, mask=mask)"
             )
 
     def gen_body_gsl_without_bptr(self, code):
@@ -636,7 +688,8 @@ class KernelGenerator:
             self.gen_body_one_tile_per_cta_without_bptr(code)
 
     def codegen_nd_tile_with_bptr(self, code):
-        """Generate kernel nd tile & 1d grid with gsl support with block pointer."""
+        """Generate kernel nd tile & 1d grid
+        with gsl support with block pointer."""
         self.gen_import_function(code)
         self.gen_decorators(code)
         self.gen_signature(code, with_block_pointer=True)
@@ -650,12 +703,15 @@ class KernelGenerator:
         with code.indent():
             code.writeline("pid = tle.program_id(0)")
             self.gen_num_tiles(code)
-            # monolitic kernel: one_tile_per_cta, it may requires a very large grid to compute
+            # monolitic kernel: one_tile_per_cta,
+            # it may requires a very large grid
             code.writeline("if one_tile_per_cta: # monolitic kernel style")
             with code.indent():
                 code.writeline("tile_id = pid")
                 self.gen_body_one_tile_per_cta_with_bptr(code)
-            # https://developer.nvidia.com/blog/cuda-pro-tip-write-flexible-kernels-grid-stride-loops/
+            # https://developer.nvidia.com/blog/
+            # cuda-pro-tip-write-flexible-kernels-
+            # grid-stride-loops/
             code.writeline("else: # grid-stride-loop style kernel")
             with code.indent():
                 self.gen_body_gsl_with_bptr(code)
@@ -676,12 +732,15 @@ class KernelGenerator:
         with code.indent():
             code.writeline("pid = tle.program_id(0)")
             self.gen_num_tiles(code)
-            # monolitic kernel: one_tile_per_cta, it may requires a very large grid to compute
+            # monolitic kernel: one_tile_per_cta,
+            # it may requires a very large grid
             code.writeline("if one_tile_per_cta: # monolitic kernel style")
             with code.indent():
                 code.writeline("tile_id = pid")
                 self.gen_body_one_tile_per_cta_without_bptr(code)
-            # https://developer.nvidia.com/blog/cuda-pro-tip-write-flexible-kernels-grid-stride-loops/
+            # https://developer.nvidia.com/blog/
+            # cuda-pro-tip-write-flexible-kernels-
+            # grid-stride-loops/
             code.writeline("else: # grid-stride-loop style kernel")
             with code.indent():
                 self.gen_body_gsl_without_bptr(code)
@@ -719,7 +778,10 @@ class KernelGenerator:
             offsets = tuple(f"i{j} * in{i}_stride{j}" for j in range(ndim))
             offset_combine = " + ".join(offsets)
             code.writeline(
-                f"in{i} = tl.load(in{i}_ptr + {offset_combine}, mask=mask).to(in{i}_ptr.type.element_ty)"
+                f"in{i} = tl.load("
+                f"in{i}_ptr + {offset_combine},"
+                " mask=mask)"
+                f".to(in{i}_ptr.type.element_ty)"
             )
 
         code.newline()
@@ -746,7 +808,9 @@ class KernelGenerator:
             offsets = tuple(f"i{j} * out{i}_stride{j}" for j in range(ndim))
             offset_combine = " + ".join(offsets)
             code.writeline(
-                f"in{i} = tl.store(out{i}_ptr + {offset_combine}, out{i}, mask=mask)"
+                f"in{i} = tl.store("
+                f"out{i}_ptr + {offset_combine},"
+                f" out{i}, mask=mask)"
             )
 
     def gen_body_gsl_1d_tile(self, code):
@@ -771,12 +835,15 @@ class KernelGenerator:
         with code.indent():
             code.writeline("pid = tle.program_id(0)")
             # code.writeline("num_ctas = te.num_programs(0)")
-            # monolitic kernel: one_tile_per_cta, it may requires a very large grid to compute
+            # monolitic kernel: one_tile_per_cta,
+            # it may requires a very large grid
             code.writeline("if one_tile_per_cta: # monolitic kernel style")
             with code.indent():
                 code.writeline("tile_id = pid")
                 self.gen_body_one_tile_per_cta_1d_tile(code)
-            # https://developer.nvidia.com/blog/cuda-pro-tip-write-flexible-kernels-grid-stride-loops/
+            # https://developer.nvidia.com/blog/
+            # cuda-pro-tip-write-flexible-kernels-
+            # grid-stride-loops/
             code.writeline("else: # grid-stride-loop style kernel")
             with code.indent():
                 self.gen_body_gsl_1d_tile(code)
@@ -825,19 +892,30 @@ class WrapperGenerator:
                     )
                 else:
                     params.append(f"{self.input_name(i)}")
-        # NOTE: [the wrapper's signature and rules for passing parameters ]
-        # input params: must be passed by position, since the names are renamed to
-        # in0, in1, val0, val1, ..., So passing these parameters by keyword is wierd
-        # So we enforce that these parameters must be passed by position.
-        # maybe we can fix it later
-        # output parameters: must be passed by keyword, since the scalar function
-        # do not have output parameters(think of it as some scalar function, output
-        # parameter does not make sense in this case.) They are added to allow destination
-        # passing style API. Output parameter is convenient in cases where we want
-        # to use some pre-defiend outputs(especially when they are some views of other
-        # tensors). We emphasize that these parameters are added in-addition, we enforce
-        # that they be passed by keyword. After all, out0, out1, ... does not mismatch
-        # names form the scalar function, since it does not have output parameters.
+        # NOTE: [the wrapper's signature and rules
+        # for passing parameters]
+        # input params: must be passed by position,
+        # since the names are renamed to in0, in1,
+        # val0, val1, ..., So passing these
+        # parameters by keyword is wierd. So we
+        # enforce that these parameters must be
+        # passed by position. maybe we can fix it
+        # later.
+        # output parameters: must be passed by
+        # keyword, since the scalar function do not
+        # have output parameters(think of it as some
+        # scalar function, output parameter does not
+        # make sense in this case.) They are added
+        # to allow destination passing style API.
+        # Output parameter is convenient in cases
+        # where we want to use some pre-defiend
+        # outputs(especially when they are some views
+        # of other tensors). We emphasize that these
+        # parameters are added in-addition, we
+        # enforce that they be passed by keyword.
+        # After all, out0, out1, ... does not
+        # mismatch names form the scalar function,
+        # since it does not have output parameters.
         params.append("/")
         params.append("*")  # output params must be passed by keyword
 
@@ -849,7 +927,8 @@ class WrapperGenerator:
 
     def gen_docstring(self, code: IndentedBuffer):
         schema = self.fx
-        doc = f'"""Generated wrapper function with {schema.signature(outputs_in_arg=True)}"""'
+        sig = schema.signature(outputs_in_arg=True)
+        doc = f'"""Generated wrapper function' f' with {sig}"""'
         code.writeline(doc)
 
     def gen_same_shape_check(self, code: IndentedBuffer):
@@ -878,11 +957,16 @@ class WrapperGenerator:
                 code.writeline("tile_sizes = tuple([64])")
             else:
                 code.writeline(
-                    f"tile_sizes = heuristics_for_tile_size({max_tile_size}, *shape)"
+                    "tile_sizes = "
+                    "heuristics_for_tile_size("
+                    f"{max_tile_size}, *shape)"
                 )
             code.writeline("tile_size = math.prod(tile_sizes)")
             code.writeline(
-                "num_tiles = math.prod(triton.cdiv(size, tile_size) for size, tile_size in zip(shape, tile_sizes))"
+                "num_tiles = math.prod("
+                "triton.cdiv(size, tile_size)"
+                " for size, tile_size"
+                " in zip(shape, tile_sizes))"
             )
 
             if self.name.find("fill_scalar") != -1 and major >= 9:
@@ -915,7 +999,9 @@ class WrapperGenerator:
                 code.writeline("tile_sizes = tuple([64])")
             else:
                 code.writeline(
-                    f"tile_sizes = heuristics_for_tile_size({max_tile_size}, num_tasks)"
+                    "tile_sizes = "
+                    "heuristics_for_tile_size("
+                    f"{max_tile_size}, num_tasks)"
                 )
 
             code.writeline("tile_size = tile_sizes[0]")
@@ -1161,9 +1247,13 @@ class ModuleGenerator:
 
 
 class PointwiseDynamicFunction:
-    """Utility to generate function for general pointwise operation. It generate wrapper & JITFunction
-    which are specialized according to the rank of the task space(the broadcasted shape of all input tensors).
-    The generated code are written out to the cache directory (defaults to ~/.flagdnn).
+    """Utility to generate function for general
+    pointwise operation. It generate wrapper &
+    JITFunction which are specialized according to
+    the rank of the task space(the broadcasted
+    shape of all input tensors). The generated code
+    are written out to the cache directory
+    (defaults to ~/.flagdnn).
     """
 
     def __init__(
@@ -1187,10 +1277,14 @@ class PointwiseDynamicFunction:
         overload = self.instantiate(ndim)
         out = overload(*args, **kwargs)
         # NOTE: overload keeps the type of outputs:
-        # if a pre-defiend output is a Tensor or StridedBuffer, the corresponding
-        # output is also a Tensor StridedBuffer, respectively
-        # since prepare_args Wraps all the arguments, the outputs are all StridedBuffer
-        # but if manually instantiated overload is directly called, take care of
+        # if a pre-defiend output is a Tensor or
+        # StridedBuffer, the corresponding output
+        # is also a Tensor StridedBuffer,
+        # respectively. Since prepare_args Wraps
+        # all the arguments, the outputs are all
+        # StridedBuffer. But if manually
+        # instantiated overload is directly called,
+        # take care of
         # that manually
         return self._unwrap(out)
 
@@ -1206,7 +1300,8 @@ class PointwiseDynamicFunction:
 
     def prepare_args(self, *args, **kwargs):
         # output allocation(when needed)
-        # task simplification & task-rank infernece & input-output reinterpretation
+        # task simplification & task-rank
+        # infernece & input-output reinterpretation
         schema = self.fx
         outputs_that_need_allocation: List[int] = []
         out_tensors = []
@@ -1220,7 +1315,10 @@ class PointwiseDynamicFunction:
         if schema._is_tensor is not None:
             if not check_tensor_attributes(args, (schema._is_tensor)):
                 raise ValueError(
-                    "Input arguments must be passed by position, and the corresponding dtype must be specified."
+                    "Input arguments must be passed"
+                    " by position, and the"
+                    " corresponding dtype must be"
+                    " specified."
                 )
         in_tensors = [
             item for i, item in enumerate(args) if schema.is_tensor(i)
@@ -1265,8 +1363,10 @@ class PointwiseDynamicFunction:
                     allocated_outputs[seq_id], task_shape, strides
                 )
         else:
-            # a simple strategy: all the undefined tensors will follow the first
-            # tensor that is not broadcated, no attempts to simplify task, no reordering,
+            # a simple strategy: all the undefined
+            # tensors will follow the first tensor
+            # that is not broadcated, no attempts
+            # to simplify task, no reordering,
             # no dimenion collapsing
             shapes = tuple(item.shape for item in in_tensors)
 
@@ -1276,12 +1376,20 @@ class PointwiseDynamicFunction:
                 for index, item in enumerate(out_tensors):
                     if list(item.shape) != list(task_shape):
                         raise RuntimeError(
-                            f"out tensor at index {index} shape is invalid, should be {task_shape} but is {item.shape}!"
+                            f"out tensor at index"
+                            f" {index} shape is"
+                            f" invalid, should be"
+                            f" {task_shape} but is"
+                            f" {item.shape}!"
                         )
-                    # output arguments must not have internal overlapping for pointwise operation
+                    # output arguments must not have
+                    # internal overlapping for
+                    # pointwise operation
                     if has_internal_overlapping(item) == MemOverlap.Yes:
                         raise RuntimeError(
-                            "Pointwise Input arguments should not have internal overlapping."
+                            "Pointwise Input arguments"
+                            " should not have internal"
+                            " overlapping."
                         )
 
             ndim = len(task_shape)
@@ -1337,9 +1445,12 @@ class PointwiseDynamicFunction:
         return tuple(item.unwrap() for item in tensors)
 
     def instantiate(self, ndim):
-        # NOTE: manually instantiated overload does not have `prepare_args` as
-        # preprocessing, so you have to manually allocate output and make sure that
-        # the inputs & ouputs actually fits the manually instantiated overload
+        # NOTE: manually instantiated overload
+        # does not have `prepare_args` as
+        # preprocessing, so you have to manually
+        # allocate output and make sure that the
+        # inputs & ouputs actually fits the
+        # manually instantiated overload
         key = f"{ndim}_{self.config.prefer_block_pointer}"
         if key in self.overloads:
             return self.overloads[key]
@@ -1360,16 +1471,26 @@ class PointwiseDynamicFunction:
         module_gen.codegen(code)
 
         # NOTE: [why write the generated code to a file]
-        # triton uses inpsect to get the source of the jitted function, which requires
-        # that the source code can be found by inspect
-        # We write it into a file, since inspect cannot find the source of functions dynamically
-        # created via exec string. We can help inspect to find the source by hacking linecache
-        # library, but we find generating a module simpler, since we can generating 2 functions
-        # the kernel and the wrapper, and the wrapper calls the kernel.
+        # triton uses inpsect to get the source of
+        # the jitted function, which requires that
+        # the source code can be found by inspect.
+        # We write it into a file, since inspect
+        # cannot find the source of functions
+        # dynamically created via exec string.
+        # We can help inspect to find the source
+        # by hacking linecache library, but we find
+        # generating a module simpler, since we can
+        # generating 2 functions the kernel and the
+        # wrapper, and the wrapper calls the kernel.
+        _use_bptr = (
+            not self.config.prefer_1d_tile and self.config.prefer_block_pointer
+        )
         file_name = (
-            f"pointwise_dynamic_{self._scalar_fn_cache_key}_{kernel_name}_"
+            f"pointwise_dynamic_"
+            f"{self._scalar_fn_cache_key}_"
+            f"{kernel_name}_"
             f"{'1d_tile_' if self.config.prefer_1d_tile else ''}"
-            f"{'bptr' if (not self.config.prefer_1d_tile and self.config.prefer_block_pointer) else ''}"
+            f"{'bptr' if _use_bptr else ''}"
             ".py"
         )
 
@@ -1386,12 +1507,20 @@ class PointwiseDynamicFunction:
         # sys.modules["_add_module"] = m
 
         # NOTE: [why not import the scalar function]
-        # we do not re-import the scalar function, although the generated kernel **calls** it
-        # Since a function's __name__ may be changed, from the module where it is defined import its
-        # __name__ is not same; Also the same may be rebind to something else, importing via name
-        # cannot guarantee that scalar function is imported.
-        # So we copy the scalar function and its __globals__ to the generated module to do this
-        # https://stackoverflow.com/questions/11170949/how-to-make-a-copy-of-a-python-module-at-runtime
+        # we do not re-import the scalar function,
+        # although the generated kernel **calls**
+        # it. Since a function's __name__ may be
+        # changed, from the module where it is
+        # defined import its __name__ is not same;
+        # Also the same may be rebind to something
+        # else, importing via name cannot guarantee
+        # that scalar function is imported.
+        # So we copy the scalar function and its
+        # __globals__ to the generated module to
+        # do this:
+        # https://stackoverflow.com/questions/
+        # 11170949/how-to-make-a-copy-of-a-
+        # python-module-at-runtime
         spec.loader.exec_module(m)
         m.__dict__.update(self._scalar_fn.__globals__)
         m.__dict__[self._scalar_fn.__name__] = self._scalar_fn

@@ -291,7 +291,10 @@ def adaptive_avg_pool1d(
     with torch_device_fn.device(input.device):
         # global avg
         if OW == 1:
-            grid = lambda meta: (N * C,)
+
+            def grid(meta):
+                return (N * C,)
+
             global_avg_pool1d_kernel[grid](
                 input,
                 y,
@@ -306,7 +309,7 @@ def adaptive_avg_pool1d(
 
             if (W % OW) == 0:
                 k_w = W // OW
-                grid = (N * C,)
+                grid = (N * C,)  # type: ignore[assignment]
                 adaptive_avg_pool1d_divisible_small_kernel[grid](
                     input,
                     y,
@@ -322,7 +325,7 @@ def adaptive_avg_pool1d(
                 )
             else:
                 max_k_w = _exact_max_window(W, OW)
-                grid = (N * C,)
+                grid = (N * C,)  # type: ignore[assignment]
                 adaptive_avg_pool1d_general_small_kernel[grid](
                     input,
                     y,
@@ -339,7 +342,7 @@ def adaptive_avg_pool1d(
         # OW==32 的 non-divisible
         elif OW == 32 and (W % OW) != 0:
             max_k_w = _exact_max_window(W, OW)
-            grid = (N * C,)
+            grid = (N * C,)  # type: ignore[assignment]
             adaptive_avg_pool1d_general_small_kernel[grid](
                 input,
                 y,
@@ -356,7 +359,10 @@ def adaptive_avg_pool1d(
         # large OW: divisible
         elif (W % OW) == 0:
             k_w = W // OW
-            grid = lambda meta: (N * C, triton.cdiv(OW, meta["BLOCK_SIZE"]))
+
+            def grid(meta):  # type: ignore[assignment]
+                return (N * C, triton.cdiv(OW, meta["BLOCK_SIZE"]))
+
             adaptive_avg_pool1d_divisible_large_kernel[grid](
                 input,
                 y,
@@ -370,7 +376,10 @@ def adaptive_avg_pool1d(
         # large OW: general
         else:
             max_k_w = _exact_max_window(W, OW)
-            grid = lambda meta: (N * C, triton.cdiv(OW, meta["BLOCK_SIZE"]))
+
+            def grid(meta):  # type: ignore[assignment]
+                return (N * C, triton.cdiv(OW, meta["BLOCK_SIZE"]))
+
             adaptive_avg_pool1d_general_large_kernel[grid](
                 input,
                 y,

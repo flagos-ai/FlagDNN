@@ -71,7 +71,8 @@ def neg(
     if n_elements == 0:
         return out
 
-    grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+    def grid(meta):
+        return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
     # 启动 Kernel
     with torch_device_fn.device(input.device):

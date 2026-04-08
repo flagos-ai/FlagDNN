@@ -1,5 +1,4 @@
 import logging
-from typing import Union
 
 import torch
 import triton
@@ -53,7 +52,9 @@ def leaky_relu(
     x: torch.Tensor, negative_slope: float = 0.01, inplace: bool = False
 ) -> torch.Tensor:
     logger.debug(
-        f"FLAG_DNN LEAKY_RELU (negative_slope={negative_slope}, inplace={inplace})"
+        "FLAG_DNN LEAKY_RELU "
+        f"(negative_slope={negative_slope}, "
+        f"inplace={inplace})"
     )
 
     assert x.is_contiguous(), "x must be contiguous"
@@ -66,7 +67,8 @@ def leaky_relu(
 
     n_elements = x.numel()
 
-    grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+    def grid(meta):
+        return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
     # 启动 Triton Kernel
     with torch_device_fn.device(x.device):

@@ -17,7 +17,8 @@ class Register:
         self.device = DeviceDetector()
 
         # lib is a instance of torch.library.Library
-        # Some inference chips may not support the backward implementation of operators
+        # Some inference chips may not support
+        # the backward implementation of operators
         self.lib = lib
 
         # reg_key like 'CUDA'
@@ -81,7 +82,8 @@ class Register:
 
         if not self.include_config:
             warnings.warn(
-                "only_enable failed: No op to register. Check if include is correct."
+                "only_enable failed: No op to register."
+                " Check if include is correct."
             )
             return
 

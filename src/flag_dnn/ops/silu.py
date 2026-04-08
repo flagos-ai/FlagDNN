@@ -1,5 +1,4 @@
 import logging
-from typing import Union
 
 import torch
 import triton
@@ -65,7 +64,8 @@ def silu(x: torch.Tensor, inplace: bool = False) -> torch.Tensor:
 
     n_elements = x.numel()
 
-    grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+    def grid(meta):
+        return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
     # 启动 Triton Kernel
     with torch_device_fn.device(x.device):

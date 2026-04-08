@@ -112,7 +112,7 @@ CODEGEN_COFIGS = {
     ),
     vendors.ASCEND: CodeGenConfig(
         512,
-        tuple([48, 1, 1]),
+        tuple([48, 1, 1]),  # type: ignore[arg-type]
         32,
         False,
         prefer_1d_tile=int(triton.__version__[0]) < 3,

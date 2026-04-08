@@ -108,7 +108,9 @@ def layer_norm(
     tail_shape = input.shape[-len(normalized_shape) :]
     if tuple(normalized_shape) != tuple(tail_shape):
         raise ValueError(
-            f"The normalized_shape must match the last few dimensions of the input tensor."
+            "The normalized_shape must match"
+            " the last few dimensions of"
+            " the input tensor."
         )
 
     for dim in normalized_shape:

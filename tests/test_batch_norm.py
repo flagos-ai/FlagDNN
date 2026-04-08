@@ -97,7 +97,7 @@ def test_accuracy_batch_norm_empty_tensor(dtype):
     running_mean = torch.zeros(C, dtype=dtype, device=flag_dnn.device)
     running_var = torch.ones(C, dtype=dtype, device=flag_dnn.device)
 
-    ref_y = F.batch_norm(x, running_mean, running_var, training=False)
+    _ref_y = F.batch_norm(x, running_mean, running_var, training=False)
     with flag_dnn.use_dnn():
         y = F.batch_norm(x, running_mean, running_var, training=False)
 

@@ -41,7 +41,9 @@ class SQLPersistantModel(PersistantModel):
         values: Mapping[str, Union[Any, Type]] = {},
     ) -> Type[Base]:
         annotations: Dict[str, Type] = {
-            k: sqlalchemy.orm.Mapped[v if isinstance(v, Type) else type(v)]
+            k: sqlalchemy.orm.Mapped[  # type: ignore[misc]
+                v if isinstance(v, Type) else type(v)
+            ]
             for k, v in chain(keys.items(), values.items())
         }
         cols: Dict[str, sqlalchemy.orm.MappedColumn] = {
@@ -97,7 +99,7 @@ class SQLPersistantModel(PersistantModel):
         values: Mapping[str, Union[Any, Type]] = {},
     ) -> Callable[[str, Optional[Mapping[str, Type]]], Optional[Type[Base]]]:
         with self.lock:
-            name: str = "{}-{}".format(
+            name: str = "{}-{}".format(  # type: ignore[no-redef]
                 name, md5("".join(keys.keys()).encode()).hexdigest()
             )
             ModelCls: Optional[Type[Base]] = self.sql_model_pool.get(name)
@@ -130,7 +132,9 @@ class SQLPersistantModel(PersistantModel):
         key_dict: Dict[str, Union[bool, int, float, str]] = (
             SQLPersistantModel.get_key_dict(keys)
         )
-        ConfigCls: Optional[Type[Base]] = self.get_sql_model(name, key_dict)
+        ConfigCls: Optional[Type[Base]] = (  # type: ignore[assignment]
+            self.get_sql_model(name, key_dict)
+        )
         if ConfigCls is None:
             return None
         with RollbackSession(self.engine) as session:
@@ -150,7 +154,7 @@ class SQLPersistantModel(PersistantModel):
                 for k, v in obj_dict.items()
                 if k not in self.signature.parameters
             }
-            config_dict: Dict[str, int] = {
+            config_dict: Dict[str, int] = {  # type: ignore[assignment]
                 k: v
                 for k, v in obj_dict.items()
                 if k in self.signature.parameters
@@ -168,7 +172,9 @@ class SQLPersistantModel(PersistantModel):
             **SQLPersistantModel.get_key_dict(keys),
             **SQLPersistantModel.get_config_dict(config),
         }
-        BenchmarkCls: Optional[Type[Base]] = self.get_sql_model(name, key_dict)
+        BenchmarkCls: Optional[Type[Base]] = (  # type: ignore[assignment]
+            self.get_sql_model(name, key_dict)
+        )
         if BenchmarkCls is None:
             return None
         with RollbackSession(self.engine) as session:
@@ -190,16 +196,18 @@ class SQLPersistantModel(PersistantModel):
         config: Union[triton.Config, Dict[str, Union[bool, int, float, str]]],
     ) -> None:
         if isinstance(config, triton.Config):
-            config: Dict[str, Union[bool, int, float, str]] = (
-                SQLPersistantModel.get_config_dict(config)
-            )
+            config: Dict[  # type: ignore[no-redef]
+                str, Union[bool, int, float, str]
+            ] = SQLPersistantModel.get_config_dict(config)
         key_dict: Dict[str, Union[bool, int, float, str]] = (
             SQLPersistantModel.get_key_dict(keys)
         )
-        ConfigCls: Optional[Type[Base]] = self.get_sql_model(
-            name,
-            {k: type(v) for k, v in key_dict.items()},
-            {k: type(v) for k, v in config.items()},
+        ConfigCls: Optional[Type[Base]] = (  # type: ignore[assignment]
+            self.get_sql_model(
+                name,
+                {k: type(v) for k, v in key_dict.items()},
+                {k: type(v) for k, v in config.items()},
+            )
         )
         if ConfigCls is not None:
             with RollbackSession(self.engine) as session:
@@ -218,18 +226,26 @@ class SQLPersistantModel(PersistantModel):
             SQLPersistantModel.get_key_dict(keys)
         )
         if isinstance(config, triton.Config):
-            config: Dict[str, Union[bool, int, float, str]] = (
-                SQLPersistantModel.get_config_dict(config)
-            )
+            config: Dict[  # type: ignore[no-redef]
+                str, Union[bool, int, float, str]
+            ] = SQLPersistantModel.get_config_dict(config)
         p50, p20, p80 = benchmark
-        benchmark: Dict[str, float] = {"p50": p50, "p20": p20, "p80": p80}
-        BenchmarkCls: Optional[Type[Base]] = self.get_sql_model(
-            name,
-            key_dict | config,
-            benchmark,
+        benchmark: Dict[str, float] = {  # type: ignore[no-redef]
+            "p50": p50,
+            "p20": p20,
+            "p80": p80,
+        }
+        BenchmarkCls: Optional[Type[Base]] = (  # type: ignore[assignment]
+            self.get_sql_model(
+                name,
+                key_dict | config,  # type: ignore[operator]
+                benchmark,
+            )
         )
         if BenchmarkCls is not None:
             with RollbackSession(self.engine) as session:
-                obj: Base = BenchmarkCls(**key_dict, **config, **benchmark)
+                obj: Base = BenchmarkCls(  # type: ignore[misc]
+                    **key_dict, **config, **benchmark
+                )
                 session.merge(obj)
                 session.commit()

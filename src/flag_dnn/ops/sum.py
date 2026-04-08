@@ -5,9 +5,7 @@ import torch
 import triton
 import triton.language as tl
 
-from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
-from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
 
 

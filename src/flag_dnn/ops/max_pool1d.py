@@ -90,7 +90,9 @@ def max_pool1d(
     return_indices: bool = False,
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
     logger.debug(
-        f"FLAG_DNN MAX_POOL1D (kernel={kernel_size}, return_indices={return_indices})"
+        f"FLAG_DNN MAX_POOL1D "
+        f"(kernel={kernel_size}, "
+        f"return_indices={return_indices})"
     )
 
     def _single(x):
@@ -113,12 +115,17 @@ def max_pool1d(
         return math.ceil(out) if ceil else math.floor(out)
 
     OW = _out_size(
-        W, padding[0], dilation[0], kernel_size[0], stride[0], ceil_mode
+        W,
+        padding[0],
+        dilation[0],  # type: ignore[index]
+        kernel_size[0],
+        stride[0],
+        ceil_mode,  # type: ignore[index]
     )
 
     # ceil_mode 边缘丢弃
     if ceil_mode:
-        if (OW - 1) * stride[0] >= W + padding[0]:
+        if (OW - 1) * stride[0] >= W + padding[0]:  # type: ignore[index]
             OW -= 1
 
     if not input.is_contiguous():
@@ -140,7 +147,8 @@ def max_pool1d(
             return out_y, (idx.squeeze(0) if is_2d else idx)
         return out_y
 
-    grid = lambda meta: (triton.cdiv(M, meta["BLOCK_SIZE"]),)
+    def grid(meta):
+        return (triton.cdiv(M, meta["BLOCK_SIZE"]),)
 
     with torch_device_fn.device(input.device):
         max_pool1d_kernel[grid](
@@ -151,10 +159,10 @@ def max_pool1d(
             C,
             W,
             OW,
-            padding[0],
-            STRIDE_W=stride[0],
-            DIL_W=dilation[0],
-            KERNEL_W=kernel_size[0],
+            padding[0],  # type: ignore[index]
+            STRIDE_W=stride[0],  # type: ignore[index]
+            DIL_W=dilation[0],  # type: ignore[index]
+            KERNEL_W=kernel_size[0],  # type: ignore[index]
             RETURN_INDICES=return_indices,
         )
 

@@ -12,11 +12,11 @@ def get_dtype_max(dtype: tl.constexpr):
         return value
     if dtype_.is_int_signed():
         width: tl.constexpr = dtype_.int_bitwidth
-        value: tl.constexpr = 2 ** (width - 1) - 1
+        value: tl.constexpr = 2 ** (width - 1) - 1  # type: ignore[no-redef]
         return value
     if dtype_.is_int_unsigned():
-        width: tl.constexpr = dtype_.int_bitwidth
-        value: tl.constexpr = 2**width - 1
+        width: tl.constexpr = dtype_.int_bitwidth  # type: ignore[no-redef]
+        value: tl.constexpr = 2**width - 1  # type: ignore[no-redef]
         return value
 
 

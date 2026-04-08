@@ -1,5 +1,4 @@
 import logging
-from typing import Union
 
 import torch
 import triton
@@ -92,7 +91,8 @@ def prelu(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
     n_elements = x.numel()
     y = torch.empty_like(x)
 
-    grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+    def grid(meta):
+        return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
     # 启动 Triton Kernel
     with torch_device_fn.device(x.device):

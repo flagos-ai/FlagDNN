@@ -182,7 +182,9 @@ def adaptive_max_pool3d(
     return_indices: bool = False,
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
     logger.debug(
-        f"FLAG_DNN ADAPTIVE_MAX_POOL3D (output_size={output_size}, return_indices={return_indices})"
+        f"FLAG_DNN ADAPTIVE_MAX_POOL3D "
+        f"(output_size={output_size}, "
+        f"return_indices={return_indices})"
     )
 
     assert input.ndim in [
@@ -230,7 +232,10 @@ def adaptive_max_pool3d(
 
     with torch_device_fn.device(input.device):
         if OD == 1 and OH == 1 and OW == 1:
-            grid_global = lambda meta: (N * C,)
+
+            def grid_global(meta):
+                return (N * C,)
+
             global_max_pool3d_kernel[grid_global](
                 input, y, idx_ptr, D, H, W, RETURN_INDICES=return_indices
             )
@@ -244,7 +249,9 @@ def adaptive_max_pool3d(
             OW_OH_OD = OW_OH * OD
             C_OW_OH_OD = C * OW_OH_OD
 
-            grid = lambda meta: (triton.cdiv(M, meta["BLOCK_SIZE"]),)
+            def grid(meta):
+                return (triton.cdiv(M, meta["BLOCK_SIZE"]),)
+
             adaptive_max_pool3d_kernel[grid](
                 input,
                 y,

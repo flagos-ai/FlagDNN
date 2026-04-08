@@ -8,7 +8,7 @@ class RollbackSession(sqlalchemy.orm.Session):
         super().__init__(*args, **kwargs)
 
     @override
-    def commit(self) -> None:
+    def commit(self) -> None:  # type: ignore[misc]
         try:
             super().commit()
         except sqlalchemy.exc.IntegrityError:

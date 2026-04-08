@@ -1,7 +1,11 @@
 # The code for IndentedBuffer is adapted from
-# https://github.com/pytorch/pytorch/blob/ed48ea9997c2b04736096e4b6669543ab2e627d5/torch/_inductor/utils.py#L742
+# https://github.com/pytorch/pytorch/blob/
+# ed48ea9997c2b04736096e4b6669543ab2e627d5/
+# torch/_inductor/utils.py#L742
 # The code for Namespace is adapted from
-# https://github.com/pytorch/pytorch/blob/ed48ea9997c2b04736096e4b6669543ab2e627d5/torch/fx/graph.py#L115
+# https://github.com/pytorch/pytorch/blob/
+# ed48ea9997c2b04736096e4b6669543ab2e627d5/
+# torch/fx/graph.py#L115
 
 # License from pytorch(https://github.com/pytorch/pytorch)
 
@@ -13,9 +17,13 @@
 # Copyright (c) 2012-2014 Deepmind Technologies    (Koray Kavukcuoglu)
 # Copyright (c) 2011-2012 NEC Laboratories America (Koray Kavukcuoglu)
 # Copyright (c) 2011-2013 NYU                      (Clement Farabet)
-# Copyright (c) 2006-2010 NEC Laboratories America (Ronan Collobert, Leon Bottou, Iain Melvin, Jason Weston)
+# Copyright (c) 2006-2010 NEC Laboratories America
+#   (Ronan Collobert, Leon Bottou, Iain Melvin,
+#    Jason Weston)
 # Copyright (c) 2006      Idiap Research Institute (Samy Bengio)
-# Copyright (c) 2001-2004 Idiap Research Institute (Ronan Collobert, Samy Bengio, Johnny Mariethoz)
+# Copyright (c) 2001-2004 Idiap Research Institute
+#   (Ronan Collobert, Samy Bengio,
+#    Johnny Mariethoz)
 
 # From Caffe2:
 
@@ -49,9 +57,11 @@
 
 # Caffe2 uses a copyright model similar to Caffe: each contributor holds
 # copyright over their contributions to Caffe2. The project versioning records
-# all such contribution and copyright details. If a contributor wants to further
+# all such contribution and copyright details.
+# If a contributor wants to further
 # mark their specific copyright on a particular contribution, they should
-# indicate their copyright solely in the commit message of the change when it is
+# indicate their copyright solely in the commit
+# message of the change when it is
 # committed.
 
 # All rights reserved.
@@ -143,7 +153,8 @@ class NameSpace:
         """Create a unique name.
 
         Arguments:
-            candidate: used as the basis for the unique name, relevant to the user.
+            candidate: used as the basis for the
+                unique name, relevant to the user.
         """
         # delete all characters that are illegal in a Python identifier
         candidate = self._illegal_char_regex.sub("_", candidate)

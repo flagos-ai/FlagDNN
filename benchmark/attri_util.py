@@ -13,7 +13,8 @@ COMPLEX_DTYPES = [torch.complex64]
 DEFAULT_WARMUP_COUNT = 1000
 DEFAULT_ITER_COUNT = 100
 
-# LEGACY_SHAPES are maintained for legacy benchmark SIZE settings and may be removed in the future.
+# LEGACY_SHAPES are maintained for legacy benchmark SIZE
+# settings and may be removed in the future.
 # Do not reference this elsewhere.
 LEGACY_SHAPES = [i * 64 for i in range(1, 22, 5)]
 LEGACY_NON_DNN_SHAPES = [(1024, shape) for shape in LEGACY_SHAPES]
@@ -58,7 +59,8 @@ def model_shapes():
 @dataclass
 class BenchmarkMetrics:
     # Legacy shape information for backward compatibility
-    # This field corresponds to the 'size' field in the previous version's benchmark.
+    # This field corresponds to the 'size' field in
+    # the previous version's benchmark.
     legacy_shape: Optional[int] = None
     # Detailed size info
     shape_detail: Optional[Tuple[int, ...]] = None
@@ -108,7 +110,7 @@ def check_metric_dependencies(
         "speedup": ["latency", "latency_base"],
         "utilization": ["latency", "tflops"],
     }
-    unsatisfied_metrics = []
+    unsatisfied_metrics: list = []
     if requested_metrics is None:
         return unsatisfied_metrics
 
@@ -161,9 +163,12 @@ class OperationAttribute:
     shape_desc: str
 
     def __str__(self) -> str:
+        shapes_label = "Recommended Core Shapes[" + self.shape_desc + "]"
         return (
-            f"{'Operator name':<40} |  {self.op_name}\n"
-            f"{'Recommended Core Shapes[' + self.shape_desc + ']':<40} |  {self.recommended_core_shapes}\n"
+            f"{'Operator name':<40}"
+            f" |  {self.op_name}\n"
+            f"{shapes_label:<40}"
+            f" |  {self.recommended_core_shapes}\n"
         )
 
     def to_dict(self) -> dict:
@@ -192,8 +197,10 @@ class BenchmarkResult:
 
     def __str__(self) -> str:
         header_title = (
-            f"\nOperator: {self.op_name}  Performance Test (dtype={self.dtype}, mode={self.mode},"
-            f"level={self.level})\n"
+            f"\nOperator: {self.op_name}  Performance"
+            f" Test (dtype={self.dtype},"
+            f" mode={self.mode},"
+            f" level={self.level})\n"
         )
         col_names = [
             f"{'Status':<10}",
@@ -219,7 +226,9 @@ class BenchmarkResult:
     def _format_metrics(self, metrics: BenchmarkMetrics) -> str:
         # self.gen_legacy_shape(metrics)
         # legacy_shape_str = (
-        #     metrics.legacy_shape if metrics.legacy_shape is not None else "N/A"
+        #     metrics.legacy_shape
+        #     if metrics.legacy_shape is not None
+        #     else "N/A"
         # )
         latency_base_str = (
             f"{metrics.latency_base:.6f}"
@@ -284,6 +293,7 @@ class BenchmarkResult:
             metrics.legacy_shape = to_record_shape[-1]
         else:
             metrics.legacy_shape = None
+        return None
 
     def to_json(self) -> str:
         import json

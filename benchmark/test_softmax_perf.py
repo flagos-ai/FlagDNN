@@ -40,7 +40,8 @@ class SoftmaxBenchmark(Benchmark):
             # 3. LLM 大语言模型 词表分类 (Batch, Vocab_size)
             (32, 32000),  # LLaMA-1/2 典型词表大小
             (16, 128256),  # LLaMA-3 典型大词表大小
-            # 4. Transformer Attention 典型 shape (Batch, Num_heads, Seq_len, Seq_len)
+            # 4. Transformer Attention 典型 shape
+            # (Batch, Num_heads, Seq_len, Seq_len)
             (16, 12, 1024, 1024),  # BERT-base 注意力分数矩阵
             (8, 32, 2048, 2048),  # LLM 2K Context 注意力
             (4, 32, 4096, 4096),  # LLM 4K Context 注意力

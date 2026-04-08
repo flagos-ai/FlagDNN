@@ -18,7 +18,8 @@ def get_device_id() -> int:
         return torch_device_fn.current_device()
     except Exception:
         warnings.warn(
-            "[device_info] Failed to get current device, fallback to device_id=0."
+            "[device_info] Failed to get current"
+            " device, fallback to device_id=0."
         )
         return 0
 
@@ -30,7 +31,9 @@ def get_device_properties():
         return torch_device_fn.get_device_properties(device_id)
     except Exception:
         warnings.warn(
-            f"[device_info] Failed to get device properties for device_id={device_id}, fallback to None."
+            f"[device_info] Failed to get device"
+            f" properties for device_id="
+            f"{device_id}, fallback to None."
         )
         return None
 
@@ -42,15 +45,22 @@ def get_device_capability() -> tuple[int, int]:
         result = torch_device_fn.get_device_capability(device_id)
         if result is None:
             warnings.warn(
-                f"[device_info] torch_device_fn.get_device_capability returned None "
-                f"for device_id={device_id}, fallback to (0, 0)."
+                "[device_info] "
+                "torch_device_fn"
+                ".get_device_capability"
+                " returned None "
+                f"for device_id={device_id},"
+                " fallback to (0, 0)."
             )
             return (0, 0)
         return result
     except Exception:
         warnings.warn(
-            f"[device_info] Failed to get device capability for device_id={device_id} "
-            f"using torch_device_fn, fallback to (0, 0)."
+            "[device_info] Failed to get device"
+            " capability for "
+            f"device_id={device_id} "
+            "using torch_device_fn,"
+            " fallback to (0, 0)."
         )
         return (0, 0)
 
@@ -71,13 +81,16 @@ def get_device_info() -> DeviceInfo:
         )
     if l2_cache_size is None:
         warnings.warn(
-            "[device_info] Failed to get l2_cache_size, fallback to 40MB (A100 default)."
+            "[device_info] Failed to get"
+            " l2_cache_size, fallback to"
+            " 40MB (A100 default)."
         )
         # default L2 cache size to 40MB for A100
         l2_cache_size = 40 * 1024 * 1024
     if sm_count is None:
         warnings.warn(
-            "[device_info] Failed to get sm_count, fallback to 108 (A100 default)."
+            "[device_info] Failed to get sm_count,"
+            " fallback to 108 (A100 default)."
         )
         # default sm_count to 108 for A100
         sm_count = 108

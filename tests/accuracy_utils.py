@@ -6,8 +6,6 @@ import numpy as np
 import torch
 
 import flag_dnn
-import os
-import sys
 
 QUICK_MODE = False
 TO_CPU = False
@@ -26,9 +24,9 @@ fp64_is_supported = flag_dnn.runtime.device.support_fp64
 bf16_is_supported = flag_dnn.runtime.device.support_bf16
 int64_is_supported = flag_dnn.runtime.device.support_int64
 
-from .conftest import L1_n_start
-from .conftest import L1_n_end
-from .conftest import L1_n_step
+from .conftest import L1_n_start  # noqa: E402
+from .conftest import L1_n_end  # noqa: E402
+from .conftest import L1_n_step  # noqa: E402
 
 L1_n_start_val = int(L1_n_start)
 L1_n_end_val = int(L1_n_end)
@@ -60,26 +58,26 @@ DEFAULT_SHAPES = [
     (134217728,),
 ]
 
-### axpy shape
+# axpy shape
 AXPY_SHAPES = DEFAULT_SHAPES
 if GEN_SHAPE:
     AXPY_SHAPES.clear()
     AXPY_SHAPES = gen_shape_N(L1_n_start_val, L1_n_end_val, L1_n_step_val)
-###
+#
 
-### asum shape
+# asum shape
 ASUM_SHAPES = DEFAULT_SHAPES
 if GEN_SHAPE:
     ASUM_SHAPES.clear()
     ASUM_SHAPES = gen_shape_N(L1_n_start_val, L1_n_end_val, L1_n_step_val)
-###
+#
 
-### scal shape
+# scal shape
 SCAL_SHAPES = DEFAULT_SHAPES
 if GEN_SHAPE:
     SCAL_SHAPES.clear()
     SCAL_SHAPES = gen_shape_N(L1_n_start_val, L1_n_end_val, L1_n_step_val)
-###
+#
 
 
 def TestForwardOnly():
@@ -128,23 +126,23 @@ POINTWISE_SHAPES = (
     [(2, 19, 7)]
     if QUICK_MODE
     else [
-        (),
-        (1,),
-        (1024, 1024),
-        (20, 320, 15),
-        (16, 128, 64, 60),
-        (16, 7, 57, 32, 29),
+        (),  # type: ignore[list-item]
+        (1,),  # type: ignore[list-item]
+        (1024, 1024),  # type: ignore[list-item]
+        (20, 320, 15),  # type: ignore[list-item]
+        (16, 128, 64, 60),  # type: ignore[list-item]
+        (16, 7, 57, 32, 29),  # type: ignore[list-item]
     ]
 )
 SPECIAL_SHAPES = (
     [(2, 19, 7)]
     if QUICK_MODE
     else [
-        (1,),
-        (1024, 1024),
-        (20, 320, 15),
-        (16, 128, 64, 1280),
-        (16, 7, 57, 32, 29),
+        (1,),  # type: ignore[list-item]
+        (1024, 1024),  # type: ignore[list-item]
+        (20, 320, 15),  # type: ignore[list-item]
+        (16, 128, 64, 1280),  # type: ignore[list-item]
+        (16, 7, 57, 32, 29),  # type: ignore[list-item]
     ]
 )
 
@@ -158,10 +156,22 @@ FP8_QUANT_SHAPES = {
 
 DISTRIBUTION_SHAPES = [(20, 320, 15)]
 REDUCTION_SHAPES = (
-    [(2, 32)] if QUICK_MODE else [(1, 2), (4096, 256), (200, 40999, 3)]
+    [(2, 32)]
+    if QUICK_MODE
+    else [
+        (1, 2),
+        (4096, 256),
+        (200, 40999, 3),  # type: ignore[list-item]
+    ]
 )
 REDUCTION_SMALL_SHAPES = (
-    [(1, 32)] if QUICK_MODE else [(1, 2), (4096, 256), (200, 2560, 3)]
+    [(1, 32)]
+    if QUICK_MODE
+    else [
+        (1, 2),
+        (4096, 256),
+        (200, 2560, 3),  # type: ignore[list-item]
+    ]
 )
 STACK_SHAPES = [
     [(16,), (16,)],
@@ -220,18 +230,18 @@ SWIGLU_SPECIAL_SHAPES = (
     [(2, 19, 8)]
     if QUICK_MODE
     else [
-        (2,),
-        (64,),
-        (32, 64),
-        (256, 512),
-        (1, 128),
-        (8, 16, 32),
-        (16, 32, 64),
-        (20, 320, 16),
-        (4, 8, 16, 32),
-        (8, 16, 32, 64),
-        (10,),
-        (20, 30),
+        (2,),  # type: ignore[list-item]
+        (64,),  # type: ignore[list-item]
+        (32, 64),  # type: ignore[list-item]
+        (256, 512),  # type: ignore[list-item]
+        (1, 128),  # type: ignore[list-item]
+        (8, 16, 32),  # type: ignore[list-item]
+        (16, 32, 64),  # type: ignore[list-item]
+        (20, 320, 16),  # type: ignore[list-item]
+        (4, 8, 16, 32),  # type: ignore[list-item]
+        (8, 16, 32, 64),  # type: ignore[list-item]
+        (10,),  # type: ignore[list-item]
+        (20, 30),  # type: ignore[list-item]
     ]
 )
 

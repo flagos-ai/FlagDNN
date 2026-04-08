@@ -45,7 +45,7 @@ class PersistantModel(object):
     ) -> None: ...
 
     @overload
-    def put_config(
+    def put_config(  # type: ignore[misc]
         self,
         name: str,
         keys: Sequence[Union[bool, int, float, str]],
@@ -70,7 +70,7 @@ class PersistantModel(object):
     ) -> None: ...
 
     @overload
-    def put_benchmark(
+    def put_benchmark(  # type: ignore[misc]
         self,
         name: str,
         keys: Sequence[Union[bool, int, float, str]],

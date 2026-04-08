@@ -94,7 +94,9 @@ def avg_pool1d(
     count_include_pad: bool = True,
 ) -> torch.Tensor:
     logger.debug(
-        f"FLAG_DNN AVG_POOL1D (kernel={kernel_size}, count_include_pad={count_include_pad})"
+        f"FLAG_DNN AVG_POOL1D "
+        f"(kernel={kernel_size}, "
+        f"count_include_pad={count_include_pad})"
     )
 
     def _single(x):
@@ -115,11 +117,17 @@ def avg_pool1d(
         out = (L + 2 * pad - k) / s + 1
         return math.ceil(out) if ceil else math.floor(out)
 
-    OW = _out_size(W, padding[0], kernel_size[0], stride[0], ceil_mode)
+    OW = _out_size(
+        W,
+        padding[0],
+        kernel_size[0],  # type: ignore[index]
+        stride[0],
+        ceil_mode,  # type: ignore[index]
+    )
 
     # ceil_mode 边缘丢弃
     if ceil_mode:
-        if (OW - 1) * stride[0] >= W + padding[0]:
+        if (OW - 1) * stride[0] >= W + padding[0]:  # type: ignore[index]
             OW -= 1
 
     if not input.is_contiguous():
@@ -132,7 +140,8 @@ def avg_pool1d(
     if M == 0:
         return y.squeeze(0) if is_2d else y
 
-    grid = lambda meta: (triton.cdiv(M, meta["BLOCK_SIZE"]),)
+    def grid(meta):
+        return (triton.cdiv(M, meta["BLOCK_SIZE"]),)
 
     # 动态分发累加精度：float64 原生保留，其他统统升级到 float32 运算
     acc_dtype = tl.float64 if input.dtype == torch.float64 else tl.float32
@@ -145,9 +154,9 @@ def avg_pool1d(
             C,
             W,
             OW,
-            padding[0],
-            STRIDE_W=stride[0],
-            KERNEL_W=kernel_size[0],
+            padding[0],  # type: ignore[index]
+            STRIDE_W=stride[0],  # type: ignore[index]
+            KERNEL_W=kernel_size[0],  # type: ignore[index]
             COUNT_INCLUDE_PAD=count_include_pad,
             ACC_DTYPE=acc_dtype,
         )

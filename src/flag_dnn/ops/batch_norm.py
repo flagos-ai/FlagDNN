@@ -5,9 +5,7 @@ import torch
 import triton
 import triton.language as tl
 
-from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
-from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
 
 
@@ -202,7 +200,7 @@ def batch_norm(
     N = input.shape[0]
     C = input.shape[1]
     S = input.numel() // (N * C)
-    n_elements = N * S
+    _n_elements = N * S
     total_elements = input.numel()
 
     # 简单的假指针，防止传入 None 时 Triton 报错
@@ -216,9 +214,13 @@ def batch_norm(
     with torch_device_fn.device(input.device):
         if not training:
             # 根据总元素数计算一维 Grid 大小
-            grid = lambda meta: (
-                triton.cdiv(total_elements, meta["BLOCK_SIZE"]),
-            )
+            def grid(meta):  # type: ignore[assignment]
+                return (
+                    triton.cdiv(
+                        total_elements,
+                        meta["BLOCK_SIZE"],
+                    ),
+                )
 
             batch_norm_inference_kernel[grid](
                 input,

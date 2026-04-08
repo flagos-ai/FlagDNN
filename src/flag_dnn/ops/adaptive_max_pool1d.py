@@ -1,6 +1,6 @@
 import logging
 import math
-from typing import Tuple, Union, Optional
+from typing import Tuple, Union
 
 import torch
 import triton
@@ -145,7 +145,9 @@ def adaptive_max_pool1d(
     return_indices: bool = False,
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
     logger.debug(
-        f"FLAG_DNN ADAPTIVE_MAX_POOL1D (output_size={output_size}, return_indices={return_indices})"
+        f"FLAG_DNN ADAPTIVE_MAX_POOL1D "
+        f"(output_size={output_size}, "
+        f"return_indices={return_indices})"
     )
 
     if isinstance(output_size, int):
@@ -187,12 +189,18 @@ def adaptive_max_pool1d(
 
     with torch_device_fn.device(input.device):
         if OW == 1:
-            grid_global = lambda meta: (N * C,)
+
+            def grid_global(meta):
+                return (N * C,)
+
             global_max_pool1d_kernel[grid_global](
                 input, y, idx_ptr, W, RETURN_INDICES=return_indices
             )
         else:
-            grid = lambda meta: (triton.cdiv(M, meta["BLOCK_SIZE"]),)
+
+            def grid(meta):
+                return (triton.cdiv(M, meta["BLOCK_SIZE"]),)
+
             adaptive_max_pool1d_kernel[grid](
                 input,
                 y,

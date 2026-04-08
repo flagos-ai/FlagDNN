@@ -12,7 +12,9 @@ except AttributeError:
     @triton.jit
     def uint_to_uniform_float(x):
         """
-        Numerically stable function to convert a random uint into a random float uniformly sampled in [0, 1).
+        Numerically stable function to convert a
+        random uint into a random float uniformly
+        sampled in [0, 1).
         """
         # TODO: fix frontend issues and cleanup
         # conditions can be simplified
@@ -20,7 +22,9 @@ except AttributeError:
         if tl.constexpr(x.dtype == tl.uint32) or tl.constexpr(
             x.dtype == tl.int32
         ):
-            # maximum value such that `MAX_INT * scale < 1.0` (with float rounding)
+            # maximum value such that
+            # `MAX_INT * scale < 1.0`
+            # (with float rounding)
             x = x.to(tl.int32, bitcast=True)
             scale = 4.6566127342e-10
         else:
@@ -34,9 +38,13 @@ except AttributeError:
         return x * scale
 
 
-# This function is roughly a python wrapper of CUDAGeneratorImpl::philox_cuda_state in Pytorch.
-# https://github.com/pytorch/pytorch/blob/8a4597980c2692b73f35fb3c7145eaeaf2273e77/aten/src/ATen/cuda/CUDAGeneratorImpl.cpp#L452
-# It returns the current state of the default Philox RNG in seed and offset and
+# This function is roughly a python wrapper of
+# CUDAGeneratorImpl::philox_cuda_state in Pytorch.
+# https://github.com/pytorch/pytorch/blob/
+# 8a4597980c2692b73f35fb3c7145eaeaf2273e77/
+# aten/src/ATen/cuda/CUDAGeneratorImpl.cpp#L452
+# It returns the current state of the default
+# Philox RNG in seed and offset and
 # updates the next offset by adding `increment`.
 def philox_backend_seed_offset(increment, generator=None):
     if generator is None:
@@ -55,7 +63,8 @@ def philox_backend_seed_offset(increment, generator=None):
     seed, offset = int(c0), int(c1)
     increment = (increment + 3) // 4 * 4
     c1 += increment
-    # get_state returns a new tensor, so it needs set_state to update the actual generator state.
+    # get_state returns a new tensor, so it needs
+    # set_state to update the actual generator state.
     generator.set_state(state_copy)
     return seed, offset
 

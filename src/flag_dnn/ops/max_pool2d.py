@@ -181,7 +181,9 @@ def max_pool2d(
     return_indices: bool = False,
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
     logger.debug(
-        f"FLAG_DNN MAX_POOL2D (kernel={kernel_size}, return_indices={return_indices})"
+        f"FLAG_DNN MAX_POOL2D "
+        f"(kernel={kernel_size}, "
+        f"return_indices={return_indices})"
     )
 
     def _pair(x):
@@ -204,16 +206,26 @@ def max_pool2d(
         return math.ceil(out) if ceil else math.floor(out)
 
     OH = _out_size(
-        H, padding[0], dilation[0], kernel_size[0], stride[0], ceil_mode
+        H,
+        padding[0],
+        dilation[0],  # type: ignore[index]
+        kernel_size[0],
+        stride[0],
+        ceil_mode,  # type: ignore[index]
     )
     OW = _out_size(
-        W, padding[1], dilation[1], kernel_size[1], stride[1], ceil_mode
+        W,
+        padding[1],
+        dilation[1],  # type: ignore[index]
+        kernel_size[1],
+        stride[1],
+        ceil_mode,  # type: ignore[index]
     )
 
     if ceil_mode:
-        if (OH - 1) * stride[0] >= H + padding[0]:
+        if (OH - 1) * stride[0] >= H + padding[0]:  # type: ignore[index]
             OH -= 1
-        if (OW - 1) * stride[1] >= W + padding[1]:
+        if (OW - 1) * stride[1] >= W + padding[1]:  # type: ignore[index]
             OW -= 1
 
     if not input.is_contiguous():
@@ -237,7 +249,10 @@ def max_pool2d(
     # 降低阈值至 64。让面积为 196 (14x14) 的走 2D，只有 49 (7x7) 及以下的走 1D
     with torch_device_fn.device(input.device):
         if OH * OW <= 64:
-            grid_1d = lambda meta: (triton.cdiv(M, meta["BLOCK_SIZE"]),)
+
+            def grid_1d(meta):
+                return (triton.cdiv(M, meta["BLOCK_SIZE"]),)
+
             max_pool2d_kernel_1d[grid_1d](
                 input,
                 y,
@@ -248,22 +263,24 @@ def max_pool2d(
                 W,
                 OH,
                 OW,
-                padding[0],
-                padding[1],
-                STRIDE_H=stride[0],
-                STRIDE_W=stride[1],
-                DIL_H=dilation[0],
-                DIL_W=dilation[1],
-                KERNEL_H=kernel_size[0],
-                KERNEL_W=kernel_size[1],
+                padding[0],  # type: ignore[index]
+                padding[1],  # type: ignore[index]
+                STRIDE_H=stride[0],  # type: ignore[index]
+                STRIDE_W=stride[1],  # type: ignore[index]
+                DIL_H=dilation[0],  # type: ignore[index]
+                DIL_W=dilation[1],  # type: ignore[index]
+                KERNEL_H=kernel_size[0],  # type: ignore[index]
+                KERNEL_W=kernel_size[1],  # type: ignore[index]
                 RETURN_INDICES=return_indices,
             )
         else:
             # 否则使用 2D，严格按空间划分
-            grid_2d = lambda meta: (
-                triton.cdiv(OH * OW, meta["BLOCK_SIZE"]),
-                N * C,
-            )
+            def grid_2d(meta):
+                return (
+                    triton.cdiv(OH * OW, meta["BLOCK_SIZE"]),
+                    N * C,
+                )
+
             max_pool2d_kernel_2d[grid_2d](
                 input,
                 y,
@@ -274,14 +291,14 @@ def max_pool2d(
                 W,
                 OH,
                 OW,
-                padding[0],
-                padding[1],
-                STRIDE_H=stride[0],
-                STRIDE_W=stride[1],
-                DIL_H=dilation[0],
-                DIL_W=dilation[1],
-                KERNEL_H=kernel_size[0],
-                KERNEL_W=kernel_size[1],
+                padding[0],  # type: ignore[index]
+                padding[1],  # type: ignore[index]
+                STRIDE_H=stride[0],  # type: ignore[index]
+                STRIDE_W=stride[1],  # type: ignore[index]
+                DIL_H=dilation[0],  # type: ignore[index]
+                DIL_W=dilation[1],  # type: ignore[index]
+                KERNEL_H=kernel_size[0],  # type: ignore[index]
+                KERNEL_W=kernel_size[1],  # type: ignore[index]
                 RETURN_INDICES=return_indices,
             )
 

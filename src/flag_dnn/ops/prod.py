@@ -1,13 +1,11 @@
 import logging
-from typing import Optional, Union, Tuple
+from typing import Optional
 
 import torch
 import triton
 import triton.language as tl
 
-from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
-from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
 
 
@@ -294,7 +292,10 @@ def prod(
     elif isinstance(dim, int):
         if dim < -ndim or dim >= ndim:
             raise IndexError(
-                f"Dimension out of range (expected to be in range of [{-ndim}, {ndim - 1}], but got {dim})"
+                f"Dimension out of range "
+                f"(expected to be in range "
+                f"of [{-ndim}, {ndim - 1}], "
+                f"but got {dim})"
             )
         dims = [dim]
     else:

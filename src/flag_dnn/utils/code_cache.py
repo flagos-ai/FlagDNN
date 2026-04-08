@@ -11,14 +11,17 @@ def cache_dir_path() -> Path:
     """Return the cache directory for generated files in flagdnn."""
     _cache_dir = os.environ.get("FLAGGEMS_CACHE_DIR")
     if _cache_dir is None:
-        _cache_dir = Path.home() / ".flagdnn"
+        _cache_dir = Path.home() / ".flagdnn"  # type: ignore[assignment]
     else:
-        _cache_dir = Path(_cache_dir)
-    return _cache_dir
+        _cache_dir = Path(_cache_dir)  # type: ignore[assignment]
+    return _cache_dir  # type: ignore[return-value]
 
 
 def cache_dir() -> Path:
-    """Return cache directory for generated files in flagdnn. Create it if it does not exist."""
+    """Return cache directory for generated files in flagdnn.
+
+    Create it if it does not exist.
+    """
     _cache_dir = cache_dir_path()
     os.makedirs(_cache_dir, exist_ok=True)
     return _cache_dir

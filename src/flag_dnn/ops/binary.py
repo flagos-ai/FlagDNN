@@ -298,7 +298,10 @@ def binary(
 
     is_other_tensor = isinstance(other, torch.Tensor)
     out_shape = (
-        torch.broadcast_shapes(input.shape, other.shape)
+        torch.broadcast_shapes(
+            input.shape,
+            other.shape,  # type: ignore[union-attr]
+        )
         if is_other_tensor
         else input.shape
     )
@@ -308,26 +311,44 @@ def binary(
         mode_map = {None: 0, "trunc": 1, "floor": 2}
         if rounding_mode not in mode_map:
             raise RuntimeError(
-                f"div expected rounding_mode to be one of None, 'trunc', 'floor' but found {rounding_mode}"
+                f"div expected rounding_mode to be"
+                f" one of None, 'trunc', 'floor'"
+                f" but found {rounding_mode}"
             )
         mode_idx = mode_map[rounding_mode]
 
     # Type promotion
     if op_type == "add":
         dummy_in = input.new_empty((0,))
-        dummy_oth = other.new_empty((0,)) if is_other_tensor else other
+        dummy_oth = (
+            other.new_empty((0,))  # type: ignore[union-attr]
+            if is_other_tensor
+            else other
+        )
         out_dtype = (dummy_in + alpha * dummy_oth).dtype
     elif op_type == "sub":
         dummy_in = input.new_empty((0,))
-        dummy_oth = other.new_empty((0,)) if is_other_tensor else other
+        dummy_oth = (
+            other.new_empty((0,))  # type: ignore[union-attr]
+            if is_other_tensor
+            else other
+        )
         out_dtype = (dummy_in - alpha * dummy_oth).dtype
     elif op_type == "mul":
         dummy_in = input.new_empty((0,))
-        dummy_oth = other.new_empty((0,)) if is_other_tensor else other
+        dummy_oth = (
+            other.new_empty((0,))  # type: ignore[union-attr]
+            if is_other_tensor
+            else other
+        )
         out_dtype = (dummy_in * dummy_oth).dtype
     elif op_type == "div":
         dummy_in = input.new_empty((0,))
-        dummy_oth = other.new_empty((0,)) if is_other_tensor else other
+        dummy_oth = (
+            other.new_empty((0,))  # type: ignore[union-attr]
+            if is_other_tensor
+            else other
+        )
         out_dtype = torch.div(
             dummy_in, dummy_oth, rounding_mode=rounding_mode
         ).dtype
@@ -343,65 +364,67 @@ def binary(
     if n_elements == 0:
         return out
 
-    grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+    def grid(meta):
+        return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
-    if is_other_tensor:
-        # 形状一致且连续，走一维 Kernel
-        if (
-            input.shape == other.shape
-            and input.is_contiguous()
-            and other.is_contiguous()
-        ):
-            binary_tensor_kernel[grid](
+    with torch_device_fn.device(input.device):
+        if is_other_tensor:
+            # 形状一致且连续，走一维 Kernel
+            if (
+                input.shape == other.shape  # type: ignore[union-attr]
+                and input.is_contiguous()
+                and other.is_contiguous()  # type: ignore[union-attr]
+            ):
+                binary_tensor_kernel[grid](
+                    input,
+                    other,
+                    out,
+                    n_elements,
+                    float(alpha),
+                    ROUND_MODE=mode_idx,
+                    OP_TYPE=op_type,
+                )
+            # broadcast
+            else:
+                # 仅逻辑扩展，不触发显存复制
+                in_exp = input.expand(out_shape)
+                oth_exp = other.expand(out_shape)  # type: ignore[union-attr]
+
+                # 维度坍缩
+                c_shape, c_sx, c_sy = collapse_dims(
+                    out_shape, in_exp.stride(), oth_exp.stride()
+                )
+
+                # 填充到 6 维
+                f_shape, f_sx, f_sy = pad_to_max_dims(
+                    c_shape, c_sx, c_sy, max_dims=6
+                )
+
+                binary_broadcast_tensor_kernel[grid](
+                    input,
+                    other,
+                    out,
+                    n_elements,
+                    *f_shape[1:],  # 传入 s1 到 s5
+                    *f_sx,  # 传入 sx0 到 sx5
+                    *f_sy,  # 传入 sy0 到 sy5
+                    float(alpha),
+                    ROUND_MODE=mode_idx,
+                    OP_TYPE=op_type,
+                )
+        else:
+            if op_type == "eq":
+                other_val = torch.tensor(other, dtype=input.dtype).item()
+            else:
+                other_val = float(other)
+            binary_scalar_kernel[grid](
                 input,
-                other,
                 out,
                 n_elements,
+                other_val,
                 float(alpha),
                 ROUND_MODE=mode_idx,
                 OP_TYPE=op_type,
             )
-        # broadcast
-        else:
-            # 仅逻辑扩展，不触发显存复制
-            in_exp = input.expand(out_shape)
-            oth_exp = other.expand(out_shape)
-
-            # 维度坍缩
-            c_shape, c_sx, c_sy = collapse_dims(
-                out_shape, in_exp.stride(), oth_exp.stride()
-            )
-
-            # 填充到 6 维
-            f_shape, f_sx, f_sy = pad_to_max_dims(
-                c_shape, c_sx, c_sy, max_dims=6
-            )
-
-            binary_broadcast_tensor_kernel[grid](
-                input,
-                other,
-                out,
-                n_elements,
-                *f_shape[1:],  # 传入 s1 到 s5
-                *f_sx,  # 传入 sx0 到 sx5
-                *f_sy,  # 传入 sy0 到 sy5
-                float(alpha),
-                ROUND_MODE=mode_idx,
-                OP_TYPE=op_type,
-            )
-    else:
-        if op_type == "eq":
-            other_val = torch.tensor(other, dtype=input.dtype).item()
-        else:
-            other_val = float(other)
-        binary_scalar_kernel[grid](
-            input,
-            out,
-            n_elements,
-            other_val,
-            float(alpha),
-            ROUND_MODE=mode_idx,
-            OP_TYPE=op_type,
-        )
 
     return out

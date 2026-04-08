@@ -1,5 +1,4 @@
 import logging
-from typing import Union
 
 import torch
 import triton
@@ -65,7 +64,8 @@ def relu(input: torch.Tensor, inplace: bool = False) -> torch.Tensor:
     n_elements = input.numel()
 
     # Grid 只需要一维，计算出需要多少个 Block 能覆盖所有的元素
-    grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+    def grid(meta):
+        return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
     # 启动 Kernel
     with torch_device_fn.device(input.device):

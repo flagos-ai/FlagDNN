@@ -209,11 +209,15 @@ def pow(
     input_is_tensor = isinstance(input, torch.Tensor)
     exp_is_tensor = isinstance(exponent, torch.Tensor)
 
-    if input_is_tensor and not input.is_contiguous():
+    if input_is_tensor and (
+        not input.is_contiguous()  # type: ignore[union-attr]
+    ):
         assert False, "input must be contiguous."
         input = input.contiguous()
 
-    if exp_is_tensor and not exponent.is_contiguous():
+    if exp_is_tensor and (
+        not exponent.is_contiguous()  # type: ignore[union-attr]
+    ):
         assert False, "exponent must be contiguous."
         exponent = exponent.contiguous()
 
@@ -222,18 +226,29 @@ def pow(
 
     # 确定输出形状与广播
     if input_is_tensor and exp_is_tensor:
-        out_shape = torch.broadcast_shapes(input.shape, exponent.shape)
-        device = input.device
+        out_shape = torch.broadcast_shapes(
+            input.shape,  # type: ignore[union-attr]
+            exponent.shape,  # type: ignore[union-attr]
+        )
+        device = input.device  # type: ignore[union-attr]
     elif input_is_tensor:
-        out_shape = input.shape
-        device = input.device
+        out_shape = input.shape  # type: ignore[union-attr]
+        device = input.device  # type: ignore[union-attr]
     else:
-        out_shape = exponent.shape
-        device = exponent.device
+        out_shape = exponent.shape  # type: ignore[union-attr]
+        device = exponent.device  # type: ignore[union-attr]
 
     # 类型推导与提升 (Type Promotion)
-    dummy_input = input.new_empty((0,)) if input_is_tensor else input
-    dummy_exponent = exponent.new_empty((0,)) if exp_is_tensor else exponent
+    dummy_input = (
+        input.new_empty((0,))  # type: ignore[union-attr]
+        if input_is_tensor
+        else input
+    )
+    dummy_exponent = (
+        exponent.new_empty((0,))  # type: ignore[union-attr]
+        if exp_is_tensor
+        else exponent
+    )
     out_dtype = torch.pow(dummy_input, dummy_exponent).dtype
 
     # 输出内存分配
@@ -249,14 +264,24 @@ def pow(
     if n_elements == 0:
         return out
 
-    grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+    def grid(meta):
+        return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
     with torch_device_fn.device(device):
-        if input_is_tensor and exp_is_tensor and input.shape == exponent.shape:
+        if (
+            input_is_tensor
+            and exp_is_tensor
+            and (
+                input.shape  # type: ignore[union-attr]
+                == exponent.shape  # type: ignore[union-attr]
+            )
+        ):
             pow_tensor_kernel[grid](input, exponent, out, n_elements)
         elif input_is_tensor and exp_is_tensor:
-            input_exp = input.expand(out_shape)
-            exponent_exp = exponent.expand(out_shape)
+            input_exp = input.expand(out_shape)  # type: ignore[union-attr]
+            exponent_exp = exponent.expand(  # type: ignore[union-attr]
+                out_shape
+            )
 
             # 维度坍缩
             c_shape, c_sx, c_sy = collapse_dims(

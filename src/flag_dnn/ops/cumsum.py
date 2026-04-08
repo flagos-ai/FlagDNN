@@ -5,7 +5,6 @@ import torch
 import triton
 import triton.language as tl
 
-from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import triton_lang_extension as tle
 
@@ -221,15 +220,38 @@ def cumsum(
                 )
             else:
                 # 触发多行 Batched Loop
-                grid = lambda meta: (triton.cdiv(M_pre, meta["BLOCK_M_PRE"]),)
-                cumsum_last_dim_kernel[grid](input_c, out_c, M_pre, N)
+                def grid(meta):
+                    return (
+                        triton.cdiv(
+                            M_pre,
+                            meta["BLOCK_M_PRE"],
+                        ),
+                    )
+
+                cumsum_last_dim_kernel[grid](
+                    input_c,
+                    out_c,
+                    M_pre,
+                    N,
+                )
         else:
-            # 归约前置/中间维度
-            grid = lambda meta: (
+
+            def grid(meta):  # type: ignore[assignment]
+                return (
+                    M_pre,
+                    triton.cdiv(
+                        M_post,
+                        meta["BLOCK_M_POST"],
+                    ),
+                )
+
+            cumsum_inner_dim_kernel[grid](
+                input_c,
+                out_c,
                 M_pre,
-                triton.cdiv(M_post, meta["BLOCK_M_POST"]),
+                N,
+                M_post,
             )
-            cumsum_inner_dim_kernel[grid](input_c, out_c, M_pre, N, M_post)
 
     if out is not None:
         if out.data_ptr() != out_c.data_ptr():

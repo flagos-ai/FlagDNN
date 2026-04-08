@@ -43,11 +43,15 @@ class ConfigLoader(object):
             if self.vendor_heuristics_config is None:
                 vendorname = self.device.vendor_name
                 warnings.warn(
-                    f"The {vendorname} configuration of heuristics_config is None"
+                    f"The {vendorname} configuration"
+                    f" of heuristics_config is None"
                 )
-            # gen_key is an identifier that indicates whether the current config needs to be generated automatically
+            # gen_key is an identifier that indicates whether
+            # the current config needs to be generated
+            # automatically
             self.gen_key = "gen"
-            # loaded_triton_config is wrapped in triton.Config according to primitive_yaml_config
+            # loaded_triton_config is wrapped in triton.Config
+            # according to primitive_yaml_config
             self.loaded_triton_config = {}
             self.triton_config_default = {
                 "num_stages": 2,

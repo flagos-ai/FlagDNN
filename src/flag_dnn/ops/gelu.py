@@ -1,5 +1,4 @@
 import logging
-from typing import Union
 
 import torch
 import triton
@@ -76,7 +75,9 @@ def gelu(x: torch.Tensor, approximate: str = "none") -> torch.Tensor:
     y = torch.empty_like(x)
     n_elements = x.numel()
 
-    grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+    def grid(meta):
+        return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+
     is_approximate = approximate == "tanh"
 
     # 启动 Triton Kernel

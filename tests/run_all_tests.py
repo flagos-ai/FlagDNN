@@ -183,7 +183,10 @@ def main():
     print("-" * 60)
     print("📊 任务执行完毕！")
     print(
-        f"总计: {summary['total']} | 通过: {summary['passed']} | 失败: {summary['failed']} | 异常中断: {summary['errored_or_interrupted']}"
+        f"总计: {summary['total']} | "
+        f"通过: {summary['passed']} | "
+        f"失败: {summary['failed']} | "
+        f"异常中断: {summary['errored_or_interrupted']}"
     )
     print(f"总耗时: {summary['total_duration_seconds']} 秒")
     print(f"详细日志已保存至 '{LOG_DIR}' 目录。")
