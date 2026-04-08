@@ -24,19 +24,29 @@ logger = logging.getLogger(__name__)
 )
 @triton.jit
 def max_pool2d_kernel_1d(
-    x_ptr, y_ptr, idx_ptr,
-    N, C, H, W,
-    OH, OW,
-    pad_h, pad_w,
-    STRIDE_H: tl.constexpr, STRIDE_W: tl.constexpr,
-    DIL_H: tl.constexpr, DIL_W: tl.constexpr,
-    KERNEL_H: tl.constexpr, KERNEL_W: tl.constexpr,
+    x_ptr,
+    y_ptr,
+    idx_ptr,
+    N,
+    C,
+    H,
+    W,
+    OH,
+    OW,
+    pad_h,
+    pad_w,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KERNEL_H: tl.constexpr,
+    KERNEL_W: tl.constexpr,
     RETURN_INDICES: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
     pid = tle.program_id(0)
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    
+
     num_elements = N * C * OH * OW
     mask = offsets < num_elements
 
@@ -44,7 +54,7 @@ def max_pool2d_kernel_1d(
     spatial_idx = offsets % spatial_size
     ow = spatial_idx % OW
     oh = spatial_idx // OW
-    
+
     batch_channel_idx = offsets // spatial_size
     c = batch_channel_idx % C
     n = batch_channel_idx // C
@@ -53,7 +63,7 @@ def max_pool2d_kernel_1d(
     h_start = oh * STRIDE_H - pad_h
     w_start = ow * STRIDE_W - pad_w
 
-    max_val = tl.full([BLOCK_SIZE], -float('inf'), dtype=tl.float32)
+    max_val = tl.full([BLOCK_SIZE], -float("inf"), dtype=tl.float32)
     max_idx = tl.full([BLOCK_SIZE], -1, dtype=tl.int64)
 
     for kh in tl.static_range(KERNEL_H):
@@ -64,11 +74,13 @@ def max_pool2d_kernel_1d(
             valid = (ih >= 0) & (ih < H) & (iw >= 0) & (iw < W)
             load_idx = x_base_idx + ih * W + iw
 
-            val = tl.load(x_ptr + load_idx, mask=mask & valid, other=-float('inf')).to(tl.float32)
+            val = tl.load(x_ptr + load_idx, mask=mask & valid, other=-float("inf")).to(
+                tl.float32
+            )
 
             update_mask = val > max_val
             max_val = tl.where(update_mask, val, max_val)
-            
+
             if RETURN_INDICES:
                 current_idx = ih * W + iw
                 max_idx = tl.where(update_mask, current_idx, max_idx)
@@ -81,28 +93,38 @@ def max_pool2d_kernel_1d(
 @libentry()
 @libtuner(
     configs=runtime.get_tuned_config("max_pool2d"),
-    key=["OH", "OW"], 
+    key=["OH", "OW"],
     warmup=5,
     rep=10,
 )
 @triton.jit
 def max_pool2d_kernel_2d(
-    x_ptr, y_ptr, idx_ptr,
-    N, C, H, W,
-    OH, OW,
-    pad_h, pad_w,
-    STRIDE_H: tl.constexpr, STRIDE_W: tl.constexpr,
-    DIL_H: tl.constexpr, DIL_W: tl.constexpr,
-    KERNEL_H: tl.constexpr, KERNEL_W: tl.constexpr,
+    x_ptr,
+    y_ptr,
+    idx_ptr,
+    N,
+    C,
+    H,
+    W,
+    OH,
+    OW,
+    pad_h,
+    pad_w,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KERNEL_H: tl.constexpr,
+    KERNEL_W: tl.constexpr,
     RETURN_INDICES: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
     pid_spatial = tle.program_id(0)
     pid_batch_channel = tle.program_id(1)
-    
+
     n = pid_batch_channel // C
     c = pid_batch_channel % C
-    
+
     offsets = pid_spatial * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     spatial_numel = OH * OW
     mask = offsets < spatial_numel
@@ -116,7 +138,7 @@ def max_pool2d_kernel_2d(
     h_start = oh * STRIDE_H - pad_h
     w_start = ow * STRIDE_W - pad_w
 
-    max_val = tl.full([BLOCK_SIZE], -float('inf'), dtype=tl.float32)
+    max_val = tl.full([BLOCK_SIZE], -float("inf"), dtype=tl.float32)
     max_idx = tl.full([BLOCK_SIZE], -1, dtype=tl.int64)
 
     for kh in tl.static_range(KERNEL_H):
@@ -127,16 +149,20 @@ def max_pool2d_kernel_2d(
             valid = (ih >= 0) & (ih < H) & (iw >= 0) & (iw < W)
             load_idx = ih * W + iw
 
-            val = tl.load(x_ptr + x_base_idx + load_idx, mask=mask & valid, other=-float('inf')).to(tl.float32)
+            val = tl.load(
+                x_ptr + x_base_idx + load_idx, mask=mask & valid, other=-float("inf")
+            ).to(tl.float32)
 
             update_mask = val > max_val
             max_val = tl.where(update_mask, val, max_val)
-            
+
             if RETURN_INDICES:
                 current_idx = ih * W + iw
                 max_idx = tl.where(update_mask, current_idx, max_idx)
 
-    tl.store(y_ptr + y_base_idx + offsets, max_val.to(x_ptr.dtype.element_ty), mask=mask)
+    tl.store(
+        y_ptr + y_base_idx + offsets, max_val.to(x_ptr.dtype.element_ty), mask=mask
+    )
     if RETURN_INDICES:
         tl.store(idx_ptr + y_base_idx + offsets, max_idx, mask=mask)
 
@@ -150,7 +176,9 @@ def max_pool2d(
     ceil_mode: bool = False,
     return_indices: bool = False,
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-    logger.debug(f"FLAG_DNN MAX_POOL2D (kernel={kernel_size}, return_indices={return_indices})")
+    logger.debug(
+        f"FLAG_DNN MAX_POOL2D (kernel={kernel_size}, return_indices={return_indices})"
+    )
 
     def _pair(x):
         return (x, x) if isinstance(x, int) else tuple(x)
@@ -185,7 +213,11 @@ def max_pool2d(
         input = input.contiguous()
 
     y = torch.empty((N, C, OH, OW), dtype=input.dtype, device=input.device)
-    idx = torch.empty((N, C, OH, OW), dtype=torch.int64, device=input.device) if return_indices else None
+    idx = (
+        torch.empty((N, C, OH, OW), dtype=torch.int64, device=input.device)
+        if return_indices
+        else None
+    )
 
     M = N * C * OH * OW
     if M == 0:
@@ -194,36 +226,52 @@ def max_pool2d(
             return out_y, (idx.squeeze(0) if is_3d else idx)
         return out_y
 
-
     # 降低阈值至 64。让面积为 196 (14x14) 的走 2D，只有 49 (7x7) 及以下的走 1D
     with torch_device_fn.device(input.device):
         if OH * OW <= 64:
-            grid_1d = lambda meta: (triton.cdiv(M, meta['BLOCK_SIZE']), )
+            grid_1d = lambda meta: (triton.cdiv(M, meta["BLOCK_SIZE"]),)
             max_pool2d_kernel_1d[grid_1d](
-                input, y, idx,
-                N, C, H, W,
-                OH, OW,
-                padding[0], padding[1],
-                STRIDE_H=stride[0], STRIDE_W=stride[1],
-                DIL_H=dilation[0], DIL_W=dilation[1],
-                KERNEL_H=kernel_size[0], KERNEL_W=kernel_size[1],
-                RETURN_INDICES=return_indices
+                input,
+                y,
+                idx,
+                N,
+                C,
+                H,
+                W,
+                OH,
+                OW,
+                padding[0],
+                padding[1],
+                STRIDE_H=stride[0],
+                STRIDE_W=stride[1],
+                DIL_H=dilation[0],
+                DIL_W=dilation[1],
+                KERNEL_H=kernel_size[0],
+                KERNEL_W=kernel_size[1],
+                RETURN_INDICES=return_indices,
             )
         else:
             # 否则使用 2D，严格按空间划分
-            grid_2d = lambda meta: (
-                triton.cdiv(OH * OW, meta['BLOCK_SIZE']), 
-                N * C
-            )
+            grid_2d = lambda meta: (triton.cdiv(OH * OW, meta["BLOCK_SIZE"]), N * C)
             max_pool2d_kernel_2d[grid_2d](
-                input, y, idx,
-                N, C, H, W,
-                OH, OW,
-                padding[0], padding[1],
-                STRIDE_H=stride[0], STRIDE_W=stride[1],
-                DIL_H=dilation[0], DIL_W=dilation[1],
-                KERNEL_H=kernel_size[0], KERNEL_W=kernel_size[1],
-                RETURN_INDICES=return_indices
+                input,
+                y,
+                idx,
+                N,
+                C,
+                H,
+                W,
+                OH,
+                OW,
+                padding[0],
+                padding[1],
+                STRIDE_H=stride[0],
+                STRIDE_W=stride[1],
+                DIL_H=dilation[0],
+                DIL_W=dilation[1],
+                KERNEL_H=kernel_size[0],
+                KERNEL_W=kernel_size[1],
+                RETURN_INDICES=return_indices,
             )
 
     out_y = y.squeeze(0) if is_3d else y

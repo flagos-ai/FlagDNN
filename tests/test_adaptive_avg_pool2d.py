@@ -6,16 +6,18 @@ import flag_dnn
 
 # (shape, output_size)
 PARAMS = [
-    ((2, 3, 32, 32), (1, 1)),                 # 全局平均池化 (Global Average Pooling)
-    ((1, 16, 28, 28), 14),                    # 降维到 14x14 (输入单整数)
-    ((4, 8, 15, 15), (7, 5)),                 # 非对称目标尺寸
-    ((2, 4, 32, 32), (None, 16)),             # 保持 H 尺寸不变，W 降到 16
-    ((16, 14, 14), (2, 2)),                   # 3D 张量输入
+    ((2, 3, 32, 32), (1, 1)),  # 全局平均池化 (Global Average Pooling)
+    ((1, 16, 28, 28), 14),  # 降维到 14x14 (输入单整数)
+    ((4, 8, 15, 15), (7, 5)),  # 非对称目标尺寸
+    ((2, 4, 32, 32), (None, 16)),  # 保持 H 尺寸不变，W 降到 16
+    ((16, 14, 14), (2, 2)),  # 3D 张量输入
 ]
 
 
 @pytest.mark.adaptive_avg_pool2d
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape, output_size", PARAMS)
 def test_accuracy_adaptive_avg_pool2d(dtype, shape, output_size):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -77,7 +79,7 @@ def test_accuracy_adaptive_avg_pool2d_large_values(dtype):
 def test_accuracy_adaptive_avg_pool2d_mixed_values(dtype):
     shape = (2, 3, 32, 32)
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
-    
+
     x[..., ::2, ::2] *= 1000.0
     x[..., 1::2, 1::2] *= 0.001
 

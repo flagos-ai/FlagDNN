@@ -14,6 +14,7 @@ from flag_dnn.utils import shape_utils
 def torch_gelu(x, y=None):
     return F.gelu(x)
 
+
 def gems_gelu_wrapper(x, y=None):
     return flag_dnn.ops.gelu(x)
 

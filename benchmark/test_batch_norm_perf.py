@@ -15,8 +15,11 @@ from flag_dnn.utils import shape_utils
 def torch_batch_norm(x, running_mean, running_var, weight, bias):
     return F.batch_norm(x, running_mean, running_var, weight, bias, training=True)
 
+
 def gems_batch_norm_wrapper(x, running_mean, running_var, weight, bias):
-    return flag_dnn.ops.batch_norm(x, running_mean, running_var, weight, bias, training=True)
+    return flag_dnn.ops.batch_norm(
+        x, running_mean, running_var, weight, bias, training=True
+    )
 
 
 class BatchNormBenchmark(Benchmark):
@@ -31,24 +34,21 @@ class BatchNormBenchmark(Benchmark):
         # 针对 Batch Norm 定制的真实 CV 业务典型 shape
         shapes = [
             # 1. MLP / 1D 卷积输出 (N, C) 或 (N, C, L)
-            (1024, 256),               # 典型 MLP 中间层
+            (1024, 256),  # 典型 MLP 中间层
             (256, 1024),
-            (32, 256, 1024),           # 1D 序列特征
-            
+            (32, 256, 1024),  # 1D 序列特征
             # 2. ResNet 系列典型特征图 (N, C, H, W)
-            (32, 64, 112, 112),        # ResNet 前期特征图 (高分辨率)
-            (32, 256, 56, 56),         # ResNet Stage 1 输出
-            (32, 512, 28, 28),         # ResNet Stage 2 输出
-            (32, 1024, 14, 14),        # ResNet Stage 3 输出
-            (32, 2048, 7, 7),          # ResNet Stage 4 输出 (通道数多，空间小)
-
+            (32, 64, 112, 112),  # ResNet 前期特征图 (高分辨率)
+            (32, 256, 56, 56),  # ResNet Stage 1 输出
+            (32, 512, 28, 28),  # ResNet Stage 2 输出
+            (32, 1024, 14, 14),  # ResNet Stage 3 输出
+            (32, 2048, 7, 7),  # ResNet Stage 4 输出 (通道数多，空间小)
             # 3. 高分辨率/大 Batch Size 视觉任务 (如分割/检测)
-            (8, 64, 512, 512),         # 语义分割典型输入特征
-            (1, 16, 2048, 2048),       # 超高分辨率图像前处理
-            
+            (8, 64, 512, 512),  # 语义分割典型输入特征
+            (1, 16, 2048, 2048),  # 超高分辨率图像前处理
             # 4. 极限压力测试
-            (16, 1024, 64, 64),        # 约 67M 元素
-            (8, 2048, 64, 64),         # 约 67M 元素，通道极多
+            (16, 1024, 64, 64),  # 约 67M 元素
+            (8, 2048, 64, 64),  # 约 67M 元素，通道极多
         ]
         self.shapes = shapes
         return None
@@ -70,17 +70,19 @@ class BatchNormBenchmark(Benchmark):
             inp = torch.randn(shape, dtype=cur_dtype, device=self.device)
             if inp.numel() == 0:
                 continue
-                
+
             # Batch Norm 至少需要 2D 张量，其中 dim=1 是通道维度 (C)
             num_channels = shape[1] if len(shape) > 1 else shape[0]
-            
+
             # Batch Norm 需要的 4 个参数：均值、方差、缩放(weight)、平移(bias)
             # 为了防止数值溢出或 NAN，给均值和方差赋安全值
-            running_mean = torch.zeros(num_channels, dtype=cur_dtype, device=self.device)
+            running_mean = torch.zeros(
+                num_channels, dtype=cur_dtype, device=self.device
+            )
             running_var = torch.ones(num_channels, dtype=cur_dtype, device=self.device)
             weight = torch.ones(num_channels, dtype=cur_dtype, device=self.device)
             bias = torch.zeros(num_channels, dtype=cur_dtype, device=self.device)
-            
+
             yield inp, running_mean, running_var, weight, bias
 
     def get_gbps(self, args, latency):
@@ -89,7 +91,7 @@ class BatchNormBenchmark(Benchmark):
         running_var = args[2]
         weight = args[3]
         bias = args[4]
-        
+
         # GBPS 计算：读入 x + 写出 y + 读入 4 个参数
         io_amount = (
             shape_utils.size_in_bytes(inp) * 2  # 读 x，写 y

@@ -15,6 +15,7 @@ def torch_sum(x, dim, keepdim):
         return torch.sum(x)
     return torch.sum(x, dim=dim, keepdim=keepdim)
 
+
 def gems_sum_wrapper(x, dim, keepdim):
     if dim is None:
         return flag_dnn.ops.sum(x)
@@ -34,23 +35,19 @@ class SumBenchmark(Benchmark):
         # 不同的 dim 对 GPU 访存合并 (Memory Coalescing) 考验极大
         configs = [
             # 1. 全局求和 (Global Reduction) - 极度考验原子操作 (Atomic Add) 或全局通信
-            ((1024 * 1024 * 16,), None, False),       # 1D 超长向量 
-            ((32, 256, 1024), None, False),           # 3D 全局归约
-            
+            ((1024 * 1024 * 16,), None, False),  # 1D 超长向量
+            ((32, 256, 1024), None, False),  # 3D 全局归约
             # 2. 沿着最后一个维度求和 (Row/Inner Reduction) - 内存连续，最容易优化
-            ((1024, 1024), 1, False),                 # 典型方阵
-            ((32, 1024, 1024), 2, False),             # NLP 典型的 Seq_len 维度归约
-            ((8, 128, 4096), 2, False),               # NLP 大词表/长序列
-            
+            ((1024, 1024), 1, False),  # 典型方阵
+            ((32, 1024, 1024), 2, False),  # NLP 典型的 Seq_len 维度归约
+            ((8, 128, 4096), 2, False),  # NLP 大词表/长序列
             # 3. 沿着最前面的维度求和 (Column/Outer Reduction) - 内存不连续，极度考验访存
-            ((1024, 1024), 0, False),                 # 考验跨步距 (Strided) 访存
-            ((32, 1024, 1024), 0, False),             # Reduce Batch 维度
-            
+            ((1024, 1024), 0, False),  # 考验跨步距 (Strided) 访存
+            ((32, 1024, 1024), 0, False),  # Reduce Batch 维度
             # 4. 视觉任务 (CV) 中的典型归约
-            ((32, 256, 56, 56), (2, 3), False),       # 类似全局平均池化 (GAP) 的前置求和
-            ((32, 256, 56, 56), 1, False),            # Reduce 通道维度 (Channel Reduction)
-            ((1, 16, 2048, 2048), (2, 3), False),     # 高分辨率空间维度归约
-            
+            ((32, 256, 56, 56), (2, 3), False),  # 类似全局平均池化 (GAP) 的前置求和
+            ((32, 256, 56, 56), 1, False),  # Reduce 通道维度 (Channel Reduction)
+            ((1, 16, 2048, 2048), (2, 3), False),  # 高分辨率空间维度归约
             # 5. 保留维度 (keepdim=True) 测试
             ((64, 512, 512), 2, True),
             ((128, 256, 256), 1, True),
@@ -73,13 +70,13 @@ class SumBenchmark(Benchmark):
             inp = torch.randn(shape, dtype=cur_dtype, device=self.device)
             if inp.numel() == 0:
                 continue
-                
+
             yield inp, dim, keepdim
 
     def get_gbps(self, args, latency):
         inp = args[0]
         dim = args[1]
-        
+
         # 估算输出大小
         if dim is None:
             out_numel = 1
@@ -89,7 +86,7 @@ class SumBenchmark(Benchmark):
             out_numel = inp.numel()
             for d in dims:
                 out_numel //= inp.shape[d]
-                
+
         # GBPS 计算：读入输入 x + 写出输出 y
         io_amount = shape_utils.size_in_bytes(inp) + (out_numel * inp.element_size())
         return io_amount * 1e-9 / (latency * 1e-3)

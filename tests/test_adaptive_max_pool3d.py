@@ -6,18 +6,20 @@ import flag_dnn
 
 # adaptive_max_pool3d 参数格式：(shape, output_size)
 PARAMS = [
-    ((2, 3, 8, 16, 16), (4, 8, 8)),        # 标准 3D 降采样
-    ((1, 8, 5, 14, 14), 7),                # 输出尺寸为单 int
-    ((2, 4, 7, 15, 15), (3, 5, 7)),        # 三个维度不同尺寸
-    ((1, 2, 4, 8, 8), (5, 10, 10)),        # 上采样 (输出尺寸大于输入)
-    ((4, 5, 10, 20, 20), 1),               # 3D 全局池化 (Global Max Pooling)
-    ((3, 8, 14, 14), (4, 7, 7)),           # 4D 张量输入 (无 Batch 维度 N)
-    ((1, 2, 8, 8, 8), (8, 8, 8)),          # output == input (原样输出)
+    ((2, 3, 8, 16, 16), (4, 8, 8)),  # 标准 3D 降采样
+    ((1, 8, 5, 14, 14), 7),  # 输出尺寸为单 int
+    ((2, 4, 7, 15, 15), (3, 5, 7)),  # 三个维度不同尺寸
+    ((1, 2, 4, 8, 8), (5, 10, 10)),  # 上采样 (输出尺寸大于输入)
+    ((4, 5, 10, 20, 20), 1),  # 3D 全局池化 (Global Max Pooling)
+    ((3, 8, 14, 14), (4, 7, 7)),  # 4D 张量输入 (无 Batch 维度 N)
+    ((1, 2, 8, 8, 8), (8, 8, 8)),  # output == input (原样输出)
 ]
 
 
 @pytest.mark.adaptive_max_pool3d
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape, output_size", PARAMS)
 @pytest.mark.parametrize("return_indices", [False, True])
 def test_accuracy_adaptive_max_pool3d(dtype, shape, output_size, return_indices):
@@ -28,7 +30,7 @@ def test_accuracy_adaptive_max_pool3d(dtype, shape, output_size, return_indices)
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
     ref_out = F.adaptive_max_pool3d(x, output_size, return_indices=return_indices)
-    
+
     with flag_dnn.use_dnn():
         out = F.adaptive_max_pool3d(x, output_size, return_indices=return_indices)
 
@@ -38,7 +40,7 @@ def test_accuracy_adaptive_max_pool3d(dtype, shape, output_size, return_indices)
     if return_indices:
         out_vals, out_indices = out
         ref_vals, ref_indices = ref_out
-        
+
         # 验证数值正确性
         torch.testing.assert_close(out_vals, ref_vals, rtol=rtol, atol=atol)
         # 验证索引正确性 (必须完全一致)

@@ -3,14 +3,14 @@
 # 接收从 backend-test.yaml 传过来的 vendor 参数 (如 nvidia, ascend)
 VENDOR=${1:?"Usage: bash tools/run_tests.sh <vendor>"}
 # 如果你的项目需要特定的环境变量，在这里导出。这里参考 FlagGems 的命名：
-export DNN_VENDOR=$VENDOR 
+export DNN_VENDOR=$VENDOR
 
 echo "===================================================="
 echo "🚀 开始运行 FlagDNN 测试 | 硬件平台: $DNN_VENDOR"
 echo "===================================================="
 
 
-export CUDA_VISIBLE_DEVICES=0 
+export CUDA_VISIBLE_DEVICES=0
 
 # 激活 Conda 环境
 # 注意：请务必把这里的路径和虚拟环境名称换成你 GPU 服务器上的实际路径！

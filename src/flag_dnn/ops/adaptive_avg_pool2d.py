@@ -44,6 +44,7 @@ def _next_power_of_2(x: int) -> int:
 
 _GLOBAL_POOL2D_PARTIAL_CACHE = {}
 
+
 def _get_global_pool2d_partial(device, dtype, nc, split_k):
     key = (device.index, str(dtype), nc, split_k)
     buf = _GLOBAL_POOL2D_PARTIAL_CACHE.get(key)
@@ -55,7 +56,7 @@ def _get_global_pool2d_partial(device, dtype, nc, split_k):
 
 def _global_large_hw_small_nc_meta(nc: int, hw: int):
     if nc <= 64 and hw >= 32768:
-        return 8, 512, 8, 2   # split_k, block_size, num_warps, num_stages
+        return 8, 512, 8, 2  # split_k, block_size, num_warps, num_stages
     elif nc <= 64 and hw >= 8192:
         return 8, 256, 4, 2
     else:
@@ -65,8 +66,10 @@ def _global_large_hw_small_nc_meta(nc: int, hw: int):
 @libentry()
 @triton.jit
 def global_avg_pool2d_tiled_nc_kernel(
-    x_ptr, y_ptr,
-    NC, HW,
+    x_ptr,
+    y_ptr,
+    NC,
+    HW,
     ACC_DTYPE: tl.constexpr,
     BLOCK_NC: tl.constexpr,
     BLOCK_HW: tl.constexpr,
@@ -91,8 +94,10 @@ def global_avg_pool2d_tiled_nc_kernel(
 
 @triton.jit
 def global_avg_pool2d_split_partial_kernel(
-    x_ptr, partial_ptr,
-    NC, HW,
+    x_ptr,
+    partial_ptr,
+    NC,
+    HW,
     SPLIT_K: tl.constexpr,
     ACC_DTYPE: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
@@ -123,8 +128,10 @@ def global_avg_pool2d_split_partial_kernel(
 
 @triton.jit
 def global_avg_pool2d_split_finalize_kernel(
-    partial_ptr, y_ptr,
-    NC, HW,
+    partial_ptr,
+    y_ptr,
+    NC,
+    HW,
     SPLIT_K: tl.constexpr,
     ACC_DTYPE: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
@@ -136,11 +143,9 @@ def global_avg_pool2d_split_finalize_kernel(
     offs = tl.arange(0, BLOCK_SIZE)
     mask = offs < SPLIT_K
 
-    vals = tl.load(
-        partial_ptr + pid_nc * SPLIT_K + offs,
-        mask=mask,
-        other=0
-    ).to(ACC_DTYPE)
+    vals = tl.load(partial_ptr + pid_nc * SPLIT_K + offs, mask=mask, other=0).to(
+        ACC_DTYPE
+    )
 
     total = tl.sum(vals, axis=0)
     avg_val = total / HW
@@ -158,8 +163,12 @@ def global_avg_pool2d_split_finalize_kernel(
 )
 @triton.jit
 def global_avg_pool2d_kernel(
-    x_ptr, y_ptr,
-    N, C, H, W,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    H,
+    W,
     ACC_DTYPE: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
@@ -188,8 +197,14 @@ def global_avg_pool2d_kernel(
 @libentry()
 @triton.jit
 def adaptive_avg_pool2d_divisible_small_kernel(
-    x_ptr, y_ptr,
-    N, C, H, W, OH, OW,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    H,
+    W,
+    OH,
+    OW,
     K_H: tl.constexpr,
     K_W: tl.constexpr,
     ACC_DTYPE: tl.constexpr,
@@ -236,8 +251,14 @@ def adaptive_avg_pool2d_divisible_small_kernel(
 @libentry()
 @triton.jit
 def adaptive_avg_pool2d_general_small_kernel(
-    x_ptr, y_ptr,
-    N, C, H, W, OH, OW,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    H,
+    W,
+    OH,
+    OW,
     MAX_K_H: tl.constexpr,
     MAX_K_W: tl.constexpr,
     ACC_DTYPE: tl.constexpr,
@@ -303,8 +324,14 @@ def adaptive_avg_pool2d_general_small_kernel(
 )
 @triton.jit
 def adaptive_avg_pool2d_divisible_large_kernel(
-    x_ptr, y_ptr,
-    N, C, H, W, OH, OW,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    H,
+    W,
+    OH,
+    OW,
     K_H: tl.constexpr,
     K_W: tl.constexpr,
     ACC_DTYPE: tl.constexpr,
@@ -360,8 +387,14 @@ def adaptive_avg_pool2d_divisible_large_kernel(
 )
 @triton.jit
 def adaptive_avg_pool2d_general_large_kernel(
-    x_ptr, y_ptr,
-    N, C, H, W, OH, OW,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    H,
+    W,
+    OH,
+    OW,
     MAX_K_H: tl.constexpr,
     MAX_K_W: tl.constexpr,
     ACC_DTYPE: tl.constexpr,
@@ -430,7 +463,9 @@ def adaptive_avg_pool2d(
         OH = output_size
         OW = output_size
     else:
-        assert len(output_size) == 2, "output_size for adaptive_avg_pool2d must have 2 elements"
+        assert (
+            len(output_size) == 2
+        ), "output_size for adaptive_avg_pool2d must have 2 elements"
         OH = output_size[0] if output_size[0] is not None else input.shape[-2]
         OW = output_size[1] if output_size[1] is not None else input.shape[-1]
 
@@ -480,8 +515,10 @@ def adaptive_avg_pool2d(
 
                 grid = (triton.cdiv(NC, block_nc),)
                 global_avg_pool2d_tiled_nc_kernel[grid](
-                    input, y,
-                    NC, HW,
+                    input,
+                    y,
+                    NC,
+                    HW,
                     ACC_DTYPE=acc_dtype,
                     BLOCK_NC=block_nc,
                     BLOCK_HW=block_hw,
@@ -490,14 +527,22 @@ def adaptive_avg_pool2d(
                 )
             # 2) NC 很小但 HW 很大：split reduction
             elif NC <= 64 and HW >= 8192:
-                split_k, block_size, num_warps, num_stages = _global_large_hw_small_nc_meta(NC, HW)
-                partial_dtype = torch.float64 if input.dtype == torch.float64 else torch.float32
-                partial = _get_global_pool2d_partial(input.device, partial_dtype, NC, split_k)
+                split_k, block_size, num_warps, num_stages = (
+                    _global_large_hw_small_nc_meta(NC, HW)
+                )
+                partial_dtype = (
+                    torch.float64 if input.dtype == torch.float64 else torch.float32
+                )
+                partial = _get_global_pool2d_partial(
+                    input.device, partial_dtype, NC, split_k
+                )
 
                 grid = (NC, split_k)
                 global_avg_pool2d_split_partial_kernel[grid](
-                    input, partial,
-                    NC, HW,
+                    input,
+                    partial,
+                    NC,
+                    HW,
                     SPLIT_K=split_k,
                     ACC_DTYPE=acc_dtype,
                     BLOCK_SIZE=block_size,
@@ -507,8 +552,10 @@ def adaptive_avg_pool2d(
 
                 grid = (NC,)
                 global_avg_pool2d_split_finalize_kernel[grid](
-                    partial, y,
-                    NC, HW,
+                    partial,
+                    y,
+                    NC,
+                    HW,
                     SPLIT_K=split_k,
                     ACC_DTYPE=acc_dtype,
                     BLOCK_SIZE=8 if split_k <= 8 else 16,
@@ -519,8 +566,12 @@ def adaptive_avg_pool2d(
             else:
                 grid = lambda meta: (NC,)
                 global_avg_pool2d_kernel[grid](
-                    input, y,
-                    N, C, H, W,
+                    input,
+                    y,
+                    N,
+                    C,
+                    H,
+                    W,
                     ACC_DTYPE=acc_dtype,
                 )
         # small OH/OW: fixed small tile, no autotune
@@ -532,8 +583,14 @@ def adaptive_avg_pool2d(
                 k_w = W // OW
                 grid = (N * C,)
                 adaptive_avg_pool2d_divisible_small_kernel[grid](
-                    input, y,
-                    N, C, H, W, OH, OW,
+                    input,
+                    y,
+                    N,
+                    C,
+                    H,
+                    W,
+                    OH,
+                    OW,
                     K_H=k_h,
                     K_W=k_w,
                     ACC_DTYPE=acc_dtype,
@@ -547,8 +604,14 @@ def adaptive_avg_pool2d(
                 max_k_w = _exact_max_window(W, OW)
                 grid = (N * C,)
                 adaptive_avg_pool2d_general_small_kernel[grid](
-                    input, y,
-                    N, C, H, W, OH, OW,
+                    input,
+                    y,
+                    N,
+                    C,
+                    H,
+                    W,
+                    OH,
+                    OW,
                     MAX_K_H=max_k_h,
                     MAX_K_W=max_k_w,
                     ACC_DTYPE=acc_dtype,
@@ -567,8 +630,14 @@ def adaptive_avg_pool2d(
                 triton.cdiv(OW, meta["BLOCK_W"]),
             )
             adaptive_avg_pool2d_divisible_large_kernel[grid](
-                input, y,
-                N, C, H, W, OH, OW,
+                input,
+                y,
+                N,
+                C,
+                H,
+                W,
+                OH,
+                OW,
                 K_H=k_h,
                 K_W=k_w,
                 ACC_DTYPE=acc_dtype,
@@ -583,8 +652,14 @@ def adaptive_avg_pool2d(
                 triton.cdiv(OW, meta["BLOCK_W"]),
             )
             adaptive_avg_pool2d_general_large_kernel[grid](
-                input, y,
-                N, C, H, W, OH, OW,
+                input,
+                y,
+                N,
+                C,
+                H,
+                W,
+                OH,
+                OW,
                 MAX_K_H=max_k_h,
                 MAX_K_W=max_k_w,
                 ACC_DTYPE=acc_dtype,

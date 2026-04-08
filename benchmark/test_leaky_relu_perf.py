@@ -15,6 +15,7 @@ from flag_dnn.utils import shape_utils
 def torch_leaky_relu(x, y=None):
     return F.leaky_relu(x)
 
+
 def gems_leaky_relu_wrapper(x, y=None):
     return flag_dnn.ops.leaky_relu(x)
 

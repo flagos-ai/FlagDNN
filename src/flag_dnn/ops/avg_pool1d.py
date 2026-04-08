@@ -24,8 +24,11 @@ logger = logging.getLogger(__name__)
 )
 @triton.jit
 def avg_pool1d_kernel(
-    x_ptr, y_ptr,
-    N, C, W,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    W,
     OW,
     pad_w,
     STRIDE_W: tl.constexpr,
@@ -36,7 +39,7 @@ def avg_pool1d_kernel(
 ):
     pid = tle.program_id(0)
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    
+
     num_elements = N * C * OW
     mask = offsets < num_elements
 
@@ -70,7 +73,7 @@ def avg_pool1d_kernel(
         iw = w_start + kw
         valid = (iw >= 0) & (iw < W)
         load_idx = x_base_idx + iw
-        
+
         # 加载时转为累加精度 (fp32 或 fp64)，越界区域补 0.0
         val = tl.load(x_ptr + load_idx, mask=mask & valid, other=0.0).to(ACC_DTYPE)
         sum_val += val
@@ -88,7 +91,9 @@ def avg_pool1d(
     ceil_mode: bool = False,
     count_include_pad: bool = True,
 ) -> torch.Tensor:
-    logger.debug(f"FLAG_DNN AVG_POOL1D (kernel={kernel_size}, count_include_pad={count_include_pad})")
+    logger.debug(
+        f"FLAG_DNN AVG_POOL1D (kernel={kernel_size}, count_include_pad={count_include_pad})"
+    )
 
     def _single(x):
         return (x,) if isinstance(x, int) else tuple(x)
@@ -125,21 +130,24 @@ def avg_pool1d(
     if M == 0:
         return y.squeeze(0) if is_2d else y
 
-    grid = lambda meta: (triton.cdiv(M, meta['BLOCK_SIZE']), )
+    grid = lambda meta: (triton.cdiv(M, meta["BLOCK_SIZE"]),)
 
     # 动态分发累加精度：float64 原生保留，其他统统升级到 float32 运算
     acc_dtype = tl.float64 if input.dtype == torch.float64 else tl.float32
 
     with torch_device_fn.device(input.device):
         avg_pool1d_kernel[grid](
-            input, y,
-            N, C, W,
+            input,
+            y,
+            N,
+            C,
+            W,
             OW,
             padding[0],
             STRIDE_W=stride[0],
             KERNEL_W=kernel_size[0],
             COUNT_INCLUDE_PAD=count_include_pad,
-            ACC_DTYPE=acc_dtype
+            ACC_DTYPE=acc_dtype,
         )
 
     return y.squeeze(0) if is_2d else y

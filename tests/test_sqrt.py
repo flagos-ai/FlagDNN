@@ -5,6 +5,7 @@ import flag_dnn
 
 SHAPES = [(32,), (1024,), (5333,), (16384,), (1024 * 1024,), (2, 3, 4, 5)]
 
+
 def _get_non_negative_tensor(shape, dtype, device):
     """
     生成非负张量，避免对负数求平方根产生 NaN，从而破坏容差对比。
@@ -13,7 +14,9 @@ def _get_non_negative_tensor(shape, dtype, device):
 
 
 @pytest.mark.sqrt
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape", SHAPES)
 def test_accuracy_sqrt(dtype, shape):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -26,9 +29,9 @@ def test_accuracy_sqrt(dtype, shape):
     if dtype == torch.bfloat16:
         rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3    # FP16 中等宽松
+        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
     else:
-        rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
+        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
 
     ref_out = torch.sqrt(x)
     with flag_dnn.use_dnn():
@@ -38,7 +41,9 @@ def test_accuracy_sqrt(dtype, shape):
 
 
 @pytest.mark.sqrt
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 def test_accuracy_sqrt_empty_tensor(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")

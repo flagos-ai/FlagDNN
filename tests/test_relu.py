@@ -7,7 +7,9 @@ SHAPES = [(32,), (1024,), (128, 256), (4, 8, 16, 32), (1024 * 1024,)]
 
 
 @pytest.mark.relu
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape", SHAPES)
 @pytest.mark.parametrize("inplace", [False, True])
 def test_accuracy_relu(dtype, shape, inplace):
@@ -27,11 +29,15 @@ def test_accuracy_relu(dtype, shape, inplace):
     # ReLU 无精度损失，直接卡死容差
     torch.testing.assert_close(y, ref_y, rtol=0, atol=0)
     if inplace:
-        assert y.data_ptr() == test_x.data_ptr(), "Inplace operation failed to reuse memory pointer."
+        assert (
+            y.data_ptr() == test_x.data_ptr()
+        ), "Inplace operation failed to reuse memory pointer."
 
 
 @pytest.mark.relu
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("inplace", [False, True])
 def test_accuracy_relu_empty_tensor(dtype, inplace):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -54,7 +60,9 @@ def test_accuracy_relu_empty_tensor(dtype, inplace):
 
 
 @pytest.mark.relu
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape", SHAPES)
 @pytest.mark.parametrize("inplace", [False, True])
 def test_accuracy_relu_negative_values(dtype, shape, inplace):
@@ -77,7 +85,9 @@ def test_accuracy_relu_negative_values(dtype, shape, inplace):
 
 
 @pytest.mark.relu
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape", SHAPES)
 @pytest.mark.parametrize("inplace", [False, True])
 def test_accuracy_relu_positive_values(dtype, shape, inplace):
@@ -100,7 +110,9 @@ def test_accuracy_relu_positive_values(dtype, shape, inplace):
 
 
 @pytest.mark.relu
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape", SHAPES)
 @pytest.mark.parametrize("inplace", [False, True])
 def test_accuracy_relu_mixed_values(dtype, shape, inplace):

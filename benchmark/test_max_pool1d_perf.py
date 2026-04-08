@@ -13,8 +13,11 @@ from flag_dnn.utils import shape_utils
 def torch_max_pool1d(x, kernel_size, stride, padding):
     return F.max_pool1d(x, kernel_size=kernel_size, stride=stride, padding=padding)
 
+
 def gems_max_pool1d_wrapper(x, kernel_size, stride, padding):
-    return flag_dnn.ops.max_pool1d(x, kernel_size=kernel_size, stride=stride, padding=padding)
+    return flag_dnn.ops.max_pool1d(
+        x, kernel_size=kernel_size, stride=stride, padding=padding
+    )
 
 
 class MaxPool1dBenchmark(Benchmark):
@@ -30,16 +33,14 @@ class MaxPool1dBenchmark(Benchmark):
         # 配置格式为: (shape, kernel_size, stride, padding)
         configs = [
             # 1. 典型的下采样降维 (Halving)
-            ((32, 128, 1024), 2, 2, 0),        
-            ((64, 256, 512), 2, 2, 0),         
-            
+            ((32, 128, 1024), 2, 2, 0),
+            ((64, 256, 512), 2, 2, 0),
             # 2. 保持原序列长度的滑动窗口 (TextCNN 常用)
-            ((32, 64, 4096), 3, 1, 1),         
-            ((16, 512, 1024), 5, 1, 2),        
-            
+            ((32, 64, 4096), 3, 1, 1),
+            ((16, 512, 1024), 5, 1, 2),
             # 3. 大核步长 (Aggressive Pooling, 音频特征提取常用)
-            ((8, 128, 16000), 10, 5, 0),       # 例如处理 1 秒 16kHz 的音频波形
-            ((1, 64, 48000), 100, 50, 0),      
+            ((8, 128, 16000), 10, 5, 0),  # 例如处理 1 秒 16kHz 的音频波形
+            ((1, 64, 48000), 100, 50, 0),
         ]
         self.shapes = configs
         return None
@@ -59,19 +60,19 @@ class MaxPool1dBenchmark(Benchmark):
             inp = torch.randn(shape, dtype=cur_dtype, device=self.device)
             if inp.numel() == 0:
                 continue
-                
+
             yield inp, kernel_size, stride, padding
 
     def get_gbps(self, args, latency):
         inp, kernel_size, stride, padding = args
-        
+
         # 1D Pooling 的输出长度计算公式
         L_in = inp.shape[-1]
         L_out = (L_in + 2 * padding - kernel_size) // stride + 1
-        
+
         # 输出的 numel = Batch * Channels * L_out
         out_numel = inp.shape[0] * inp.shape[1] * L_out
-                
+
         io_amount = shape_utils.size_in_bytes(inp) + (out_numel * inp.element_size())
         return io_amount * 1e-9 / (latency * 1e-3)
 
@@ -82,6 +83,6 @@ def test_perf_max_pool1d():
         op_name="max_pool1d",
         torch_op=torch_max_pool1d,
         gems_op=gems_max_pool1d_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64]
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

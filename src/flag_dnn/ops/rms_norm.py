@@ -17,16 +17,19 @@ logger = logging.getLogger(__name__)
 @libentry()
 @libtuner(
     configs=runtime.get_tuned_config("rms_norm"),
-    key=['N'],
+    key=["N"],
     strategy=["align32"],
     warmup=5,
     rep=10,
 )
 @triton.jit
 def rms_norm_kernel(
-    x_ptr, y_ptr,
+    x_ptr,
+    y_ptr,
     weight_ptr,
-    M, N, eps,
+    M,
+    N,
+    eps,
     BLOCK_SIZE: tl.constexpr,
     HAS_WEIGHT: tl.constexpr,
 ):
@@ -41,10 +44,10 @@ def rms_norm_kernel(
     for offset in range(0, N, BLOCK_SIZE):
         cols = offset + tl.arange(0, BLOCK_SIZE)
         mask = cols < N
-        
+
         # 加载数据并上采样到 fp32
         x = tl.load(x_row_ptr + cols, mask=mask, other=0.0).to(tl.float32)
-        
+
         # 累加平方和
         sum_squares += tl.sum(x * x, axis=0)
 
@@ -54,9 +57,9 @@ def rms_norm_kernel(
     for offset in range(0, N, BLOCK_SIZE):
         cols = offset + tl.arange(0, BLOCK_SIZE)
         mask = cols < N
-        
+
         x = tl.load(x_row_ptr + cols, mask=mask, other=0.0).to(tl.float32)
-        
+
         # 核心 RMSNorm 计算
         x_hat = x * rrms
 
@@ -81,7 +84,9 @@ def rms_norm(
     if input.numel() == 0:
         return torch.empty_like(input)
 
-    assert input.ndim >= len(normalized_shape), "Input dimensions must be >= normalized_shape length"
+    assert input.ndim >= len(
+        normalized_shape
+    ), "Input dimensions must be >= normalized_shape length"
 
     if not input.is_contiguous():
         assert False, "input must be contiguous."
@@ -89,9 +94,11 @@ def rms_norm(
     y = torch.empty_like(input)
 
     N = 1
-    tail_shape = input.shape[-len(normalized_shape):]
+    tail_shape = input.shape[-len(normalized_shape) :]
     if tuple(normalized_shape) != tuple(tail_shape):
-        raise ValueError(f"The normalized_shape must match the last few dimensions of the input tensor.")
+        raise ValueError(
+            f"The normalized_shape must match the last few dimensions of the input tensor."
+        )
 
     for dim in normalized_shape:
         N *= dim
@@ -108,11 +115,6 @@ def rms_norm(
     grid = (M,)
 
     with torch_device_fn.device(input.device):
-        rms_norm_kernel[grid](
-            input, y,
-            weight_ptr,
-            M, N, eps,
-            HAS_WEIGHT=has_weight
-        )
+        rms_norm_kernel[grid](input, y, weight_ptr, M, N, eps, HAS_WEIGHT=has_weight)
 
     return y

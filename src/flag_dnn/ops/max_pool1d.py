@@ -24,8 +24,12 @@ logger = logging.getLogger(__name__)
 )
 @triton.jit
 def max_pool1d_kernel(
-    x_ptr, y_ptr, idx_ptr,
-    N, C, W,
+    x_ptr,
+    y_ptr,
+    idx_ptr,
+    N,
+    C,
+    W,
     OW,
     pad_w,
     STRIDE_W: tl.constexpr,
@@ -36,7 +40,7 @@ def max_pool1d_kernel(
 ):
     pid = tle.program_id(0)
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    
+
     num_elements = N * C * OW
     mask = offsets < num_elements
 
@@ -48,7 +52,7 @@ def max_pool1d_kernel(
 
     w_start = ow * STRIDE_W - pad_w
 
-    max_val = tl.full([BLOCK_SIZE], -float('inf'), dtype=tl.float32)
+    max_val = tl.full([BLOCK_SIZE], -float("inf"), dtype=tl.float32)
     max_idx = tl.full([BLOCK_SIZE], -1, dtype=tl.int64)
 
     # 使用 tl.static_range 强制编译器在编译期展开循环
@@ -59,17 +63,19 @@ def max_pool1d_kernel(
         valid = (iw >= 0) & (iw < W)
         load_idx = x_base_idx + iw
 
-        val = tl.load(x_ptr + load_idx, mask=mask & valid, other=-float('inf')).to(tl.float32)
+        val = tl.load(x_ptr + load_idx, mask=mask & valid, other=-float("inf")).to(
+            tl.float32
+        )
 
         update_mask = val > max_val
         max_val = tl.where(update_mask, val, max_val)
-        
+
         if RETURN_INDICES:
             current_idx = iw
             max_idx = tl.where(update_mask, current_idx, max_idx)
 
     tl.store(y_ptr + offsets, max_val.to(x_ptr.dtype.element_ty), mask=mask)
-    
+
     if RETURN_INDICES:
         tl.store(idx_ptr + offsets, max_idx, mask=mask)
 
@@ -83,7 +89,9 @@ def max_pool1d(
     ceil_mode: bool = False,
     return_indices: bool = False,
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-    logger.debug(f"FLAG_DNN MAX_POOL1D (kernel={kernel_size}, return_indices={return_indices})")
+    logger.debug(
+        f"FLAG_DNN MAX_POOL1D (kernel={kernel_size}, return_indices={return_indices})"
+    )
 
     def _single(x):
         return (x,) if isinstance(x, int) else tuple(x)
@@ -114,10 +122,14 @@ def max_pool1d(
     if not input.is_contiguous():
         assert False, "input must be contiguous."
         input = input.contiguous()
-    
+
     y = torch.empty((N, C, OW), dtype=input.dtype, device=input.device)
-    
-    idx = torch.empty((N, C, OW), dtype=torch.int64, device=input.device) if return_indices else None
+
+    idx = (
+        torch.empty((N, C, OW), dtype=torch.int64, device=input.device)
+        if return_indices
+        else None
+    )
 
     M = N * C * OW
     if M == 0:
@@ -126,18 +138,22 @@ def max_pool1d(
             return out_y, (idx.squeeze(0) if is_2d else idx)
         return out_y
 
-    grid = lambda meta: (triton.cdiv(M, meta['BLOCK_SIZE']), )
+    grid = lambda meta: (triton.cdiv(M, meta["BLOCK_SIZE"]),)
 
     with torch_device_fn.device(input.device):
         max_pool1d_kernel[grid](
-            input, y, idx,
-            N, C, W,
+            input,
+            y,
+            idx,
+            N,
+            C,
+            W,
             OW,
             padding[0],
             STRIDE_W=stride[0],
             DIL_W=dilation[0],
             KERNEL_W=kernel_size[0],
-            RETURN_INDICES=return_indices
+            RETURN_INDICES=return_indices,
         )
 
     out_y = y.squeeze(0) if is_2d else y

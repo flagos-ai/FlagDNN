@@ -11,12 +11,14 @@ CUMSUM_CASES = [
     ((2, 3, 4, 5), -2),
     ((128, 256), 1),
     ((128, 256), 0),
-    ((2, 5000), 1), 
+    ((2, 5000), 1),
 ]
 
 
 @pytest.mark.cumsum
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape, dim", CUMSUM_CASES)
 def test_accuracy_cumsum(dtype, shape, dim):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -55,14 +57,14 @@ def test_accuracy_cumsum_out_param():
     """测试原地的 out 参数覆盖"""
     x = torch.randn((10, 20), dtype=torch.float32, device=flag_dnn.device)
     out = torch.empty((10, 20), dtype=torch.float32, device=flag_dnn.device)
-    
+
     ref_out = torch.cumsum(x, dim=0)
     with flag_dnn.use_dnn():
         torch.cumsum(x, dim=0, out=out)
-    
+
     torch.testing.assert_close(out, ref_out)
-    
-    
+
+
 @pytest.mark.cumsum
 def test_accuracy_cumsum_empty():
     """测试极其刁钻的空张量边界情况"""

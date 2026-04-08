@@ -8,6 +8,6 @@ def sub(
     other: Union[torch.Tensor, int, float],
     *,
     alpha: float = 1.0,
-    out: Optional[torch.Tensor] = None
+    out: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     return binary(input, other, out=out, op_type="sub", alpha=alpha)

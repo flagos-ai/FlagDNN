@@ -9,7 +9,9 @@ DIMS = [-1, 0, 1, 2]
 
 
 @pytest.mark.softmax
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape", SHAPES)
 @pytest.mark.parametrize("dim", DIMS)
 def test_accuracy_softmax(dtype, shape, dim):
@@ -27,10 +29,10 @@ def test_accuracy_softmax(dtype, shape, dim):
     if dtype == torch.bfloat16:
         rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3    # FP16 中等宽松
+        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
     else:
-        rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
-    
+        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
+
     ref_y = F.softmax(x, dim=dim)
     with flag_dnn.use_dnn():
         y = F.softmax(x, dim=dim)
@@ -39,7 +41,9 @@ def test_accuracy_softmax(dtype, shape, dim):
 
 
 @pytest.mark.softmax
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("dim", [-1, 0])
 def test_accuracy_softmax_empty_tensor(dtype, dim):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -50,12 +54,12 @@ def test_accuracy_softmax_empty_tensor(dtype, dim):
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
     if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2 
+        rtol, atol = 1.6e-2, 1e-2
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3   
+        rtol, atol = 1e-3, 1e-3
     else:
-        rtol, atol = 1e-5, 1e-5   
-    
+        rtol, atol = 1e-5, 1e-5
+
     ref_y = F.softmax(x, dim=dim)
     with flag_dnn.use_dnn():
         y = F.softmax(x, dim=dim)
@@ -67,7 +71,9 @@ def test_accuracy_softmax_empty_tensor(dtype, dim):
 
 
 @pytest.mark.softmax
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("dim", [-1, 1])
 def test_accuracy_softmax_large_values(dtype, dim):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -78,12 +84,12 @@ def test_accuracy_softmax_large_values(dtype, dim):
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 10.0 + 100.0
 
     if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2 
+        rtol, atol = 1.6e-2, 1e-2
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3   
+        rtol, atol = 1e-3, 1e-3
     else:
-        rtol, atol = 1e-5, 1e-5   
-    
+        rtol, atol = 1e-5, 1e-5
+
     ref_y = F.softmax(x, dim=dim)
     with flag_dnn.use_dnn():
         y = F.softmax(x, dim=dim)
@@ -92,7 +98,9 @@ def test_accuracy_softmax_large_values(dtype, dim):
 
 
 @pytest.mark.softmax
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("dim", [-1, 0, 1])
 def test_accuracy_softmax_mixed_values(dtype, dim):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -103,12 +111,12 @@ def test_accuracy_softmax_mixed_values(dtype, dim):
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
     if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2 
+        rtol, atol = 1.6e-2, 1e-2
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3   
+        rtol, atol = 1e-3, 1e-3
     else:
-        rtol, atol = 1e-5, 1e-5   
-    
+        rtol, atol = 1e-5, 1e-5
+
     ref_y = F.softmax(x, dim=dim)
     with flag_dnn.use_dnn():
         y = F.softmax(x, dim=dim)

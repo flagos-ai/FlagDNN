@@ -8,7 +8,9 @@ SHAPES = [(32,), (1024,), (5333,), (16384,), (1024 * 1024,)]
 
 
 @pytest.mark.silu
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape", SHAPES)
 @pytest.mark.parametrize("inplace", [False, True])
 def test_accuracy_silu(dtype, shape, inplace):
@@ -21,12 +23,12 @@ def test_accuracy_silu(dtype, shape, inplace):
     if dtype == torch.bfloat16:
         rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3    # FP16 中等宽松
+        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
     else:
-        rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
-    
+        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
+
     # 必须 clone，防止 inplace=True 时原生算子破坏输入数据
-    ref_x = x.clone() 
+    ref_x = x.clone()
     ref_y = F.silu(ref_x, inplace=inplace)
 
     with flag_dnn.use_dnn():
@@ -36,7 +38,9 @@ def test_accuracy_silu(dtype, shape, inplace):
 
 
 @pytest.mark.silu
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("inplace", [False, True])
 def test_accuracy_silu_empty_tensor(dtype, inplace):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -49,13 +53,13 @@ def test_accuracy_silu_empty_tensor(dtype, inplace):
     if dtype == torch.bfloat16:
         rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3    # FP16 中等宽松
+        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
     else:
-        rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
-    
+        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
+
     ref_x = x.clone()
     ref_y = F.silu(ref_x, inplace=inplace)
-    
+
     with flag_dnn.use_dnn():
         y = F.silu(x, inplace=inplace)
 
@@ -66,7 +70,9 @@ def test_accuracy_silu_empty_tensor(dtype, inplace):
 
 
 @pytest.mark.silu
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("inplace", [False, True])
 def test_accuracy_silu_negative_values(dtype, inplace):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -79,13 +85,13 @@ def test_accuracy_silu_negative_values(dtype, inplace):
     if dtype == torch.bfloat16:
         rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3    # FP16 中等宽松
+        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
     else:
-        rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
-    
+        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
+
     ref_x = x.clone()
     ref_y = F.silu(ref_x, inplace=inplace)
-    
+
     with flag_dnn.use_dnn():
         y = F.silu(x, inplace=inplace)
 
@@ -93,7 +99,9 @@ def test_accuracy_silu_negative_values(dtype, inplace):
 
 
 @pytest.mark.silu
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("inplace", [False, True])
 def test_accuracy_silu_positive_values(dtype, inplace):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -106,13 +114,13 @@ def test_accuracy_silu_positive_values(dtype, inplace):
     if dtype == torch.bfloat16:
         rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3    # FP16 中等宽松
+        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
     else:
-        rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
-    
+        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
+
     ref_x = x.clone()
     ref_y = F.silu(ref_x, inplace=inplace)
-    
+
     with flag_dnn.use_dnn():
         y = F.silu(x, inplace=inplace)
 
@@ -120,7 +128,9 @@ def test_accuracy_silu_positive_values(dtype, inplace):
 
 
 @pytest.mark.silu
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("inplace", [False, True])
 def test_accuracy_silu_mixed_values(dtype, inplace):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -133,13 +143,13 @@ def test_accuracy_silu_mixed_values(dtype, inplace):
     if dtype == torch.bfloat16:
         rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3    # FP16 中等宽松
+        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
     else:
-        rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
-    
+        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
+
     ref_x = x.clone()
     ref_y = F.silu(ref_x, inplace=inplace)
-    
+
     with flag_dnn.use_dnn():
         y = F.silu(x, inplace=inplace)
 

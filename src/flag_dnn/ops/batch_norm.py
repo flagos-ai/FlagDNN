@@ -16,10 +16,16 @@ logger = logging.getLogger(__name__)
 
 @triton.jit
 def batch_norm_inference_kernel(
-    x_ptr, y_ptr,
-    mean_ptr, var_ptr,
-    weight_ptr, bias_ptr,
-    total_elements, C, S, eps,
+    x_ptr,
+    y_ptr,
+    mean_ptr,
+    var_ptr,
+    weight_ptr,
+    bias_ptr,
+    total_elements,
+    C,
+    S,
+    eps,
     BLOCK_SIZE: tl.constexpr,
     HAS_WEIGHT: tl.constexpr,
     HAS_BIAS: tl.constexpr,
@@ -36,7 +42,9 @@ def batch_norm_inference_kernel(
 
     mean = tl.load(mean_ptr + c_idx, mask=mask).to(tl.float32)
     var = tl.load(var_ptr + c_idx, mask=mask).to(tl.float32)
-    weight = tl.load(weight_ptr + c_idx, mask=mask).to(tl.float32) if HAS_WEIGHT else 1.0
+    weight = (
+        tl.load(weight_ptr + c_idx, mask=mask).to(tl.float32) if HAS_WEIGHT else 1.0
+    )
     bias = tl.load(bias_ptr + c_idx, mask=mask).to(tl.float32) if HAS_BIAS else 0.0
 
     rstd = 1.0 / tl.sqrt(var + eps)
@@ -48,24 +56,20 @@ def batch_norm_inference_kernel(
 def get_autotune_configs():
     return [
         # --- 1. 针对小 M / 小 S 的轻量配置 ---
-        triton.Config({'BLOCK_SIZE': 128}, num_warps=2, num_stages=2),
-        triton.Config({'BLOCK_SIZE': 256}, num_warps=4, num_stages=2),
-        
+        triton.Config({"BLOCK_SIZE": 128}, num_warps=2, num_stages=2),
+        triton.Config({"BLOCK_SIZE": 256}, num_warps=4, num_stages=2),
         # --- 2. 针对中等规模 ---
-        triton.Config({'BLOCK_SIZE': 512}, num_warps=4, num_stages=2),
-        triton.Config({'BLOCK_SIZE': 1024}, num_warps=8, num_stages=3),
-        
+        triton.Config({"BLOCK_SIZE": 512}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_SIZE": 1024}, num_warps=8, num_stages=3),
         # --- 3. 针对超大 M (FP64 核心优化区) ---
         # 增加 num_warps 到 16，尝试在寄存器允许的情况下压榨带宽
-        triton.Config({'BLOCK_SIZE': 1024}, num_warps=16, num_stages=2),
-        triton.Config({'BLOCK_SIZE': 2048}, num_warps=16, num_stages=2),
-        
+        triton.Config({"BLOCK_SIZE": 1024}, num_warps=16, num_stages=2),
+        triton.Config({"BLOCK_SIZE": 2048}, num_warps=16, num_stages=2),
         # 极端情况：减少 stages 释放寄存器，提升 Occupancy
-        triton.Config({'BLOCK_SIZE': 1024}, num_warps=8, num_stages=1),
-        triton.Config({'BLOCK_SIZE': 2048}, num_warps=16, num_stages=1),
-
+        triton.Config({"BLOCK_SIZE": 1024}, num_warps=8, num_stages=1),
+        triton.Config({"BLOCK_SIZE": 2048}, num_warps=16, num_stages=1),
         # 针对 512x512, 2048x2048 等超大平面
-        triton.Config({'BLOCK_SIZE': 4096}, num_warps=16, num_stages=2),
+        triton.Config({"BLOCK_SIZE": 4096}, num_warps=16, num_stages=2),
     ]
 
 
@@ -79,15 +83,22 @@ def get_autotune_configs():
 # )
 @triton.autotune(
     configs=get_autotune_configs(),
-    key=['N', 'C', 'S'],  # 根据 S (数据长度) 的不同，缓存不同的最优配置
-    restore_value=['mean_ptr', 'var_ptr'],
+    key=["N", "C", "S"],  # 根据 S (数据长度) 的不同，缓存不同的最优配置
+    restore_value=["mean_ptr", "var_ptr"],
 )
 @triton.jit
 def batch_norm_fused_kernel_optimized_(
-    x_ptr, y_ptr,
-    mean_ptr, var_ptr,
-    weight_ptr, bias_ptr,
-    N, C, S, eps, momentum,
+    x_ptr,
+    y_ptr,
+    mean_ptr,
+    var_ptr,
+    weight_ptr,
+    bias_ptr,
+    N,
+    C,
+    S,
+    eps,
+    momentum,
     BLOCK_SIZE: tl.constexpr,
     IS_TRAINING: tl.constexpr,
     HAS_WEIGHT: tl.constexpr,
@@ -108,12 +119,12 @@ def batch_norm_fused_kernel_optimized_(
         for i_offset in range(0, M, BLOCK_SIZE):
             i = i_offset + tl.arange(0, BLOCK_SIZE)
             mask = i < M
-            
+
             # 计算正确的内存地址 (Stride 逻辑保持不变)
             mem_ptrs = base_x_ptr + i + (i // S) * stride_gap
-            
+
             x = tl.load(mem_ptrs, mask=mask, other=0.0).to(tl.float32)
-            
+
             sum_x += tl.sum(x, axis=0)
             sum_x2 += tl.sum(x * x, axis=0)
 
@@ -141,13 +152,13 @@ def batch_norm_fused_kernel_optimized_(
     for i_offset in range(0, M, BLOCK_SIZE):
         i = i_offset + tl.arange(0, BLOCK_SIZE)
         mask = i < M
-        
+
         mem_ptrs = base_x_ptr + i + (i // S) * stride_gap
         x = tl.load(mem_ptrs, mask=mask).to(tl.float32)
-        
+
         x_hat = (x - mean) * rstd
         y_f32 = x_hat * weight + bias
-        
+
         y = y_f32.to(x_ptr.dtype.element_ty)
         out_ptrs = base_y_ptr + i + (i // S) * stride_gap
         tl.store(out_ptrs, y, mask=mask)
@@ -171,13 +182,15 @@ def batch_norm(
     assert input.ndim >= 2, "BatchNorm requires at least 2D input (N, C, ...)"
 
     if not training:
-        assert running_mean is not None and running_var is not None, "running stats must be provided in eval mode"
+        assert (
+            running_mean is not None and running_var is not None
+        ), "running stats must be provided in eval mode"
 
     # 内存连续性处理
     if not input.is_contiguous():
-        # assert False, "input must be contiguous" 
+        # assert False, "input must be contiguous"
         input = input.contiguous()
-        
+
     y = torch.empty_like(input)
 
     N = input.shape[0]
@@ -197,22 +210,36 @@ def batch_norm(
     with torch_device_fn.device(input.device):
         if not training:
             # 根据总元素数计算一维 Grid 大小
-            grid = lambda meta: (triton.cdiv(total_elements, meta['BLOCK_SIZE']), )
+            grid = lambda meta: (triton.cdiv(total_elements, meta["BLOCK_SIZE"]),)
 
             batch_norm_inference_kernel[grid](
-                input, y,
-                mean_ptr, var_ptr, weight, bias,
-                total_elements, C, S, eps,
+                input,
+                y,
+                mean_ptr,
+                var_ptr,
+                weight,
+                bias,
+                total_elements,
+                C,
+                S,
+                eps,
                 BLOCK_SIZE=1024,
                 HAS_WEIGHT=(weight is not None),
                 HAS_BIAS=(bias is not None),
             )
         else:
             batch_norm_fused_kernel_optimized_[grid](
-                input, y,
-                mean_ptr, var_ptr,
-                weight, bias,
-                N, C, S, eps, momentum,
+                input,
+                y,
+                mean_ptr,
+                var_ptr,
+                weight,
+                bias,
+                N,
+                C,
+                S,
+                eps,
+                momentum,
                 IS_TRAINING=training,
                 HAS_WEIGHT=(weight is not None),
                 HAS_BIAS=(bias is not None),

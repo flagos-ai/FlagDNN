@@ -13,8 +13,11 @@ from flag_dnn.utils import shape_utils
 def torch_max_pool2d(x, kernel_size, stride, padding):
     return F.max_pool2d(x, kernel_size=kernel_size, stride=stride, padding=padding)
 
+
 def gems_max_pool2d_wrapper(x, kernel_size, stride, padding):
-    return flag_dnn.ops.max_pool2d(x, kernel_size=kernel_size, stride=stride, padding=padding)
+    return flag_dnn.ops.max_pool2d(
+        x, kernel_size=kernel_size, stride=stride, padding=padding
+    )
 
 
 def _to_tuple2(val):
@@ -41,18 +44,14 @@ class MaxPool2dBenchmark(Benchmark):
             ((64, 128, 28, 28), 2, 2, 0),
             ((32, 256, 14, 14), 2, 2, 0),
             ((16, 512, 7, 7), 2, 2, 0),
-
             # 2. ResNet Stem 阶段的大核带 padding 池化
             ((64, 64, 112, 112), 3, 2, 1),
-
             # 3. 保持尺寸的重叠池化 (Overlapping pooling, 常见于 Inception/AlexNet)
             ((64, 192, 28, 28), 3, 1, 1),
             ((32, 256, 14, 14), 3, 1, 1),
-
             # 4. 高分辨率输入 (如目标检测/语义分割 Backbone)
-            ((8, 64, 800, 800), 2, 2, 0),          # 常见的目标检测输入尺寸
-            ((4, 128, 1080, 1920), 2, 2, 0),       # 1080p FHD 分辨率非对称输入
-
+            ((8, 64, 800, 800), 2, 2, 0),  # 常见的目标检测输入尺寸
+            ((4, 128, 1080, 1920), 2, 2, 0),  # 1080p FHD 分辨率非对称输入
             # 5. 非对称 Kernel 和 Stride (如语音声学特征频谱图处理、特定遥感图像)
             ((32, 1, 128, 256), (2, 3), (2, 2), (0, 1)),
         ]
@@ -74,24 +73,24 @@ class MaxPool2dBenchmark(Benchmark):
             inp = torch.randn(shape, dtype=cur_dtype, device=self.device)
             if inp.numel() == 0:
                 continue
-                
+
             yield inp, kernel_size, stride, padding
 
     def get_gbps(self, args, latency):
         inp, kernel_size, stride, padding = args
-        
+
         kh, kw = _to_tuple2(kernel_size)
         sh, sw = _to_tuple2(stride)
         ph, pw = _to_tuple2(padding)
-        
+
         # 2D Pooling 的输出宽高计算公式
         H_in, W_in = inp.shape[2], inp.shape[3]
         H_out = (H_in + 2 * ph - kh) // sh + 1
         W_out = (W_in + 2 * pw - kw) // sw + 1
-        
+
         # 输出的 numel = Batch * Channels * H_out * W_out
         out_numel = inp.shape[0] * inp.shape[1] * H_out * W_out
-                
+
         io_amount = shape_utils.size_in_bytes(inp) + (out_numel * inp.element_size())
         return io_amount * 1e-9 / (latency * 1e-3)
 
@@ -102,6 +101,6 @@ def test_perf_max_pool2d():
         op_name="max_pool2d",
         torch_op=torch_max_pool2d,
         gems_op=gems_max_pool2d_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64]
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

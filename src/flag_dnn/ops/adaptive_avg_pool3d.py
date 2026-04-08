@@ -54,12 +54,15 @@ def _small_od_oh_ow_meta(od: int, oh: int, ow: int):
 # Global Pooling Kernels (OD == OH == OW == 1)
 # =============================================================================
 
+
 # Small DHW, large NC: batch multiple channels in one block
 @libentry()
 @triton.jit
 def global_avg_pool3d_tiled_nc_kernel(
-    x_ptr, y_ptr,
-    NC, DHW,
+    x_ptr,
+    y_ptr,
+    NC,
+    DHW,
     ACC_DTYPE: tl.constexpr,
     BLOCK_NC: tl.constexpr,
     BLOCK_DHW: tl.constexpr,
@@ -86,9 +89,13 @@ def global_avg_pool3d_tiled_nc_kernel(
 @libentry()
 @triton.jit
 def global_avg_pool3d_fused_kernel(
-    x_ptr, y_ptr,
-    partial_ptr, counter_ptr,
-    NC, DHW, COUNTER_BASE,
+    x_ptr,
+    y_ptr,
+    partial_ptr,
+    counter_ptr,
+    NC,
+    DHW,
+    COUNTER_BASE,
     SPLIT_K: tl.constexpr,
     ACC_DTYPE: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
@@ -223,8 +230,13 @@ def _should_use_native_global_pool3d(
 )
 @triton.jit
 def global_avg_pool3d_kernel(
-    x_ptr, y_ptr,
-    N, C, D, H, W,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    D,
+    H,
+    W,
     ACC_DTYPE: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
@@ -253,11 +265,20 @@ def global_avg_pool3d_kernel(
 # Small Output Size Kernels (OD * OH * OW <= 8)
 # =============================================================================
 
+
 @libentry()
 @triton.jit
 def adaptive_avg_pool3d_divisible_small_kernel(
-    x_ptr, y_ptr,
-    N, C, D, H, W, OD, OH, OW,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    D,
+    H,
+    W,
+    OD,
+    OH,
+    OW,
     K_D: tl.constexpr,
     K_H: tl.constexpr,
     K_W: tl.constexpr,
@@ -304,8 +325,16 @@ def adaptive_avg_pool3d_divisible_small_kernel(
 @libentry()
 @triton.jit
 def adaptive_avg_pool3d_general_small_kernel(
-    x_ptr, y_ptr,
-    N, C, D, H, W, OD, OH, OW,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    D,
+    H,
+    W,
+    OD,
+    OH,
+    OW,
     MAX_K_D: tl.constexpr,
     MAX_K_H: tl.constexpr,
     MAX_K_W: tl.constexpr,
@@ -371,6 +400,7 @@ def adaptive_avg_pool3d_general_small_kernel(
 # Large Output Size Kernels (with autotuning, 3D grid)
 # =============================================================================
 
+
 @libentry()
 @libtuner(
     configs=runtime.get_tuned_config("adaptive_avg_pool3d_divisible_large"),
@@ -380,8 +410,16 @@ def adaptive_avg_pool3d_general_small_kernel(
 )
 @triton.jit
 def adaptive_avg_pool3d_divisible_large_kernel(
-    x_ptr, y_ptr,
-    N, C, D, H, W, OD, OH, OW,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    D,
+    H,
+    W,
+    OD,
+    OH,
+    OW,
     K_D: tl.constexpr,
     K_H: tl.constexpr,
     K_W: tl.constexpr,
@@ -441,8 +479,16 @@ def adaptive_avg_pool3d_divisible_large_kernel(
 )
 @triton.jit
 def adaptive_avg_pool3d_general_large_kernel(
-    x_ptr, y_ptr,
-    N, C, D, H, W, OD, OH, OW,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    D,
+    H,
+    W,
+    OD,
+    OH,
+    OW,
     MAX_K_D: tl.constexpr,
     MAX_K_H: tl.constexpr,
     MAX_K_W: tl.constexpr,
@@ -515,6 +561,7 @@ def adaptive_avg_pool3d_general_large_kernel(
 # Main Function
 # =============================================================================
 
+
 def adaptive_avg_pool3d(
     input: torch.Tensor,
     output_size: Union[int, Tuple[int, int, int]],
@@ -573,8 +620,10 @@ def adaptive_avg_pool3d(
 
                 grid = (triton.cdiv(NC, block_nc),)
                 global_avg_pool3d_tiled_nc_kernel[grid](
-                    input, y,
-                    NC, DHW,
+                    input,
+                    y,
+                    NC,
+                    DHW,
                     ACC_DTYPE=acc_dtype,
                     BLOCK_NC=block_nc,
                     BLOCK_DHW=block_dhw,
@@ -583,18 +632,25 @@ def adaptive_avg_pool3d(
                 )
             # Small NC, large DHW: split-K keeps the GPU busy for global pooling.
             elif _should_use_global_pool3d_fused(NC, DHW):
-                split_k, block_size, num_warps, num_stages = \
+                split_k, block_size, num_warps, num_stages = (
                     _global_large_dhw_small_nc_meta(NC, DHW)
-                acc_torch_dtype = torch.float64 if input.dtype == torch.float64 else torch.float32
+                )
+                acc_torch_dtype = (
+                    torch.float64 if input.dtype == torch.float64 else torch.float32
+                )
                 partial_buf, counter_buf, counter_base = _get_global_pool3d_fused_bufs(
                     input.device, acc_torch_dtype, NC, split_k
                 )
 
                 grid = (NC, split_k)
                 global_avg_pool3d_fused_kernel[grid](
-                    input, y,
-                    partial_buf, counter_buf,
-                    NC, DHW, counter_base,
+                    input,
+                    y,
+                    partial_buf,
+                    counter_buf,
+                    NC,
+                    DHW,
+                    counter_base,
                     SPLIT_K=split_k,
                     ACC_DTYPE=acc_dtype,
                     BLOCK_SIZE=block_size,
@@ -606,8 +662,13 @@ def adaptive_avg_pool3d(
             else:
                 grid = lambda meta: (NC,)
                 global_avg_pool3d_kernel[grid](
-                    input, y,
-                    N, C, D, H, W,
+                    input,
+                    y,
+                    N,
+                    C,
+                    D,
+                    H,
+                    W,
                     ACC_DTYPE=acc_dtype,
                 )
 
@@ -620,8 +681,16 @@ def adaptive_avg_pool3d(
                 k_w = W // OW
                 grid = (NC,)
                 adaptive_avg_pool3d_divisible_small_kernel[grid](
-                    input, y,
-                    N, C, D, H, W, OD, OH, OW,
+                    input,
+                    y,
+                    N,
+                    C,
+                    D,
+                    H,
+                    W,
+                    OD,
+                    OH,
+                    OW,
                     K_D=k_d,
                     K_H=k_h,
                     K_W=k_w,
@@ -638,8 +707,16 @@ def adaptive_avg_pool3d(
                 max_k_w = _exact_max_window(W, OW)
                 grid = (NC,)
                 adaptive_avg_pool3d_general_small_kernel[grid](
-                    input, y,
-                    N, C, D, H, W, OD, OH, OW,
+                    input,
+                    y,
+                    N,
+                    C,
+                    D,
+                    H,
+                    W,
+                    OD,
+                    OH,
+                    OW,
                     MAX_K_D=max_k_d,
                     MAX_K_H=max_k_h,
                     MAX_K_W=max_k_w,
@@ -662,8 +739,16 @@ def adaptive_avg_pool3d(
                 triton.cdiv(OH, meta["BLOCK_H"]) * triton.cdiv(OW, meta["BLOCK_W"]),
             )
             adaptive_avg_pool3d_divisible_large_kernel[grid](
-                input, y,
-                N, C, D, H, W, OD, OH, OW,
+                input,
+                y,
+                N,
+                C,
+                D,
+                H,
+                W,
+                OD,
+                OH,
+                OW,
                 K_D=k_d,
                 K_H=k_h,
                 K_W=k_w,
@@ -681,8 +766,16 @@ def adaptive_avg_pool3d(
                 triton.cdiv(OH, meta["BLOCK_H"]) * triton.cdiv(OW, meta["BLOCK_W"]),
             )
             adaptive_avg_pool3d_general_large_kernel[grid](
-                input, y,
-                N, C, D, H, W, OD, OH, OW,
+                input,
+                y,
+                N,
+                C,
+                D,
+                H,
+                W,
+                OD,
+                OH,
+                OW,
                 MAX_K_D=max_k_d,
                 MAX_K_H=max_k_h,
                 MAX_K_W=max_k_w,

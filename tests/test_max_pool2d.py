@@ -6,21 +6,25 @@ import flag_dnn
 
 # (shape, kernel_size, stride, padding, dilation)
 PARAMS = [
-    ((2, 3, 32, 32), 2, 2, 0, 1),             # 标准 2x2 降采样
-    ((1, 16, 28, 28), 3, 1, 1, 1),            # 保持原图尺寸
-    ((4, 8, 15, 15), 3, 2, 1, 1),             # 奇数尺寸的步长跨越
-    ((2, 4, 32, 32), (3, 5), (2, 1), 0, 1),   # 不对称核和步长
-    ((2, 3, 32, 32), 3, 2, 0, 2),             # 带空洞率 (Dilation)
-    ((16, 14, 14), 2, 2, 0, 1),               # 3D 张量输入 (无 N 维度)
+    ((2, 3, 32, 32), 2, 2, 0, 1),  # 标准 2x2 降采样
+    ((1, 16, 28, 28), 3, 1, 1, 1),  # 保持原图尺寸
+    ((4, 8, 15, 15), 3, 2, 1, 1),  # 奇数尺寸的步长跨越
+    ((2, 4, 32, 32), (3, 5), (2, 1), 0, 1),  # 不对称核和步长
+    ((2, 3, 32, 32), 3, 2, 0, 2),  # 带空洞率 (Dilation)
+    ((16, 14, 14), 2, 2, 0, 1),  # 3D 张量输入 (无 N 维度)
 ]
 
 
 @pytest.mark.max_pool2d
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape, kernel_size, stride, padding, dilation", PARAMS)
 @pytest.mark.parametrize("ceil_mode", [False, True])
 @pytest.mark.parametrize("return_indices", [False, True])
-def test_accuracy_max_pool2d(dtype, shape, kernel_size, stride, padding, dilation, ceil_mode, return_indices):
+def test_accuracy_max_pool2d(
+    dtype, shape, kernel_size, stride, padding, dilation, ceil_mode, return_indices
+):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
 
@@ -29,15 +33,25 @@ def test_accuracy_max_pool2d(dtype, shape, kernel_size, stride, padding, dilatio
 
     # 官方基准
     ref_out = F.max_pool2d(
-        x, kernel_size, stride=stride, padding=padding, dilation=dilation,
-        ceil_mode=ceil_mode, return_indices=return_indices
+        x,
+        kernel_size,
+        stride=stride,
+        padding=padding,
+        dilation=dilation,
+        ceil_mode=ceil_mode,
+        return_indices=return_indices,
     )
-    
+
     # Triton 实现
     with flag_dnn.use_dnn():
         out = F.max_pool2d(
-            x, kernel_size, stride=stride, padding=padding, dilation=dilation,
-            ceil_mode=ceil_mode, return_indices=return_indices
+            x,
+            kernel_size,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            ceil_mode=ceil_mode,
+            return_indices=return_indices,
         )
 
     # 容差设置：因为 MaxPool 只做选择不参与算术运算，应该完全一致，设 0 完全可以。

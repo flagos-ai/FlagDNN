@@ -2,7 +2,6 @@
 flag_dnn - DNN operations implemented with Triton
 """
 
-
 import torch
 from packaging import version
 from flag_dnn import runtime
@@ -10,6 +9,7 @@ from flag_dnn import testing
 from flag_dnn.ops import *
 from flag_dnn.config import aten_patch_list, resolve_user_setting
 from flag_dnn.runtime.register import Register
+
 device = runtime.device.name
 vendor_name = runtime.device.vendor_name
 aten_lib = torch.library.Library("aten", "IMPL")
@@ -20,7 +20,7 @@ runtime.replace_customized_ops(globals())
 __version__ = "0.1.0"
 
 _FULL_CONFIG = (
-    ("relu", relu),  
+    ("relu", relu),
     ("prelu", prelu),
     ("leaky_relu", leaky_relu),
     ("gelu", gelu),
@@ -30,9 +30,9 @@ _FULL_CONFIG = (
     ("mean", mean),
     ("cumsum", cumsum),
     ("cumprod", cumprod),
-    ("eq",  eq),
+    ("eq", eq),
     ("ne", ne),
-    )
+)
 
 FULL_CONFIG_BY_FUNC = {}
 for _item in _FULL_CONFIG:
@@ -118,6 +118,7 @@ def only_enable(
           known ops, the function warns and returns without registering.
     """
     import warnings
+
     include_ops = resolve_user_setting(include, "include")
     if not include_ops:
         warnings.warn(

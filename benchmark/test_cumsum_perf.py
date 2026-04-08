@@ -12,6 +12,7 @@ from flag_dnn.utils import shape_utils
 def torch_cumsum(x, dim):
     return torch.cumsum(x, dim=dim)
 
+
 def gems_cumsum_wrapper(x, dim):
     return flag_dnn.ops.cumsum(x, dim=dim)
 
@@ -27,14 +28,14 @@ class CumsumBenchmark(Benchmark):
     def set_more_shapes(self):
         # cumsum 必须指定单个 dim，且不支持 keepdim，输出 shape 永远与输入一致
         configs = [
-            ((1024 * 1024 * 16,), 0),                 # 1D 超长向量 Scan
-            ((32, 256, 1024), 2),                     # Inner Dim (Row) Scan, 易合并
-            ((32, 256, 1024), 0),                     # Outer Dim (Column) Scan, 最难合并
-            ((32, 256, 1024), 1),                     # Middle Dim Scan
-            ((1024, 1024), 1),                        # 方阵 Inner
-            ((1024, 1024), 0),                        # 方阵 Outer
-            ((32, 256, 56, 56), 3),                   # CV 典型 Inner
-            ((32, 256, 56, 56), 1),                   # CV 典型 Channel Scan
+            ((1024 * 1024 * 16,), 0),  # 1D 超长向量 Scan
+            ((32, 256, 1024), 2),  # Inner Dim (Row) Scan, 易合并
+            ((32, 256, 1024), 0),  # Outer Dim (Column) Scan, 最难合并
+            ((32, 256, 1024), 1),  # Middle Dim Scan
+            ((1024, 1024), 1),  # 方阵 Inner
+            ((1024, 1024), 0),  # 方阵 Outer
+            ((32, 256, 56, 56), 3),  # CV 典型 Inner
+            ((32, 256, 56, 56), 1),  # CV 典型 Channel Scan
         ]
         self.shapes = configs
         return None
@@ -53,14 +54,14 @@ class CumsumBenchmark(Benchmark):
             inp = torch.randn(shape, dtype=cur_dtype, device=self.device)
             if inp.numel() == 0:
                 continue
-                
+
             yield inp, dim
 
     def get_gbps(self, args, latency):
         inp = args[0]
         # cumsum 输出大小和输入大小完全一致
         out_numel = inp.numel()
-                
+
         io_amount = shape_utils.size_in_bytes(inp) + (out_numel * inp.element_size())
         return io_amount * 1e-9 / (latency * 1e-3)
 
@@ -68,9 +69,9 @@ class CumsumBenchmark(Benchmark):
 @pytest.mark.cumsum
 def test_perf_cumsum():
     bench = CumsumBenchmark(
-        op_name="cumsum", 
-        torch_op=torch_cumsum, 
-        gems_op=gems_cumsum_wrapper, 
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64]
+        op_name="cumsum",
+        torch_op=torch_cumsum,
+        gems_op=gems_cumsum_wrapper,
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

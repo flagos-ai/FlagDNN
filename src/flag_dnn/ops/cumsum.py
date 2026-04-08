@@ -52,20 +52,17 @@ def cumsum_global_pass3(out_ptr, sums_ptr, N, BLOCK_N: tl.constexpr):
 
 @triton.autotune(
     configs=[
-        triton.Config({'BLOCK_M_POST': 16, 'BLOCK_N': 256}, num_warps=4, num_stages=4),
-        triton.Config({'BLOCK_M_POST': 32, 'BLOCK_N': 128}, num_warps=4, num_stages=4),
-        triton.Config({'BLOCK_M_POST': 64, 'BLOCK_N': 64}, num_warps=4, num_stages=4),
-        triton.Config({'BLOCK_M_POST': 128, 'BLOCK_N': 32}, num_warps=4, num_stages=5),
-        triton.Config({'BLOCK_M_POST': 8, 'BLOCK_N': 512}, num_warps=8, num_stages=3),
+        triton.Config({"BLOCK_M_POST": 16, "BLOCK_N": 256}, num_warps=4, num_stages=4),
+        triton.Config({"BLOCK_M_POST": 32, "BLOCK_N": 128}, num_warps=4, num_stages=4),
+        triton.Config({"BLOCK_M_POST": 64, "BLOCK_N": 64}, num_warps=4, num_stages=4),
+        triton.Config({"BLOCK_M_POST": 128, "BLOCK_N": 32}, num_warps=4, num_stages=5),
+        triton.Config({"BLOCK_M_POST": 8, "BLOCK_N": 512}, num_warps=8, num_stages=3),
     ],
-    key=['M_pre', 'N', 'M_post'],
+    key=["M_pre", "N", "M_post"],
 )
 @triton.jit
 def cumsum_inner_dim_kernel(
-    in_ptr, out_ptr,
-    M_pre, N, M_post,
-    BLOCK_N: tl.constexpr,
-    BLOCK_M_POST: tl.constexpr
+    in_ptr, out_ptr, M_pre, N, M_post, BLOCK_N: tl.constexpr, BLOCK_M_POST: tl.constexpr
 ):
     pid_pre = tle.program_id(0)
     pid_post = tle.program_id(1)
@@ -87,27 +84,24 @@ def cumsum_inner_dim_kernel(
         val = tl.load(in_ptr + idx, mask=mask, other=0.0).to(tl.float32)
         chunk_cumsum = tl.cumsum(val, axis=0)
         out_val = chunk_cumsum + running_sum[None, :]
-        
+
         tl.store(out_ptr + idx, out_val.to(out_ptr.dtype.element_ty), mask=mask)
         running_sum += tl.sum(val, axis=0)
 
 
 @triton.autotune(
     configs=[
-        triton.Config({'BLOCK_M_PRE': 4, 'BLOCK_N': 4096}, num_warps=8, num_stages=3),
-        triton.Config({'BLOCK_M_PRE': 8, 'BLOCK_N': 2048}, num_warps=8, num_stages=4),
-        triton.Config({'BLOCK_M_PRE': 16, 'BLOCK_N': 1024}, num_warps=4, num_stages=4),
-        triton.Config({'BLOCK_M_PRE': 32, 'BLOCK_N': 512}, num_warps=4, num_stages=5),
-        triton.Config({'BLOCK_M_PRE': 64, 'BLOCK_N': 256}, num_warps=4, num_stages=5),
+        triton.Config({"BLOCK_M_PRE": 4, "BLOCK_N": 4096}, num_warps=8, num_stages=3),
+        triton.Config({"BLOCK_M_PRE": 8, "BLOCK_N": 2048}, num_warps=8, num_stages=4),
+        triton.Config({"BLOCK_M_PRE": 16, "BLOCK_N": 1024}, num_warps=4, num_stages=4),
+        triton.Config({"BLOCK_M_PRE": 32, "BLOCK_N": 512}, num_warps=4, num_stages=5),
+        triton.Config({"BLOCK_M_PRE": 64, "BLOCK_N": 256}, num_warps=4, num_stages=5),
     ],
-    key=['M_pre', 'N'],
+    key=["M_pre", "N"],
 )
 @triton.jit
 def cumsum_last_dim_kernel(
-    in_ptr, out_ptr,
-    M_pre, N,
-    BLOCK_M_PRE: tl.constexpr,
-    BLOCK_N: tl.constexpr
+    in_ptr, out_ptr, M_pre, N, BLOCK_M_PRE: tl.constexpr, BLOCK_N: tl.constexpr
 ):
     pid_pre = tle.program_id(0)
     offsets_pre = pid_pre * BLOCK_M_PRE + tl.arange(0, BLOCK_M_PRE)
@@ -120,14 +114,14 @@ def cumsum_last_dim_kernel(
         cols = n_offset + offsets_n
         mask_n = cols < N
 
-        idx = cols[:, None] + offsets_pre[None, :] * N 
+        idx = cols[:, None] + offsets_pre[None, :] * N
         mask = mask_n[:, None] & mask_pre[None, :]
 
         val = tl.load(in_ptr + idx, mask=mask, other=0.0).to(tl.float32)
         chunk_cumsum = tl.cumsum(val, axis=0)
-        
+
         out_val = chunk_cumsum + running_sum[None, :]
-        
+
         tl.store(out_ptr + idx, out_val.to(out_ptr.dtype.element_ty), mask=mask)
         running_sum += tl.sum(val, axis=0)
 
@@ -137,12 +131,12 @@ def cumsum(
     dim: int,
     *,
     dtype: Optional[torch.dtype] = None,
-    out: Optional[torch.Tensor] = None
+    out: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     logger.debug("FLAG_DNN CUMSUM OPTIMIZED")
 
     out_dtype = dtype if dtype is not None else input.dtype
-    
+
     if input.numel() == 0:
         if out is not None:
             if out.shape != input.shape:
@@ -159,13 +153,19 @@ def cumsum(
     if out is not None:
         if out.shape != input_c.shape:
             out.resize_(input_c.shape)
-        out_c = out.contiguous() if out.is_contiguous() else torch.empty_like(input_c, dtype=out_dtype)
+        out_c = (
+            out.contiguous()
+            if out.is_contiguous()
+            else torch.empty_like(input_c, dtype=out_dtype)
+        )
     else:
         out_c = torch.empty_like(input_c, dtype=out_dtype)
 
     M_pre, N, M_post = 1, input_c.shape[d], 1
-    for i in range(d): M_pre *= input_c.shape[i]
-    for i in range(d + 1, input_c.ndim): M_post *= input_c.shape[i]
+    for i in range(d):
+        M_pre *= input_c.shape[i]
+    for i in range(d + 1, input_c.ndim):
+        M_post *= input_c.shape[i]
 
     with torch_device_fn.device(input.device):
         if M_post == 1:
@@ -178,18 +178,22 @@ def cumsum(
                     BLOCK_N = 8192
 
                 grid_size = triton.cdiv(N, BLOCK_N)
-                sums = torch.empty((grid_size,), dtype=torch.float32, device=input.device)
-                
-                cumsum_global_pass1[(grid_size,)](input_c, out_c, sums, N, BLOCK_N=BLOCK_N)
+                sums = torch.empty(
+                    (grid_size,), dtype=torch.float32, device=input.device
+                )
+
+                cumsum_global_pass1[(grid_size,)](
+                    input_c, out_c, sums, N, BLOCK_N=BLOCK_N
+                )
                 cumsum_global_pass2[(1,)](sums, grid_size, BLOCK_N=4096)
                 cumsum_global_pass3[(grid_size,)](out_c, sums, N, BLOCK_N=BLOCK_N)
             else:
                 # 触发多行 Batched Loop
-                grid = lambda meta: (triton.cdiv(M_pre, meta['BLOCK_M_PRE']),)
+                grid = lambda meta: (triton.cdiv(M_pre, meta["BLOCK_M_PRE"]),)
                 cumsum_last_dim_kernel[grid](input_c, out_c, M_pre, N)
         else:
             # 归约前置/中间维度
-            grid = lambda meta: (M_pre, triton.cdiv(M_post, meta['BLOCK_M_POST']))
+            grid = lambda meta: (M_pre, triton.cdiv(M_post, meta["BLOCK_M_POST"]))
             cumsum_inner_dim_kernel[grid](input_c, out_c, M_pre, N, M_post)
 
     if out is not None:

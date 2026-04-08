@@ -6,15 +6,17 @@ import flag_dnn
 
 # (shape, num_groups) 必须保证 shape[1] % num_groups == 0
 SHAPES_AND_GROUPS = [
-    ((2, 32), 4),                             # 2D 张量，类似全连接后的归一化
-    ((2, 32, 16), 8),                         # 3D 张量
-    ((4, 16, 32, 32), 4),                     # 4D 张量，标准 CV 特征图
-    ((2, 8, 16, 16, 16), 2),                  # 5D 张量，如 3D 卷积输出
+    ((2, 32), 4),  # 2D 张量，类似全连接后的归一化
+    ((2, 32, 16), 8),  # 3D 张量
+    ((4, 16, 32, 32), 4),  # 4D 张量，标准 CV 特征图
+    ((2, 8, 16, 16, 16), 2),  # 5D 张量，如 3D 卷积输出
 ]
 
 
 @pytest.mark.group_norm
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape, num_groups", SHAPES_AND_GROUPS)
 @pytest.mark.parametrize("affine", [False, True])
 def test_accuracy_group_norm(dtype, shape, num_groups, affine):
@@ -25,19 +27,19 @@ def test_accuracy_group_norm(dtype, shape, num_groups, affine):
 
     # 动态设置容差 (低精度依旧放大阈值)
     if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2 
+        rtol, atol = 1.6e-2, 1e-2
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3   
+        rtol, atol = 1e-3, 1e-3
     else:
-        rtol, atol = 1e-5, 1e-5   
-    
+        rtol, atol = 1e-5, 1e-5
+
     weight, bias = None, None
     C = shape[1]
     if affine:
         # GroupNorm 的参数维度等于 Channel 数量
         weight = torch.randn(C, dtype=dtype, device=flag_dnn.device)
         bias = torch.randn(C, dtype=dtype, device=flag_dnn.device)
-    
+
     ref_y = F.group_norm(x, num_groups, weight=weight, bias=bias)
     with flag_dnn.use_dnn():
         y = F.group_norm(x, num_groups, weight=weight, bias=bias)
@@ -46,7 +48,9 @@ def test_accuracy_group_norm(dtype, shape, num_groups, affine):
 
 
 @pytest.mark.group_norm
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("affine", [False, True])
 def test_accuracy_group_norm_empty_tensor(dtype, affine):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -58,18 +62,18 @@ def test_accuracy_group_norm_empty_tensor(dtype, affine):
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
     if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2 
+        rtol, atol = 1.6e-2, 1e-2
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3   
+        rtol, atol = 1e-3, 1e-3
     else:
-        rtol, atol = 1e-5, 1e-5   
-    
+        rtol, atol = 1e-5, 1e-5
+
     C = shape[1]
     weight, bias = None, None
     if affine:
         weight = torch.randn(C, dtype=dtype, device=flag_dnn.device)
         bias = torch.randn(C, dtype=dtype, device=flag_dnn.device)
-    
+
     ref_y = F.group_norm(x, num_groups, weight=weight, bias=bias)
     with flag_dnn.use_dnn():
         y = F.group_norm(x, num_groups, weight=weight, bias=bias)
@@ -81,7 +85,9 @@ def test_accuracy_group_norm_empty_tensor(dtype, affine):
 
 
 @pytest.mark.group_norm
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("affine", [False, True])
 def test_accuracy_group_norm_large_values(dtype, affine):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -98,12 +104,12 @@ def test_accuracy_group_norm_large_values(dtype, affine):
         x = torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 500.0 + 5000.0
 
     if dtype == torch.bfloat16:
-        rtol, atol = 5e-2, 5e-2  
+        rtol, atol = 5e-2, 5e-2
     elif dtype == torch.float16:
-        rtol, atol = 1e-2, 1e-2  
+        rtol, atol = 1e-2, 1e-2
     else:
-        rtol, atol = 1e-4, 1e-4   
-    
+        rtol, atol = 1e-4, 1e-4
+
     weight, bias = None, None
     if affine:
         if dtype in [torch.float16, torch.bfloat16]:
@@ -112,7 +118,7 @@ def test_accuracy_group_norm_large_values(dtype, affine):
         else:
             weight = torch.randn(C, dtype=dtype, device=flag_dnn.device) * 10.0
             bias = torch.randn(C, dtype=dtype, device=flag_dnn.device) * 100.0
-    
+
     ref_y = F.group_norm(x, num_groups, weight=weight, bias=bias)
     with flag_dnn.use_dnn():
         y = F.group_norm(x, num_groups, weight=weight, bias=bias)
@@ -121,7 +127,9 @@ def test_accuracy_group_norm_large_values(dtype, affine):
 
 
 @pytest.mark.group_norm
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("affine", [False, True])
 def test_accuracy_group_norm_mixed_values(dtype, affine):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -133,18 +141,18 @@ def test_accuracy_group_norm_mixed_values(dtype, affine):
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
     if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2 
+        rtol, atol = 1.6e-2, 1e-2
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3   
+        rtol, atol = 1e-3, 1e-3
     else:
-        rtol, atol = 1e-5, 1e-5   
-    
+        rtol, atol = 1e-5, 1e-5
+
     C = shape[1]
     weight, bias = None, None
     if affine:
         weight = torch.randn(C, dtype=dtype, device=flag_dnn.device)
         bias = torch.randn(C, dtype=dtype, device=flag_dnn.device)
-    
+
     ref_y = F.group_norm(x, num_groups, weight=weight, bias=bias)
     with flag_dnn.use_dnn():
         y = F.group_norm(x, num_groups, weight=weight, bias=bias)

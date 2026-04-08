@@ -13,6 +13,7 @@ from flag_dnn.utils import shape_utils
 def torch_neg(x):
     return torch.neg(x)
 
+
 def gems_neg_wrapper(x):
     return flag_dnn.ops.neg(x)
 
@@ -27,13 +28,25 @@ class NegBenchmark(Benchmark):
 
     def set_more_shapes(self):
         configs = [
-            (1,), (16,), (64,),
-            (127,), (1023, 1025), (7, 31, 109), (33, 129, 257),
-            (1, 2048, 4096), (8, 128, 12288), (4, 4096, 4096),
-            (1, 3, 224, 224), (32, 256, 56, 56), (16, 1024, 14, 14),
+            (1,),
+            (16,),
+            (64,),
+            (127,),
+            (1023, 1025),
+            (7, 31, 109),
+            (33, 129, 257),
+            (1, 2048, 4096),
+            (8, 128, 12288),
+            (4, 4096, 4096),
+            (1, 3, 224, 224),
+            (32, 256, 56, 56),
+            (16, 1024, 14, 14),
             (2, 16, 32, 64, 64),
-            (1024 * 256,), (1024 * 1024 * 16,), (8192, 8192), 
-            (1024 * 1024 * 64,), (2, 8192, 8192),
+            (1024 * 256,),
+            (1024 * 1024 * 16,),
+            (8192, 8192),
+            (1024 * 1024 * 64,),
+            (2, 8192, 8192),
         ]
         self.shapes = [(shape,) for shape in configs]
         return None
@@ -65,6 +78,6 @@ def test_perf_neg():
         op_name="neg",
         torch_op=torch_neg,
         gems_op=gems_neg_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64]
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

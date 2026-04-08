@@ -8,9 +8,11 @@ SHAPES = [(32,), (1024,), (5333,), (16384,), (1024 * 1024,)]
 
 
 @pytest.mark.gelu
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape", SHAPES)
-@pytest.mark.parametrize("approximate", ['none', 'tanh'])
+@pytest.mark.parametrize("approximate", ["none", "tanh"])
 def test_accuracy_gelu(dtype, shape, approximate):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -21,9 +23,9 @@ def test_accuracy_gelu(dtype, shape, approximate):
     if dtype == torch.bfloat16:
         rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3    # FP16 中等宽松
+        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
     else:
-        rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
+        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
 
     ref_x = x.clone()
     ref_y = F.gelu(ref_x, approximate=approximate)
@@ -35,8 +37,10 @@ def test_accuracy_gelu(dtype, shape, approximate):
 
 
 @pytest.mark.gelu
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
-@pytest.mark.parametrize("approximate", ['none', 'tanh'])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
+@pytest.mark.parametrize("approximate", ["none", "tanh"])
 def test_accuracy_gelu_empty_tensor(dtype, approximate):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -48,9 +52,9 @@ def test_accuracy_gelu_empty_tensor(dtype, approximate):
     if dtype == torch.bfloat16:
         rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3    # FP16 中等宽松
+        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
     else:
-        rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
+        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
 
     ref_y = F.gelu(x, approximate=approximate)
     with flag_dnn.use_dnn():
@@ -63,8 +67,10 @@ def test_accuracy_gelu_empty_tensor(dtype, approximate):
 
 
 @pytest.mark.gelu
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
-@pytest.mark.parametrize("approximate", ['none', 'tanh'])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
+@pytest.mark.parametrize("approximate", ["none", "tanh"])
 def test_accuracy_gelu_negative_values(dtype, approximate):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -76,9 +82,9 @@ def test_accuracy_gelu_negative_values(dtype, approximate):
     if dtype == torch.bfloat16:
         rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3    # FP16 中等宽松
+        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
     else:
-        rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
+        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
 
     ref_y = F.gelu(x, approximate=approximate)
     with flag_dnn.use_dnn():
@@ -88,8 +94,10 @@ def test_accuracy_gelu_negative_values(dtype, approximate):
 
 
 @pytest.mark.gelu
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
-@pytest.mark.parametrize("approximate", ['none', 'tanh'])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
+@pytest.mark.parametrize("approximate", ["none", "tanh"])
 def test_accuracy_gelu_positive_values(dtype, approximate):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -101,9 +109,9 @@ def test_accuracy_gelu_positive_values(dtype, approximate):
     if dtype == torch.bfloat16:
         rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3    # FP16 中等宽松
+        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
     else:
-        rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
+        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
 
     ref_y = F.gelu(x, approximate=approximate)
     with flag_dnn.use_dnn():
@@ -113,8 +121,10 @@ def test_accuracy_gelu_positive_values(dtype, approximate):
 
 
 @pytest.mark.gelu
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
-@pytest.mark.parametrize("approximate", ['none', 'tanh'])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
+@pytest.mark.parametrize("approximate", ["none", "tanh"])
 def test_accuracy_gelu_mixed_values(dtype, approximate):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -126,9 +136,9 @@ def test_accuracy_gelu_mixed_values(dtype, approximate):
     if dtype == torch.bfloat16:
         rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3    # FP16 中等宽松
+        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
     else:
-        rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
+        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
 
     ref_y = F.gelu(x, approximate=approximate)
     with flag_dnn.use_dnn():

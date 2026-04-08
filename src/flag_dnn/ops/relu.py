@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 )
 @triton.jit
 def relu_1d_kernel(
-    in_ptr, out_ptr,
+    in_ptr,
+    out_ptr,
     n_elements,
     BLOCK_SIZE: tl.constexpr,
 ):
@@ -35,7 +36,7 @@ def relu_1d_kernel(
 
     # 加载数据
     x = tl.load(in_ptr + offsets, mask=mask, other=0)
-    
+
     # ReLU 核心逻辑：x > 0 则保留 x，否则填 0
     # 使用 tl.where 非常安全，Triton 会自动处理 0 的隐式类型转换，不会报错
     out = tl.where(x > 0, x, 0)
@@ -62,15 +63,12 @@ def relu(input: torch.Tensor, inplace: bool = False) -> torch.Tensor:
         out = torch.empty_like(input)
 
     n_elements = input.numel()
-    
+
     # Grid 只需要一维，计算出需要多少个 Block 能覆盖所有的元素
-    grid = lambda meta: (triton.cdiv(n_elements, meta['BLOCK_SIZE']),)
+    grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
     # 启动 Kernel
     with torch_device_fn.device(input.device):
-        relu_1d_kernel[grid](
-            input, out,
-            n_elements
-        )
+        relu_1d_kernel[grid](input, out, n_elements)
 
     return out

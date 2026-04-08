@@ -6,9 +6,9 @@ import flag_dnn
 SHAPES = [(32,), (1024,), (5333,), (16384,), (1024 * 1024,)]
 
 BROADCAST_SHAPES = [
-    ((4, 4), (4,)),              # 1D broadcast to 2D
-    ((2, 3, 4), (3, 1)),         # 内部维度广播
-    ((1, 5), (5, 5)),            # 单一维度扩展
+    ((4, 4), (4,)),  # 1D broadcast to 2D
+    ((2, 3, 4), (3, 1)),  # 内部维度广播
+    ((1, 5), (5, 5)),  # 单一维度扩展
 ]
 
 
@@ -24,7 +24,9 @@ def _get_safe_divisor(shape, dtype, device):
 
 
 @pytest.mark.div
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape", SHAPES)
 def test_accuracy_div(dtype, shape):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -37,9 +39,9 @@ def test_accuracy_div(dtype, shape):
     if dtype == torch.bfloat16:
         rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3    # FP16 中等宽松
+        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
     else:
-        rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
+        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
 
     ref_out = torch.div(x, y)
     with flag_dnn.use_dnn():
@@ -49,7 +51,9 @@ def test_accuracy_div(dtype, shape):
 
 
 @pytest.mark.div
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 def test_accuracy_div_empty_tensor(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -76,7 +80,9 @@ def test_accuracy_div_empty_tensor(dtype):
 
 
 @pytest.mark.div
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 def test_accuracy_div_scalar(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -99,7 +105,9 @@ def test_accuracy_div_scalar(dtype):
 
 
 @pytest.mark.div
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("rounding_mode", [None, "trunc", "floor"])
 def test_accuracy_div_rounding_mode(dtype, rounding_mode):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -123,7 +131,9 @@ def test_accuracy_div_rounding_mode(dtype, rounding_mode):
 
 
 @pytest.mark.div
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("input_shape, other_shape", BROADCAST_SHAPES)
 def test_accuracy_div_broadcast(dtype, input_shape, other_shape):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:

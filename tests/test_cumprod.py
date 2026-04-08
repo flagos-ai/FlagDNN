@@ -15,7 +15,9 @@ CUMPROD_CASES = [
 
 
 @pytest.mark.cumprod
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape, dim", CUMPROD_CASES)
 def test_accuracy_cumprod(dtype, shape, dim):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:

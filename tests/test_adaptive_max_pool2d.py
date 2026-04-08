@@ -6,16 +6,18 @@ import flag_dnn
 
 # (shape, output_size)
 PARAMS = [
-    ((2, 3, 32, 32), (1, 1)),                 # 全局最大池化
-    ((1, 16, 28, 28), 14),                    # 降维到 14x14
-    ((4, 8, 15, 15), (7, 5)),                 # 非对称目标尺寸
-    ((2, 4, 32, 32), (None, 16)),             # 保持 H 尺寸不变
-    ((16, 14, 14), (2, 2)),                   # 3D 张量输入
+    ((2, 3, 32, 32), (1, 1)),  # 全局最大池化
+    ((1, 16, 28, 28), 14),  # 降维到 14x14
+    ((4, 8, 15, 15), (7, 5)),  # 非对称目标尺寸
+    ((2, 4, 32, 32), (None, 16)),  # 保持 H 尺寸不变
+    ((16, 14, 14), (2, 2)),  # 3D 张量输入
 ]
 
 
 @pytest.mark.adaptive_max_pool2d
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape, output_size", PARAMS)
 @pytest.mark.parametrize("return_indices", [False, True])
 def test_accuracy_adaptive_max_pool2d(dtype, shape, output_size, return_indices):

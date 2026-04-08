@@ -5,6 +5,7 @@ import torch
 import triton
 import triton.language as tl
 from triton.language.extra.cuda import libdevice
+
 # if error try :
 # res = tl.math.exp(y_f32 * tl.math.log(x_f32))
 
@@ -28,7 +29,9 @@ logger = logging.getLogger(__name__)
 )
 @triton.jit
 def pow_tensor_kernel(
-    x_ptr, y_ptr, out_ptr,
+    x_ptr,
+    y_ptr,
+    out_ptr,
     n_elements,
     BLOCK_SIZE: tl.constexpr,
 ):
@@ -60,7 +63,8 @@ def pow_tensor_kernel(
 )
 @triton.jit
 def pow_scalar_exponent_kernel(
-    x_ptr, out_ptr,
+    x_ptr,
+    out_ptr,
     n_elements,
     exponent_val,
     BLOCK_SIZE: tl.constexpr,
@@ -70,7 +74,7 @@ def pow_scalar_exponent_kernel(
     mask = offsets < n_elements
 
     x = tl.load(x_ptr + offsets, mask=mask)
-    
+
     x_f32 = x.to(tl.float32)
 
     exp_f32 = tl.cast(exponent_val, tl.float32)
@@ -89,7 +93,8 @@ def pow_scalar_exponent_kernel(
 )
 @triton.jit
 def pow_scalar_base_kernel(
-    y_ptr, out_ptr,
+    y_ptr,
+    out_ptr,
     n_elements,
     base_val,
     BLOCK_SIZE: tl.constexpr,
@@ -99,7 +104,7 @@ def pow_scalar_base_kernel(
     mask = offsets < n_elements
 
     y = tl.load(y_ptr + offsets, mask=mask)
-    
+
     y_f32 = y.to(tl.float32)
 
     base_f32 = tl.cast(base_val, tl.float32)
@@ -118,14 +123,31 @@ def pow_scalar_base_kernel(
 )
 @triton.jit
 def pow_broadcast_tensor_kernel(
-    x_ptr, y_ptr, out_ptr, n_elements,
+    x_ptr,
+    y_ptr,
+    out_ptr,
+    n_elements,
     # 填充后的 6D 形状
-    s1, s2, s3, s4, s5,
+    s1,
+    s2,
+    s3,
+    s4,
+    s5,
     # X 的 6D Strides
-    sx0, sx1, sx2, sx3, sx4, sx5,
+    sx0,
+    sx1,
+    sx2,
+    sx3,
+    sx4,
+    sx5,
     # Y 的 6D Strides
-    sy0, sy1, sy2, sy3, sy4, sy5,
-    BLOCK_SIZE: tl.constexpr
+    sy0,
+    sy1,
+    sy2,
+    sy3,
+    sy4,
+    sy5,
+    BLOCK_SIZE: tl.constexpr,
 ):
     pid = tl.program_id(0)
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
@@ -135,24 +157,22 @@ def pow_broadcast_tensor_kernel(
     # 由于做了坍缩，许多 sX 实际上是 1，Triton 编译器遇到 x % 1 或 x // 1 会直接优化掉?
     idx5 = offsets % s5
     rem4 = offsets // s5
-    
+
     idx4 = rem4 % s4
     rem3 = rem4 // s4
-    
+
     idx3 = rem3 % s3
     rem2 = rem3 // s3
-    
+
     idx2 = rem2 % s2
     rem1 = rem2 // s2
-    
+
     idx1 = rem1 % s1
     idx0 = rem1 // s1
 
     # 计算物理偏移并加载数据
-    x_off = (idx0 * sx0 + idx1 * sx1 + idx2 * sx2 + 
-             idx3 * sx3 + idx4 * sx4 + idx5 * sx5)
-    y_off = (idx0 * sy0 + idx1 * sy1 + idx2 * sy2 + 
-             idx3 * sy3 + idx4 * sy4 + idx5 * sy5)
+    x_off = idx0 * sx0 + idx1 * sx1 + idx2 * sx2 + idx3 * sx3 + idx4 * sx4 + idx5 * sx5
+    y_off = idx0 * sy0 + idx1 * sy1 + idx2 * sy2 + idx3 * sy3 + idx4 * sy4 + idx5 * sy5
 
     x = tl.load(x_ptr + x_off, mask=mask)
     y = tl.load(y_ptr + y_off, mask=mask)
@@ -168,7 +188,7 @@ def pow(
     input: Union[torch.Tensor, int, float],
     exponent: Union[torch.Tensor, int, float],
     *,
-    out: Optional[torch.Tensor] = None
+    out: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     logger.debug("FLAG_DNN POW")
 
@@ -178,7 +198,7 @@ def pow(
     if input_is_tensor and not input.is_contiguous():
         assert False, "input must be contiguous."
         input = input.contiguous()
-    
+
     if exp_is_tensor and not exponent.is_contiguous():
         assert False, "exponent must be contiguous."
         exponent = exponent.contiguous()
@@ -206,48 +226,44 @@ def pow(
     if out is None:
         out = torch.empty(out_shape, dtype=out_dtype, device=device)
     else:
-        assert out.shape == out_shape, f"out shape {out.shape} mismatch with broadcast shape {out_shape}"
+        assert (
+            out.shape == out_shape
+        ), f"out shape {out.shape} mismatch with broadcast shape {out_shape}"
         out_dtype = out.dtype
 
     n_elements = out.numel()
     if n_elements == 0:
         return out
 
-    grid = lambda meta: (triton.cdiv(n_elements, meta['BLOCK_SIZE']), )
+    grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
     with torch_device_fn.device(device):
         if input_is_tensor and exp_is_tensor and input.shape == exponent.shape:
-            pow_tensor_kernel[grid](
-                input, exponent, out,
-                n_elements
-            )
+            pow_tensor_kernel[grid](input, exponent, out, n_elements)
         elif input_is_tensor and exp_is_tensor:
             input_exp = input.expand(out_shape)
             exponent_exp = exponent.expand(out_shape)
-            
+
             # 维度坍缩
-            c_shape, c_sx, c_sy = collapse_dims(out_shape, input_exp.stride(), exponent_exp.stride())
-            
+            c_shape, c_sx, c_sy = collapse_dims(
+                out_shape, input_exp.stride(), exponent_exp.stride()
+            )
+
             # 填充到 6 维
             f_shape, f_sx, f_sy = pad_to_max_dims(c_shape, c_sx, c_sy, max_dims=6)
-            
+
             pow_broadcast_tensor_kernel[grid](
-                input, exponent, out, n_elements,
-                *f_shape[1:], # 传入 s1 到 s5
-                *f_sx,        # 传入 sx0 到 sx5
-                *f_sy         # 传入 sy0 到 sy5
+                input,
+                exponent,
+                out,
+                n_elements,
+                *f_shape[1:],  # 传入 s1 到 s5
+                *f_sx,  # 传入 sx0 到 sx5
+                *f_sy,  # 传入 sy0 到 sy5
             )
         elif input_is_tensor:
-            pow_scalar_exponent_kernel[grid](
-                input, out,
-                n_elements,
-                float(exponent)
-            )
+            pow_scalar_exponent_kernel[grid](input, out, n_elements, float(exponent))
         else:
-            pow_scalar_base_kernel[grid](
-                exponent, out,
-                n_elements,
-                float(input)
-            )
+            pow_scalar_base_kernel[grid](exponent, out, n_elements, float(input))
 
     return out

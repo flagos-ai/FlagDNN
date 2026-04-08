@@ -16,7 +16,9 @@ def _get_tolerances(dtype):
 
 
 @pytest.mark.abs
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape", SHAPES)
 def test_accuracy_abs(dtype, shape):
     """最基础的全域测试"""
@@ -34,7 +36,9 @@ def test_accuracy_abs(dtype, shape):
 
 
 @pytest.mark.abs
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape", SHAPES)
 def test_accuracy_abs_mixed_values(dtype, shape):
     """细粒度测试：显式测试包含正负数的混合情况"""
@@ -53,7 +57,9 @@ def test_accuracy_abs_mixed_values(dtype, shape):
 
 
 @pytest.mark.abs
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape", SHAPES)
 def test_accuracy_abs_positive_values(dtype, shape):
     """细粒度测试：纯正数的情况"""
@@ -71,7 +77,9 @@ def test_accuracy_abs_positive_values(dtype, shape):
 
 
 @pytest.mark.abs
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape", SHAPES)
 def test_accuracy_abs_negative_values(dtype, shape):
     """细粒度测试：纯负数的情况"""
@@ -89,7 +97,9 @@ def test_accuracy_abs_negative_values(dtype, shape):
 
 
 @pytest.mark.abs
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 def test_accuracy_abs_empty_tensor(dtype):
     """边界情况：空张量测试"""
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:

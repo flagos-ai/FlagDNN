@@ -24,19 +24,27 @@ logger = logging.getLogger(__name__)
 )
 @triton.jit
 def avg_pool2d_kernel_1d(
-    x_ptr, y_ptr,
-    N, C, H, W,
-    OH, OW,
-    pad_h, pad_w,
-    STRIDE_H: tl.constexpr, STRIDE_W: tl.constexpr,
-    KERNEL_H: tl.constexpr, KERNEL_W: tl.constexpr,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    H,
+    W,
+    OH,
+    OW,
+    pad_h,
+    pad_w,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    KERNEL_H: tl.constexpr,
+    KERNEL_W: tl.constexpr,
     COUNT_INCLUDE_PAD: tl.constexpr,
     DIVISOR_OVERRIDE: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
     pid = tle.program_id(0)
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    
+
     num_elements = N * C * OH * OW
     mask = offsets < num_elements
 
@@ -44,7 +52,7 @@ def avg_pool2d_kernel_1d(
     spatial_idx = offsets % spatial_size
     ow = spatial_idx % OW
     oh = spatial_idx // OW
-    
+
     batch_channel_idx = offsets // spatial_size
     c = batch_channel_idx % C
     n = batch_channel_idx // C
@@ -66,13 +74,16 @@ def avg_pool2d_kernel_1d(
             val = tl.load(x_ptr + load_idx, mask=mask & valid, other=0.0).to(tl.float32)
             sum_val += val
 
-
     if DIVISOR_OVERRIDE > 0:
         divisor = DIVISOR_OVERRIDE
     elif COUNT_INCLUDE_PAD:
-        hend_bounded = tl.where(h_start + KERNEL_H > H + pad_h, H + pad_h, h_start + KERNEL_H)
+        hend_bounded = tl.where(
+            h_start + KERNEL_H > H + pad_h, H + pad_h, h_start + KERNEL_H
+        )
         pool_h = hend_bounded - h_start
-        wend_bounded = tl.where(w_start + KERNEL_W > W + pad_w, W + pad_w, w_start + KERNEL_W)
+        wend_bounded = tl.where(
+            w_start + KERNEL_W > W + pad_w, W + pad_w, w_start + KERNEL_W
+        )
         pool_w = wend_bounded - w_start
         divisor = pool_h * pool_w
     else:
@@ -84,10 +95,10 @@ def avg_pool2d_kernel_1d(
         iw_end_clamp = tl.where(w_start + KERNEL_W > W, W, w_start + KERNEL_W)
         valid_w = iw_end_clamp - iw_start_clamp
         divisor = valid_h * valid_w
-    
+
     divisor = tl.where(divisor <= 0, 1, divisor)
     avg_val = sum_val / divisor
-    
+
     tl.store(y_ptr + offsets, avg_val.to(x_ptr.dtype.element_ty), mask=mask)
 
 
@@ -100,22 +111,30 @@ def avg_pool2d_kernel_1d(
 )
 @triton.jit
 def avg_pool2d_kernel_2d(
-    x_ptr, y_ptr,
-    N, C, H, W,
-    OH, OW,
-    pad_h, pad_w,
-    STRIDE_H: tl.constexpr, STRIDE_W: tl.constexpr,
-    KERNEL_H: tl.constexpr, KERNEL_W: tl.constexpr,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    H,
+    W,
+    OH,
+    OW,
+    pad_h,
+    pad_w,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    KERNEL_H: tl.constexpr,
+    KERNEL_W: tl.constexpr,
     COUNT_INCLUDE_PAD: tl.constexpr,
     DIVISOR_OVERRIDE: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
     pid_spatial = tle.program_id(0)
     pid_batch_channel = tle.program_id(1)
-    
+
     n = pid_batch_channel // C
     c = pid_batch_channel % C
-    
+
     offsets = pid_spatial * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     spatial_numel = OH * OW
     mask = offsets < spatial_numel
@@ -139,16 +158,21 @@ def avg_pool2d_kernel_2d(
             valid = (ih >= 0) & (ih < H) & (iw >= 0) & (iw < W)
             load_idx = ih * W + iw
 
-            val = tl.load(x_ptr + x_base_idx + load_idx, mask=mask & valid, other=0.0).to(tl.float32)
+            val = tl.load(
+                x_ptr + x_base_idx + load_idx, mask=mask & valid, other=0.0
+            ).to(tl.float32)
             sum_val += val
-
 
     if DIVISOR_OVERRIDE > 0:
         divisor = DIVISOR_OVERRIDE
     elif COUNT_INCLUDE_PAD:
-        hend_bounded = tl.where(h_start + KERNEL_H > H + pad_h, H + pad_h, h_start + KERNEL_H)
+        hend_bounded = tl.where(
+            h_start + KERNEL_H > H + pad_h, H + pad_h, h_start + KERNEL_H
+        )
         pool_h = hend_bounded - h_start
-        wend_bounded = tl.where(w_start + KERNEL_W > W + pad_w, W + pad_w, w_start + KERNEL_W)
+        wend_bounded = tl.where(
+            w_start + KERNEL_W > W + pad_w, W + pad_w, w_start + KERNEL_W
+        )
         pool_w = wend_bounded - w_start
         divisor = pool_h * pool_w
     else:
@@ -160,11 +184,13 @@ def avg_pool2d_kernel_2d(
         iw_end_clamp = tl.where(w_start + KERNEL_W > W, W, w_start + KERNEL_W)
         valid_w = iw_end_clamp - iw_start_clamp
         divisor = valid_h * valid_w
-    
+
     divisor = tl.where(divisor <= 0, 1, divisor)
     avg_val = sum_val / divisor
-    
-    tl.store(y_ptr + y_base_idx + offsets, avg_val.to(x_ptr.dtype.element_ty), mask=mask)
+
+    tl.store(
+        y_ptr + y_base_idx + offsets, avg_val.to(x_ptr.dtype.element_ty), mask=mask
+    )
 
 
 def avg_pool2d(
@@ -176,7 +202,9 @@ def avg_pool2d(
     count_include_pad: bool = True,
     divisor_override: Optional[int] = None,
 ) -> torch.Tensor:
-    logger.debug(f"FLAG_DNN AVG_POOL2D (kernel={kernel_size}, count_include_pad={count_include_pad})")
+    logger.debug(
+        f"FLAG_DNN AVG_POOL2D (kernel={kernel_size}, count_include_pad={count_include_pad})"
+    )
 
     def _pair(x):
         return (x, x) if isinstance(x, int) else tuple(x)
@@ -217,34 +245,46 @@ def avg_pool2d(
 
     div_over = divisor_override if divisor_override is not None else -1
 
-
     with torch_device_fn.device(input.device):
         if OH * OW <= 64:
-            grid_1d = lambda meta: (triton.cdiv(M, meta['BLOCK_SIZE']), )
+            grid_1d = lambda meta: (triton.cdiv(M, meta["BLOCK_SIZE"]),)
             avg_pool2d_kernel_1d[grid_1d](
-                input, y,
-                N, C, H, W,
-                OH, OW,
-                padding[0], padding[1],
-                STRIDE_H=stride[0], STRIDE_W=stride[1],
-                KERNEL_H=kernel_size[0], KERNEL_W=kernel_size[1],
+                input,
+                y,
+                N,
+                C,
+                H,
+                W,
+                OH,
+                OW,
+                padding[0],
+                padding[1],
+                STRIDE_H=stride[0],
+                STRIDE_W=stride[1],
+                KERNEL_H=kernel_size[0],
+                KERNEL_W=kernel_size[1],
                 COUNT_INCLUDE_PAD=count_include_pad,
-                DIVISOR_OVERRIDE=div_over
+                DIVISOR_OVERRIDE=div_over,
             )
         else:
-            grid_2d = lambda meta: (
-                triton.cdiv(OH * OW, meta['BLOCK_SIZE']), 
-                N * C
-            )
+            grid_2d = lambda meta: (triton.cdiv(OH * OW, meta["BLOCK_SIZE"]), N * C)
             avg_pool2d_kernel_2d[grid_2d](
-                input, y,
-                N, C, H, W,
-                OH, OW,
-                padding[0], padding[1],
-                STRIDE_H=stride[0], STRIDE_W=stride[1],
-                KERNEL_H=kernel_size[0], KERNEL_W=kernel_size[1],
+                input,
+                y,
+                N,
+                C,
+                H,
+                W,
+                OH,
+                OW,
+                padding[0],
+                padding[1],
+                STRIDE_H=stride[0],
+                STRIDE_W=stride[1],
+                KERNEL_H=kernel_size[0],
+                KERNEL_W=kernel_size[1],
                 COUNT_INCLUDE_PAD=count_include_pad,
-                DIVISOR_OVERRIDE=div_over
+                DIVISOR_OVERRIDE=div_over,
             )
 
     return y.squeeze(0) if is_3d else y

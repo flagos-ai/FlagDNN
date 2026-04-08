@@ -52,11 +52,12 @@ TARGET_OPERATORS = [
     "adaptive_max_pool3d",
 ]
 
-TEST_DIR = "tests"                   # 测试文件所在目录
-LOG_DIR = "test_logs"            # 单个测试日志的存放目录
-REPORT_FILE = "test_summary.json"# 最终汇总报告的文件名
+TEST_DIR = "tests"  # 测试文件所在目录
+LOG_DIR = "test_logs"  # 单个测试日志的存放目录
+REPORT_FILE = "test_summary.json"  # 最终汇总报告的文件名
 
 # ==========================================
+
 
 def get_operator_name(filename):
     """从文件名中提取算子名，例如 test_batch_norm.py -> batch_norm"""
@@ -65,9 +66,10 @@ def get_operator_name(filename):
         return basename[5:-3]
     return basename
 
+
 def main():
     os.makedirs(LOG_DIR, exist_ok=True)
-    
+
     # 收集并过滤测试文件
     all_test_files = sorted(glob.glob(os.path.join(TEST_DIR, "test_*.py")))
     if not all_test_files:
@@ -98,7 +100,7 @@ def main():
         "failed": 0,
         "errored_or_interrupted": 0,
         "details": [],
-        "start_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "start_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
     start_time_total = time.time()
@@ -107,19 +109,26 @@ def main():
     for idx, file_path in enumerate(test_files, 1):
         file_name = os.path.basename(file_path)
         log_file = os.path.join(LOG_DIR, f"{file_name}.log")
-        
-        print(f"[{idx}/{len(test_files)}] 正在测试: {file_name:<30}", end="", flush=True)
+
+        print(
+            f"[{idx}/{len(test_files)}] 正在测试: {file_name:<30}", end="", flush=True
+        )
 
         # 构建 yhrun 命令
         cmd = [
-            # "yhrun", 
-            # "-p", "h100x", 
-            # "-G", "1", 
-            "python", "-m", "pytest", "-v", "-s", file_path
+            # "yhrun",
+            # "-p", "h100x",
+            # "-G", "1",
+            "python",
+            "-m",
+            "pytest",
+            "-v",
+            "-s",
+            file_path,
         ]
-        
+
         start_time = time.time()
-        
+
         # 启动子进程并捕获输出
         result = subprocess.run(cmd, capture_output=True, text=True)
         duration = time.time() - start_time
@@ -149,25 +158,30 @@ def main():
                 f.write("--- STDERR ---\n" + result.stderr + "\n")
 
         # 记录汇总信息
-        summary["details"].append({
-            "file": file_name,
-            "status": status.strip("✅❌⚠️💥 "),
-            "return_code": result.returncode,
-            "duration_seconds": round(duration, 2),
-            "log_path": log_file
-        })
+        summary["details"].append(
+            {
+                "file": file_name,
+                "status": status.strip("✅❌⚠️💥 "),
+                "return_code": result.returncode,
+                "duration_seconds": round(duration, 2),
+                "log_path": log_file,
+            }
+        )
 
     # 生成报告与控制台汇总
     summary["total_duration_seconds"] = round(time.time() - start_time_total, 2)
-    
+
     with open(REPORT_FILE, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=4, ensure_ascii=False)
 
     print("-" * 60)
     print("📊 任务执行完毕！")
-    print(f"总计: {summary['total']} | 通过: {summary['passed']} | 失败: {summary['failed']} | 异常中断: {summary['errored_or_interrupted']}")
+    print(
+        f"总计: {summary['total']} | 通过: {summary['passed']} | 失败: {summary['failed']} | 异常中断: {summary['errored_or_interrupted']}"
+    )
     print(f"总耗时: {summary['total_duration_seconds']} 秒")
     print(f"详细日志已保存至 '{LOG_DIR}' 目录。")
+
 
 if __name__ == "__main__":
     main()

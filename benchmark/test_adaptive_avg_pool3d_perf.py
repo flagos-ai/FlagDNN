@@ -13,6 +13,7 @@ from flag_dnn.utils import shape_utils
 def torch_adaptive_avg_pool3d(x, output_size):
     return F.adaptive_avg_pool3d(x, output_size=output_size)
 
+
 def gems_adaptive_avg_pool3d_wrapper(x, output_size):
     return flag_dnn.ops.adaptive_avg_pool3d(x, output_size=output_size)
 
@@ -29,24 +30,21 @@ class AdaptiveAvgPool3dBenchmark(Benchmark):
         # 配置格式为: (shape, output_size)
         configs = [
             # --- 基础场景 (常见于视频/医学图像 3D-CNN) ---
-            ((4, 256, 16, 14, 14), 1),             
-            ((2, 512, 8, 7, 7), (1, 1, 1)),              
-            ((4, 128, 16, 28, 28), 14),            
-            ((2, 64, 32, 112, 112), (8, 7, 7)),              
-            
+            ((4, 256, 16, 14, 14), 1),
+            ((2, 512, 8, 7, 7), (1, 1, 1)),
+            ((4, 128, 16, 28, 28), 14),
+            ((2, 64, 32, 112, 112), (8, 7, 7)),
             # --- 非整除场景 ---
             ((4, 128, 16, 112, 112), 15),
             ((2, 64, 10, 150, 150), (4, 42, 42)),
-            
             # --- 内存非对齐/奇数场景 ---
             ((4, 3, 16, 112, 112), 1),
             ((8, 27, 8, 56, 56), 7),
             ((2, 128, 15, 111, 111), (7, 14, 14)),
-            
             # --- 边界与极端场景 ---
-            ((1, 1, 1, 1, 1), 1),                  # Launch overhead 测试
-            ((32, 16, 8, 16, 16), 8),              # 输入等于/接近输出大小
-            ((128, 64, 4, 4, 4), 2),               # 大 Batch 场景
+            ((1, 1, 1, 1, 1), 1),  # Launch overhead 测试
+            ((32, 16, 8, 16, 16), 8),  # 输入等于/接近输出大小
+            ((128, 64, 4, 4, 4), 2),  # 大 Batch 场景
         ]
         self.shapes = configs
         return None
@@ -66,20 +64,20 @@ class AdaptiveAvgPool3dBenchmark(Benchmark):
             inp = torch.randn(shape, dtype=cur_dtype, device=self.device)
             if inp.numel() == 0:
                 continue
-                
+
             yield inp, output_size
 
     def get_gbps(self, args, latency):
         inp, output_size = args
-        
+
         # 处理 output_size 是 int 还是 tuple 的情况
         if isinstance(output_size, int):
             out_d, out_h, out_w = output_size, output_size, output_size
         else:
             out_d, out_h, out_w = output_size
-            
+
         out_numel = inp.shape[0] * inp.shape[1] * out_d * out_h * out_w
-                
+
         io_amount = shape_utils.size_in_bytes(inp) + (out_numel * inp.element_size())
         return io_amount * 1e-9 / (latency * 1e-3)
 
@@ -87,9 +85,9 @@ class AdaptiveAvgPool3dBenchmark(Benchmark):
 @pytest.mark.adaptive_avg_pool3d
 def test_perf_adaptive_avg_pool3d():
     bench = AdaptiveAvgPool3dBenchmark(
-        op_name="adaptive_avg_pool3d", 
-        torch_op=torch_adaptive_avg_pool3d, 
-        gems_op=gems_adaptive_avg_pool3d_wrapper, 
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64]
+        op_name="adaptive_avg_pool3d",
+        torch_op=torch_adaptive_avg_pool3d,
+        gems_op=gems_adaptive_avg_pool3d_wrapper,
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

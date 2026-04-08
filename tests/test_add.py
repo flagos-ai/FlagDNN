@@ -6,14 +6,16 @@ import flag_dnn
 SHAPES = [(32,), (1024,), (5333,), (16384,), (1024 * 1024,)]
 
 BROADCAST_SHAPES = [
-    ((4, 4), (4,)),              # 1D broadcast to 2D
-    ((2, 3, 4), (3, 1)),         # 内部维度广播
-    ((1, 5), (5, 5)),            # 单一维度扩展
+    ((4, 4), (4,)),  # 1D broadcast to 2D
+    ((2, 3, 4), (3, 1)),  # 内部维度广播
+    ((1, 5), (5, 5)),  # 单一维度扩展
 ]
 
 
 @pytest.mark.add
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape", SHAPES)
 def test_accuracy_add(dtype, shape):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -26,9 +28,9 @@ def test_accuracy_add(dtype, shape):
     if dtype == torch.bfloat16:
         rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3    # FP16 中等宽松
+        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
     else:
-        rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
+        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
 
     ref_out = torch.add(x, y)
     with flag_dnn.use_dnn():
@@ -38,7 +40,9 @@ def test_accuracy_add(dtype, shape):
 
 
 @pytest.mark.add
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 def test_accuracy_add_empty_tensor(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -58,7 +62,9 @@ def test_accuracy_add_empty_tensor(dtype):
 
 
 @pytest.mark.add
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 def test_accuracy_add_scalar(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -70,9 +76,9 @@ def test_accuracy_add_scalar(dtype):
     if dtype == torch.bfloat16:
         rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3    # FP16 中等宽松
+        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
     else:
-        rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
+        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
 
     ref_out = torch.add(x, scalar)
     with flag_dnn.use_dnn():
@@ -82,7 +88,9 @@ def test_accuracy_add_scalar(dtype):
 
 
 @pytest.mark.add
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 def test_accuracy_add_alpha(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -95,9 +103,9 @@ def test_accuracy_add_alpha(dtype):
     if dtype == torch.bfloat16:
         rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3    # FP16 中等宽松
+        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
     else:
-        rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
+        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
 
     ref_out = torch.add(x, y, alpha=alpha)
     with flag_dnn.use_dnn():
@@ -107,7 +115,9 @@ def test_accuracy_add_alpha(dtype):
 
 
 @pytest.mark.add
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("input_shape, other_shape", BROADCAST_SHAPES)
 def test_accuracy_add_broadcast(dtype, input_shape, other_shape):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -120,9 +130,9 @@ def test_accuracy_add_broadcast(dtype, input_shape, other_shape):
     if dtype == torch.bfloat16:
         rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
     elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3    # FP16 中等宽松
+        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
     else:
-        rtol, atol = 1e-5, 1e-5    # FP32 和 FP64 保持严格
+        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
 
     ref_out = torch.add(x, y)
     with flag_dnn.use_dnn():

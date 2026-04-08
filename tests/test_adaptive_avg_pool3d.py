@@ -6,18 +6,20 @@ import flag_dnn
 
 # adaptive_avg_pool3d 参数格式：(shape, output_size)
 PARAMS = [
-    ((2, 3, 8, 16, 16), (4, 8, 8)),        # 标准 3D 降采样
-    ((1, 8, 5, 14, 14), 7),                # 输出尺寸为单 int
-    ((2, 4, 7, 15, 15), (3, 5, 7)),        # 三个维度不同尺寸
-    ((1, 2, 4, 8, 8), (5, 10, 10)),        # 上采样 (输出尺寸大于输入)
-    ((4, 5, 10, 20, 20), 1),               # 3D 全局平均池化 (Global Average Pooling)
-    ((3, 8, 14, 14), (4, 7, 7)),           # 4D 张量输入 (无 Batch 维度 N)
-    ((1, 2, 8, 8, 8), (8, 8, 8)),          # output == input (原样输出)
+    ((2, 3, 8, 16, 16), (4, 8, 8)),  # 标准 3D 降采样
+    ((1, 8, 5, 14, 14), 7),  # 输出尺寸为单 int
+    ((2, 4, 7, 15, 15), (3, 5, 7)),  # 三个维度不同尺寸
+    ((1, 2, 4, 8, 8), (5, 10, 10)),  # 上采样 (输出尺寸大于输入)
+    ((4, 5, 10, 20, 20), 1),  # 3D 全局平均池化 (Global Average Pooling)
+    ((3, 8, 14, 14), (4, 7, 7)),  # 4D 张量输入 (无 Batch 维度 N)
+    ((1, 2, 8, 8, 8), (8, 8, 8)),  # output == input (原样输出)
 ]
 
 
 @pytest.mark.adaptive_avg_pool3d
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize(
+    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
+)
 @pytest.mark.parametrize("shape, output_size", PARAMS)
 def test_accuracy_adaptive_avg_pool3d(dtype, shape, output_size):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -27,7 +29,7 @@ def test_accuracy_adaptive_avg_pool3d(dtype, shape, output_size):
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
     ref_out = F.adaptive_avg_pool3d(x, output_size)
-    
+
     with flag_dnn.use_dnn():
         out = F.adaptive_avg_pool3d(x, output_size)
 

@@ -13,6 +13,7 @@ from flag_dnn.utils import shape_utils
 def torch_adaptive_max_pool2d(x, output_size):
     return F.adaptive_max_pool2d(x, output_size=output_size)
 
+
 def gems_adaptive_max_pool2d_wrapper(x, output_size):
     return flag_dnn.ops.adaptive_max_pool2d(x, output_size=output_size)
 
@@ -31,11 +32,9 @@ class AdaptiveMaxPool2dBenchmark(Benchmark):
             # 1. 全局池化 (Global 2D Pooling)，提取特征图最强特征，如 ResNet 等分类网络最后阶段
             ((32, 2048, 7, 7), (1, 1)),
             ((128, 512, 14, 14), (1, 1)),
-            
             # 2. 空间降维到特定的宽高特征大小，常见于目标检测或特征金字塔
             ((16, 256, 112, 112), (56, 56)),
             ((32, 128, 64, 64), (32, 32)),
-            
             # 3. 针对非对称尺寸的图像输入处理 (如长宽不等的特征图)
             ((8, 64, 128, 256), (32, 64)),
             ((4, 32, 1080, 1920), (270, 480)),
@@ -58,16 +57,16 @@ class AdaptiveMaxPool2dBenchmark(Benchmark):
             inp = torch.randn(shape, dtype=cur_dtype, device=self.device)
             if inp.numel() == 0:
                 continue
-                
+
             yield inp, output_size
 
     def get_gbps(self, args, latency):
         inp, output_size = args
-        
+
         # 对于 Adaptive Max Pool 2D, 输出的空间维度是 output_size (oH, oW)
         # inp.shape[0] 是 N (batch), inp.shape[1] 是 C (channel)
         out_numel = inp.shape[0] * inp.shape[1] * output_size[0] * output_size[1]
-                
+
         io_amount = shape_utils.size_in_bytes(inp) + (out_numel * inp.element_size())
         return io_amount * 1e-9 / (latency * 1e-3)
 
@@ -75,9 +74,9 @@ class AdaptiveMaxPool2dBenchmark(Benchmark):
 @pytest.mark.adaptive_max_pool2d
 def test_perf_adaptive_max_pool2d():
     bench = AdaptiveMaxPool2dBenchmark(
-        op_name="adaptive_max_pool2d", 
-        torch_op=torch_adaptive_max_pool2d, 
-        gems_op=gems_adaptive_max_pool2d_wrapper, 
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64]
+        op_name="adaptive_max_pool2d",
+        torch_op=torch_adaptive_max_pool2d,
+        gems_op=gems_adaptive_max_pool2d_wrapper,
+        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
     )
     bench.run()

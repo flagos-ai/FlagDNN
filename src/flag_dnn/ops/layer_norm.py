@@ -17,22 +17,26 @@ logger = logging.getLogger(__name__)
 @libentry()
 @libtuner(
     configs=runtime.get_tuned_config("layer_norm"),
-    key=['N'],
+    key=["N"],
     strategy=["align32"],
     warmup=5,
     rep=10,
 )
 @triton.jit
 def layer_norm_kernel(
-    x_ptr, y_ptr,
-    weight_ptr, bias_ptr,
-    M, N, eps,
+    x_ptr,
+    y_ptr,
+    weight_ptr,
+    bias_ptr,
+    M,
+    N,
+    eps,
     BLOCK_SIZE: tl.constexpr,
     HAS_WEIGHT: tl.constexpr,
     HAS_BIAS: tl.constexpr,
 ):
     row_idx = tle.program_id(0)
-    
+
     x_row_ptr = x_ptr + row_idx * N
     y_row_ptr = y_ptr + row_idx * N
 
@@ -41,7 +45,7 @@ def layer_norm_kernel(
     for offset in range(0, N, BLOCK_SIZE):
         cols = offset + tl.arange(0, BLOCK_SIZE)
         mask = cols < N
-        
+
         x = tl.load(x_row_ptr + cols, mask=mask, other=0.0).to(tl.float32)
 
         sum_x += tl.sum(x, axis=0)
@@ -57,7 +61,7 @@ def layer_norm_kernel(
     for offset in range(0, N, BLOCK_SIZE):
         cols = offset + tl.arange(0, BLOCK_SIZE)
         mask = cols < N
-        
+
         x = tl.load(x_row_ptr + cols, mask=mask, other=0.0).to(tl.float32)
         x_hat = (x - mean) * rstd
 
@@ -65,7 +69,7 @@ def layer_norm_kernel(
         if HAS_WEIGHT:
             weight = tl.load(weight_ptr + cols, mask=mask, other=0.0).to(tl.float32)
             x_hat = x_hat * weight
-        
+
         if HAS_BIAS:
             bias = tl.load(bias_ptr + cols, mask=mask, other=0.0).to(tl.float32)
             x_hat = x_hat + bias
@@ -86,7 +90,9 @@ def layer_norm(
     if input.numel() == 0:
         return torch.empty_like(input)
 
-    assert input.ndim >= len(normalized_shape), "Input dimensions must be >= normalized_shape length"
+    assert input.ndim >= len(
+        normalized_shape
+    ), "Input dimensions must be >= normalized_shape length"
 
     if not input.is_contiguous():
         assert False, "input must be contiguous."
@@ -95,9 +101,11 @@ def layer_norm(
     y = torch.empty_like(input)
 
     N = 1
-    tail_shape = input.shape[-len(normalized_shape):]
+    tail_shape = input.shape[-len(normalized_shape) :]
     if tuple(normalized_shape) != tuple(tail_shape):
-        raise ValueError(f"The normalized_shape must match the last few dimensions of the input tensor.")
+        raise ValueError(
+            f"The normalized_shape must match the last few dimensions of the input tensor."
+        )
 
     for dim in normalized_shape:
         N *= dim
@@ -105,14 +113,18 @@ def layer_norm(
     M = input.numel() // N
 
     grid = (M,)
-    
+
     with torch_device_fn.device(input.device):
         layer_norm_kernel[grid](
-            input, y,
-            weight, bias,
-            M, N, eps,
+            input,
+            y,
+            weight,
+            bias,
+            M,
+            N,
+            eps,
             HAS_WEIGHT=(weight is not None),
-            HAS_BIAS=(bias is not None)
+            HAS_BIAS=(bias is not None),
         )
 
     return y

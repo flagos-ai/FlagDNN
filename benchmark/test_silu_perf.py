@@ -14,6 +14,7 @@ from flag_dnn.utils import shape_utils
 def torch_silu(x, y=None):
     return F.silu(x)
 
+
 def gems_silu_wrapper(x, y=None):
     return flag_dnn.ops.silu(x)
 

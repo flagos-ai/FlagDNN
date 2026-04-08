@@ -14,6 +14,7 @@ from flag_dnn.utils import shape_utils
 def torch_relu(x, y=None):
     return F.relu(x)
 
+
 def gems_relu_wrapper(x, y=None):
     return flag_dnn.ops.relu(x)
 

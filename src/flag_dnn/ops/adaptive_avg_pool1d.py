@@ -37,8 +37,11 @@ def _small_ow_meta(ow: int):
 )
 @triton.jit
 def global_avg_pool1d_kernel(
-    x_ptr, y_ptr,
-    N, C, W,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    W,
     ACC_DTYPE: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
@@ -66,8 +69,12 @@ def global_avg_pool1d_kernel(
 @libentry()
 @triton.jit
 def adaptive_avg_pool1d_divisible_small_kernel(
-    x_ptr, y_ptr,
-    N, C, W, OW,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    W,
+    OW,
     K_W: tl.constexpr,
     ACC_DTYPE: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
@@ -102,8 +109,12 @@ def adaptive_avg_pool1d_divisible_small_kernel(
 @libentry()
 @triton.jit
 def adaptive_avg_pool1d_general_small_kernel(
-    x_ptr, y_ptr,
-    N, C, W, OW,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    W,
+    OW,
     MAX_K_W: tl.constexpr,
     ACC_DTYPE: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
@@ -151,8 +162,12 @@ def adaptive_avg_pool1d_general_small_kernel(
 )
 @triton.jit
 def adaptive_avg_pool1d_divisible_large_kernel(
-    x_ptr, y_ptr,
-    N, C, W, OW,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    W,
+    OW,
     K_W: tl.constexpr,
     ACC_DTYPE: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
@@ -195,8 +210,12 @@ def adaptive_avg_pool1d_divisible_large_kernel(
 )
 @triton.jit
 def adaptive_avg_pool1d_general_large_kernel(
-    x_ptr, y_ptr,
-    N, C, W, OW,
+    x_ptr,
+    y_ptr,
+    N,
+    C,
+    W,
+    OW,
     MAX_K_W: tl.constexpr,
     ACC_DTYPE: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
@@ -274,8 +293,11 @@ def adaptive_avg_pool1d(
         if OW == 1:
             grid = lambda meta: (N * C,)
             global_avg_pool1d_kernel[grid](
-                input, y,
-                N, C, W,
+                input,
+                y,
+                N,
+                C,
+                W,
                 ACC_DTYPE=acc_dtype,
             )
         # small OW: 直接固定小 block，不做 autotune
@@ -286,8 +308,12 @@ def adaptive_avg_pool1d(
                 k_w = W // OW
                 grid = (N * C,)
                 adaptive_avg_pool1d_divisible_small_kernel[grid](
-                    input, y,
-                    N, C, W, OW,
+                    input,
+                    y,
+                    N,
+                    C,
+                    W,
+                    OW,
                     K_W=k_w,
                     ACC_DTYPE=acc_dtype,
                     BLOCK_SIZE=block_size,
@@ -298,8 +324,12 @@ def adaptive_avg_pool1d(
                 max_k_w = _exact_max_window(W, OW)
                 grid = (N * C,)
                 adaptive_avg_pool1d_general_small_kernel[grid](
-                    input, y,
-                    N, C, W, OW,
+                    input,
+                    y,
+                    N,
+                    C,
+                    W,
+                    OW,
                     MAX_K_W=max_k_w,
                     ACC_DTYPE=acc_dtype,
                     BLOCK_SIZE=block_size,
@@ -311,8 +341,12 @@ def adaptive_avg_pool1d(
             max_k_w = _exact_max_window(W, OW)
             grid = (N * C,)
             adaptive_avg_pool1d_general_small_kernel[grid](
-                input, y,
-                N, C, W, OW,
+                input,
+                y,
+                N,
+                C,
+                W,
+                OW,
                 MAX_K_W=max_k_w,
                 ACC_DTYPE=acc_dtype,
                 BLOCK_SIZE=32,
@@ -324,8 +358,12 @@ def adaptive_avg_pool1d(
             k_w = W // OW
             grid = lambda meta: (N * C, triton.cdiv(OW, meta["BLOCK_SIZE"]))
             adaptive_avg_pool1d_divisible_large_kernel[grid](
-                input, y,
-                N, C, W, OW,
+                input,
+                y,
+                N,
+                C,
+                W,
+                OW,
                 K_W=k_w,
                 ACC_DTYPE=acc_dtype,
             )
@@ -334,8 +372,12 @@ def adaptive_avg_pool1d(
             max_k_w = _exact_max_window(W, OW)
             grid = lambda meta: (N * C, triton.cdiv(OW, meta["BLOCK_SIZE"]))
             adaptive_avg_pool1d_general_large_kernel[grid](
-                input, y,
-                N, C, W, OW,
+                input,
+                y,
+                N,
+                C,
+                W,
+                OW,
                 MAX_K_W=max_k_w,
                 ACC_DTYPE=acc_dtype,
             )

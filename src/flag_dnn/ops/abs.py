@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 )
 @triton.jit
 def abs_kernel(
-    x_ptr, out_ptr,
+    x_ptr,
+    out_ptr,
     n_elements,
     BLOCK_SIZE: tl.constexpr,
 ):
@@ -42,11 +43,7 @@ def abs_kernel(
     tl.store(out_ptr + offsets, res.to(out_ptr.dtype.element_ty), mask=mask)
 
 
-def abs(
-    input: torch.Tensor,
-    *,
-    out: Optional[torch.Tensor] = None
-) -> torch.Tensor:
+def abs(input: torch.Tensor, *, out: Optional[torch.Tensor] = None) -> torch.Tensor:
     logger.debug("FLAG_DNN ABS")
 
     if not input.is_contiguous():
@@ -64,20 +61,19 @@ def abs(
     if out is None:
         out = torch.empty(out_shape, dtype=out_dtype, device=input.device)
     else:
-        assert out.shape == out_shape, f"out shape {out.shape} mismatch with input shape {out_shape}"
+        assert (
+            out.shape == out_shape
+        ), f"out shape {out.shape} mismatch with input shape {out_shape}"
         out_dtype = out.dtype
 
     n_elements = out.numel()
     if n_elements == 0:
         return out
 
-    grid = lambda meta: (triton.cdiv(n_elements, meta['BLOCK_SIZE']), )
+    grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
     # 启动 Kernel
     with torch_device_fn.device(input.device):
-        abs_kernel[grid](
-            input, out,
-            n_elements
-        )
+        abs_kernel[grid](input, out, n_elements)
 
     return out

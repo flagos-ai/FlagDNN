@@ -25,9 +25,12 @@ logger = logging.getLogger(__name__)
 )
 @triton.jit
 def clamp_kernel(
-    x_ptr, out_ptr,
-    min_ptr, max_ptr,       # Tensor 指针
-    min_val, max_val,       # Scalar 数值
+    x_ptr,
+    out_ptr,
+    min_ptr,
+    max_ptr,  # Tensor 指针
+    min_val,
+    max_val,  # Scalar 数值
     n_elements,
     HAS_MIN: tl.constexpr,
     HAS_MAX: tl.constexpr,
@@ -73,16 +76,34 @@ def clamp_kernel(
 )
 @triton.jit
 def clamp_broadcast_tensor_kernel(
-    x_ptr, min_ptr, max_ptr, out_ptr, n_elements,
+    x_ptr,
+    min_ptr,
+    max_ptr,
+    out_ptr,
+    n_elements,
     # 填充后的 6D 形状
-    s1, s2, s3, s4, s5,
+    s1,
+    s2,
+    s3,
+    s4,
+    s5,
     # X 的 6D Strides
-    sx0, sx1, sx2, sx3, sx4, sx5,
+    sx0,
+    sx1,
+    sx2,
+    sx3,
+    sx4,
+    sx5,
     # Y 的 6D Strides
-    sy0, sy1, sy2, sy3, sy4, sy5,
+    sy0,
+    sy1,
+    sy2,
+    sy3,
+    sy4,
+    sy5,
     HAS_MIN: tl.constexpr,
     HAS_MAX: tl.constexpr,
-    BLOCK_SIZE: tl.constexpr
+    BLOCK_SIZE: tl.constexpr,
 ):
     pid = tl.program_id(0)
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
@@ -91,24 +112,22 @@ def clamp_broadcast_tensor_kernel(
     # 坐标还原
     idx5 = offsets % s5
     rem4 = offsets // s5
-    
+
     idx4 = rem4 % s4
     rem3 = rem4 // s4
-    
+
     idx3 = rem3 % s3
     rem2 = rem3 // s3
-    
+
     idx2 = rem2 % s2
     rem1 = rem2 // s2
-    
+
     idx1 = rem1 % s1
     idx0 = rem1 // s1
 
     # 计算物理偏移并加载数据
-    x_off = (idx0 * sx0 + idx1 * sx1 + idx2 * sx2 + 
-             idx3 * sx3 + idx4 * sx4 + idx5 * sx5)
-    y_off = (idx0 * sy0 + idx1 * sy1 + idx2 * sy2 + 
-             idx3 * sy3 + idx4 * sy4 + idx5 * sy5)
+    x_off = idx0 * sx0 + idx1 * sx1 + idx2 * sx2 + idx3 * sx3 + idx4 * sx4 + idx5 * sx5
+    y_off = idx0 * sy0 + idx1 * sy1 + idx2 * sy2 + idx3 * sy3 + idx4 * sy4 + idx5 * sy5
 
     x = tl.load(x_ptr + x_off, mask=mask)
     # 统一转换到 float32 进行数值比较，防止低精度截断
@@ -132,7 +151,7 @@ def clamp(
     min: Optional[Union[float, int, torch.Tensor]] = None,
     max: Optional[Union[float, int, torch.Tensor]] = None,
     *,
-    out: Optional[torch.Tensor] = None
+    out: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     logger.debug("FLAG_DNN CLAMP")
 
@@ -149,10 +168,20 @@ def clamp(
     is_max_tensor = isinstance(max, torch.Tensor)
 
     if has_min and has_max and is_min_tensor != is_max_tensor:
-        raise RuntimeError("'min' and 'max' must be equal(Number or Tensor) at the same time")
+        raise RuntimeError(
+            "'min' and 'max' must be equal(Number or Tensor) at the same time"
+        )
 
-    if has_min and has_max and is_min_tensor and is_max_tensor and min.shape != max.shape:
-        raise RuntimeError("Not supported when 'min' and 'max' are both Tensors but with different shapes")
+    if (
+        has_min
+        and has_max
+        and is_min_tensor
+        and is_max_tensor
+        and min.shape != max.shape
+    ):
+        raise RuntimeError(
+            "Not supported when 'min' and 'max' are both Tensors but with different shapes"
+        )
 
     need_broadcast = False
     if has_min and is_min_tensor and (input.shape != min.shape):
@@ -178,7 +207,9 @@ def clamp(
     if out is None:
         out = torch.empty(out_shape, dtype=out_dtype, device=input.device)
     else:
-        assert out.shape == out_shape, f"out shape {out.shape} mismatch with broadcasted shape {out_shape}"
+        assert (
+            out.shape == out_shape
+        ), f"out shape {out.shape} mismatch with broadcasted shape {out_shape}"
         out_dtype = out.dtype
 
     n_elements = out.numel()
@@ -191,8 +222,12 @@ def clamp(
         if is_min_tensor and (input.shape != min.shape):
             input_exp = input.expand(out_shape)
             min_exp = min.expand(out_shape)
-            min_c_shape, min_c_sx, min_c_sy = collapse_dims(out_shape, input_exp.stride(), min_exp.stride())
-            f_shape, f_sx, f_sy = pad_to_max_dims(min_c_shape, min_c_sx, min_c_sy, max_dims=6)
+            min_c_shape, min_c_sx, min_c_sy = collapse_dims(
+                out_shape, input_exp.stride(), min_exp.stride()
+            )
+            f_shape, f_sx, f_sy = pad_to_max_dims(
+                min_c_shape, min_c_sx, min_c_sy, max_dims=6
+            )
         elif not is_min_tensor:
             min_val = float(min)
 
@@ -202,31 +237,45 @@ def clamp(
         if is_max_tensor and (input.shape != max.shape):
             input_exp = input.expand(out_shape)
             max_exp = max.expand(out_shape)
-            max_c_shape, max_c_sx, max_c_sy = collapse_dims(out_shape, input_exp.stride(), max_exp.stride())
-            f_shape, f_sx, f_sy = pad_to_max_dims(max_c_shape, max_c_sx, max_c_sy, max_dims=6)
+            max_c_shape, max_c_sx, max_c_sy = collapse_dims(
+                out_shape, input_exp.stride(), max_exp.stride()
+            )
+            f_shape, f_sx, f_sy = pad_to_max_dims(
+                max_c_shape, max_c_sx, max_c_sy, max_dims=6
+            )
         elif not is_max_tensor:
             max_val = float(max)
 
-    grid = lambda meta: (triton.cdiv(n_elements, meta['BLOCK_SIZE']), )
+    grid = lambda meta: (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
     # 启动 Kernel
     with torch_device_fn.device(input.device):
         if not need_broadcast:
             clamp_kernel[grid](
-                input, out,
-                min, max,
-                min_val, max_val,
+                input,
+                out,
+                min,
+                max,
+                min_val,
+                max_val,
                 n_elements,
-                HAS_MIN=has_min, HAS_MAX=has_max,
-                IS_MIN_TENSOR=is_min_tensor, IS_MAX_TENSOR=is_max_tensor
+                HAS_MIN=has_min,
+                HAS_MAX=has_max,
+                IS_MIN_TENSOR=is_min_tensor,
+                IS_MAX_TENSOR=is_max_tensor,
             )
         else:
             clamp_broadcast_tensor_kernel[grid](
-                input, min, max, out, n_elements,
-                *f_shape[1:], # 传入 s1 到 s5
-                *f_sx,        # 传入 sx0 到 sx5
-                *f_sy,        # 传入 sy0 到 sy5
-                HAS_MIN=has_min, HAS_MAX=has_max
+                input,
+                min,
+                max,
+                out,
+                n_elements,
+                *f_shape[1:],  # 传入 s1 到 s5
+                *f_sx,  # 传入 sx0 到 sx5
+                *f_sy,  # 传入 sy0 到 sy5
+                HAS_MIN=has_min,
+                HAS_MAX=has_max,
             )
 
     return out
