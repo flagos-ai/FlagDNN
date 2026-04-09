@@ -16,6 +16,32 @@ PARAMS = [
 ]
 
 
+def _gather_from_adaptive_max_pool3d_indices(
+    x: torch.Tensor, indices: torch.Tensor
+):
+    """
+    根据 adaptive_max_pool3d 返回的 indices，从输入 x 中取回对应值。
+    indices 是相对于每个 (N, C) 或每个 C 的 D*H*W 展平索引。
+    """
+    if x.ndim == 5:
+        # x: (N, C, D, H, W)
+        n, c, _, _, _ = x.shape
+        x_flat = x.reshape(n, c, -1)
+        idx_flat = indices.reshape(n, c, -1).long()
+        gathered = torch.gather(x_flat, 2, idx_flat)
+        return gathered.reshape_as(indices)
+
+    if x.ndim == 4:
+        # x: (C, D, H, W)
+        c, _, _, _ = x.shape
+        x_flat = x.reshape(c, -1)
+        idx_flat = indices.reshape(c, -1).long()
+        gathered = torch.gather(x_flat, 1, idx_flat)
+        return gathered.reshape_as(indices)
+
+    raise AssertionError(f"Unsupported input ndim={x.ndim}, expected 4 or 5")
+
+
 @pytest.mark.adaptive_max_pool3d
 @pytest.mark.parametrize(
     "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
@@ -25,23 +51,53 @@ def test_accuracy_adaptive_max_pool3d(dtype, shape, output_size):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
 
-    # 使用 randn 生成测试数据
+    torch.manual_seed(0)
+
+    # 随机输入下，低精度 dtype 可能出现并列最大值，
+    # 此时 values 正确，但 indices 不一定和 PyTorch 完全一致。
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
-    ref_out = F.adaptive_max_pool3d(x, output_size)
+    ref_vals, ref_indices = F.adaptive_max_pool3d(x, output_size)
 
     with flag_dnn.use_dnn():
-        out = F.adaptive_max_pool3d(x, output_size)
+        out_vals, out_indices = F.adaptive_max_pool3d(x, output_size)
 
-    # 容差设置：Max Pool 仅拷贝数据无数学运算，因此所有 dtype 皆可要求严苛的精确匹配
-    rtol, atol = 1e-5, 1e-5
+    # Max Pool 只是选取输入元素，values 应与参考结果一致
+    torch.testing.assert_close(out_vals, ref_vals, rtol=0, atol=0)
 
-    out_vals, out_indices = out
-    ref_vals, ref_indices = ref_out
+    # 不直接要求随机输入下的 indices 与 PyTorch 完全一致；
+    # 只要求这些 indices 能从输入中取回正确的输出值
+    gathered_vals = _gather_from_adaptive_max_pool3d_indices(x, out_indices)
+    torch.testing.assert_close(gathered_vals, out_vals, rtol=0, atol=0)
 
-    # 验证数值正确性
-    torch.testing.assert_close(out_vals, ref_vals, rtol=rtol, atol=atol)
-    # 验证索引正确性 (必须完全一致)
+    # 对高精度随机输入，通常不会出现 tie，可额外严格比对索引
+    if dtype in [torch.float32, torch.float64]:
+        torch.testing.assert_close(out_indices, ref_indices, rtol=0, atol=0)
+
+
+@pytest.mark.adaptive_max_pool3d
+def test_accuracy_adaptive_max_pool3d_indices_unique_max():
+    """
+    单独构造“唯一最大值”的输入，严格验证 indices 与 PyTorch 完全一致。
+    这里用 float32，避免低精度量化引入并列值。
+    """
+    shape = (2, 3, 4, 5, 6)
+    output_size = (2, 3, 4)
+
+    numel = 1
+    for s in shape:
+        numel *= s
+
+    x = torch.arange(
+        numel, dtype=torch.float32, device=flag_dnn.device
+    ).reshape(shape)
+
+    ref_vals, ref_indices = F.adaptive_max_pool3d(x, output_size)
+
+    with flag_dnn.use_dnn():
+        out_vals, out_indices = F.adaptive_max_pool3d(x, output_size)
+
+    torch.testing.assert_close(out_vals, ref_vals, rtol=0, atol=0)
     torch.testing.assert_close(out_indices, ref_indices, rtol=0, atol=0)
 
 

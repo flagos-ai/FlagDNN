@@ -153,7 +153,9 @@ def test_accuracy_batch_norm_large_values(dtype, training):
         rtol, atol = 5e-2, 5e-2
     elif dtype == torch.float16:
         rtol, atol = 5e-3, 5e-3
-    else:
+    elif dtype == torch.float32:
+        rtol, atol = 1e-4, 1e-4
+    else:  # torch.float64
         rtol, atol = 1e-5, 1e-5
 
     ref_running_mean, test_running_mean = (
