@@ -142,13 +142,14 @@ def adaptive_max_pool1d_kernel(
 def adaptive_max_pool1d(
     input: torch.Tensor,
     output_size: Union[int, Tuple[int]],
-    return_indices: bool = False,
-) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     logger.debug(
         f"FLAG_DNN ADAPTIVE_MAX_POOL1D "
         f"(output_size={output_size}, "
-        f"return_indices={return_indices})"
+        f"return_indices={True})"
     )
+
+    return_indices: bool = True
 
     if isinstance(output_size, int):
         OW = output_size

@@ -162,13 +162,14 @@ def adaptive_max_pool2d_kernel(
 def adaptive_max_pool2d(
     input: torch.Tensor,
     output_size: Union[int, Tuple[Optional[int], Optional[int]]],
-    return_indices: bool = False,
-) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     logger.debug(
         f"FLAG_DNN ADAPTIVE_MAX_POOL2D "
         f"(output_size={output_size}, "
-        f"return_indices={return_indices})"
+        f"return_indices={True})"
     )
+
+    return_indices: bool = True
 
     assert input.ndim in [3, 4], "Input must be 3D or 4D"
     is_3d = input.ndim == 3

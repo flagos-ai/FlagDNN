@@ -179,13 +179,14 @@ def adaptive_max_pool3d(
     output_size: Union[
         int, Tuple[Optional[int], Optional[int], Optional[int]]
     ],
-    return_indices: bool = False,
-) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     logger.debug(
         f"FLAG_DNN ADAPTIVE_MAX_POOL3D "
         f"(output_size={output_size}, "
-        f"return_indices={return_indices})"
+        f"return_indices={True})"
     )
+
+    return_indices: bool = True
 
     assert input.ndim in [
         4,

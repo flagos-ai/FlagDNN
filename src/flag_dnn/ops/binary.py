@@ -349,9 +349,7 @@ def binary(
             if is_other_tensor
             else other
         )
-        out_dtype = torch.div(
-            dummy_in, dummy_oth, rounding_mode=rounding_mode
-        ).dtype
+        out_dtype = input.dtype
     elif op_type == "eq" or op_type == "ne":
         out_dtype = torch.bool
     else:

@@ -227,19 +227,7 @@ def clamp(
             max.shape,  # type: ignore[union-attr]
         )
 
-    # 类型推导 (Type Promotion)
-    dummy_input = input.new_empty((0,))
-    dummy_min = (
-        min
-        if not is_min_tensor
-        else min.new_empty((0,))  # type: ignore[union-attr]
-    )
-    dummy_max = (
-        max
-        if not is_max_tensor
-        else max.new_empty((0,))  # type: ignore[union-attr]
-    )
-    out_dtype = torch.clamp(dummy_input, min=dummy_min, max=dummy_max).dtype
+    out_dtype = input.dtype
 
     # 输出内存分配
     if out is None:

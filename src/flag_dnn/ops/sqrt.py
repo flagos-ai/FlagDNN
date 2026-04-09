@@ -55,11 +55,7 @@ def sqrt(
         assert False, "input must be contiguous."
         input = input.contiguous()
 
-    # 类型推导 (Type Promotion)
-    # 利用 PyTorch 原生逻辑处理整数输入提升为浮点的情况
-    dummy_input = input.new_empty((0,))
-    out_dtype = torch.sqrt(dummy_input).dtype
-
+    out_dtype = input.dtype
     out_shape = input.shape
 
     # 输出内存分配

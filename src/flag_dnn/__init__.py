@@ -17,7 +17,7 @@ from flag_dnn.ops import (  # noqa: F401
     avg_pool1d,
     avg_pool2d,
     avg_pool3d,
-    batch_norm,
+    batch_norm_aten,
     clamp,
     cumprod,
     cumsum,
@@ -52,24 +52,50 @@ device = runtime.device.name
 vendor_name = runtime.device.vendor_name
 aten_lib = torch.library.Library("aten", "IMPL")
 registrar = Register
-current_work_registerar = None
+current_work_registrar = None
 runtime.replace_customized_ops(globals())
 
 __version__ = "0.1.0"
 
 _FULL_CONFIG = (
-    ("relu", relu),
-    ("prelu", prelu),
-    ("leaky_relu", leaky_relu),
+    ("abs", abs),
+    ("adaptive_avg_pool1d", adaptive_avg_pool1d),
+    ("adaptive_avg_pool2d", adaptive_avg_pool2d),
+    ("adaptive_avg_pool3d", adaptive_avg_pool3d),
+    ("adaptive_max_pool1d", adaptive_max_pool1d),
+    ("adaptive_max_pool2d", adaptive_max_pool2d),
+    ("adaptive_max_pool3d", adaptive_max_pool3d),
+    ("add", add),
+    ("avg_pool1d", avg_pool1d),
+    ("avg_pool2d", avg_pool2d),
+    ("avg_pool3d", avg_pool3d),
+    ("batch_norm", batch_norm_aten),
+    ("clamp", clamp),
+    ("cumprod", cumprod),
+    ("cumsum", cumsum),
+    ("div", div),
+    ("eq", eq),
     ("gelu", gelu),
+    ("group_norm", group_norm),
+    ("layer_norm", layer_norm),
+    ("leaky_relu", leaky_relu),
+    ("max_pool1d", max_pool1d),
+    ("max_pool2d", max_pool2d),
+    ("max_pool3d", max_pool3d),
+    ("mean", mean),
+    ("mul", mul),
+    ("ne", ne),
+    ("neg", neg),
+    ("pow", pow),
+    ("prelu", prelu),
+    ("prod", prod),
+    ("relu", relu),
+    ("rms_norm", rms_norm),
     ("silu", silu),
     ("softmax", softmax),
+    ("sqrt", sqrt),
+    ("sub", sub),
     ("sum", sum),
-    ("mean", mean),
-    ("cumsum", cumsum),
-    ("cumprod", cumprod),
-    ("eq", eq),
-    ("ne", ne),
 )
 
 FULL_CONFIG_BY_FUNC: dict = {}
@@ -229,14 +255,18 @@ class use_dnn:
         del self.exclude
         del self.include
         del self.registrar
-        del current_work_registrar
+        current_work_registrar = None
 
 
 def all_registered_ops():
+    if current_work_registrar is None:
+        return []
     return current_work_registrar.get_all_ops()
 
 
 def all_registered_keys():
+    if current_work_registrar is None:
+        return []
     return current_work_registrar.get_all_keys()
 
 

@@ -238,18 +238,10 @@ def pow(
         out_shape = exponent.shape  # type: ignore[union-attr]
         device = exponent.device  # type: ignore[union-attr]
 
-    # 类型推导与提升 (Type Promotion)
-    dummy_input = (
-        input.new_empty((0,))  # type: ignore[union-attr]
-        if input_is_tensor
-        else input
-    )
-    dummy_exponent = (
-        exponent.new_empty((0,))  # type: ignore[union-attr]
-        if exp_is_tensor
-        else exponent
-    )
-    out_dtype = torch.pow(dummy_input, dummy_exponent).dtype
+    if out is not None:
+        out_dtype = out.dtype
+    else:
+        out_dtype = torch.result_type(input, exponent)
 
     # 输出内存分配
     if out is None:

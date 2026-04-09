@@ -3,7 +3,6 @@ from typing import Generator
 import numpy as np
 import pytest
 import torch
-import torch.nn.functional as F
 
 import flag_dnn
 from benchmark.performance_utils import Benchmark
@@ -11,7 +10,7 @@ from flag_dnn.utils import shape_utils
 
 
 def torch_adaptive_max_pool1d(x, output_size):
-    return F.adaptive_max_pool1d(x, output_size=output_size)
+    return torch.adaptive_max_pool1d(x, output_size=output_size)
 
 
 def gems_adaptive_max_pool1d_wrapper(x, output_size):

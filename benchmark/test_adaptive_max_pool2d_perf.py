@@ -3,7 +3,7 @@ from typing import Generator
 import numpy as np
 import pytest
 import torch
-import torch.nn.functional as F
+import torch._C._nn as F
 
 import flag_dnn
 from benchmark.performance_utils import Benchmark

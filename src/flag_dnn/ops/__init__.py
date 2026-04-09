@@ -9,6 +9,7 @@ from flag_dnn.ops.leaky_relu import leaky_relu
 from flag_dnn.ops.prelu import prelu
 from flag_dnn.ops.softmax import softmax
 from flag_dnn.ops.batch_norm import batch_norm
+from flag_dnn.ops.batch_norm import batch_norm_aten
 from flag_dnn.ops.layer_norm import layer_norm
 from flag_dnn.ops.rms_norm import rms_norm
 from flag_dnn.ops.group_norm import group_norm
@@ -50,6 +51,7 @@ __all__ = [
     "prelu",
     "softmax",
     "batch_norm",
+    "batch_norm_aten",
     "layer_norm",
     "rms_norm",
     "group_norm",

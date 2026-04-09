@@ -52,11 +52,7 @@ def abs(
         assert False, "input must be contiguous."
         input = input.contiguous()
 
-    # 类型推导 (Type Promotion)
-    # 对于 abs 而言，整数输入仍然返回整数，浮点输入返回浮点
-    dummy_input = input.new_empty((0,))
-    out_dtype = torch.abs(dummy_input).dtype
-
+    out_dtype = input.dtype
     out_shape = input.shape
 
     # 输出内存分配

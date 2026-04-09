@@ -52,10 +52,7 @@ def neg(
         assert False, "input must be contiguous."
         input = input.contiguous()
 
-    # 类型推导 (Type Promotion)
-    dummy_input = input.new_empty((0,))
-    out_dtype = torch.neg(dummy_input).dtype
-
+    out_dtype = input.dtype
     out_shape = input.shape
 
     # 输出内存分配

@@ -168,17 +168,30 @@ def batch_norm_fused_kernel_optimized_(
         tl.store(out_ptrs, y, mask=mask)
 
 
-def batch_norm(
+# def batch_norm(
+#     input: torch.Tensor,
+#     running_mean: Optional[torch.Tensor],
+#     running_var: Optional[torch.Tensor],
+#     weight: Optional[torch.Tensor] = None,
+#     bias: Optional[torch.Tensor] = None,
+#     training: bool = False,
+#     momentum: float = 0.1,
+#     eps: float = 1e-05,
+# ) -> torch.Tensor:
+def batch_norm_aten(
     input: torch.Tensor,
+    weight: Optional[torch.Tensor],
+    bias: Optional[torch.Tensor],
     running_mean: Optional[torch.Tensor],
     running_var: Optional[torch.Tensor],
-    weight: Optional[torch.Tensor] = None,
-    bias: Optional[torch.Tensor] = None,
     training: bool = False,
     momentum: float = 0.1,
-    eps: float = 1e-05,
+    eps: float = 1e-5,
+    cudnn_enabled: bool = True,
 ) -> torch.Tensor:
     logger.debug(f"FLAG_DNN FUSED BATCH_NORM (training={training}, eps={eps})")
+
+    _ = cudnn_enabled
 
     if input.numel() == 0:
         return torch.empty_like(input)
@@ -256,3 +269,26 @@ def batch_norm(
             )
 
     return y
+
+
+def batch_norm(
+    input: torch.Tensor,
+    running_mean: Optional[torch.Tensor],
+    running_var: Optional[torch.Tensor],
+    weight: Optional[torch.Tensor] = None,
+    bias: Optional[torch.Tensor] = None,
+    training: bool = False,
+    momentum: float = 0.1,
+    eps: float = 1e-5,
+) -> torch.Tensor:
+    return batch_norm_aten(
+        input,
+        weight,
+        bias,
+        running_mean,
+        running_var,
+        training,
+        momentum,
+        eps,
+        torch.backends.cudnn.enabled,
+    )
