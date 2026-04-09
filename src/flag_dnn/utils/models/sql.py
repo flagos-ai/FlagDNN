@@ -23,7 +23,10 @@ from .model import PersistantModel
 from .session import RollbackSession
 
 
-class Base(sqlalchemy.orm.DeclarativeBase): ...
+class Base(sqlalchemy.orm.DeclarativeBase):
+    # wbj fix:
+    # ...
+    pass
 
 
 class SQLPersistantModel(PersistantModel):
@@ -42,7 +45,7 @@ class SQLPersistantModel(PersistantModel):
     ) -> Type[Base]:
         annotations: Dict[str, Type] = {
             k: sqlalchemy.orm.Mapped[  # type: ignore[misc]
-                v if isinstance(v, Type) else type(v)
+                v if isinstance(v, Type) else type(v)  # type: ignore[arg-type]
             ]
             for k, v in chain(keys.items(), values.items())
         }
@@ -132,9 +135,9 @@ class SQLPersistantModel(PersistantModel):
         key_dict: Dict[str, Union[bool, int, float, str]] = (
             SQLPersistantModel.get_key_dict(keys)
         )
-        ConfigCls: Optional[Type[Base]] = (  # type: ignore[assignment]
-            self.get_sql_model(name, key_dict)
-        )
+        ConfigCls: Optional[Type[Base]] = self.get_sql_model(
+            name, key_dict
+        )  # type: ignore[assignment]
         if ConfigCls is None:
             return None
         with RollbackSession(self.engine) as session:
@@ -154,8 +157,8 @@ class SQLPersistantModel(PersistantModel):
                 for k, v in obj_dict.items()
                 if k not in self.signature.parameters
             }
-            config_dict: Dict[str, int] = {  # type: ignore[assignment]
-                k: v
+            config_dict: Dict[str, int] = {
+                k: v  # type: ignore[misc]
                 for k, v in obj_dict.items()
                 if k in self.signature.parameters
             }
@@ -172,9 +175,9 @@ class SQLPersistantModel(PersistantModel):
             **SQLPersistantModel.get_key_dict(keys),
             **SQLPersistantModel.get_config_dict(config),
         }
-        BenchmarkCls: Optional[Type[Base]] = (  # type: ignore[assignment]
-            self.get_sql_model(name, key_dict)
-        )
+        BenchmarkCls: Optional[Type[Base]] = self.get_sql_model(
+            name, key_dict
+        )  # type: ignore[assignment]
         if BenchmarkCls is None:
             return None
         with RollbackSession(self.engine) as session:
@@ -202,8 +205,8 @@ class SQLPersistantModel(PersistantModel):
         key_dict: Dict[str, Union[bool, int, float, str]] = (
             SQLPersistantModel.get_key_dict(keys)
         )
-        ConfigCls: Optional[Type[Base]] = (  # type: ignore[assignment]
-            self.get_sql_model(
+        ConfigCls: Optional[Type[Base]] = (
+            self.get_sql_model(  # type: ignore[assignment]
                 name,
                 {k: type(v) for k, v in key_dict.items()},
                 {k: type(v) for k, v in config.items()},
@@ -211,7 +214,9 @@ class SQLPersistantModel(PersistantModel):
         )
         if ConfigCls is not None:
             with RollbackSession(self.engine) as session:
-                obj: Base = ConfigCls(**key_dict, **config)
+                obj: Base = ConfigCls(
+                    **key_dict, **config
+                )  # type: ignore[call-arg]
                 session.merge(obj)
                 session.commit()
 
@@ -235,16 +240,16 @@ class SQLPersistantModel(PersistantModel):
             "p20": p20,
             "p80": p80,
         }
-        BenchmarkCls: Optional[Type[Base]] = (  # type: ignore[assignment]
-            self.get_sql_model(
+        BenchmarkCls: Optional[Type[Base]] = (
+            self.get_sql_model(  # type: ignore[assignment]
                 name,
                 key_dict | config,  # type: ignore[operator]
-                benchmark,
+                benchmark,  # type: ignore[arg-type]
             )
         )
         if BenchmarkCls is not None:
             with RollbackSession(self.engine) as session:
-                obj: Base = BenchmarkCls(  # type: ignore[misc]
+                obj: Base = BenchmarkCls(  # type: ignore[call-arg, arg-type]
                     **key_dict, **config, **benchmark
                 )
                 session.merge(obj)

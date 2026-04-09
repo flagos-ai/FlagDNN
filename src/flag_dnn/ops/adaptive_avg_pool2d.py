@@ -567,7 +567,7 @@ def adaptive_avg_pool2d(
             # 3) 其余走原来的 global kernel
             else:
 
-                def grid(meta):  # type: ignore[assignment]
+                def grid(meta):  # type: ignore[misc]
                     return (NC,)
 
                 global_avg_pool2d_kernel[grid](
@@ -630,7 +630,7 @@ def adaptive_avg_pool2d(
             k_h = H // OH
             k_w = W // OW
 
-            def grid(meta):  # type: ignore[assignment]
+            def grid(meta):  # type: ignore[misc]
                 return (
                     N * C,
                     triton.cdiv(OH, meta["BLOCK_H"]),
@@ -655,7 +655,7 @@ def adaptive_avg_pool2d(
             max_k_h = _exact_max_window(H, OH)
             max_k_w = _exact_max_window(W, OW)
 
-            def grid(meta):  # type: ignore[assignment]
+            def grid(meta):  # type: ignore[misc]
                 return (
                     N * C,
                     triton.cdiv(OH, meta["BLOCK_H"]),

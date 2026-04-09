@@ -183,10 +183,10 @@ class Benchmark:
                 f"Shape file '{shape_file_path}' does not exist."
             )
         try:
-            with open(shape_file_path, "r") as file:
-                yaml_config = yaml.safe_load(  # type: ignore[call-overload]
-                    file
-                )
+            with open(  # type: ignore[call-overload]
+                shape_file_path, "r"
+            ) as file:
+                yaml_config = yaml.safe_load(file)
                 if self.op_name in yaml_config:
                     self.shapes = yaml_config[self.op_name].get(
                         "shapes", self.DEFAULT_SHAPES

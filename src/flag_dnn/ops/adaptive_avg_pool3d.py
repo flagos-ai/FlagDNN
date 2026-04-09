@@ -672,7 +672,7 @@ def adaptive_avg_pool3d(
             # General case: autotuned global kernel
             else:
 
-                def grid(meta):  # type: ignore[assignment]
+                def grid(meta):  # type: ignore[misc]
                     return (NC,)
 
                 global_avg_pool3d_kernel[grid](
@@ -750,7 +750,7 @@ def adaptive_avg_pool3d(
             k_h = H // OH
             k_w = W // OW
 
-            def grid(meta):  # type: ignore[assignment]
+            def grid(meta):  # type: ignore[misc]
                 return (
                     NC,
                     triton.cdiv(OD, meta["BLOCK_D"]),
@@ -781,7 +781,7 @@ def adaptive_avg_pool3d(
             max_k_h = _exact_max_window(H, OH)
             max_k_w = _exact_max_window(W, OW)
 
-            def grid(meta):  # type: ignore[assignment]
+            def grid(meta):  # type: ignore[misc]
                 return (
                     NC,
                     triton.cdiv(OD, meta["BLOCK_D"]),

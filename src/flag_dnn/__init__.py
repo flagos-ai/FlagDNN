@@ -5,7 +5,7 @@ flag_dnn - DNN operations implemented with Triton
 import torch
 from flag_dnn import runtime
 from flag_dnn import testing  # noqa: F401
-from flag_dnn.ops import (
+from flag_dnn.ops import (  # noqa: F401
     abs,
     adaptive_avg_pool1d,
     adaptive_avg_pool2d,

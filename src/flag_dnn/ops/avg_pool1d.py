@@ -119,10 +119,10 @@ def avg_pool1d(
 
     OW = _out_size(
         W,
-        padding[0],
+        padding[0],  # type: ignore[index]
         kernel_size[0],  # type: ignore[index]
-        stride[0],
-        ceil_mode,  # type: ignore[index]
+        stride[0],  # type: ignore[index]
+        ceil_mode,
     )
 
     # ceil_mode 边缘丢弃

@@ -136,7 +136,7 @@ class BenchmarkCache(Cache):
         self, config: triton.Config
     ) -> bool:
         return (
-            self.model.get_benchmark(
+            self.model.get_benchmark(  # type: ignore[call-arg]
                 self.key, config  # type: ignore[arg-type]
             )
             is not None
@@ -157,7 +157,7 @@ class BenchmarkCache(Cache):
     def __setitem__(  # type: ignore[override]
         self, config: triton.Config, benchmark: Tuple[float]
     ) -> None:
-        return self.set(config, benchmark)
+        return self.set(config, benchmark)  # type: ignore[arg-type]
 
     def get(
         self, config: triton.Config
@@ -226,7 +226,7 @@ class LibCache(object):
         if isinstance(key, str):
             return self.get_config(key)
         elif isinstance(key, tuple):
-            return self.get_benchmark(*key)
+            return self.get_benchmark(*key)  # type: ignore[arg-type]
         else:
             assert (
                 False
@@ -267,7 +267,9 @@ class LibTuner(triton.runtime.Autotuner):
     # The dispatch table for `LibTuner` subclasses.
     # It's shared across all instances.
     _dispatch_table: Dict[str, Type[LibTuner]] = {}
-    _strategy_table: Dict[str, Callable[[Any], Any]] = {}
+    # wbj fix:
+    # _strategy_table: Dict[str, Callable[[Any], Any]] = {}
+    _strategy_table: Dict[Optional[str], Callable[[Any], Any]] = {}
 
     def __init__(
         self,
@@ -344,7 +346,11 @@ class LibTuner(triton.runtime.Autotuner):
         self.benchmark_table_name: str = (
             f"{self.__name__}_{self.cache_key}_benchmark"
         )
-        self.cache: BenchmarkCache = libcache[self.config_table_name]
+        # wbj fix:
+        # self.cache: BenchmarkCache = (  # type: ignore[assignment]
+        #     libcache[self.config_table_name]
+        # )
+        self.cache: ConfigCache = libcache[self.config_table_name]
 
     @cached_property
     def cache_key(self) -> str:
@@ -415,8 +421,12 @@ class LibTuner(triton.runtime.Autotuner):
     def get(cls, name: str):
         return cls._dispatch_table[name]
 
+    # wbj fix:
+    # @classmethod
+    # def get_strategy(cls, name: str):
+    #     return cls._strategy_table[name]
     @classmethod
-    def get_strategy(cls, name: str):
+    def get_strategy(cls, name: Optional[str]) -> Callable[[Any], Any]:
         return cls._strategy_table[name]
 
     @staticmethod
@@ -461,13 +471,26 @@ class LibTuner(triton.runtime.Autotuner):
 
             return AnonymousLibTunerImpl
 
-        return decorator
+        return decorator  # type: ignore[return-value]
 
+    # wbj fix:
+    # @staticmethod
+    # def register_strategy(name: str):
+    #     def decorator(
+    # strategy: Union[Callable[[Any], Any],
+    # List[Callable[[Any], Any]]],
+    #     ):
+    #         LibTuner._strategy_table[  # type: ignore[assignment]
+    #             name
+    #         ] = strategy
+    #         return strategy
+
+    #     return decorator
     @staticmethod
-    def register_strategy(name: str):
+    def register_strategy(name: Optional[str]):
         def decorator(
-            strategy: Union[Callable[[Any], Any], List[Callable[[Any], Any]]],
-        ):
+            strategy: Callable[[Any], Any],
+        ) -> Callable[[Any], Any]:
             LibTuner._strategy_table[name] = strategy
             return strategy
 
@@ -497,7 +520,7 @@ class LibTuner(triton.runtime.Autotuner):
                     ret = cache.get(config)
                     if ret is None:
                         ret = self._bench(*args, config=config, **kwargs)
-                        cache[config] = tuple(ret)
+                        cache[config] = tuple(ret)  # type: ignore[assignment]
                     return list(ret)
 
                 best_config, timings = self.policy(
@@ -572,7 +595,7 @@ def align32_strategy(key: Union[int, float]) -> int:
     return math.ceil(key / 32) * 32
 
 
-@LibTuner.register_policy("default")
+@LibTuner.register_policy("default")  # type: ignore[call-arg]
 def default_policy(
     bench_fn: Callable[[triton.Config], List[float]],
     configs: Iterator[triton.Config],
@@ -627,7 +650,7 @@ def default_policy(
     control over the autotuning process.
     """
     timings: Dict[triton.Config, float] = {
-        config: bench_fn(config) for config in configs
+        config: bench_fn(config) for config in configs  # type: ignore[misc]
     }
     best_config: triton.Config = min(  # type: ignore[type-var]
         timings, key=timings.get
@@ -670,8 +693,8 @@ def libtuner(
 
     if isinstance(policy, str):
         policy = LibTuner.get(policy)
-    assert issubclass(policy, LibTuner), (
-        f"the class of {policy.__name__} is"
+    assert issubclass(policy, LibTuner), (  # type: ignore[arg-type]
+        f"the class of {policy.__name__} is"  # type: ignore[union-attr]
         f" {policy.__class__.__name__},"
         f" not a subclass of {LibTuner.__name__}"
     )

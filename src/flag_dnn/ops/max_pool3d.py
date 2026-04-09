@@ -246,27 +246,27 @@ def max_pool3d(
 
     OD = _out_size(
         D,
-        padding[0],
+        padding[0],  # type: ignore[index]
         dilation[0],  # type: ignore[index]
-        kernel_size[0],
-        stride[0],
-        ceil_mode,  # type: ignore[index]
+        kernel_size[0],  # type: ignore[index]
+        stride[0],  # type: ignore[index]
+        ceil_mode,
     )
     OH = _out_size(
         H,
-        padding[1],
+        padding[1],  # type: ignore[index]
         dilation[1],  # type: ignore[index]
-        kernel_size[1],
-        stride[1],
-        ceil_mode,  # type: ignore[index]
+        kernel_size[1],  # type: ignore[index]
+        stride[1],  # type: ignore[index]
+        ceil_mode,
     )
     OW = _out_size(
         W,
-        padding[2],
+        padding[2],  # type: ignore[index]
         dilation[2],  # type: ignore[index]
-        kernel_size[2],
-        stride[2],
-        ceil_mode,  # type: ignore[index]
+        kernel_size[2],  # type: ignore[index]
+        stride[2],  # type: ignore[index]
+        ceil_mode,
     )
 
     if ceil_mode:

@@ -339,24 +339,24 @@ def avg_pool3d(
 
     OD = _out_size(
         D,
-        padding[0],
+        padding[0],  # type: ignore[index]
         kernel_size[0],  # type: ignore[index]
-        stride[0],
-        ceil_mode,  # type: ignore[index]
+        stride[0],  # type: ignore[index]
+        ceil_mode,
     )
     OH = _out_size(
         H,
-        padding[1],
+        padding[1],  # type: ignore[index]
         kernel_size[1],  # type: ignore[index]
-        stride[1],
-        ceil_mode,  # type: ignore[index]
+        stride[1],  # type: ignore[index]
+        ceil_mode,
     )
     OW = _out_size(
         W,
-        padding[2],
+        padding[2],  # type: ignore[index]
         kernel_size[2],  # type: ignore[index]
-        stride[2],
-        ceil_mode,  # type: ignore[index]
+        stride[2],  # type: ignore[index]
+        ceil_mode,
     )
 
     if ceil_mode:
@@ -400,37 +400,37 @@ def avg_pool3d(
                     -padding[0] + kernel_size[0],  # type: ignore[index]
                     D + padding[0],  # type: ignore[index]
                 ) - (
-                    -padding[0]
-                )  # type: ignore[index]
+                    -padding[0]  # type: ignore[index]
+                )
                 pool_h = min(
                     -padding[1] + kernel_size[1],  # type: ignore[index]
                     H + padding[1],  # type: ignore[index]
                 ) - (
-                    -padding[1]
-                )  # type: ignore[index]
+                    -padding[1]  # type: ignore[index]
+                )
                 pool_w = min(
                     -padding[2] + kernel_size[2],  # type: ignore[index]
                     W + padding[2],  # type: ignore[index]
                 ) - (
-                    -padding[2]
-                )  # type: ignore[index]
+                    -padding[2]  # type: ignore[index]
+                )
                 gap_divisor = pool_d * pool_h * pool_w
             else:
                 valid_d = min(
                     -padding[0] + kernel_size[0], D  # type: ignore[index]
                 ) - max(
-                    -padding[0], 0
-                )  # type: ignore[index]
+                    -padding[0], 0  # type: ignore[index]
+                )
                 valid_h = min(
                     -padding[1] + kernel_size[1], H  # type: ignore[index]
                 ) - max(
-                    -padding[1], 0
-                )  # type: ignore[index]
+                    -padding[1], 0  # type: ignore[index]
+                )
                 valid_w = min(
                     -padding[2] + kernel_size[2], W  # type: ignore[index]
                 ) - max(
-                    -padding[2], 0
-                )  # type: ignore[index]
+                    -padding[2], 0  # type: ignore[index]
+                )
                 gap_divisor = valid_d * valid_h * valid_w
 
             def grid_gap(meta):
