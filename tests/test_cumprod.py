@@ -44,7 +44,12 @@ def test_accuracy_cumprod(dtype, shape, dim):
         else:
             rtol, atol = 5e-2, 5e-2
 
-    ref_out = torch.cumprod(x, dim=dim)
+    if dtype in (torch.float16, torch.bfloat16):
+        # 显式指定 dtype=torch.float32，PyTorch内部累加将不损失精度，最后强制转换对齐类型
+        ref_out = torch.cumprod(x, dim=dim, dtype=torch.float32).to(dtype)
+    else:
+        ref_out = torch.cumprod(x, dim=dim)
+
     with flag_dnn.use_dnn():
         out = torch.cumprod(x, dim=dim)
 
