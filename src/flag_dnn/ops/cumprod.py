@@ -211,7 +211,7 @@ def cumprod(
                 if input.dtype in (torch.float16, torch.bfloat16):
                     BLOCK_N = 4096
                 else:
-                    BLOCK_N = 8192
+                    BLOCK_N = 4096
 
                 grid_size = triton.cdiv(N, BLOCK_N)
                 prods = torch.empty(

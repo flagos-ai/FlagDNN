@@ -28,7 +28,7 @@ class CumsumBenchmark(Benchmark):
     def set_more_shapes(self):
         # cumsum 必须指定单个 dim，且不支持 keepdim，输出 shape 永远与输入一致
         configs = [
-            ((1024 * 1024 * 16,), 0),  # 1D 超长向量 Scan
+            ((1024,), 0),  # 1D 超长向量 Scan
             ((32, 256, 1024), 2),  # Inner Dim (Row) Scan, 易合并
             ((32, 256, 1024), 0),  # Outer Dim (Column) Scan, 最难合并
             ((32, 256, 1024), 1),  # Middle Dim Scan

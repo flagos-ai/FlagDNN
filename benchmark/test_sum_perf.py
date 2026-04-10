@@ -51,7 +51,7 @@ class SumBenchmark(Benchmark):
                 False,
             ),  # 类似全局平均池化 (GAP) 的前置求和
             (
-                (32, 256, 56, 56),
+                (128, 256, 56, 56),
                 1,
                 False,
             ),  # Reduce 通道维度 (Channel Reduction)
