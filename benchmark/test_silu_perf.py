@@ -61,11 +61,17 @@ class SiluBenchmark(Benchmark):
 
 
 @pytest.mark.silu
-def test_perf_silu():
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
+)
+def test_perf_silu(dtype):
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+
     bench = SiluBenchmark(
         op_name="silu",
         torch_op=torch_silu,
         gems_op=gems_silu_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
+        dtypes=[dtype],
     )
     bench.run()

@@ -90,11 +90,17 @@ class AddBenchmark(Benchmark):
 
 
 @pytest.mark.add
-def test_perf_add():
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
+)
+def test_perf_add(dtype):
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+
     bench = AddBenchmark(
         op_name="add",
         torch_op=torch_add,
         gems_op=gems_add_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
+        dtypes=[dtype],
     )
     bench.run()

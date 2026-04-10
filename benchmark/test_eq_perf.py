@@ -86,11 +86,17 @@ class EqBenchmark(Benchmark):
 
 
 @pytest.mark.eq
-def test_perf_eq():
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
+)
+def test_perf_eq(dtype):
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+
     bench = EqBenchmark(
         op_name="eq",
         torch_op=torch_eq,
         gems_op=gems_eq_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
+        dtypes=[dtype],
     )
     bench.run()

@@ -93,11 +93,17 @@ class PowBenchmark(Benchmark):
 
 
 @pytest.mark.pow
-def test_perf_pow():
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
+)
+def test_perf_pow(dtype):
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+
     bench = PowBenchmark(
         op_name="pow",
         torch_op=torch_pow,
         gems_op=gems_pow_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
+        dtypes=[dtype],
     )
     bench.run()

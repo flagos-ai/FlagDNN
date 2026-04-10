@@ -76,11 +76,17 @@ class NegBenchmark(Benchmark):
 
 
 @pytest.mark.neg
-def test_perf_neg():
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
+)
+def test_perf_neg(dtype):
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+
     bench = NegBenchmark(
         op_name="neg",
         torch_op=torch_neg,
         gems_op=gems_neg_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
+        dtypes=[dtype],
     )
     bench.run()

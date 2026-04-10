@@ -88,11 +88,17 @@ class SqrtBenchmark(Benchmark):
 
 
 @pytest.mark.sqrt
-def test_perf_sqrt():
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
+)
+def test_perf_sqrt(dtype):
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+
     bench = SqrtBenchmark(
         op_name="sqrt",
         torch_op=torch_sqrt,
         gems_op=gems_sqrt_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
+        dtypes=[dtype],
     )
     bench.run()

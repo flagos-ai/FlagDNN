@@ -76,11 +76,17 @@ class AvgPool1dBenchmark(Benchmark):
 
 
 @pytest.mark.avg_pool1d
-def test_perf_avg_pool1d():
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
+)
+def test_perf_avg_pool1d(dtype):
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+
     bench = AvgPool1dBenchmark(
         op_name="avg_pool1d",
         torch_op=torch_avg_pool1d,
         gems_op=gems_avg_pool1d_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
+        dtypes=[dtype],
     )
     bench.run()

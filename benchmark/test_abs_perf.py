@@ -79,11 +79,17 @@ class AbsBenchmark(Benchmark):
 
 
 @pytest.mark.abs
-def test_perf_abs():
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
+)
+def test_perf_abs(dtype):
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+
     bench = AbsBenchmark(
         op_name="abs",
         torch_op=torch_abs,
         gems_op=gems_abs_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
+        dtypes=[dtype],
     )
     bench.run()

@@ -112,11 +112,17 @@ class LayerNormBenchmark(Benchmark):
 
 
 @pytest.mark.layer_norm
-def test_perf_layer_norm():
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
+)
+def test_perf_layer_norm(dtype):
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+
     bench = LayerNormBenchmark(
         op_name="layer_norm",
         torch_op=torch_layer_norm,
         gems_op=gems_layer_norm_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
+        dtypes=[dtype],
     )
     bench.run()

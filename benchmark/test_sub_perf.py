@@ -85,11 +85,17 @@ class SubBenchmark(Benchmark):
 
 
 @pytest.mark.sub
-def test_perf_sub():
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
+)
+def test_perf_sub(dtype):
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+
     bench = SubBenchmark(
         op_name="sub",
         torch_op=torch_sub,
         gems_op=gems_sub_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
+        dtypes=[dtype],
     )
     bench.run()

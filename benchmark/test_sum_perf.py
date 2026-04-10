@@ -103,11 +103,17 @@ class SumBenchmark(Benchmark):
 
 
 @pytest.mark.sum
-def test_perf_sum():
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
+)
+def test_perf_sum(dtype):
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+
     bench = SumBenchmark(
         op_name="sum",
         torch_op=torch_sum,
         gems_op=gems_sum_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
+        dtypes=[dtype],
     )
     bench.run()

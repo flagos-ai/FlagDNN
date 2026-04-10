@@ -62,11 +62,17 @@ class LeakyReluBenchmark(Benchmark):
 
 
 @pytest.mark.leaky_relu
-def test_perf_leaky_relu():
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
+)
+def test_perf_leaky_relu(dtype):
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+
     bench = LeakyReluBenchmark(
         op_name="leaky_relu",
         torch_op=torch_leaky_relu,
         gems_op=gems_leaky_relu_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
+        dtypes=[dtype],
     )
     bench.run()

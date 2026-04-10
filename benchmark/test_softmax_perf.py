@@ -91,11 +91,17 @@ class SoftmaxBenchmark(Benchmark):
 
 
 @pytest.mark.softmax
-def test_perf_softmax():
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
+)
+def test_perf_softmax(dtype):
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+
     bench = SoftmaxBenchmark(
         op_name="softmax",
         torch_op=torch_softmax,
         gems_op=gems_softmax_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
+        dtypes=[dtype],
     )
     bench.run()

@@ -60,11 +60,17 @@ class ReluBenchmark(Benchmark):
 
 
 @pytest.mark.relu
-def test_perf_relu():
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
+)
+def test_perf_relu(dtype):
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+
     bench = ReluBenchmark(
         op_name="relu",
         torch_op=torch_relu,
         gems_op=gems_relu_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
+        dtypes=[dtype],
     )
     bench.run()

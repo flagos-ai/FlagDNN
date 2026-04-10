@@ -83,11 +83,17 @@ class ProdBenchmark(Benchmark):
 
 
 @pytest.mark.prod
-def test_perf_prod():
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
+)
+def test_perf_prod(dtype):
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+
     bench = ProdBenchmark(
         op_name="prod",
         torch_op=torch_prod,
         gems_op=gems_prod_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
+        dtypes=[dtype],
     )
     bench.run()

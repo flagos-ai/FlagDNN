@@ -123,7 +123,7 @@ def main():
             # "yhrun",
             # "-p", "h100x",
             # "-G", "1",
-            "python",
+            "python3",
             "-m",
             "pytest",
             "-v",

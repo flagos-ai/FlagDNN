@@ -86,11 +86,17 @@ class DivBenchmark(Benchmark):
 
 
 @pytest.mark.div
-def test_perf_div():
+@pytest.mark.parametrize(
+    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
+)
+def test_perf_div(dtype):
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+
     bench = DivBenchmark(
         op_name="div",
         torch_op=torch_div,
         gems_op=gems_div_wrapper,
-        dtypes=[torch.float16, torch.bfloat16, torch.float32, torch.float64],
+        dtypes=[dtype],
     )
     bench.run()
