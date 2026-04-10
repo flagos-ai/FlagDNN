@@ -1,0 +1,740 @@
+scal:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+        KERNEL_ID: kernel_id
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    kernel_id:
+      - 0
+      - 1
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+relu:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+gelu:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+silu:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+leaky_relu:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+prelu:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+softmax:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096      # 针对大词表新增的大块读取
+      - 8192      # 极限显存吞吐块大小
+    warps:
+      - 4
+      - 8
+      - 16
+      - 32
+    stages:
+      - 2
+      - 3
+      - 4         # 增加流水线深度，有助于掩盖大块访存延迟
+batch_norm:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 256
+      # - 512
+      # - 1024
+      # - 2048
+      # - 4096
+      # - 8192
+    warps:
+      # - 4
+      - 8
+    #   - 16
+    #   - 32
+    stages:
+      - 2
+    #   - 3
+    #   - 4
+pow:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+sqrt:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+abs:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+neg:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+clamp:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+binary:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+layer_norm:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+      - 4
+rms_norm:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+      - 4
+group_norm:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+      - 4
+max_pool1d:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+      - 4
+avg_pool1d:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+      - 4
+max_pool2d:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+      - 4
+avg_pool2d:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+      - 4
+max_pool3d:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+      - 4
+avg_pool3d:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+      - 4
+adaptive_max_pool1d:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+      - 4
+adaptive_max_pool2d:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+      - 4
+adaptive_max_pool3d:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+      - 4
+adaptive_avg_pool1d_global:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+      - 4
+adaptive_avg_pool1d_divisible_large:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 16
+      - 32
+      - 64
+      - 128
+    warps:
+      - 1
+      - 2
+      - 4
+    stages:
+      - 1
+      - 2
+adaptive_avg_pool1d_general_large:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 16
+      - 32
+      - 64
+      - 128
+    warps:
+      - 1
+      - 2
+      - 4
+    stages:
+      - 1
+      - 2
+adaptive_avg_pool2d_global:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 32
+      - 64
+      - 128
+      - 256
+      - 512
+    warps:
+      - 1
+      - 2
+      - 4
+    stages:
+      - 1
+      - 2
+      - 3
+adaptive_avg_pool2d_divisible_large:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_H: block_h
+        BLOCK_W: block_w
+      num_warps: warps
+      num_stages: stages
+    block_h:
+      - 1
+      - 2
+      - 4
+      - 8
+    block_w:
+      - 4
+      - 8
+      - 16
+    warps:
+      - 1
+      - 2
+      - 4
+      - 8
+    stages:
+      - 1
+      - 2
+      - 3
+adaptive_avg_pool2d_general_large:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_H: block_h
+        BLOCK_W: block_w
+      num_warps: warps
+      num_stages: stages
+    block_h:
+      - 1
+      - 2
+      - 4
+      - 8
+    block_w:
+      - 4
+      - 8
+      - 16
+    warps:
+      - 1
+      - 2
+      - 4
+    stages:
+      - 1
+      - 2
+adaptive_avg_pool3d_global:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 32
+      - 64
+      - 128
+      - 256
+      - 512
+      - 1024
+      - 2048
+    warps:
+      - 2
+      - 4
+      - 8
+      - 16
+    stages:
+      - 1
+      - 2
+      - 3
+      - 4
+adaptive_avg_pool3d_divisible_large:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_D: block_d
+        BLOCK_H: block_h
+        BLOCK_W: block_w
+      num_warps: warps
+      num_stages: stages
+    block_d:
+      - 1
+      - 2
+      - 4
+    block_h:
+      - 1
+      - 2
+      - 4
+      - 8
+    block_w:
+      - 4
+      - 8
+      - 16
+    warps:
+      - 1
+      - 2
+      - 4
+      - 8
+    stages:
+      - 1
+      - 2
+      - 3
+adaptive_avg_pool3d_general_large:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_D: block_d
+        BLOCK_H: block_h
+        BLOCK_W: block_w
+      num_warps: warps
+      num_stages: stages
+    block_d:
+      - 1
+      - 2
+      - 4
+    block_h:
+      - 1
+      - 2
+      - 4
+      - 8
+    block_w:
+      - 4
+      - 8
+      - 16
+    warps:
+      - 1
+      - 2
+      - 4
+      - 8
+    stages:
+      - 1
+      - 2
+      - 3
