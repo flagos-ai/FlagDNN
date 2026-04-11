@@ -125,7 +125,8 @@ def prelu(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
     assert x.dtype == weight.dtype, "x and weight must have the same dtype"
 
     n_elements = x.numel()
-    assert n_elements > 0, "input must be non-empty"
+    if n_elements == 0:
+        return torch.empty_like(x)
 
     y = torch.empty_like(x)
 
