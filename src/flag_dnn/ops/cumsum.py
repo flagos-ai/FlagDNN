@@ -15,37 +15,52 @@ logger = logging.getLogger(__name__)
 @triton.jit
 def cumsum_global_pass1(in_ptr, out_ptr, sums_ptr, N, BLOCK_N: tl.constexpr):
     pid = tle.program_id(0)
-    cols = pid * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs = tl.arange(0, BLOCK_N)
+    cols = pid * BLOCK_N + offs
     mask = cols < N
+
     val = tl.load(in_ptr + cols, mask=mask, other=0.0).to(tl.float32)
     c_sum = tl.cumsum(val, axis=0)
+
     tl.store(out_ptr + cols, c_sum.to(out_ptr.dtype.element_ty), mask=mask)
+
     if sums_ptr is not None:
-        tl.store(sums_ptr + pid, tl.sum(val, axis=0))
+        last_mask = offs == (BLOCK_N - 1)
+        block_total = tl.sum(tl.where(last_mask, c_sum, 0.0), axis=0)
+        tl.store(sums_ptr + pid, block_total)
 
 
 @triton.jit
 def cumsum_global_pass2(sums_ptr, num_blocks, BLOCK_N: tl.constexpr):
-    cols = tl.arange(0, BLOCK_N)
+    offs = tl.arange(0, BLOCK_N)
     running_sum = 0.0
+
     for i in range(0, num_blocks, BLOCK_N):
-        idx = i + cols
+        idx = i + offs
         mask = idx < num_blocks
+
         val = tl.load(sums_ptr + idx, mask=mask, other=0.0).to(tl.float32)
         c_sum = tl.cumsum(val, axis=0) + running_sum
         tl.store(sums_ptr + idx, c_sum, mask=mask)
-        running_sum += tl.sum(val, axis=0)
+
+        # Triton 不支持 c_sum[BLOCK_N - 1]
+        # 改成 one-hot mask + reduce 取最后一个元素
+        last_mask = offs == (BLOCK_N - 1)
+        running_sum = tl.sum(tl.where(last_mask, c_sum, 0.0), axis=0)
 
 
 @triton.jit
 def cumsum_global_pass3(out_ptr, sums_ptr, N, BLOCK_N: tl.constexpr):
     pid = tle.program_id(0)
+
     if pid > 0:
         add_val = tl.load(sums_ptr + pid - 1).to(tl.float32)
         cols = pid * BLOCK_N + tl.arange(0, BLOCK_N)
         mask = cols < N
+
         val = tl.load(out_ptr + cols, mask=mask, other=0.0).to(tl.float32)
         val += add_val
+
         tl.store(out_ptr + cols, val.to(out_ptr.dtype.element_ty), mask=mask)
 
 
@@ -103,7 +118,14 @@ def cumsum_inner_dim_kernel(
         tl.store(
             out_ptr + idx, out_val.to(out_ptr.dtype.element_ty), mask=mask
         )
-        running_sum += tl.sum(val, axis=0)
+
+        # Triton 不支持 out_val[BLOCK_N - 1, :]
+        # 用 one-hot 选最后一行，再沿 axis=0 reduce
+        last_row_mask = offsets_n[:, None] == (BLOCK_N - 1)
+        running_sum = tl.sum(
+            tl.where(last_row_mask, out_val, 0.0),
+            axis=0,
+        )
 
 
 @triton.autotune(
@@ -146,13 +168,19 @@ def cumsum_last_dim_kernel(
 
         val = tl.load(in_ptr + idx, mask=mask, other=0.0).to(tl.float32)
         chunk_cumsum = tl.cumsum(val, axis=0)
-
         out_val = chunk_cumsum + running_sum[None, :]
 
         tl.store(
             out_ptr + idx, out_val.to(out_ptr.dtype.element_ty), mask=mask
         )
-        running_sum += tl.sum(val, axis=0)
+
+        # Triton 不支持 out_val[BLOCK_N - 1, :]
+        # 用 one-hot 选最后一行，再沿 axis=0 reduce
+        last_row_mask = offsets_n[:, None] == (BLOCK_N - 1)
+        running_sum = tl.sum(
+            tl.where(last_row_mask, out_val, 0.0),
+            axis=0,
+        )
 
 
 def cumsum(
@@ -198,35 +226,41 @@ def cumsum(
 
     with torch_device_fn.device(input.device):
         if M_post == 1:
-            # 归约最后一维
+            # 最后一维扫描
             if M_pre == 1 and N > 65536:
-                # 3-Pass 全局并行扫描
+                # 3-pass 全局并行扫描
                 if input.dtype in (torch.float16, torch.bfloat16):
-                    BLOCK_N = 4096
+                    block_n_pass1_3 = 4096
                 else:
-                    BLOCK_N = 8192
+                    block_n_pass1_3 = 8192
 
-                grid_size = triton.cdiv(N, BLOCK_N)
+                grid_size = triton.cdiv(N, block_n_pass1_3)
                 sums = torch.empty(
                     (grid_size,), dtype=torch.float32, device=input.device
                 )
 
                 cumsum_global_pass1[(grid_size,)](
-                    input_c, out_c, sums, N, BLOCK_N=BLOCK_N
+                    input_c,
+                    out_c,
+                    sums,
+                    N,
+                    BLOCK_N=block_n_pass1_3,
                 )
-                cumsum_global_pass2[(1,)](sums, grid_size, BLOCK_N=4096)
+                cumsum_global_pass2[(1,)](
+                    sums,
+                    grid_size,
+                    BLOCK_N=4096,
+                )
                 cumsum_global_pass3[(grid_size,)](
-                    out_c, sums, N, BLOCK_N=BLOCK_N
+                    out_c,
+                    sums,
+                    N,
+                    BLOCK_N=block_n_pass1_3,
                 )
             else:
-                # 触发多行 Batched Loop
+
                 def grid(meta):
-                    return (
-                        triton.cdiv(
-                            M_pre,
-                            meta["BLOCK_M_PRE"],
-                        ),
-                    )
+                    return (triton.cdiv(M_pre, meta["BLOCK_M_PRE"]),)
 
                 cumsum_last_dim_kernel[grid](
                     input_c,
@@ -236,13 +270,10 @@ def cumsum(
                 )
         else:
 
-            def grid(meta):  # type: ignore[assignment]
+            def grid(meta):
                 return (
                     M_pre,
-                    triton.cdiv(
-                        M_post,
-                        meta["BLOCK_M_POST"],
-                    ),
+                    triton.cdiv(M_post, meta["BLOCK_M_POST"]),
                 )
 
             cumsum_inner_dim_kernel[grid](
