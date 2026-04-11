@@ -88,9 +88,9 @@ def prelu_channelwise_kernel(
     x_ptr,
     weight_ptr,
     y_ptr,
-    inner_size,     # H * W * ...
-    num_channels,   # C
-    outer_size,     # N * C
+    inner_size,  # H * W * ...
+    num_channels,  # C
+    outer_size,  # N * C
     BLOCK_SIZE: tl.constexpr,
 ):
     """
@@ -100,8 +100,8 @@ def prelu_channelwise_kernel(
       - channel 索引只算一次
       - slope a 只加载一次
     """
-    pid_col = tle.program_id(0)   # 当前 row 内的 block id
-    pid_row = tle.program_id(1)   # row id, 范围 [0, outer_size)
+    pid_col = tle.program_id(0)  # 当前 row 内的 block id
+    pid_row = tle.program_id(1)  # row id, 范围 [0, outer_size)
 
     offsets = pid_col * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     mask = offsets < inner_size
@@ -134,6 +134,7 @@ def prelu(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
     with torch_device_fn.device(x.device):
         # 路径1：单参数，共享一个 slope
         if num_parameters == 1:
+
             def grid(meta):
                 return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
@@ -147,15 +148,17 @@ def prelu(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
 
         # 多参数时，必须满足 PyTorch prelu 的通道规则
         assert x.dim() >= 2, "when weight.numel() > 1, input dim must be >= 2"
-        assert (
-            num_parameters == x.shape[1]
-        ), f"weight numel ({num_parameters}) must equal channel size ({x.shape[1]})"
+        assert num_parameters == x.shape[1], (
+            f"weight numel ({num_parameters}) must equal "
+            f"channel size ({x.shape[1]})"
+        )
 
         inner_size = math.prod(x.shape[2:]) if x.dim() > 2 else 1
 
         # 路径2：多通道，但 inner_size == 1
         # 例如 (N, C) 或 (N, C, 1, 1)
         if inner_size == 1:
+
             def grid(meta):
                 return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
