@@ -67,7 +67,7 @@ def get_tol(dtype):
     "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
 )
 @pytest.mark.parametrize("shape, threshold_val, value_val", THRESHOLD_CASES)
-def test_accuracy_threshold(dtype, shape, threshold_val, value_val):
+def test_accuracy_threshold_(dtype, shape, threshold_val, value_val):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
 

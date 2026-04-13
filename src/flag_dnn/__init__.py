@@ -46,6 +46,7 @@ from flag_dnn.ops import (  # noqa: F401
     sum,
     threshold,
     threshold_,
+    leaky_relu_,
 )
 from flag_dnn.config import aten_patch_list, resolve_user_setting
 from flag_dnn.runtime.register import Register
@@ -100,6 +101,7 @@ _FULL_CONFIG = (
     ("sum", sum),
     ("threshold", threshold),
     ("threshold_", threshold_),
+    ("leaky_relu_", leaky_relu_),
 )
 
 FULL_CONFIG_BY_FUNC: dict = {}

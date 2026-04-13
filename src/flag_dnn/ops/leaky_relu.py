@@ -12,6 +12,21 @@ from flag_dnn.utils import triton_lang_extension as tle
 
 logger = logging.getLogger(__name__)
 
+_NEG_TENSOR_CACHE: dict[
+    tuple[str, int | None, torch.dtype, float], torch.Tensor
+] = {}
+
+
+def _get_neg_tensor(
+    device: torch.device, dtype: torch.dtype, negative_slope: float
+):
+    key = (device.type, device.index, dtype, float(negative_slope))
+    neg = _NEG_TENSOR_CACHE.get(key)
+    if neg is None:
+        neg = torch.tensor(float(negative_slope), dtype=dtype, device=device)
+        _NEG_TENSOR_CACHE[key] = neg
+    return neg
+
 
 @libentry()
 @libtuner(
@@ -23,29 +38,29 @@ logger = logging.getLogger(__name__)
 )
 @triton.jit
 def leaky_relu_kernel(
-    x_ptr,  # 输入张量指针
-    y_ptr,  # 输出张量指针
-    n_elements,  # 张量总元素个数
-    negative_slope,  # 负半轴斜率 (标量，不需要设为 constexpr，因为可以动态传参)
-    BLOCK_SIZE: tl.constexpr,  # 编译期常量：线程块大小
+    x_ptr,
+    y_ptr,
+    neg_ptr,
+    n_elements,
+    COMPUTE_FP64: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
 ):
-    # 计算当前线程处理的全局索引
     pid = tle.program_id(0)
-    block_start = pid * BLOCK_SIZE
-    offsets = block_start + tl.arange(0, BLOCK_SIZE)
-
-    # 创建掩码，防止越界访问
+    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     mask = offsets < n_elements
 
-    # 从显存中加载数据
-    x = tl.load(x_ptr + offsets, mask=mask)
+    x = tl.load(x_ptr + offsets, mask=mask, other=0)
+    neg = tl.load(neg_ptr)
 
-    # 计算 LeakyReLU
-    # 在 GPU 底层，这通常会被编译为高效的条件选择指令，避免了真正的分支跳转
-    y = tl.where(x >= 0.0, x, x * negative_slope)
+    if COMPUTE_FP64:
+        x = x.to(tl.float64)
+        neg = neg.to(tl.float64)
+    else:
+        x = x.to(tl.float32)
+        neg = neg.to(tl.float32)
 
-    # 将计算结果写回显存
-    tl.store(y_ptr + offsets, y, mask=mask)
+    y = tl.where(x > 0, x, x * neg)
+    tl.store(y_ptr + offsets, y.to(y_ptr.dtype.element_ty), mask=mask)
 
 
 def leaky_relu(
@@ -53,30 +68,33 @@ def leaky_relu(
 ) -> torch.Tensor:
     logger.debug(
         "FLAG_DNN LEAKY_RELU "
-        f"(negative_slope={negative_slope}, "
-        f"inplace={inplace})"
+        f"(negative_slope={negative_slope}, inplace={inplace})"
     )
 
     assert x.is_contiguous(), "x must be contiguous"
 
-    # 根据 inplace 参数决定是否复用输入张量的显存
-    if inplace:
-        y = x
-    else:
-        y = torch.empty_like(x)
-
     n_elements = x.numel()
+    if n_elements == 0:
+        return x if inplace else torch.empty_like(x)
+
+    y = x if inplace else torch.empty_like(x)
+
+    compute_fp64 = x.dtype == torch.float64
+    compute_dtype = torch.float64 if compute_fp64 else torch.float32
+
+    # 关键：不要每次新建，走缓存
+    neg = _get_neg_tensor(x.device, compute_dtype, negative_slope)
 
     def grid(meta):
         return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
-    # 启动 Triton Kernel
     with torch_device_fn.device(x.device):
         leaky_relu_kernel[grid](
             x,
             y,
+            neg,
             n_elements,
-            negative_slope,  # 传入浮点数参数
+            compute_fp64,
         )
 
     return y
