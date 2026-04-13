@@ -44,6 +44,7 @@ from flag_dnn.ops import (  # noqa: F401
     sqrt,
     sub,
     sum,
+    threshold,
 )
 from flag_dnn.config import aten_patch_list, resolve_user_setting
 from flag_dnn.runtime.register import Register
@@ -96,6 +97,7 @@ _FULL_CONFIG = (
     ("sqrt", sqrt),
     ("sub", sub),
     ("sum", sum),
+    ("threshold", threshold),
 )
 
 FULL_CONFIG_BY_FUNC: dict = {}

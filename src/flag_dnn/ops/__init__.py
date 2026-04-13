@@ -41,6 +41,7 @@ from flag_dnn.ops.adaptive_avg_pool1d import adaptive_avg_pool1d
 from flag_dnn.ops.adaptive_avg_pool3d import adaptive_avg_pool3d
 from flag_dnn.ops.adaptive_max_pool1d import adaptive_max_pool1d
 from flag_dnn.ops.adaptive_max_pool3d import adaptive_max_pool3d
+from flag_dnn.ops.threshold import threshold
 
 
 __all__ = [
@@ -83,4 +84,5 @@ __all__ = [
     "adaptive_avg_pool3d",
     "adaptive_max_pool1d",
     "adaptive_max_pool3d",
+    "threshold",
 ]
