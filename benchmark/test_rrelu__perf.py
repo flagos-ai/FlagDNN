@@ -9,15 +9,15 @@ import flag_dnn
 from benchmark.performance_utils import Benchmark
 
 
-def torch_threshold_(x, threshold_val, value_val):
-    return F.threshold_(x, threshold_val, value_val)
+def torch_rrelu_(x, lower, upper, training):
+    return F.rrelu_(x, lower=lower, upper=upper, training=training)
 
 
-def gems_threshold__wrapper(x, threshold_val, value_val):
-    return flag_dnn.ops.threshold_(x, threshold_val, value_val)
+def gems_rrelu__wrapper(x, lower, upper, training):
+    return flag_dnn.ops.rrelu_(x, lower, upper, training)
 
 
-class Threshold_Benchmark(Benchmark):
+class RReLU_Benchmark(Benchmark):
     IO_FACTOR = 2
     MAX_PEAK_BYTES = 6 * 1024**3
 
@@ -26,15 +26,29 @@ class Threshold_Benchmark(Benchmark):
 
     def set_more_shapes(self):
         self.shapes = [
-            (4096,),  # 小向量
-            (65536,),  # 中等向量
-            (1048576,),  # 大向量
-            (4096, 4096),  # 大 2D
-            (32, 128, 768),  # Transformer: B x S x H
-            (32, 512, 768),  # Transformer 长序列
-            (32, 128, 1024),  # 更大 hidden size
-            (32, 64, 56, 56),  # CV: ResNet 中间层激活
-            (32, 256, 28, 28),  # CV: 更深层特征图
+            # 1D
+            (1024,),
+            (4096,),
+            (16384,),
+            (65536,),
+            (262144,),
+            (1048576,),
+            # 2D
+            (256, 256),
+            (512, 512),
+            (1024, 1024),
+            (2048, 2048),
+            # 4D
+            (1, 3, 224, 224),
+            (8, 3, 224, 224),
+            (32, 3, 224, 224),
+            (64, 3, 224, 224),
+            (1, 64, 112, 112),
+            (8, 64, 112, 112),
+            (32, 64, 112, 112),
+            (1, 128, 56, 56),
+            (8, 128, 56, 56),
+            (32, 128, 56, 56),
         ]
         return None
 
@@ -47,8 +61,9 @@ class Threshold_Benchmark(Benchmark):
         return input_bytes * 2
 
     def get_input_iter(self, cur_dtype) -> Generator:
-        threshold_val = 0.0
-        value_val = 0.0
+        lower = 1.0 / 8
+        upper = 1.0 / 3
+        training = False
 
         for shape in self.shapes:
             if (
@@ -56,6 +71,7 @@ class Threshold_Benchmark(Benchmark):
                 > self.MAX_PEAK_BYTES
             ):
                 continue
+
             numel = prod(shape)
             if numel == 0:
                 continue
@@ -63,7 +79,7 @@ class Threshold_Benchmark(Benchmark):
             x = torch.empty(
                 shape, dtype=cur_dtype, device=self.device
             ).uniform_(-1.0, 1.0)
-            yield x, threshold_val, value_val
+            yield x, lower, upper, training
 
     def get_gbps(self, args, latency):
         x = args[0]
@@ -71,18 +87,18 @@ class Threshold_Benchmark(Benchmark):
         return io_amount / (latency * 1e-3) / 1e9
 
 
-@pytest.mark.threshold_
+@pytest.mark.rrelu_
 @pytest.mark.parametrize(
     "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
 )
-def test_perf_threshold_(dtype):
+def test_perf_rrelu_(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
 
-    bench = Threshold_Benchmark(
-        op_name="threshold_",
-        torch_op=torch_threshold_,
-        gems_op=gems_threshold__wrapper,
+    bench = RReLU_Benchmark(
+        op_name="rrelu_",
+        torch_op=torch_rrelu_,
+        gems_op=gems_rrelu__wrapper,
         dtypes=[dtype],
     )
     bench.run()

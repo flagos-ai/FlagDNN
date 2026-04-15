@@ -44,6 +44,12 @@ from flag_dnn.ops.adaptive_max_pool3d import adaptive_max_pool3d
 from flag_dnn.ops.threshold import threshold
 from flag_dnn.ops.threshold_ import threshold_
 from flag_dnn.ops.leaky_relu_ import leaky_relu_
+from flag_dnn.ops.hardtanh import hardtanh
+from flag_dnn.ops.hardtanh_ import hardtanh_
+from flag_dnn.ops.elu import elu
+from flag_dnn.ops.elu_ import elu_
+from flag_dnn.ops.rrelu import rrelu
+from flag_dnn.ops.rrelu_ import rrelu_
 
 
 __all__ = [
@@ -89,4 +95,10 @@ __all__ = [
     "threshold",
     "threshold_",
     "leaky_relu_",
+    "hardtanh",
+    "hardtanh_",
+    "elu",
+    "elu_",
+    "rrelu",
+    "rrelu_",
 ]

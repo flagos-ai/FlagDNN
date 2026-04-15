@@ -29,7 +29,7 @@ def get_tol(dtype):
     return dict(rtol=1e-12, atol=1e-12)
 
 
-@pytest.mark.leaky_relu
+@pytest.mark.leaky_relu_
 @pytest.mark.parametrize(
     "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
 )

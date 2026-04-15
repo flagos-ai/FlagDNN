@@ -19,7 +19,7 @@ def gems_leaky_relu__wrapper(x, y=None):
     return flag_dnn.ops.leaky_relu_(x)
 
 
-class LeakyReluBenchmark(Benchmark):
+class LeakyRelu_Benchmark(Benchmark):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -59,15 +59,15 @@ class LeakyReluBenchmark(Benchmark):
         return io_amount * 1e-9 / (latency * 1e-3)
 
 
-@pytest.mark.leaky_relu
+@pytest.mark.leaky_relu_
 @pytest.mark.parametrize(
     "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
 )
-def test_perf_leaky_relu(dtype):
+def test_perf_leaky_relu_(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
 
-    bench = LeakyReluBenchmark(
+    bench = LeakyRelu_Benchmark(
         op_name="leaky_relu_",
         torch_op=torch_leaky_relu_,
         gems_op=gems_leaky_relu__wrapper,

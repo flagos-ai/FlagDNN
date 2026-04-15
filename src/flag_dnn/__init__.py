@@ -47,6 +47,12 @@ from flag_dnn.ops import (  # noqa: F401
     threshold,
     threshold_,
     leaky_relu_,
+    hardtanh,
+    hardtanh_,
+    elu,
+    elu_,
+    rrelu,
+    rrelu_,
 )
 from flag_dnn.config import aten_patch_list, resolve_user_setting
 from flag_dnn.runtime.register import Register
@@ -102,6 +108,12 @@ _FULL_CONFIG = (
     ("threshold", threshold),
     ("threshold_", threshold_),
     ("leaky_relu_", leaky_relu_),
+    ("hardtanh", hardtanh),
+    ("hardtanh_", hardtanh_),
+    ("elu", elu),
+    ("elu_", elu_),
+    ("rrelu", rrelu),
+    ("rrelu_", rrelu_),
 )
 
 FULL_CONFIG_BY_FUNC: dict = {}
