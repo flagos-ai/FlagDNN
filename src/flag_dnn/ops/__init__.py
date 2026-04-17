@@ -50,6 +50,11 @@ from flag_dnn.ops.elu import elu
 from flag_dnn.ops.elu_ import elu_
 from flag_dnn.ops.rrelu import rrelu
 from flag_dnn.ops.rrelu_ import rrelu_
+from flag_dnn.ops.mish import mish
+from flag_dnn.ops.softplus import softplus
+from flag_dnn.ops.softsign import softsign
+from flag_dnn.ops.softshrink import softshrink
+from flag_dnn.ops.softmin import softmin
 
 
 __all__ = [
@@ -101,4 +106,9 @@ __all__ = [
     "elu_",
     "rrelu",
     "rrelu_",
+    "mish",
+    "softplus",
+    "softsign",
+    "softshrink",
+    "softmin",
 ]

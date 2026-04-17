@@ -53,6 +53,11 @@ from flag_dnn.ops import (  # noqa: F401
     elu_,
     rrelu,
     rrelu_,
+    mish,
+    softplus,
+    softsign,
+    softshrink,
+    softmin,
 )
 from flag_dnn.config import aten_patch_list, resolve_user_setting
 from flag_dnn.runtime.register import Register
@@ -114,6 +119,11 @@ _FULL_CONFIG = (
     ("elu_", elu_),
     ("rrelu", rrelu),
     ("rrelu_", rrelu_),
+    ("mish", mish),
+    ("softplus", softplus),
+    ("softsign", softsign),
+    ("softshrink", softshrink),
+    ("softmin", softmin),
 )
 
 FULL_CONFIG_BY_FUNC: dict = {}
