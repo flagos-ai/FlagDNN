@@ -59,6 +59,7 @@ from flag_dnn.ops import (  # noqa: F401
     softshrink,
     softmin,
     mv,
+    dot,
 )
 from flag_dnn.config import aten_patch_list, resolve_user_setting
 from flag_dnn.runtime.register import Register
@@ -126,6 +127,7 @@ _FULL_CONFIG = (
     ("softshrink", softshrink),
     ("softmin", softmin),
     ("mv", mv),
+    ("dot", dot),
 )
 
 FULL_CONFIG_BY_FUNC: dict = {}

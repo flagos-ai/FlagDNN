@@ -56,6 +56,7 @@ from flag_dnn.ops.softsign import softsign
 from flag_dnn.ops.softshrink import softshrink
 from flag_dnn.ops.softmin import softmin
 from flag_dnn.ops.mv import mv
+from flag_dnn.ops.dot import dot
 
 
 __all__ = [
@@ -113,4 +114,5 @@ __all__ = [
     "softshrink",
     "softmin",
     "mv",
+    "dot",
 ]

@@ -1038,3 +1038,51 @@ mv_wide_fp64:
       - 3
       - 4
       - 5
+dot:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+        UNROLL: unroll
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    unroll:
+      - 2
+      - 4
+      - 8
+    warps:
+      - 2
+      - 4
+      - 8
+    stages:
+      - 1
+      - 2
+
+dot_fp64:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+        UNROLL: unroll
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 64
+      - 128
+      - 256
+      - 512
+    unroll:
+      - 2
+      - 4
+    warps:
+      - 2
+      - 4
+      - 8
+    stages:
+      - 1
+      - 2
