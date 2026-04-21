@@ -16,25 +16,53 @@ logger = logging.getLogger(__name__)
 
 def _fallback_dot_configs() -> Sequence[triton.Config]:
     return [
-        triton.Config({"BLOCK_SIZE": 128, "UNROLL": 2}, num_warps=2, num_stages=1),
-        triton.Config({"BLOCK_SIZE": 128, "UNROLL": 4}, num_warps=4, num_stages=1),
-        triton.Config({"BLOCK_SIZE": 256, "UNROLL": 2}, num_warps=4, num_stages=1),
-        triton.Config({"BLOCK_SIZE": 256, "UNROLL": 4}, num_warps=4, num_stages=2),
-        triton.Config({"BLOCK_SIZE": 512, "UNROLL": 4}, num_warps=4, num_stages=2),
-        triton.Config({"BLOCK_SIZE": 512, "UNROLL": 8}, num_warps=8, num_stages=2),
-        triton.Config({"BLOCK_SIZE": 1024, "UNROLL": 4}, num_warps=8, num_stages=2),
+        triton.Config(
+            {"BLOCK_SIZE": 128, "UNROLL": 2}, num_warps=2, num_stages=1
+        ),
+        triton.Config(
+            {"BLOCK_SIZE": 128, "UNROLL": 4}, num_warps=4, num_stages=1
+        ),
+        triton.Config(
+            {"BLOCK_SIZE": 256, "UNROLL": 2}, num_warps=4, num_stages=1
+        ),
+        triton.Config(
+            {"BLOCK_SIZE": 256, "UNROLL": 4}, num_warps=4, num_stages=2
+        ),
+        triton.Config(
+            {"BLOCK_SIZE": 512, "UNROLL": 4}, num_warps=4, num_stages=2
+        ),
+        triton.Config(
+            {"BLOCK_SIZE": 512, "UNROLL": 8}, num_warps=8, num_stages=2
+        ),
+        triton.Config(
+            {"BLOCK_SIZE": 1024, "UNROLL": 4}, num_warps=8, num_stages=2
+        ),
     ]
 
 
 def _fallback_dot_fp64_configs() -> Sequence[triton.Config]:
     return [
-        triton.Config({"BLOCK_SIZE": 64, "UNROLL": 2}, num_warps=2, num_stages=1),
-        triton.Config({"BLOCK_SIZE": 128, "UNROLL": 2}, num_warps=2, num_stages=1),
-        triton.Config({"BLOCK_SIZE": 128, "UNROLL": 4}, num_warps=4, num_stages=1),
-        triton.Config({"BLOCK_SIZE": 256, "UNROLL": 2}, num_warps=4, num_stages=1),
-        triton.Config({"BLOCK_SIZE": 256, "UNROLL": 4}, num_warps=4, num_stages=2),
-        triton.Config({"BLOCK_SIZE": 512, "UNROLL": 2}, num_warps=4, num_stages=2),
-        triton.Config({"BLOCK_SIZE": 512, "UNROLL": 4}, num_warps=8, num_stages=2),
+        triton.Config(
+            {"BLOCK_SIZE": 64, "UNROLL": 2}, num_warps=2, num_stages=1
+        ),
+        triton.Config(
+            {"BLOCK_SIZE": 128, "UNROLL": 2}, num_warps=2, num_stages=1
+        ),
+        triton.Config(
+            {"BLOCK_SIZE": 128, "UNROLL": 4}, num_warps=4, num_stages=1
+        ),
+        triton.Config(
+            {"BLOCK_SIZE": 256, "UNROLL": 2}, num_warps=4, num_stages=1
+        ),
+        triton.Config(
+            {"BLOCK_SIZE": 256, "UNROLL": 4}, num_warps=4, num_stages=2
+        ),
+        triton.Config(
+            {"BLOCK_SIZE": 512, "UNROLL": 2}, num_warps=4, num_stages=2
+        ),
+        triton.Config(
+            {"BLOCK_SIZE": 512, "UNROLL": 4}, num_warps=8, num_stages=2
+        ),
     ]
 
 
@@ -49,7 +77,9 @@ def _get_tuned_or_default(name: str, fallback):
 
 
 _DOT_CONFIGS = _get_tuned_or_default("dot", _fallback_dot_configs())
-_DOT_FP64_CONFIGS = _get_tuned_or_default("dot_fp64", _fallback_dot_fp64_configs())
+_DOT_FP64_CONFIGS = _get_tuned_or_default(
+    "dot_fp64", _fallback_dot_fp64_configs()
+)
 
 # single-program 阈值
 _DOT_SINGLE_THRESHOLD_LOW_PREC = 24576
@@ -199,9 +229,7 @@ def cast_scalar_kernel(src_ptr, dst_ptr):
 
 def _check_dot_inputs(input: torch.Tensor, tensor: torch.Tensor) -> None:
     if input.dim() != 1 or tensor.dim() != 1:
-        raise RuntimeError(
-            "flag_dnn dot expects both input tensors to be 1D"
-        )
+        raise RuntimeError("flag_dnn dot expects both input tensors to be 1D")
 
     if input.numel() != tensor.numel():
         raise RuntimeError(
@@ -272,17 +300,16 @@ def _launch_atomic_fp32(
     n_elements: int,
     out_tensor: torch.Tensor,
 ) -> torch.Tensor:
+    def grid(meta):
+        return (
+            triton.cdiv(
+                n_elements,
+                meta["BLOCK_SIZE"] * meta["UNROLL"],
+            ),
+        )
+
     if input.dtype == torch.float32:
         out_tensor.zero_()
-
-        def grid(meta):
-            return (
-                triton.cdiv(
-                    n_elements,
-                    meta["BLOCK_SIZE"] * meta["UNROLL"],
-                ),
-            )
-
         dot_atomic_kernel_fp32[grid](
             input,
             tensor,
@@ -292,15 +319,6 @@ def _launch_atomic_fp32(
         return out_tensor
 
     scratch = torch.zeros((), device=input.device, dtype=torch.float32)
-
-    def grid(meta):
-        return (
-            triton.cdiv(
-                n_elements,
-                meta["BLOCK_SIZE"] * meta["UNROLL"],
-            ),
-        )
-
     dot_atomic_kernel_fp32[grid](
         input,
         tensor,

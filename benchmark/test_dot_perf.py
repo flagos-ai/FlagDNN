@@ -68,7 +68,10 @@ class DotBenchmark(Benchmark):
 
     def get_input_iter(self, cur_dtype) -> Generator:
         for shape in self.shapes:
-            if self._estimate_peak_bytes(shape, cur_dtype) > self.MAX_PEAK_BYTES:
+            if (
+                self._estimate_peak_bytes(shape, cur_dtype)
+                > self.MAX_PEAK_BYTES
+            ):
                 continue
 
             numel = shape[0]
@@ -87,10 +90,7 @@ class DotBenchmark(Benchmark):
 
     def get_gbps(self, args, latency):
         x, y = args
-        io_amount = (
-            x.numel() * x.element_size()
-            + y.numel() * y.element_size()
-        )
+        io_amount = x.numel() * x.element_size() + y.numel() * y.element_size()
         return io_amount / (latency * 1e-3) / 1e9
 
     def get_gflops(self, args, latency):

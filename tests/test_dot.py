@@ -71,9 +71,9 @@ def test_accuracy_dot(dtype, numel, use_out):
             out_custom = torch.dot(x_custom, y_custom, out=out_buf)
 
         # 返回值应当复用 out buffer
-        assert out_custom.data_ptr() == out_buf.data_ptr(), (
-            "use_out=True, but returned tensor does not share memory with out."
-        )
+        assert (
+            out_custom.data_ptr() == out_buf.data_ptr()
+        ), "use_out=True, but returned tensor does not share memory with out."
     else:
         with flag_dnn.use_dnn():
             out_custom = torch.dot(x_custom, y_custom)
