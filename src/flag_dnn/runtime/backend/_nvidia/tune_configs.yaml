@@ -933,3 +933,108 @@ softmin_fp64:
     stages:
       - 2
       - 3
+mv:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 1
+      - 4
+      - 8
+      - 16
+      - 32
+      - 64
+      - 128
+    block_n:
+      - 32
+      - 64
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 2
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+      - 4
+mv_wide:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_N: block_n
+      num_warps: warps
+      num_stages: stages
+    block_n:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+      - 4
+mv_fp64:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 1
+      - 2
+      - 4
+      - 8
+      - 16
+      - 32
+    block_n:
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+      - 4
+      - 5
+mv_wide_fp64:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_N: block_n
+      num_warps: warps
+      num_stages: stages
+    block_n:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    warps:
+      - 2
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
+      - 4
+      - 5
