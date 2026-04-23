@@ -57,6 +57,16 @@ from flag_dnn.ops.softshrink import softshrink
 from flag_dnn.ops.softmin import softmin
 from flag_dnn.ops.mv import mv
 from flag_dnn.ops.dot import dot
+from flag_dnn.ops.conv2d import conv2d
+from flag_dnn.ops.hardswish import hardswish
+from flag_dnn.ops.relu6 import relu6
+from flag_dnn.ops.selu import selu
+from flag_dnn.ops.selu_ import selu_
+from flag_dnn.ops.glu import glu
+from flag_dnn.ops.celu import celu
+from flag_dnn.ops.celu_ import celu_
+from flag_dnn.ops.tanh import tanh
+from flag_dnn.ops.logsigmoid import logsigmoid
 
 
 __all__ = [
@@ -115,4 +125,14 @@ __all__ = [
     "softmin",
     "mv",
     "dot",
+    "conv2d",
+    "hardswish",
+    "relu6",
+    "selu",
+    "selu_",
+    "glu",
+    "celu",
+    "celu_",
+    "tanh",
+    "logsigmoid",
 ]

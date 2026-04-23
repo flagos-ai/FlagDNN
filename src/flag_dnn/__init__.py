@@ -60,6 +60,16 @@ from flag_dnn.ops import (  # noqa: F401
     softmin,
     mv,
     dot,
+    conv2d,
+    hardswish,
+    relu6,
+    selu,
+    selu_,
+    glu,
+    celu,
+    celu_,
+    tanh,
+    logsigmoid,
 )
 from flag_dnn.config import aten_patch_list, resolve_user_setting
 from flag_dnn.runtime.register import Register
@@ -128,6 +138,16 @@ _FULL_CONFIG = (
     ("softmin", softmin),
     ("mv", mv),
     ("dot", dot),
+    ("conv2d", conv2d),
+    ("hardswish", hardswish),
+    ("relu6", relu6),
+    ("selu", selu),
+    ("selu_", selu_),
+    ("glu", glu),
+    ("celu", celu),
+    ("celu_", celu_),
+    ("tanh", tanh),
+    ("log_sigmoid", logsigmoid),
 )
 
 FULL_CONFIG_BY_FUNC: dict = {}

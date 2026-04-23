@@ -23,12 +23,14 @@ logger = logging.getLogger(__name__)
 )
 @triton.jit
 def elu_kernel(
-    x_ptr,  # 输入张量指针
-    y_ptr,  # 输出张量指针
-    n_elements,  # 元素总数
-    alpha,  # ELU alpha
+    x_ptr,
+    y_ptr,
+    n_elements,
+    alpha,
+    scale,
+    input_scale,
     BLOCK_SIZE: tl.constexpr,
-    USE_FP32_MATH: tl.constexpr,  # fp16/bf16/fp32 走 fp32 exp 计算
+    USE_FP32_MATH: tl.constexpr,
 ):
     pid = tle.program_id(0)
     block_start = pid * BLOCK_SIZE
@@ -40,24 +42,35 @@ def elu_kernel(
     if USE_FP32_MATH:
         x_math = x.to(tl.float32)
     else:
-        x_math = x
+        x_math = x.to(tl.float64)
 
-    # ELU:
-    # y = x,                        if x > 0
-    # y = alpha * (exp(x) - 1),     otherwise
-    y_math = tl.where(x_math > 0, x_math, alpha * (tl.exp(x_math) - 1.0))
+    zero = x_math * 0
+    one = zero + 1
+    alpha_v = zero + alpha
+    scale_v = zero + scale
+    input_scale_v = zero + input_scale
+
+    y_math = tl.where(
+        x_math > zero,
+        scale_v * x_math,
+        scale_v * alpha_v * (tl.exp(x_math * input_scale_v) - one),
+    )
 
     tl.store(y_ptr + offsets, y_math.to(y_ptr.dtype.element_ty), mask=mask)
 
 
-def elu(
+def _elu_impl(
     input: torch.Tensor,
     alpha: float = 1.0,
+    scale: float = 1.0,
+    input_scale: float = 1.0,
     inplace: bool = False,
 ) -> torch.Tensor:
-    logger.debug("FLAG_DNN ELU")
+    logger.debug("FLAG_DNN ELU/SELU INTERNAL")
 
     alpha = float(alpha)
+    scale = float(scale)
+    input_scale = float(input_scale)
 
     orig_input = input
     need_copy_back = inplace and (not input.is_contiguous())
@@ -72,10 +85,7 @@ def elu(
             return orig_input
         return torch.empty_like(input)
 
-    if inplace:
-        y = input
-    else:
-        y = torch.empty_like(input)
+    y = input if inplace else torch.empty_like(input)
 
     def grid(meta):
         return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
@@ -88,6 +98,8 @@ def elu(
             y,
             n_elements,
             alpha,
+            scale,
+            input_scale,
             USE_FP32_MATH=use_fp32_math,
         )
 
@@ -96,3 +108,18 @@ def elu(
         return orig_input
 
     return y
+
+
+def elu(
+    input: torch.Tensor,
+    alpha: float = 1.0,
+    inplace: bool = False,
+) -> torch.Tensor:
+    logger.debug("FLAG_DNN ELU")
+    return _elu_impl(
+        input,
+        alpha=alpha,
+        scale=1.0,
+        input_scale=1.0,
+        inplace=inplace,
+    )

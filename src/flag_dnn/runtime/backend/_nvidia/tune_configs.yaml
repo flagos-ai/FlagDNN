@@ -1086,3 +1086,192 @@ dot_fp64:
     stages:
       - 1
       - 2
+hardswish:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 2
+      - 4
+      - 8
+    stages:
+      - 1
+      - 2
+relu6:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 2
+      - 4
+      - 8
+    stages:
+      - 1
+      - 2
+selu:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 2
+      - 4
+      - 8
+    stages:
+      - 1
+      - 2
+celu:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 2
+      - 4
+      - 8
+    stages:
+      - 1
+      - 2
+glu:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 2
+      - 4
+      - 8
+    stages:
+      - 1
+      - 2
+tanh:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 2
+      - 4
+      - 8
+    stages:
+      - 1
+      - 2
+logsigmoid:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 2
+      - 4
+      - 8
+    stages:
+      - 1
+      - 2
+conv2d_1x1:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_OC: block_oc
+        BLOCK_HW: block_hw
+        BLOCK_K: block_k
+      num_warps: warps
+      num_stages: stages
+    # 256x256 tiles are too aggressive here: the accumulator alone is already
+    # huge and tends to destroy occupancy. Keep the search space realistic.
+    block_oc:
+      - 32
+      - 64
+      - 128
+    block_hw:
+      - 32
+      - 64
+      - 128
+    block_k:
+      - 16
+      - 32
+      - 64
+      - 128
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+      - 4
+
+conv2d_dw_v2:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_C: block_c
+        BLOCK_HW: block_hw
+      num_warps: warps
+      num_stages: stages
+    block_c:
+      - 16
+      - 32
+      - 64
+    block_hw:
+      - 64
+      - 128
+      - 256
+    warps:
+      - 2
+      - 4
+      - 8
+    stages:
+      - 1
+      - 2
+      - 3
