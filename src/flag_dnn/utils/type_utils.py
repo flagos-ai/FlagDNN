@@ -19,6 +19,35 @@ _accumulator_dtype_map = {
     torch.complex32: torch.complex64,
 }
 
+_INTEGRAL_DTYPES = {
+    torch.bool,
+    torch.int8,
+    torch.int16,
+    torch.int32,
+    torch.int64,
+    torch.uint8,
+}
+
 
 def get_accumulator_dtype(dtype: torch.dtype) -> torch.dtype:
     return _accumulator_dtype_map.get(dtype, dtype)
+
+
+def is_integral_dtype(dtype: torch.dtype) -> bool:
+    return dtype in _INTEGRAL_DTYPES
+
+
+def is_bool_dtype(dtype: torch.dtype) -> bool:
+    return dtype == torch.bool
+
+
+def is_python_bool(value) -> bool:
+    return isinstance(value, bool)
+
+
+def is_python_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def is_python_float(value) -> bool:
+    return isinstance(value, float)

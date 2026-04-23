@@ -7,6 +7,7 @@ import triton.language as tl
 
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import triton_lang_extension as tle
+from flag_dnn.utils.type_utils import is_integral_dtype
 
 
 logger = logging.getLogger(__name__)
@@ -192,7 +193,11 @@ def cumsum(
 ) -> torch.Tensor:
     logger.debug("FLAG_DNN CUMSUM OPTIMIZED")
 
-    out_dtype = dtype if dtype is not None else input.dtype
+    out_dtype = (
+        dtype
+        if dtype is not None
+        else (torch.int64 if is_integral_dtype(input.dtype) else input.dtype)
+    )
 
     if input.numel() == 0:
         if out is not None:

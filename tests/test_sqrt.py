@@ -59,3 +59,23 @@ def test_accuracy_sqrt_empty_tensor(dtype):
     assert out.dtype == dtype
     assert out.device == x.device
     torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+
+
+@pytest.mark.sqrt
+@pytest.mark.parametrize("dtype", [torch.bool, torch.int32, torch.int64])
+def test_accuracy_sqrt_integral_and_bool(dtype):
+    if dtype == torch.bool:
+        x = torch.tensor(
+            [True, False, True, True],
+            dtype=dtype,
+            device=flag_dnn.device,
+        )
+    else:
+        x = torch.tensor([0, 1, 4, 9], dtype=dtype, device=flag_dnn.device)
+
+    ref_out = torch.sqrt(x)
+    with flag_dnn.use_dnn():
+        out = torch.sqrt(x)
+
+    assert out.dtype == torch.float32
+    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)

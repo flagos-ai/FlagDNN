@@ -155,3 +155,22 @@ def test_accuracy_pow_broadcast(dtype, input_shape, other_shape):
         out = torch.pow(x, y)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+
+
+@pytest.mark.pow
+def test_accuracy_pow_integer_and_bool_dtype():
+    x_int = torch.tensor([2, 3, 4], dtype=torch.int32, device=flag_dnn.device)
+    x_bool = torch.tensor(
+        [True, False, True], dtype=torch.bool, device=flag_dnn.device
+    )
+
+    ref_int = torch.pow(x_int, 2.0)
+    ref_bool = torch.pow(x_bool, 2)
+    with flag_dnn.use_dnn():
+        out_int = torch.pow(x_int, 2.0)
+        out_bool = torch.pow(x_bool, 2)
+
+    assert out_int.dtype == torch.float32
+    assert out_bool.dtype == torch.int64
+    torch.testing.assert_close(out_int, ref_int, rtol=0, atol=0)
+    torch.testing.assert_close(out_bool, ref_bool, rtol=0, atol=0)

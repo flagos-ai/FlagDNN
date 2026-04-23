@@ -122,3 +122,18 @@ def test_accuracy_neg_empty_tensor(dtype):
     assert out.dtype == dtype
     assert out.device == x.device
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+
+
+@pytest.mark.neg
+@pytest.mark.parametrize(
+    "dtype", [torch.int8, torch.int16, torch.int32, torch.int64]
+)
+def test_accuracy_neg_integer(dtype):
+    x = torch.randint(-9, 10, (257,), dtype=dtype, device=flag_dnn.device)
+
+    ref_out = torch.neg(x)
+    with flag_dnn.use_dnn():
+        out = torch.neg(x)
+
+    assert out.dtype == ref_out.dtype
+    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)

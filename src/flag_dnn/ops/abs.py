@@ -9,6 +9,7 @@ from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
+from flag_dnn.utils.type_utils import is_bool_dtype
 
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,11 @@ def abs(
     input: torch.Tensor, *, out: Optional[torch.Tensor] = None
 ) -> torch.Tensor:
     logger.debug("FLAG_DNN ABS")
+
+    if is_bool_dtype(input.dtype):
+        raise NotImplementedError(
+            f"\"abs\" not implemented for '{input.dtype}'"
+        )
 
     if not input.is_contiguous():
         assert False, "input must be contiguous."

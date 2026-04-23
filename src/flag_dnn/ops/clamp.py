@@ -10,6 +10,7 @@ from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
 from flag_dnn.ops.binary import collapse_dims, pad_to_max_dims
+from flag_dnn.utils.type_utils import is_bool_dtype, is_python_bool
 
 
 logger = logging.getLogger(__name__)
@@ -181,6 +182,15 @@ def clamp(
     is_min_tensor = isinstance(min, torch.Tensor)
     is_max_tensor = isinstance(max, torch.Tensor)
 
+    if is_bool_dtype(input.dtype):
+        if (has_min and not is_min_tensor and is_python_bool(min)) or (
+            has_max and not is_max_tensor and is_python_bool(max)
+        ):
+            raise NotImplementedError(
+                "flag_dnn clamp does not support bool scalar bounds "
+                f"for dtype={input.dtype}"
+            )
+
     if has_min and has_max and is_min_tensor != is_max_tensor:
         raise RuntimeError(
             "'min' and 'max' must be equal(Number or Tensor) at the same time"
@@ -228,6 +238,13 @@ def clamp(
         )
 
     out_dtype = input.dtype
+    if has_min:
+        out_dtype = torch.result_type(input, min)
+    if has_max:
+        out_dtype = torch.result_type(
+            torch.empty((), dtype=out_dtype, device=input.device),
+            max,
+        )
 
     # 输出内存分配
     if out is None:

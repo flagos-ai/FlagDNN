@@ -7,12 +7,18 @@ import triton.language as tl
 
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import triton_lang_extension as tle
+from flag_dnn.utils.type_utils import is_integral_dtype
 
 
 logger = logging.getLogger(__name__)
 
 
-_SUPPORTED_FLOAT_DTYPES = {
+_SUPPORTED_DTYPES = {
+    torch.bool,
+    torch.int8,
+    torch.int16,
+    torch.int32,
+    torch.int64,
     torch.float16,
     torch.bfloat16,
     torch.float32,
@@ -333,16 +339,16 @@ def prod(
 ) -> torch.Tensor:
     logger.debug("FLAG_DNN PROD")
 
-    target_dtype = dtype if dtype is not None else input.dtype
+    target_dtype = (
+        dtype
+        if dtype is not None
+        else (torch.int64 if is_integral_dtype(input.dtype) else input.dtype)
+    )
 
-    if input.dtype not in _SUPPORTED_FLOAT_DTYPES:
-        raise NotImplementedError(
-            "prod currently supports floating dtypes only"
-        )
-    if dtype is not None and dtype not in _SUPPORTED_FLOAT_DTYPES:
-        raise NotImplementedError(
-            "prod currently supports floating dtypes only"
-        )
+    if input.dtype not in _SUPPORTED_DTYPES:
+        raise NotImplementedError(f"prod does not support dtype={input.dtype}")
+    if dtype is not None and dtype not in _SUPPORTED_DTYPES:
+        raise NotImplementedError(f"prod does not support dtype={dtype}")
 
     ndim = input.ndim
     if dim is None:

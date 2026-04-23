@@ -9,6 +9,13 @@ from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
+from flag_dnn.utils.type_utils import (
+    is_bool_dtype,
+    is_integral_dtype,
+    is_python_bool,
+    is_python_float,
+    is_python_int,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -276,21 +283,81 @@ def binary_broadcast_tensor_kernel(
 """
 
 
+def _other_is_bool(other: Union[torch.Tensor, int, float, bool]) -> bool:
+    return (
+        other.dtype == torch.bool
+        if isinstance(other, torch.Tensor)
+        else is_python_bool(other)
+    )
+
+
+def _other_is_integral(other: Union[torch.Tensor, int, float, bool]) -> bool:
+    if isinstance(other, torch.Tensor):
+        return is_integral_dtype(other.dtype)
+    return is_python_bool(other) or is_python_int(other)
+
+
+def _validate_binary_args(
+    input: torch.Tensor,
+    other: Union[torch.Tensor, int, float, bool],
+    alpha: Union[int, float],
+    op_type: str,
+):
+    if op_type == "sub" and (
+        is_bool_dtype(input.dtype) or _other_is_bool(other)
+    ):
+        raise RuntimeError(
+            "Subtraction, the `-` operator, with a bool tensor is not "
+            "supported. If you are trying to invert a mask, use the `~` or "
+            "`logical_not()` operator instead."
+        )
+
+    if op_type in ("add", "sub") and is_integral_dtype(input.dtype):
+        if is_python_float(alpha):
+            raise RuntimeError(
+                "For integral input tensors, argument alpha must not be a "
+                "floating point number."
+            )
+        if (
+            is_python_bool(alpha)
+            and torch.result_type(input, other) != torch.bool
+        ):
+            raise RuntimeError(
+                "Boolean alpha only supported for Boolean results."
+            )
+
+
+def _infer_binary_out_dtype(
+    input: torch.Tensor,
+    other: Union[torch.Tensor, int, float, bool],
+    rounding_mode: Optional[str],
+    op_type: str,
+) -> torch.dtype:
+    if op_type in ("eq", "ne"):
+        return torch.bool
+
+    if op_type == "div":
+        if rounding_mode is None:
+            if is_integral_dtype(input.dtype) and _other_is_integral(other):
+                return torch.float32
+            return torch.result_type(input, other)
+        if is_bool_dtype(input.dtype) and _other_is_bool(other):
+            return torch.int64
+        return torch.result_type(input, other)
+
+    return torch.result_type(input, other)
+
+
 def binary(
     input: torch.Tensor,
     other: Union[torch.Tensor, int, float, bool],
     *,
-    alpha: float = 1.0,
+    alpha: Union[int, float] = 1,
     rounding_mode: Optional[str] = None,
     out: Optional[torch.Tensor] = None,
     op_type: str = "",
 ) -> torch.Tensor:
     logger.debug(f"FLAG_DNN {op_type.upper()})")
-
-    if op_type not in ["eq", "ne"] and type(other) is bool:
-        raise RuntimeError(
-            f"当 other 是 bool 类型时，仅支持 eq/ne 操作，但 op_type={op_type}"
-        )
 
     if not input.is_contiguous():
         assert False, "input must be contiguous."
@@ -317,46 +384,18 @@ def binary(
             )
         mode_idx = mode_map[rounding_mode]
 
-    # Type promotion
-    if op_type == "add":
-        dummy_in = input.new_empty((0,))
-        dummy_oth = (
-            other.new_empty((0,))  # type: ignore[union-attr]
-            if is_other_tensor
-            else other
-        )
-        out_dtype = (dummy_in + alpha * dummy_oth).dtype
-    elif op_type == "sub":
-        dummy_in = input.new_empty((0,))
-        dummy_oth = (
-            other.new_empty((0,))  # type: ignore[union-attr]
-            if is_other_tensor
-            else other
-        )
-        out_dtype = (dummy_in - alpha * dummy_oth).dtype
-    elif op_type == "mul":
-        dummy_in = input.new_empty((0,))
-        dummy_oth = (
-            other.new_empty((0,))  # type: ignore[union-attr]
-            if is_other_tensor
-            else other
-        )
-        out_dtype = (dummy_in * dummy_oth).dtype
-    elif op_type == "div":
-        dummy_in = input.new_empty((0,))
-        dummy_oth = (
-            other.new_empty((0,))  # type: ignore[union-attr]
-            if is_other_tensor
-            else other
-        )
-        out_dtype = input.dtype
-    elif op_type == "eq" or op_type == "ne":
-        out_dtype = torch.bool
-    else:
+    if op_type not in ["add", "sub", "mul", "div", "eq", "ne"]:
         raise RuntimeError(f"Unsupported OP_TYPE={op_type} in binary")
+
+    _validate_binary_args(input, other, alpha, op_type)
+    out_dtype = _infer_binary_out_dtype(input, other, rounding_mode, op_type)
 
     if out is None:
         out = torch.empty(out_shape, dtype=out_dtype, device=input.device)
+    else:
+        assert (
+            out.shape == out_shape
+        ), f"out shape {out.shape} mismatch with broadcasted shape {out_shape}"
 
     n_elements = out.numel()
     if n_elements == 0:
@@ -411,8 +450,11 @@ def binary(
                     OP_TYPE=op_type,
                 )
         else:
-            if op_type == "eq":
-                other_val = torch.tensor(other, dtype=input.dtype).item()
+            other_val: Union[bool, int, float]
+            if is_python_bool(other):
+                other_val = bool(other)
+            elif is_python_int(other):
+                other_val = int(other)
             else:
                 other_val = float(other)
             binary_scalar_kernel[grid](

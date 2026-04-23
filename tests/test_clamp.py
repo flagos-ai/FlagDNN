@@ -200,3 +200,29 @@ def test_accuracy_clamp_tensor_bounds_broadcast(dtype):
         out = torch.clamp(x, min=min_1d_t, max=max_1d_t)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+
+
+@pytest.mark.clamp
+def test_accuracy_clamp_mixed_dtype_integer_input():
+    x = torch.tensor([-2, 1, 3], dtype=torch.int32, device=flag_dnn.device)
+
+    ref_out = torch.clamp(x, min=0.5, max=2.5)
+    with flag_dnn.use_dnn():
+        out = torch.clamp(x, min=0.5, max=2.5)
+
+    assert out.dtype == torch.float32
+    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+
+
+@pytest.mark.clamp
+def test_accuracy_clamp_bool_with_integer_bounds():
+    x = torch.tensor(
+        [True, False, True], dtype=torch.bool, device=flag_dnn.device
+    )
+
+    ref_out = torch.clamp(x, min=0, max=1)
+    with flag_dnn.use_dnn():
+        out = torch.clamp(x, min=0, max=1)
+
+    assert out.dtype == torch.int64
+    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)

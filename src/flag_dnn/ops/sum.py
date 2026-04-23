@@ -7,6 +7,7 @@ import triton.language as tl
 
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import triton_lang_extension as tle
+from flag_dnn.utils.type_utils import is_integral_dtype
 
 
 logger = logging.getLogger(__name__)
@@ -544,10 +545,11 @@ def sum(
     dtype: Optional[torch.dtype] = None,
 ) -> torch.Tensor:
     logger.debug("FLAG_DNN SUM")
-    target_dtype = dtype if dtype is not None else input.dtype
-
-    if target_dtype in (torch.int8, torch.int16, torch.bool):
-        target_dtype = torch.int64
+    target_dtype = (
+        dtype
+        if dtype is not None
+        else (torch.int64 if is_integral_dtype(input.dtype) else input.dtype)
+    )
 
     ndim = input.ndim
     if dim is None:

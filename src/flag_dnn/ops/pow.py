@@ -14,6 +14,12 @@ from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
 from flag_dnn.ops.binary import collapse_dims, pad_to_max_dims
+from flag_dnn.utils.type_utils import (
+    is_bool_dtype,
+    is_integral_dtype,
+    is_python_bool,
+    is_python_int,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -224,6 +230,16 @@ def pow(
     if not (input_is_tensor or exp_is_tensor):
         raise TypeError("At least one of input or exponent must be a Tensor")
 
+    if isinstance(exponent, torch.Tensor) and is_bool_dtype(exponent.dtype):
+        raise NotImplementedError(
+            "flag_dnn pow does not support bool tensor exponent"
+        )
+
+    if input_is_tensor and is_python_int(exponent) and exponent < 0:
+        if is_integral_dtype(input.dtype):  # type: ignore[union-attr]
+            raise RuntimeError(
+                "Integers to negative integer powers are not allowed."
+            )
     # 确定输出形状与广播
     if input_is_tensor and exp_is_tensor:
         out_shape = torch.broadcast_shapes(
@@ -238,10 +254,15 @@ def pow(
         out_shape = exponent.shape  # type: ignore[union-attr]
         device = exponent.device  # type: ignore[union-attr]
 
-    if out is not None:
-        out_dtype = out.dtype
-    else:
-        out_dtype = torch.result_type(input, exponent)
+    out_dtype = (
+        out.dtype if out is not None else torch.result_type(input, exponent)
+    )
+    if (
+        is_python_bool(exponent)
+        and input_is_tensor
+        and is_bool_dtype(input.dtype)  # type: ignore[union-attr]
+    ):
+        out_dtype = torch.bool
 
     # 输出内存分配
     if out is None:

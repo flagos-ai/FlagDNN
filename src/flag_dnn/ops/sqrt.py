@@ -9,6 +9,7 @@ from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
+from flag_dnn.utils.type_utils import is_integral_dtype
 
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,9 @@ def sqrt(
         assert False, "input must be contiguous."
         input = input.contiguous()
 
-    out_dtype = input.dtype
+    out_dtype = (
+        torch.float32 if is_integral_dtype(input.dtype) else input.dtype
+    )
     out_shape = input.shape
 
     # 输出内存分配
@@ -65,6 +68,11 @@ def sqrt(
         assert (
             out.shape == out_shape
         ), f"out shape {out.shape} mismatch with input shape {out_shape}"
+        if is_integral_dtype(input.dtype) and not out.dtype.is_floating_point:
+            raise RuntimeError(
+                "result type Float can't be cast to the desired output type "
+                f"{out.dtype}"
+            )
         out_dtype = out.dtype
 
     n_elements = out.numel()

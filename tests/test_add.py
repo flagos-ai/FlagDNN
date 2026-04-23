@@ -139,3 +139,33 @@ def test_accuracy_add_broadcast(dtype, input_shape, other_shape):
         out = torch.add(x, y)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+
+
+@pytest.mark.add
+def test_accuracy_add_bool_tensor():
+    x = torch.tensor(
+        [True, False, True], dtype=torch.bool, device=flag_dnn.device
+    )
+    y = torch.tensor(
+        [True, True, False], dtype=torch.bool, device=flag_dnn.device
+    )
+
+    ref_out = torch.add(x, y)
+    with flag_dnn.use_dnn():
+        out = torch.add(x, y)
+
+    assert out.dtype == torch.bool
+    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+
+
+@pytest.mark.add
+def test_accuracy_add_integer_alpha():
+    x = torch.randint(-5, 6, (128,), dtype=torch.int32, device=flag_dnn.device)
+    y = torch.randint(-5, 6, (128,), dtype=torch.int32, device=flag_dnn.device)
+
+    ref_out = torch.add(x, y, alpha=2)
+    with flag_dnn.use_dnn():
+        out = torch.add(x, y, alpha=2)
+
+    assert out.dtype == torch.int32
+    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)

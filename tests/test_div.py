@@ -154,3 +154,33 @@ def test_accuracy_div_broadcast(dtype, input_shape, other_shape):
         out = torch.div(x, y)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+
+
+@pytest.mark.div
+def test_accuracy_div_integer_dtype():
+    x = torch.tensor([2, 4, 8], dtype=torch.int32, device=flag_dnn.device)
+    y = torch.tensor([2, 2, 4], dtype=torch.int32, device=flag_dnn.device)
+
+    ref_out = torch.div(x, y)
+    with flag_dnn.use_dnn():
+        out = torch.div(x, y)
+
+    assert out.dtype == torch.float32
+    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+
+
+@pytest.mark.div
+def test_accuracy_div_bool_rounding_mode():
+    x = torch.tensor(
+        [True, False, True], dtype=torch.bool, device=flag_dnn.device
+    )
+    y = torch.tensor(
+        [True, True, True], dtype=torch.bool, device=flag_dnn.device
+    )
+
+    ref_out = torch.div(x, y, rounding_mode="trunc")
+    with flag_dnn.use_dnn():
+        out = torch.div(x, y, rounding_mode="trunc")
+
+    assert out.dtype == torch.int64
+    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)

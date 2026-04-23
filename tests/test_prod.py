@@ -98,3 +98,23 @@ def test_accuracy_prod_empty_tensor():
         out = torch.prod(x, dim=1)
 
     torch.testing.assert_close(out, ref_out)
+
+
+@pytest.mark.prod
+@pytest.mark.parametrize("dtype", [torch.bool, torch.int32, torch.int64])
+def test_accuracy_prod_default_integer_output_dtype(dtype):
+    if dtype == torch.bool:
+        x = torch.tensor(
+            [[True, True], [False, True]],
+            dtype=dtype,
+            device=flag_dnn.device,
+        )
+    else:
+        x = torch.tensor([[1, 2], [3, 4]], dtype=dtype, device=flag_dnn.device)
+
+    ref_out = torch.prod(x, dim=1)
+    with flag_dnn.use_dnn():
+        out = torch.prod(x, dim=1)
+
+    assert out.dtype == torch.int64
+    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
