@@ -3,7 +3,22 @@ import torch
 import flag_dnn
 
 
-SHAPES = [(32,), (1024,), (5333,), (16384,), (1024 * 1024,), (2, 3, 4, 5)]
+SHAPES = [
+    (),
+    (1,),
+    (17,),
+    (32,),
+    (127,),
+    (1024,),
+    (5333,),
+    (17, 31),
+    (4, 8, 16),
+    (2, 3, 4, 5),
+    (1, 64, 7, 7),
+    (1024 * 1024,),
+]
+
+INTEGER_SHAPES = [(), (1,), (257,), (17, 31), (2, 3, 4, 5)]
 
 
 def _get_tolerances(dtype):
@@ -128,8 +143,9 @@ def test_accuracy_abs_empty_tensor(dtype):
 @pytest.mark.parametrize(
     "dtype", [torch.int8, torch.int16, torch.int32, torch.int64]
 )
-def test_accuracy_abs_integer(dtype):
-    x = torch.randint(-9, 10, (257,), dtype=dtype, device=flag_dnn.device)
+@pytest.mark.parametrize("shape", INTEGER_SHAPES)
+def test_accuracy_abs_integer(dtype, shape):
+    x = torch.randint(-9, 10, shape, dtype=dtype, device=flag_dnn.device)
 
     ref_out = torch.abs(x)
     with flag_dnn.use_dnn():

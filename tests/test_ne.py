@@ -6,6 +6,7 @@ import flag_dnn
 # (input_shape, other_spec) 的组合测试用例
 NE_CASES = [
     # 相同形状
+    ((), ()),
     ((1024,), (1024,)),
     ((2, 3, 4), (2, 3, 4)),
     # 标量比较 (包括刚才报错的浮点标量截断用例，这次一定能过！)
@@ -15,36 +16,47 @@ NE_CASES = [
     ((10, 1), (1, 20)),
     ((2, 3, 4), (4,)),
     ((1, 3, 1, 5), (2, 1, 4, 1)),
+    ((), (17, 31)),  # 标量 Tensor 广播到矩阵
+]
+
+NE_DTYPES = [
+    torch.float32,
+    torch.float64,
+    torch.float16,
+    torch.bfloat16,
+    torch.bool,
+    torch.int8,
+    torch.int16,
+    torch.int32,
+    torch.int64,
 ]
 
 
+def _rand_input(shape, dtype):
+    if dtype == torch.bool:
+        return torch.randint(0, 2, shape, dtype=dtype, device=flag_dnn.device)
+    if not dtype.is_floating_point:
+        return torch.randint(-5, 5, shape, dtype=dtype, device=flag_dnn.device)
+    return torch.randn(shape, dtype=dtype, device=flag_dnn.device)
+
+
 @pytest.mark.ne
-@pytest.mark.parametrize(
-    "dtype",
-    [torch.float32, torch.float64, torch.float16, torch.bfloat16, torch.int32],
-)
+@pytest.mark.parametrize("dtype", NE_DTYPES)
 @pytest.mark.parametrize("input_shape, other_spec", NE_CASES)
 def test_accuracy_ne(dtype, input_shape, other_spec):
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
+
     # 初始化 input
-    if dtype == torch.int32:
-        x = torch.randint(
-            -5, 5, input_shape, dtype=dtype, device=flag_dnn.device
-        )
-    else:
-        x = torch.randn(input_shape, dtype=dtype, device=flag_dnn.device)
+    x = _rand_input(input_shape, dtype)
 
     # 初始化 other
     if isinstance(other_spec, tuple):
-        if dtype == torch.int32:
-            y = torch.randint(
-                -5, 5, other_spec, dtype=dtype, device=flag_dnn.device
-            )
-        else:
-            y = torch.randn(other_spec, dtype=dtype, device=flag_dnn.device)
-            # 为了制造相等的条件，随机将一部分 y 赋值为 x 的对应切片 (从而让 != 产生 False)
-            if input_shape == other_spec:
-                mask = torch.rand(input_shape, device=flag_dnn.device) > 0.5
-                y = torch.where(mask, x, y)
+        y = _rand_input(other_spec, dtype)
+        # 为了制造相等的条件，随机将一部分 y 赋值为 x 的对应切片 (从而让 != 产生 False)
+        if input_shape == other_spec:
+            mask = torch.rand(input_shape, device=flag_dnn.device) > 0.5
+            y = torch.where(mask, x, y)
     else:
         y = torch.tensor(other_spec, dtype=dtype).item()
         # y = other_spec

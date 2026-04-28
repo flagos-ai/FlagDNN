@@ -3,13 +3,42 @@ import torch
 import flag_dnn
 
 
-SHAPES = [(32,), (1024,), (5333,), (16384,), (1024 * 1024,)]
+SHAPES = [
+    (),
+    (1,),
+    (17,),
+    (32,),
+    (127,),
+    (1024,),
+    (5333,),
+    (17, 31),
+    (4, 8, 16),
+    (2, 3, 4, 5),
+    (1, 64, 7, 7),
+    (1024 * 1024,),
+]
 
 BROADCAST_SHAPES = [
     ((4, 4), (4,)),  # 1D broadcast to 2D
     ((2, 3, 4), (3, 1)),  # 内部维度广播
     ((1, 5), (5, 5)),  # 单一维度扩展
+    ((2, 1, 4, 1), (1, 3, 1, 5)),  # 复杂高维双向广播
+    ((), (17, 31)),  # 标量 Tensor 广播到矩阵
 ]
+
+NON_FLOAT_DTYPES = [
+    torch.bool,
+    torch.int8,
+    torch.int16,
+    torch.int32,
+    torch.int64,
+]
+
+
+def _rand_non_float(shape, dtype):
+    if dtype == torch.bool:
+        return torch.randint(0, 2, shape, dtype=dtype, device=flag_dnn.device)
+    return torch.randint(-4, 5, shape, dtype=dtype, device=flag_dnn.device)
 
 
 @pytest.mark.mul
@@ -112,3 +141,18 @@ def test_accuracy_mul_broadcast(dtype, input_shape, other_shape):
         out = torch.mul(x, y)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+
+
+@pytest.mark.mul
+@pytest.mark.parametrize("dtype", NON_FLOAT_DTYPES)
+@pytest.mark.parametrize("shape", SHAPES)
+def test_accuracy_mul_non_float_dtype(dtype, shape):
+    x = _rand_non_float(shape, dtype)
+    y = _rand_non_float(shape, dtype)
+
+    ref_out = torch.mul(x, y)
+    with flag_dnn.use_dnn():
+        out = torch.mul(x, y)
+
+    assert out.dtype == ref_out.dtype
+    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)

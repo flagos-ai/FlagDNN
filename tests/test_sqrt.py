@@ -3,7 +3,22 @@ import torch
 import flag_dnn
 
 
-SHAPES = [(32,), (1024,), (5333,), (16384,), (1024 * 1024,), (2, 3, 4, 5)]
+SHAPES = [
+    (),
+    (1,),
+    (17,),
+    (32,),
+    (127,),
+    (1024,),
+    (5333,),
+    (17, 31),
+    (4, 8, 16),
+    (2, 3, 4, 5),
+    (1, 64, 7, 7),
+    (1024 * 1024,),
+]
+
+INTEGRAL_AND_BOOL_SHAPES = [(), (1,), (257,), (17, 31), (2, 3, 4, 5)]
 
 
 def _get_non_negative_tensor(shape, dtype, device):
@@ -62,16 +77,16 @@ def test_accuracy_sqrt_empty_tensor(dtype):
 
 
 @pytest.mark.sqrt
-@pytest.mark.parametrize("dtype", [torch.bool, torch.int32, torch.int64])
-def test_accuracy_sqrt_integral_and_bool(dtype):
+@pytest.mark.parametrize(
+    "dtype", [torch.bool, torch.int8, torch.int16, torch.int32, torch.int64]
+)
+@pytest.mark.parametrize("shape", INTEGRAL_AND_BOOL_SHAPES)
+def test_accuracy_sqrt_integral_and_bool(dtype, shape):
     if dtype == torch.bool:
-        x = torch.tensor(
-            [True, False, True, True],
-            dtype=dtype,
-            device=flag_dnn.device,
-        )
+        x = torch.randint(0, 2, shape, dtype=dtype, device=flag_dnn.device)
     else:
-        x = torch.tensor([0, 1, 4, 9], dtype=dtype, device=flag_dnn.device)
+        base = torch.randint(0, 4, shape, dtype=dtype, device=flag_dnn.device)
+        x = base * base
 
     ref_out = torch.sqrt(x)
     with flag_dnn.use_dnn():

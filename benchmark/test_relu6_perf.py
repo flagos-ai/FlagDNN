@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 
 import flag_dnn
-from benchmark.performance_utils import Benchmark
+from benchmark.performance_utils import Benchmark, ELEMENTWISE_PERF_SHAPES
 
 
 def torch_relu6(x):
@@ -25,20 +25,7 @@ class Relu6Benchmark(Benchmark):
         return ["gbps"]
 
     def set_more_shapes(self):
-        self.shapes = [
-            (1024,),
-            (4096,),
-            (16384,),
-            (2, 3),
-            (32, 128),
-            (256, 256),
-            (1024, 1024),
-            (2, 3, 32, 32),
-            (8, 64, 56, 56),
-            (16, 128, 28, 28),
-            (32, 256, 14, 14),
-            (1, 64, 112, 112),
-        ]
+        self.shapes = list(ELEMENTWISE_PERF_SHAPES)
         return None
 
     @staticmethod

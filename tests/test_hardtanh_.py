@@ -17,6 +17,17 @@ HARDTANH_CASES = [
     ((0, 3), -1.0, 1.0),
 ]
 
+INTEGER_HARDTANH_CASES = [
+    ((), -1, 1),
+    ((1,), -1, 1),
+    ((17,), -2, 2),
+    ((17, 31), -3, 3),
+    ((2, 3, 4, 5), -1, 1),
+    ((0, 3), -1, 1),
+]
+
+INTEGER_DTYPES = [torch.int8, torch.int16, torch.int32, torch.int64]
+
 
 def get_tol(dtype):
     if dtype == torch.float16:
@@ -55,3 +66,22 @@ def test_accuracy_hardtanh_(dtype, shape, min_val, max_val):
         "output is not modifying " "the input tensor directly."
     )
     torch.testing.assert_close(x_custom, x_ref, **get_tol(dtype))
+
+
+@pytest.mark.hardtanh_
+@pytest.mark.parametrize("dtype", INTEGER_DTYPES)
+@pytest.mark.parametrize("shape, min_val, max_val", INTEGER_HARDTANH_CASES)
+def test_accuracy_hardtanh__integer_dtype(dtype, shape, min_val, max_val):
+    x = torch.randint(-5, 6, shape, dtype=dtype, device=flag_dnn.device)
+
+    x_ref = x.clone()
+    x_custom = x.clone()
+
+    out_ref = F.hardtanh_(x_ref, min_val=min_val, max_val=max_val)
+    with flag_dnn.use_dnn():
+        out_custom = F.hardtanh_(x_custom, min_val=min_val, max_val=max_val)
+
+    assert out_custom.dtype == dtype
+    assert out_custom.data_ptr() == x_custom.data_ptr()
+    torch.testing.assert_close(out_custom, out_ref, rtol=0, atol=0)
+    torch.testing.assert_close(x_custom, x_ref, rtol=0, atol=0)

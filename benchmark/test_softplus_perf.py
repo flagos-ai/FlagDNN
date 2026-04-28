@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 
 import flag_dnn
-from benchmark.performance_utils import Benchmark
+from benchmark.performance_utils import Benchmark, ELEMENTWISE_PERF_SHAPES
 
 
 def torch_softplus(x, beta, threshold):
@@ -25,22 +25,7 @@ class SoftplusBenchmark(Benchmark):
         return ["gbps"]
 
     def set_more_shapes(self):
-        self.shapes = [
-            (1024,),
-            (4096,),
-            (16384,),
-            (65536,),
-            (262144,),
-            (1048576,),
-            (2, 3),
-            (32, 128),
-            (256, 256),
-            (1024, 1024),
-            (2, 3, 32, 32),
-            (8, 64, 56, 56),
-            (16, 128, 28, 28),
-            (32, 256, 14, 14),
-        ]
+        self.shapes = list(ELEMENTWISE_PERF_SHAPES)
         self.param_cases = [
             (1.0, 20.0),
             (0.5, 20.0),

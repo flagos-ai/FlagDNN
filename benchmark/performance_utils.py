@@ -39,6 +39,30 @@ elif device == "npu":
 else:
     torch_backend_device.matmul.allow_tf32 = False
 
+ELEMENTWISE_PERF_SHAPES = [
+    # Launch overhead, non-power-of-two, and 1D throughput coverage.
+    (1,),
+    (16,),
+    (127,),
+    (1024,),
+    (65536,),
+    (1024 * 1024,),
+    (16 * 1024 * 1024,),
+    # Non-aligned 2D and matrix-like layouts.
+    (17, 31),
+    (1024, 1025),
+    (4096, 4096),
+    # NLP / LLM activation layouts.
+    (1, 2048, 4096),
+    (8, 128, 12288),
+    # CV activation layouts.
+    (1, 3, 224, 224),
+    (8, 64, 56, 56),
+    (32, 256, 14, 14),
+    # 5D layout to catch flattening/indexing assumptions.
+    (1, 8, 16, 32, 32),
+]
+
 
 def SkipVersion(module_name, skip_pattern):
     if importlib.util.find_spec(module_name) is None:

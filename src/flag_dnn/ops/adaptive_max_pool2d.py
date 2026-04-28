@@ -189,6 +189,20 @@ def adaptive_max_pool2d(
         assert False, "input must be contiguous."
         input = input.contiguous()
 
+    M = N * C * OH * OW
+
+    # 拦截特例：空张量
+    if M == 0:
+        y = torch.empty((N, C, OH, OW), dtype=input.dtype, device=input.device)
+        indices = torch.empty(
+            (N, C, OH, OW), dtype=torch.int64, device=input.device
+        )
+        out_y = y.squeeze(0) if is_3d else y
+        if return_indices:
+            out_idx = indices.squeeze(0) if is_3d else indices
+            return out_y, out_idx
+        return out_y
+
     y = torch.empty((N, C, OH, OW), dtype=input.dtype, device=input.device)
 
     indices = None
@@ -198,16 +212,6 @@ def adaptive_max_pool2d(
             (N, C, OH, OW), dtype=torch.int64, device=input.device
         )
         idx_ptr = indices
-
-    M = N * C * OH * OW
-
-    # 拦截特例：空张量
-    if M == 0:
-        out_y = y.squeeze(0) if is_3d else y
-        if return_indices:
-            out_idx = indices.squeeze(0) if is_3d else indices
-            return out_y, out_idx
-        return out_y
 
     with torch_device_fn.device(input.device):
         if OH == 1 and OW == 1:

@@ -3,12 +3,35 @@ import torch
 import flag_dnn
 
 
-SHAPES = [(32,), (1024,), (5333,), (16384,), (1024 * 1024,)]
+SHAPES = [
+    (),
+    (1,),
+    (17,),
+    (32,),
+    (127,),
+    (1024,),
+    (5333,),
+    (17, 31),
+    (4, 8, 16),
+    (2, 3, 4, 5),
+    (1, 64, 7, 7),
+    (1024 * 1024,),
+]
 
 BROADCAST_SHAPES = [
     ((4, 4), (4,)),  # 1D broadcast to 2D
     ((2, 3, 4), (3, 1)),  # 内部维度广播
     ((1, 5), (5, 5)),  # 单一维度扩展
+    ((2, 1, 4, 1), (1, 3, 1, 5)),  # 复杂高维双向广播
+    ((), (17, 31)),  # 标量 Tensor 广播到矩阵
+]
+
+NON_FLOAT_DTYPES = [
+    torch.bool,
+    torch.int8,
+    torch.int16,
+    torch.int32,
+    torch.int64,
 ]
 
 
@@ -170,6 +193,28 @@ def test_accuracy_div_integer_dtype():
 
 
 @pytest.mark.div
+@pytest.mark.parametrize("dtype", NON_FLOAT_DTYPES)
+@pytest.mark.parametrize("shape", SHAPES)
+def test_accuracy_div_non_float_dtype(dtype, shape):
+    if dtype == torch.bool:
+        x = torch.randint(0, 2, shape, dtype=dtype, device=flag_dnn.device)
+        y = torch.ones(shape, dtype=dtype, device=flag_dnn.device)
+    else:
+        y = torch.randint(1, 5, shape, dtype=dtype, device=flag_dnn.device)
+        scale = torch.randint(
+            -4, 5, shape, dtype=dtype, device=flag_dnn.device
+        )
+        x = y * scale
+
+    ref_out = torch.div(x, y)
+    with flag_dnn.use_dnn():
+        out = torch.div(x, y)
+
+    assert out.dtype == torch.float32
+    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+
+
+@pytest.mark.div
 def test_accuracy_div_bool_rounding_mode():
     x = torch.tensor(
         [True, False, True], dtype=torch.bool, device=flag_dnn.device
@@ -178,9 +223,9 @@ def test_accuracy_div_bool_rounding_mode():
         [True, True, True], dtype=torch.bool, device=flag_dnn.device
     )
 
-    ref_out = torch.div(x, y, rounding_mode="trunc")
-    with flag_dnn.use_dnn():
-        out = torch.div(x, y, rounding_mode="trunc")
+    with pytest.raises(NotImplementedError):
+        torch.div(x, y, rounding_mode="trunc")
 
-    assert out.dtype == torch.int64
-    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+    with flag_dnn.use_dnn():
+        with pytest.raises(NotImplementedError):
+            torch.div(x, y, rounding_mode="trunc")

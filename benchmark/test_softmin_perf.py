@@ -26,15 +26,17 @@ class SoftminBenchmark(Benchmark):
 
     def set_more_shapes(self):
         self.shapes = [
-            (128, 128),
-            (256, 256),
-            (512, 512),
-            (1024, 1024),
-            (64, 256, 64),
-            (32, 128, 128),
+            (1024,),
+            (17, 31),
+            (256, 1000),
+            (32, 4096),
+            (7, 31, 109),
+            (4, 512, 1024),
+            (8, 128, 4096),
             (2, 3, 32, 32),
             (8, 64, 56, 56),
             (16, 128, 28, 28),
+            (2, 12, 512, 512),
         ]
         return None
 
@@ -51,6 +53,8 @@ class SoftminBenchmark(Benchmark):
         dims = {0, -1}
         if ndim >= 2:
             dims.add(1)
+        if prod(shape) >= 1024 * 1024:
+            dims = {-1}
         return sorted(dims, key=lambda x: (x < 0, x))
 
     def get_input_iter(self, cur_dtype) -> Generator:

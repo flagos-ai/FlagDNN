@@ -3,7 +3,22 @@ import torch
 import flag_dnn
 
 
-SHAPES = [(32,), (1024,), (128, 256), (4, 8, 16, 32), (1024 * 1024,)]
+SHAPES = [
+    (),
+    (1,),
+    (17,),
+    (32,),
+    (127,),
+    (1024,),
+    (5333,),
+    (17, 31),
+    (4, 8, 16),
+    (2, 3, 4, 5),
+    (1, 64, 7, 7),
+    (1024 * 1024,),
+]
+
+INTEGER_DTYPES = [torch.int8, torch.int16, torch.int32, torch.int64]
 
 
 @pytest.mark.relu
@@ -129,6 +144,26 @@ def test_accuracy_relu_mixed_values(dtype, shape, inplace):
     with flag_dnn.use_dnn():
         y = torch.nn.functional.relu(test_x, inplace=inplace)
 
+    torch.testing.assert_close(y, ref_y, rtol=0, atol=0)
+    if inplace:
+        assert y.data_ptr() == test_x.data_ptr()
+
+
+@pytest.mark.relu
+@pytest.mark.parametrize("dtype", INTEGER_DTYPES)
+@pytest.mark.parametrize("shape", SHAPES)
+@pytest.mark.parametrize("inplace", [False, True])
+def test_accuracy_relu_integer_dtype(dtype, shape, inplace):
+    x = torch.randint(-5, 6, shape, dtype=dtype, device=flag_dnn.device)
+
+    ref_x = x.clone()
+    test_x = x.clone()
+
+    ref_y = torch.nn.functional.relu(ref_x, inplace=inplace)
+    with flag_dnn.use_dnn():
+        y = torch.nn.functional.relu(test_x, inplace=inplace)
+
+    assert y.dtype == dtype
     torch.testing.assert_close(y, ref_y, rtol=0, atol=0)
     if inplace:
         assert y.data_ptr() == test_x.data_ptr()

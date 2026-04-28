@@ -52,14 +52,18 @@ def _choose_num_stages(block_size: int) -> int:
 
 
 def _choose_rows_per_program(n: int) -> int:
+    if n <= 4:
+        return 256
     if n <= 8:
-        return 16
+        return 128
     if n <= 16:
-        return 16
+        return 64
     if n <= 32:
-        return 8
+        return 32
     if n <= 64:
-        return 4
+        return 16
+    if n <= 128:
+        return 8
     return 2
 
 
@@ -153,8 +157,8 @@ def online_softmin_kernel(
     row_x_ptr = x_ptr + pid * stride_x_row
     row_y_ptr = y_ptr + pid * stride_y_row
 
-    m_i = -float("inf")
-    d_i = 0.0
+    m_i = tl.full((), -float("inf"), dtype=tl.float32)
+    d_i = tl.full((), 0.0, dtype=tl.float32)
 
     ptrs = row_x_ptr + tl.arange(0, BLOCK_SIZE)
 
@@ -212,8 +216,8 @@ def online_softmin_fp64_kernel(
     row_x_ptr = x_ptr + pid * stride_x_row
     row_y_ptr = y_ptr + pid * stride_y_row
 
-    m_i = -float("inf")
-    d_i = 0.0
+    m_i = tl.full((), -float("inf"), dtype=tl.float64)
+    d_i = tl.full((), 0.0, dtype=tl.float64)
 
     ptrs = row_x_ptr + tl.arange(0, BLOCK_SIZE)
 
@@ -446,21 +450,25 @@ def softmin(
     if not x.is_contiguous():
         x = x.contiguous()
 
-    y = torch.empty_like(x)
     n_orig = x.shape[dim]
+
+    y = torch.empty_like(x)
 
     # -------------------------------------------------------------------------
     # 路径1：dim != last 且 N 很小
     # 直接在原 contiguous tensor 上做 strided softmin，避免 transpose+contiguous
     # -------------------------------------------------------------------------
-    if dim != x.ndim - 1 and n_orig <= 64:
+    use_strided_tiny = (
+        dim != x.ndim - 1 and n_orig <= 64 and x.numel() < 1024 * 1024
+    )
+    if use_strided_tiny:
         outer = prod(x.shape[:dim]) if dim > 0 else 1
         inner = prod(x.shape[dim + 1 :]) if dim < x.ndim - 1 else 1
         m = outer * inner
 
         block_size = triton.next_power_of_2(n_orig)
         rows_per_program = _choose_rows_per_program(n_orig)
-        num_warps = _choose_num_warps(block_size)
+        num_warps = _choose_num_warps(block_size * rows_per_program)
         num_stages = _choose_num_stages(block_size)
 
         grid = (triton.cdiv(m, rows_per_program),)
@@ -501,7 +509,7 @@ def softmin(
 
         block_size = triton.next_power_of_2(n_orig)
         rows_per_program = _choose_rows_per_program(n_orig)
-        num_warps = _choose_num_warps(block_size)
+        num_warps = _choose_num_warps(block_size * rows_per_program)
         num_stages = _choose_num_stages(block_size)
 
         grid = (triton.cdiv(m, rows_per_program),)

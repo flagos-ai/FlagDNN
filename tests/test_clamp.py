@@ -3,7 +3,22 @@ import torch
 import flag_dnn
 
 
-SHAPES = [(32,), (1024,), (5333,), (16384,), (1024 * 1024,), (2, 3, 4, 5)]
+SHAPES = [
+    (),
+    (1,),
+    (17,),
+    (32,),
+    (127,),
+    (1024,),
+    (5333,),
+    (17, 31),
+    (4, 8, 16),
+    (2, 3, 4, 5),
+    (1, 64, 7, 7),
+    (1024 * 1024,),
+]
+
+INTEGER_SHAPES = [(), (1,), (257,), (17, 31), (2, 3, 4, 5)]
 
 # 测试组合：(min_val, max_val)
 CLAMP_BOUNDS = [
@@ -200,6 +215,22 @@ def test_accuracy_clamp_tensor_bounds_broadcast(dtype):
         out = torch.clamp(x, min=min_1d_t, max=max_1d_t)
 
     torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+
+
+@pytest.mark.clamp
+@pytest.mark.parametrize(
+    "dtype", [torch.int8, torch.int16, torch.int32, torch.int64]
+)
+@pytest.mark.parametrize("shape", INTEGER_SHAPES)
+def test_accuracy_clamp_integer_input(dtype, shape):
+    x = torch.randint(-9, 10, shape, dtype=dtype, device=flag_dnn.device)
+
+    ref_out = torch.clamp(x, min=-2, max=3)
+    with flag_dnn.use_dnn():
+        out = torch.clamp(x, min=-2, max=3)
+
+    assert out.dtype == dtype
+    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
 
 
 @pytest.mark.clamp

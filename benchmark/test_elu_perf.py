@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 
 import flag_dnn
-from benchmark.performance_utils import Benchmark
+from benchmark.performance_utils import Benchmark, ELEMENTWISE_PERF_SHAPES
 
 
 def torch_elu(x, alpha):
@@ -25,31 +25,7 @@ class EluBenchmark(Benchmark):
         return ["gbps"]
 
     def set_more_shapes(self):
-        self.shapes = [
-            # 1D
-            (1024,),
-            (4096,),
-            (16384,),
-            (65536,),
-            (262144,),
-            (1048576,),
-            # 2D
-            (256, 256),
-            (512, 512),
-            (1024, 1024),
-            (2048, 2048),
-            # 4D
-            (1, 3, 224, 224),
-            (8, 3, 224, 224),
-            (32, 3, 224, 224),
-            (64, 3, 224, 224),
-            (1, 64, 112, 112),
-            (8, 64, 112, 112),
-            (32, 64, 112, 112),
-            (1, 128, 56, 56),
-            (8, 128, 56, 56),
-            (32, 128, 56, 56),
-        ]
+        self.shapes = list(ELEMENTWISE_PERF_SHAPES)
         return None
 
     @staticmethod

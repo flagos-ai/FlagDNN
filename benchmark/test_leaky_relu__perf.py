@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 import flag_dnn
 
-from benchmark.performance_utils import Benchmark
+from benchmark.performance_utils import Benchmark, ELEMENTWISE_PERF_SHAPES
 from flag_dnn.utils import shape_utils
 
 
@@ -28,20 +28,7 @@ class LeakyRelu_Benchmark(Benchmark):
         return ["gbps"]
 
     def set_more_shapes(self):
-        shapes = [
-            (1024,),  # 小 1D
-            (65536,),  # 中等 1D
-            (1048576,),  # 大 1D
-            (1024, 1024),  # 典型 2D
-            (4096, 4096),  # 大 2D
-            (32, 128, 768),  # Transformer 常见 3D
-            (32, 512, 768),  # 更长序列
-            (32, 64, 56, 56),  # CV 4D
-            (32, 256, 28, 28),  # 更深层特征图
-            (5333,),  # 非对齐 1D
-            (17, 31),  # 非对齐 2D
-        ]
-        self.shapes = shapes
+        self.shapes = list(ELEMENTWISE_PERF_SHAPES)
         return None
 
     def get_input_iter(self, cur_dtype) -> Generator:

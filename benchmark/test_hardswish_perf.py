@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 
 import flag_dnn
-from benchmark.performance_utils import Benchmark
+from benchmark.performance_utils import Benchmark, ELEMENTWISE_PERF_SHAPES
 
 
 def torch_hardswish(x):
@@ -25,24 +25,7 @@ class HardSwishBenchmark(Benchmark):
         return ["gbps"]
 
     def set_more_shapes(self):
-        self.shapes = [
-            # 1D: 纯 elementwise 吞吐测试
-            (1024,),
-            (4096,),
-            # 2D: 常规矩阵形状
-            (32, 128),
-            (128, 512),
-            (512, 1024),
-            (1024, 4096),
-            # 4D: 更贴近 hardswish 常见 CNN / MobileNet 使用场景
-            (1, 16, 112, 112),
-            (1, 16, 56, 56),
-            # batched feature maps
-            (8, 16, 112, 112),
-            (8, 24, 56, 56),
-            (8, 80, 14, 14),
-            (8, 160, 7, 7),
-        ]
+        self.shapes = list(ELEMENTWISE_PERF_SHAPES)
         return None
 
     @staticmethod

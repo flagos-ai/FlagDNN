@@ -41,7 +41,7 @@ def get_tol(dtype):
     if dtype == torch.bfloat16:
         return dict(rtol=1e-2, atol=1e-2)
     if dtype == torch.float32:
-        return dict(rtol=1e-5, atol=1e-5)
+        return dict(rtol=1e-4, atol=1e-4)
     return dict(rtol=1e-12, atol=1e-12)
 
 

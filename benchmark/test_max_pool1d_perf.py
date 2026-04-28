@@ -43,6 +43,10 @@ class MaxPool1dBenchmark(Benchmark):
             # 3. 大核步长 (Aggressive Pooling, 音频特征提取常用)
             ((8, 128, 16000), 10, 5, 0),  # 例如处理 1 秒 16kHz 的音频波形
             ((1, 64, 48000), 100, 50, 0),
+            # 4. 非整除、奇数长度和最小边界
+            ((16, 3, 1023), 7, 3, 2),
+            ((8, 27, 733), 5, 2, 1),
+            ((1, 1, 1), 1, 1, 0),
         ]
         self.shapes = configs
         return None

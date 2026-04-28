@@ -341,8 +341,6 @@ def _infer_binary_out_dtype(
             if is_integral_dtype(input.dtype) and _other_is_integral(other):
                 return torch.float32
             return torch.result_type(input, other)
-        if is_bool_dtype(input.dtype) and _other_is_bool(other):
-            return torch.int64
         return torch.result_type(input, other)
 
     return torch.result_type(input, other)
@@ -383,6 +381,14 @@ def binary(
                 f" but found {rounding_mode}"
             )
         mode_idx = mode_map[rounding_mode]
+        if (
+            rounding_mode is not None
+            and is_bool_dtype(input.dtype)
+            and _other_is_bool(other)
+        ):
+            raise NotImplementedError(
+                f"\"div_{rounding_mode}_cuda\" not implemented for 'Bool'"
+            )
 
     if op_type not in ["add", "sub", "mul", "div", "eq", "ne"]:
         raise RuntimeError(f"Unsupported OP_TYPE={op_type} in binary")

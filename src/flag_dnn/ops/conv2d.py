@@ -3,7 +3,6 @@ from collections import OrderedDict
 from typing import Optional, Sequence, Tuple, Union
 
 import torch
-import torch.nn.functional as F
 import triton
 import triton.language as tl
 
@@ -41,21 +40,27 @@ def _pair(v: int | Sequence[int]) -> tuple[int, int]:
 
 
 def _conv_out_dim(
-    input_size: int, pad: int, dilation: int, kernel: int, stride: int
+    input_size: int,
+    pad_before: int,
+    pad_after: int,
+    dilation: int,
+    kernel: int,
+    stride: int,
 ) -> int:
-    return (input_size + 2 * pad - dilation * (kernel - 1) - 1) // stride + 1
+    return (
+        input_size + pad_before + pad_after - dilation * (kernel - 1) - 1
+    ) // stride + 1
 
 
 def _normalize_padding(
-    input: torch.Tensor,
     weight: torch.Tensor,
     stride: Tuple[int, int],
     padding: Union[str, int, Tuple[int, int]],
     dilation: Tuple[int, int],
-) -> Tuple[torch.Tensor, Tuple[int, int]]:
+) -> Tuple[int, int, int, int]:
     if isinstance(padding, str):
         if padding == "valid":
-            return input, (0, 0)
+            return (0, 0, 0, 0)
         if padding == "same":
             if stride != (1, 1):
                 raise RuntimeError(
@@ -66,12 +71,10 @@ def _normalize_padding(
             eff_kh, eff_kw = dil_h * (kh - 1) + 1, dil_w * (kw - 1) + 1
             pad_h, pad_w = max(eff_kh - 1, 0), max(eff_kw - 1, 0)
             pad_top, pad_left = pad_h // 2, pad_w // 2
-            input = F.pad(
-                input, (pad_left, pad_w - pad_left, pad_top, pad_h - pad_top)
-            )
-            return input, (0, 0)
+            return (pad_top, pad_h - pad_top, pad_left, pad_w - pad_left)
         raise RuntimeError("padding must be 'valid', 'same', int, or tuple")
-    return input, _pair(padding)
+    pad_h, pad_w = _pair(padding)
+    return (pad_h, pad_h, pad_w, pad_w)
 
 
 def _check_conv2d_inputs(
@@ -79,7 +82,7 @@ def _check_conv2d_inputs(
     weight: torch.Tensor,
     bias: Optional[torch.Tensor],
     stride: Tuple[int, int],
-    padding: Tuple[int, int],
+    padding: Tuple[int, int, int, int],
     dilation: Tuple[int, int],
     groups: int,
 ) -> None:
@@ -231,6 +234,28 @@ def _should_fallback_to_native(
         return True
 
     return False
+
+
+def _can_use_channels_last_fast_path(
+    input: torch.Tensor,
+    weight: torch.Tensor,
+    bias: Optional[torch.Tensor],
+    stride: Tuple[int, int],
+    padding: Tuple[int, int, int, int],
+    dilation: Tuple[int, int],
+    groups: int,
+) -> bool:
+    if padding[0] != padding[1] or padding[2] != padding[3]:
+        return False
+    return not _should_fallback_to_native(
+        input,
+        weight,
+        bias,
+        stride,
+        (padding[0], padding[2]),
+        dilation,
+        groups,
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -461,6 +486,186 @@ def conv2d_1x1_cl_kernel(
     tl.store(y_ptrs, acc.to(y_ptr.dtype.element_ty), mask=y_mask)
 
 
+@triton.jit
+def conv2d_general_kernel(
+    x_ptr,
+    w_ptr,
+    bias_ptr,
+    y_ptr,
+    total_elements,
+    XH,
+    XW,
+    OH,
+    OW,
+    C_OUT,
+    COUT_PER_GROUP: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    x_stride_n,
+    x_stride_c,
+    x_stride_h,
+    x_stride_w,
+    w_stride_o,
+    w_stride_i,
+    w_stride_h,
+    w_stride_w,
+    y_stride_n,
+    y_stride_c,
+    y_stride_h,
+    y_stride_w,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_TOP: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    HAS_BIAS: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < total_elements
+
+    ow = offsets % OW
+    oh = (offsets // OW) % OH
+    oc = (offsets // (OH * OW)) % C_OUT
+    batch = offsets // (C_OUT * OH * OW)
+    group = oc // COUT_PER_GROUP
+
+    acc = tl.zeros((BLOCK_SIZE,), dtype=tl.float32)
+    if HAS_BIAS:
+        acc += tl.load(bias_ptr + oc, mask=mask, other=0.0).to(tl.float32)
+
+    for kh in tl.static_range(0, KH):
+        ih = oh * STRIDE_H - PAD_TOP + kh * DIL_H
+        valid_h = (ih >= 0) & (ih < XH)
+        for kw in tl.static_range(0, KW):
+            iw = ow * STRIDE_W - PAD_LEFT + kw * DIL_W
+            valid = mask & valid_h & (iw >= 0) & (iw < XW)
+            for ci in tl.static_range(0, CIN_PER_GROUP):
+                ic = group * CIN_PER_GROUP + ci
+                x = tl.load(
+                    x_ptr
+                    + batch * x_stride_n
+                    + ic * x_stride_c
+                    + ih * x_stride_h
+                    + iw * x_stride_w,
+                    mask=valid,
+                    other=0.0,
+                ).to(tl.float32)
+                weight = tl.load(
+                    w_ptr
+                    + oc * w_stride_o
+                    + ci * w_stride_i
+                    + kh * w_stride_h
+                    + kw * w_stride_w,
+                    mask=mask,
+                    other=0.0,
+                ).to(tl.float32)
+                acc += x * weight
+
+    tl.store(
+        y_ptr
+        + batch * y_stride_n
+        + oc * y_stride_c
+        + oh * y_stride_h
+        + ow * y_stride_w,
+        acc.to(y_ptr.dtype.element_ty),
+        mask=mask,
+    )
+
+
+@triton.jit
+def conv2d_general_fp64_kernel(
+    x_ptr,
+    w_ptr,
+    bias_ptr,
+    y_ptr,
+    total_elements,
+    XH,
+    XW,
+    OH,
+    OW,
+    C_OUT,
+    COUT_PER_GROUP: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    x_stride_n,
+    x_stride_c,
+    x_stride_h,
+    x_stride_w,
+    w_stride_o,
+    w_stride_i,
+    w_stride_h,
+    w_stride_w,
+    y_stride_n,
+    y_stride_c,
+    y_stride_h,
+    y_stride_w,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_TOP: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    HAS_BIAS: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < total_elements
+
+    ow = offsets % OW
+    oh = (offsets // OW) % OH
+    oc = (offsets // (OH * OW)) % C_OUT
+    batch = offsets // (C_OUT * OH * OW)
+    group = oc // COUT_PER_GROUP
+
+    acc = tl.zeros((BLOCK_SIZE,), dtype=tl.float64)
+    if HAS_BIAS:
+        acc += tl.load(bias_ptr + oc, mask=mask, other=0.0).to(tl.float64)
+
+    for kh in tl.static_range(0, KH):
+        ih = oh * STRIDE_H - PAD_TOP + kh * DIL_H
+        valid_h = (ih >= 0) & (ih < XH)
+        for kw in tl.static_range(0, KW):
+            iw = ow * STRIDE_W - PAD_LEFT + kw * DIL_W
+            valid = mask & valid_h & (iw >= 0) & (iw < XW)
+            for ci in tl.static_range(0, CIN_PER_GROUP):
+                ic = group * CIN_PER_GROUP + ci
+                x = tl.load(
+                    x_ptr
+                    + batch * x_stride_n
+                    + ic * x_stride_c
+                    + ih * x_stride_h
+                    + iw * x_stride_w,
+                    mask=valid,
+                    other=0.0,
+                ).to(tl.float64)
+                weight = tl.load(
+                    w_ptr
+                    + oc * w_stride_o
+                    + ci * w_stride_i
+                    + kh * w_stride_h
+                    + kw * w_stride_w,
+                    mask=mask,
+                    other=0.0,
+                ).to(tl.float64)
+                acc += x * weight
+
+    tl.store(
+        y_ptr
+        + batch * y_stride_n
+        + oc * y_stride_c
+        + oh * y_stride_h
+        + ow * y_stride_w,
+        acc.to(y_ptr.dtype.element_ty),
+        mask=mask,
+    )
+
+
 # -----------------------------------------------------------------------------
 # Public op
 # -----------------------------------------------------------------------------
@@ -478,17 +683,16 @@ def conv2d(
     stride = _pair(stride)
     dilation = _pair(dilation)
 
-    input, padding = _normalize_padding(
-        input, weight, stride, padding, dilation
-    )
+    padding_2d = _normalize_padding(weight, stride, padding, dilation)
     _check_conv2d_inputs(
-        input, weight, bias, stride, padding, dilation, groups
+        input, weight, bias, stride, padding_2d, dilation, groups
     )
 
     n, c_in, h, w = input.shape
     c_out, c_per_group, kh, kw = weight.shape
-    oh = _conv_out_dim(h, padding[0], dilation[0], kh, stride[0])
-    ow = _conv_out_dim(w, padding[1], dilation[1], kw, stride[1])
+    pad_top, pad_bottom, pad_left, pad_right = padding_2d
+    oh = _conv_out_dim(h, pad_top, pad_bottom, dilation[0], kh, stride[0])
+    ow = _conv_out_dim(w, pad_left, pad_right, dilation[1], kw, stride[1])
 
     if oh < 0 or ow < 0:
         raise RuntimeError("computed output size is negative")
@@ -502,31 +706,72 @@ def conv2d(
     if bias is not None and not bias.is_contiguous():
         bias = bias.contiguous()
 
-    # Default path: native conv. This is the correct high-performance choice
-    # for all regular spatial convolutions and for training.
-    if _should_fallback_to_native(
-        input, weight, bias, stride, padding, dilation, groups
-    ):
-        if (
-            not _any_requires_grad(input, weight, bias)
-            and _input_has_fast_channel_stride(input)
-            and input.dtype in (torch.float16, torch.bfloat16, torch.float32)
-        ):
-            # If the caller already keeps tensors in channels-last layout, feed
-            # the native backend a matching weight layout too.
-            weight_native = _pack_weight_native_channels_last(weight, groups)
-            return F.conv2d(
-                input, weight_native, bias, stride, padding, dilation, groups
-            )
-        return F.conv2d(input, weight, bias, stride, padding, dilation, groups)
-
     cout_per_group = c_out // groups
     cin_per_group = c_in // groups
 
     is_depthwise = groups == c_in and c_per_group == 1 and c_out == c_in
     is_1x1 = kh == 1 and kw == 1 and dilation == (1, 1)
 
-    # We only reach here when the input is already channels-last-friendly.
+    if not _can_use_channels_last_fast_path(
+        input, weight, bias, stride, padding_2d, dilation, groups
+    ):
+        if not input.is_contiguous():
+            input = input.contiguous()
+        if not weight.is_contiguous():
+            weight = weight.contiguous()
+
+        output = torch.empty(
+            (n, c_out, oh, ow),
+            device=input.device,
+            dtype=input.dtype,
+        )
+        total = n * c_out * oh * ow
+        block_size = 128
+
+        with torch_device_fn.device(input.device):
+            kernel = (
+                conv2d_general_fp64_kernel
+                if input.dtype == torch.float64
+                else conv2d_general_kernel
+            )
+            kernel[(triton.cdiv(total, block_size),)](
+                input,
+                weight,
+                bias if bias is not None else output,
+                output,
+                total,
+                h,
+                w,
+                oh,
+                ow,
+                c_out,
+                cout_per_group,
+                cin_per_group,
+                input.stride(0),
+                input.stride(1),
+                input.stride(2),
+                input.stride(3),
+                weight.stride(0),
+                weight.stride(1),
+                weight.stride(2),
+                weight.stride(3),
+                output.stride(0),
+                output.stride(1),
+                output.stride(2),
+                output.stride(3),
+                stride[0],
+                stride[1],
+                pad_top,
+                pad_left,
+                dilation[0],
+                dilation[1],
+                kh,
+                kw,
+                HAS_BIAS=bias is not None,
+                BLOCK_SIZE=block_size,
+            )
+        return output
+
     output = torch.empty(
         (n, c_out, oh, ow),
         device=input.device,
@@ -566,8 +811,8 @@ def conv2d(
                 output.stride(3),
                 stride[0],
                 stride[1],
-                padding[0],
-                padding[1],
+                pad_top,
+                pad_left,
                 dilation[0],
                 dilation[1],
                 kh,
@@ -609,16 +854,11 @@ def conv2d(
                 cout_per_group,
                 stride[0],
                 stride[1],
-                padding[0],
-                padding[1],
+                pad_top,
+                pad_left,
                 HAS_BIAS=bias is not None,
                 GROUP_M=_GROUP_SIZE_M,
             )
             return output
 
-    # Safety net. Stay correct and fast
-    # if a new shape classification sneaks in.
-    weight_native = _pack_weight_native_channels_last(weight, groups)
-    return F.conv2d(
-        input, weight_native, bias, stride, padding, dilation, groups
-    )
+    raise RuntimeError("flag_dnn conv2d failed to select a kernel")

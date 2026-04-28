@@ -281,19 +281,6 @@ def _prepare_out(
     return out
 
 
-def _native_dot_fallback(
-    input: torch.Tensor,
-    tensor: torch.Tensor,
-    out_tensor: torch.Tensor,
-    out: Optional[torch.Tensor],
-) -> torch.Tensor:
-    if out is None:
-        return torch.dot(input, tensor)
-
-    torch.dot(input, tensor, out=out_tensor)
-    return out_tensor
-
-
 def _launch_atomic_fp32(
     input: torch.Tensor,
     tensor: torch.Tensor,
@@ -387,7 +374,12 @@ def dot(
         if input.dtype == torch.float32:
             # 1024 * 8 * 2 = 16384
             if n_elements <= _DOT_SINGLE_THRESHOLD_FP32:
-                dot_single_kernel_fp32[(1,)](
+                single_kernel = (
+                    dot_single_kernel_fp64
+                    if runtime.device.support_fp64
+                    else dot_single_kernel_fp32
+                )
+                single_kernel[(1,)](
                     input,
                     tensor,
                     out_tensor,
@@ -420,7 +412,12 @@ def dot(
                 return out_tensor
 
             if n_elements <= _DOT_FP16_FALLBACK_MAX:
-                return _native_dot_fallback(input, tensor, out_tensor, out)
+                return _launch_atomic_fp32(
+                    input,
+                    tensor,
+                    n_elements,
+                    out_tensor,
+                )
 
             return _launch_atomic_fp32(
                 input,
@@ -443,7 +440,12 @@ def dot(
             return out_tensor
 
         if n_elements <= _DOT_BF16_FALLBACK_MAX:
-            return _native_dot_fallback(input, tensor, out_tensor, out)
+            return _launch_atomic_fp32(
+                input,
+                tensor,
+                n_elements,
+                out_tensor,
+            )
 
         return _launch_atomic_fp32(
             input,

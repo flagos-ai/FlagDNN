@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 
 import flag_dnn
-from benchmark.performance_utils import Benchmark
+from benchmark.performance_utils import Benchmark, ELEMENTWISE_PERF_SHAPES
 
 
 def torch_threshold(x, threshold_val, value_val):
@@ -25,17 +25,7 @@ class ThresholdBenchmark(Benchmark):
         return ["gbps"]
 
     def set_more_shapes(self):
-        self.shapes = [
-            (4096,),  # 小向量
-            (65536,),  # 中等向量
-            (1048576,),  # 大向量
-            (4096, 4096),  # 大 2D
-            (32, 128, 768),  # Transformer: B x S x H
-            (32, 512, 768),  # Transformer 长序列
-            (32, 128, 1024),  # 更大 hidden size
-            (32, 64, 56, 56),  # CV: ResNet 中间层激活
-            (32, 256, 28, 28),  # CV: 更深层特征图
-        ]
+        self.shapes = list(ELEMENTWISE_PERF_SHAPES)
         return None
 
     @staticmethod

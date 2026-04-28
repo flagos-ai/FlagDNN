@@ -26,6 +26,18 @@ HARDTANH_CASES = [
     ((0, 3), -1.0, 1.0, True),
 ]
 
+INTEGER_HARDTANH_CASES = [
+    ((), -1, 1, False),
+    ((), -1, 1, True),
+    ((1,), -1, 1, False),
+    ((17,), -2, 2, True),
+    ((17, 31), -3, 3, False),
+    ((2, 3, 4, 5), -1, 1, True),
+    ((0, 3), -1, 1, False),
+]
+
+INTEGER_DTYPES = [torch.int8, torch.int16, torch.int32, torch.int64]
+
 
 def get_tol(dtype):
     if dtype == torch.float16:
@@ -77,3 +89,36 @@ def test_accuracy_hardtanh(dtype, shape, min_val, max_val, inplace):
                 "the input tensor memory."
             )
         torch.testing.assert_close(x_custom, x, **get_tol(dtype))
+
+
+@pytest.mark.hardtanh
+@pytest.mark.parametrize("dtype", INTEGER_DTYPES)
+@pytest.mark.parametrize(
+    "shape, min_val, max_val, inplace", INTEGER_HARDTANH_CASES
+)
+def test_accuracy_hardtanh_integer_dtype(
+    dtype, shape, min_val, max_val, inplace
+):
+    x = torch.randint(-5, 6, shape, dtype=dtype, device=flag_dnn.device)
+
+    x_ref = x.clone()
+    x_custom = x.clone()
+
+    out_ref = F.hardtanh(
+        x_ref, min_val=min_val, max_val=max_val, inplace=inplace
+    )
+    with flag_dnn.use_dnn():
+        out_custom = F.hardtanh(
+            x_custom, min_val=min_val, max_val=max_val, inplace=inplace
+        )
+
+    assert out_custom.dtype == dtype
+    torch.testing.assert_close(out_custom, out_ref, rtol=0, atol=0)
+
+    if inplace:
+        assert out_custom.data_ptr() == x_custom.data_ptr()
+        torch.testing.assert_close(x_custom, x_ref, rtol=0, atol=0)
+    else:
+        if x.numel() > 0:
+            assert out_custom.data_ptr() != x_custom.data_ptr()
+        torch.testing.assert_close(x_custom, x, rtol=0, atol=0)
