@@ -58,6 +58,7 @@ from flag_dnn.ops.softmin import softmin
 from flag_dnn.ops.mv import mv
 from flag_dnn.ops.mm import mm
 from flag_dnn.ops.dot import dot
+from flag_dnn.ops.conv1d import conv1d
 from flag_dnn.ops.conv2d import conv2d
 from flag_dnn.ops.hardswish import hardswish
 from flag_dnn.ops.relu6 import relu6
@@ -129,6 +130,7 @@ __all__ = [
     "mv",
     "mm",
     "dot",
+    "conv1d",
     "conv2d",
     "hardswish",
     "relu6",

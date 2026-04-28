@@ -1299,6 +1299,65 @@ conv2d_1x1:
       - 3
       - 4
 
+conv1d_gemm_v3:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_OC: block_oc
+        BLOCK_K: block_k
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 32
+      - 64
+      - 128
+    block_oc:
+      - 32
+      - 64
+      - 128
+    block_k:
+      - 32
+      - 64
+    warps:
+      - 4
+    stages:
+      - 2
+
+conv1d_general:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+    warps:
+      - 4
+    stages:
+      - 1
+
+conv1d_depthwise_v5:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_C: block_c
+        BLOCK_L: block_l
+      num_warps: warps
+      num_stages: stages
+    block_c:
+      - 8
+      - 16
+      - 32
+    block_l:
+      - 128
+      - 256
+    warps:
+      - 4
+    stages:
+      - 2
+
 conv2d_dw_v2:
   - gen: true
     param_map:
