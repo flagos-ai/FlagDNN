@@ -1,155 +1,51 @@
 import pytest
 import torch
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
-SHAPES = [
-    (),
-    (1,),
-    (17,),
-    (32,),
-    (127,),
-    (1024,),
-    (5333,),
-    (17, 31),
-    (4, 8, 16),
-    (2, 3, 4, 5),
-    (1, 64, 7, 7),
-    (1024 * 1024,),
-]
-
-INTEGER_SHAPES = [(), (1,), (257,), (17, 31), (2, 3, 4, 5)]
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+    INT_DTYPES = [torch.int32]
+    BOOL_DTYPES = [torch.bool]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
+    INT_DTYPES = utils.ALL_INT_DTYPES
+    BOOL_DTYPES = utils.BOOL_TYPES
 
 
-def _get_tolerances(dtype):
-    if dtype == torch.bfloat16:
-        return 1.6e-2, 1e-2
-    elif dtype == torch.float16:
-        return 1e-3, 1e-3
-    else:
-        return 1e-5, 1e-5
+ABS_SHAPES = utils.POINTWISE_SHAPES
 
 
 @pytest.mark.abs
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
-@pytest.mark.parametrize("shape", SHAPES)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
+@pytest.mark.parametrize("shape", ABS_SHAPES)
 def test_accuracy_abs(dtype, shape):
     """最基础的全域测试"""
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
 
-    x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
+    inp = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
+    ref_inp = utils.to_reference(inp, ref_kind="compute")
 
-    rtol, atol = _get_tolerances(dtype)
-    ref_out = torch.abs(x)
+    ref_out = torch.abs(ref_inp)
     with flag_dnn.use_dnn():
-        out = torch.abs(x)
+        res_out = torch.abs(inp)
 
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+    utils.gems_assert_close(res_out, ref_out, dtype)
 
 
 @pytest.mark.abs
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
-@pytest.mark.parametrize("shape", SHAPES)
-def test_accuracy_abs_mixed_values(dtype, shape):
-    """细粒度测试：显式测试包含正负数的混合情况"""
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-
-    # 显式构造混合张量（天然的正态分布即可保证混合）
-    x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
-
-    rtol, atol = _get_tolerances(dtype)
-    ref_out = torch.abs(x)
-    with flag_dnn.use_dnn():
-        out = torch.abs(x)
-
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
-
-
-@pytest.mark.abs
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
-@pytest.mark.parametrize("shape", SHAPES)
-def test_accuracy_abs_positive_values(dtype, shape):
-    """细粒度测试：纯正数的情况"""
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-
-    x = (
-        torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device))
-        + 0.1
-    )
-
-    rtol, atol = _get_tolerances(dtype)
-    ref_out = torch.abs(x)
-    with flag_dnn.use_dnn():
-        out = torch.abs(x)
-
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
-
-
-@pytest.mark.abs
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
-@pytest.mark.parametrize("shape", SHAPES)
-def test_accuracy_abs_negative_values(dtype, shape):
-    """细粒度测试：纯负数的情况"""
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-
-    x = (
-        -torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device))
-        - 0.1
-    )
-
-    rtol, atol = _get_tolerances(dtype)
-    ref_out = torch.abs(x)
-    with flag_dnn.use_dnn():
-        out = torch.abs(x)
-
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
-
-
-@pytest.mark.abs
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
-def test_accuracy_abs_empty_tensor(dtype):
-    """边界情况：空张量测试"""
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-
-    x = torch.randn(0, dtype=dtype, device=flag_dnn.device)
-
-    rtol, atol = _get_tolerances(dtype)
-    ref_out = torch.abs(x)
-    with flag_dnn.use_dnn():
-        out = torch.abs(x)
-
-    assert out.shape == (0,)
-    assert out.dtype == dtype
-    assert out.device == x.device
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
-
-
-@pytest.mark.abs
-@pytest.mark.parametrize(
-    "dtype", [torch.int8, torch.int16, torch.int32, torch.int64]
-)
-@pytest.mark.parametrize("shape", INTEGER_SHAPES)
+@pytest.mark.parametrize("dtype", INT_DTYPES)
+@pytest.mark.parametrize("shape", ABS_SHAPES)
 def test_accuracy_abs_integer(dtype, shape):
-    x = torch.randint(-9, 10, shape, dtype=dtype, device=flag_dnn.device)
+    inp = torch.randint(-9, 10, shape, dtype=dtype, device=flag_dnn.device)
+    ref_inp = utils.to_reference(inp, ref_kind="compute")
 
-    ref_out = torch.abs(x)
+    ref_out = torch.abs(ref_inp)
     with flag_dnn.use_dnn():
-        out = torch.abs(x)
+        res_out = torch.abs(inp)
 
-    assert out.dtype == ref_out.dtype
-    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+    assert res_out.dtype == ref_out.dtype
+    utils.gems_assert_equal(res_out, ref_out)

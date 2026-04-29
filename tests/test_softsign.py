@@ -3,35 +3,21 @@ import torch
 import torch.nn.functional as F
 
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
-SOFTSIGN_CASES = [
-    (0,),
-    (1,),
-    (17,),
-    (1024,),
-    (4096,),
-    (2, 3),
-    (4, 5, 6),
-    (2, 3, 32, 32),
-    (1, 64, 112, 112),
-]
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
 
 
-def get_tol(dtype):
-    if dtype == torch.float16:
-        return dict(rtol=1e-3, atol=1e-3)
-    if dtype == torch.bfloat16:
-        return dict(rtol=1e-2, atol=1e-2)
-    if dtype == torch.float32:
-        return dict(rtol=1e-6, atol=1e-6)
-    return dict(rtol=1e-12, atol=1e-12)
+SOFTSIGN_CASES = [(0,), *utils.POINTWISE_SHAPES]
 
 
 @pytest.mark.softsign
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape", SOFTSIGN_CASES)
 def test_accuracy_softsign(dtype, shape):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -42,15 +28,16 @@ def test_accuracy_softsign(dtype, shape):
     x_ref = x.clone()
     x_custom = x.clone()
 
-    out_ref = F.softsign(x_ref)
+    ref_x = utils.to_reference(x_ref, ref_kind="compute")
+    out_ref = F.softsign(ref_x)
 
     with flag_dnn.use_dnn():
         out_custom = F.softsign(x_custom)
 
-    torch.testing.assert_close(out_custom, out_ref, **get_tol(dtype))
+    utils.gems_assert_close(out_custom, out_ref, dtype)
 
     if x.numel() > 0:
         assert (
             out_custom.data_ptr() != x_custom.data_ptr()
         ), "softsign should be out-of-place, but output shares input memory."
-        torch.testing.assert_close(x_custom, x, **get_tol(dtype))
+        torch.testing.assert_close(x_custom, x, rtol=0, atol=0)

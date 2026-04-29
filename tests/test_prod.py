@@ -1,63 +1,69 @@
 import pytest
 import torch
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
-# (shape, dim, keepdim) 组合测试用例
-# 注意：prod 不支持 tuple 形式的多维度归约
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+    INT_DTYPES = [torch.int32]
+    BOOL_DTYPES = [torch.bool]
+    DIM_LIST = [0]
+    KEEPDIM = [True]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
+    INT_DTYPES = utils.ALL_INT_DTYPES
+    BOOL_DTYPES = utils.BOOL_TYPES
+    DIM_LIST = [0, 1]
+    KEEPDIM = [True, False]
+
+
+PROD_SHAPES = utils.REDUCTION_SHAPES + [
+    (128, 256),
+    (10, 20, 30),
+]
 PROD_CASES = [
-    # 全局归约
+    (shape, dim, keepdim)
+    for shape in PROD_SHAPES
+    for dim in DIM_LIST
+    if dim < len(shape)
+    for keepdim in KEEPDIM
+]
+PROD_CASES += [
     ((1024,), None, False),
     ((2, 3, 4, 5), None, True),
-    # 单维度归约
-    ((128, 256), 0, False),
-    ((128, 256), 1, True),
-    ((2, 3, 4, 5), 2, False),
-    ((2, 3, 4, 5), -1, True),
-    # 大 N 归约
-    ((2, 5000), 1, False),
 ]
 
 
-def _get_tolerances(dtype):
-    # 乘积的浮点误差会迅速放大，所以这里的容差比 sum 稍微放宽一些
-    if dtype == torch.bfloat16:
-        return 1e-1, 1e-1
-    elif dtype == torch.float16:
-        return 5e-2, 5e-2
-    else:
-        return 1e-3, 1e-3
-
-
 @pytest.mark.prod
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape, dim, keepdim", PROD_CASES)
 def test_accuracy_prod(dtype, shape, dim, keepdim):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
 
     # 乘积操作很容易发生指数级溢出/下溢，所以用较小的方差生成数据
-    x = torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 0.5 + 1.0
-
-    rtol, atol = _get_tolerances(dtype)
+    inp = torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 0.5 + 1.0
+    ref_inp = utils.to_reference(inp, ref_kind="compute")
 
     # 绕过 PyTorch 原生 prod API 对 dim=None 和 keepdim 的限制
     if dim is None:
-        ref_out = torch.prod(x)  # PyTorch 全局求积只能这么调用
+        ref_out = torch.prod(ref_inp)  # PyTorch 全局求积只能这么调用
         with flag_dnn.use_dnn():
-            out = torch.prod(x)
+            res_out = torch.prod(inp)
 
         if keepdim:
-            ref_out = ref_out.view([1] * x.ndim)  # 手动补齐 keepdim 的形状
-            out = out.view([1] * x.ndim)
+            ref_out = ref_out.view([1] * inp.ndim)  # 手动补齐 keepdim 的形状
+            res_out = res_out.view([1] * inp.ndim)
+        reduce_dim = inp.numel()
     else:
-        ref_out = torch.prod(x, dim=dim, keepdim=keepdim)
+        ref_out = torch.prod(ref_inp, dim=dim, keepdim=keepdim)
         with flag_dnn.use_dnn():
-            out = torch.prod(x, dim=dim, keepdim=keepdim)
+            res_out = torch.prod(inp, dim=dim, keepdim=keepdim)
+        reduce_dim = shape[dim % inp.ndim]
 
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+    utils.gems_assert_close(res_out, ref_out, dtype, reduce_dim=reduce_dim)
 
 
 @pytest.mark.prod
@@ -71,50 +77,57 @@ def test_accuracy_prod(dtype, shape, dim, keepdim):
 def test_accuracy_prod_dtype_promotion(input_dtype, out_dtype):
     """测试带有 dtype 参数的计算，防止数据类型溢出"""
     if input_dtype.is_floating_point:
-        x = (
+        inp = (
             torch.randn((10, 20), dtype=input_dtype, device=flag_dnn.device)
             * 0.5
         )
     else:
-        x = torch.randint(
+        inp = torch.randint(
             -2, 3, (10, 20), dtype=input_dtype, device=flag_dnn.device
         )
 
-    ref_out = torch.prod(x, dim=1, dtype=out_dtype)
+    ref_inp = utils.to_reference(inp, ref_kind="compute")
+
+    ref_out = torch.prod(ref_inp, dim=1, dtype=out_dtype)
     with flag_dnn.use_dnn():
-        out = torch.prod(x, dim=1, dtype=out_dtype)
+        out = torch.prod(inp, dim=1, dtype=out_dtype)
 
     assert out.dtype == out_dtype
-    torch.testing.assert_close(out, ref_out, rtol=1e-3, atol=1e-3)
+    utils.gems_assert_close(out, ref_out, out_dtype, reduce_dim=20)
 
 
 @pytest.mark.prod
 def test_accuracy_prod_empty_tensor():
     """边界测试：空张量的乘积必须产生 1 (而不是 0)"""
-    x = torch.empty((2, 0, 3), dtype=torch.float32, device=flag_dnn.device)
+    inp = torch.empty((2, 0, 3), dtype=torch.float32, device=flag_dnn.device)
+    ref_inp = utils.to_reference(inp, ref_kind="compute")
 
-    ref_out = torch.prod(x, dim=1)
+    ref_out = torch.prod(ref_inp, dim=1)
     with flag_dnn.use_dnn():
-        out = torch.prod(x, dim=1)
+        out = torch.prod(inp, dim=1)
 
-    torch.testing.assert_close(out, ref_out)
+    utils.gems_assert_close(out, ref_out, torch.float32)
 
 
 @pytest.mark.prod
-@pytest.mark.parametrize("dtype", [torch.bool, torch.int32, torch.int64])
+@pytest.mark.parametrize("dtype", BOOL_DTYPES + INT_DTYPES)
 def test_accuracy_prod_default_integer_output_dtype(dtype):
     if dtype == torch.bool:
-        x = torch.tensor(
+        inp = torch.tensor(
             [[True, True], [False, True]],
             dtype=dtype,
             device=flag_dnn.device,
         )
     else:
-        x = torch.tensor([[1, 2], [3, 4]], dtype=dtype, device=flag_dnn.device)
+        inp = torch.tensor(
+            [[1, 2], [3, 4]], dtype=dtype, device=flag_dnn.device
+        )
 
-    ref_out = torch.prod(x, dim=1)
+    ref_inp = utils.to_reference(inp, ref_kind="compute")
+
+    ref_out = torch.prod(ref_inp, dim=1)
     with flag_dnn.use_dnn():
-        out = torch.prod(x, dim=1)
+        out = torch.prod(inp, dim=1)
 
     assert out.dtype == torch.int64
-    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+    utils.gems_assert_equal(out, ref_out)

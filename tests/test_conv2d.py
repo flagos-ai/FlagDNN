@@ -2,6 +2,8 @@ import pytest
 import torch
 import torch.nn.functional as F
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
 # (
@@ -35,22 +37,18 @@ CONV2D_CASES = [
     ((1, 3, 12, 12), (6, 3, 3, 3), True, 1, "valid", 1, 1),
     ((2, 4, 20, 18), (8, 2, 5, 5), False, 2, "valid", 1, 2),
 ]
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
 
 
-def get_tol(dtype):
-    if dtype == torch.float16:
-        return dict(rtol=2e-2, atol=2e-2)
-    if dtype == torch.bfloat16:
-        return dict(rtol=3e-2, atol=3e-2)
-    if dtype == torch.float32:
-        return dict(rtol=2e-2, atol=2e-2)
-    return dict(rtol=1e-12, atol=1e-12)
+def _conv_reduce_dim(weight_shape):
+    return max(weight_shape[1] * weight_shape[2] * weight_shape[3], 1)
 
 
 @pytest.mark.conv2d
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize(
     "input_shape, weight_shape, has_bias, stride, padding, dilation, groups",
     CONV2D_CASES,
@@ -76,9 +74,13 @@ def test_accuracy_conv2d(
         else None
     )
 
-    x_ref = x.clone()
-    w_ref = w.clone()
-    b_ref = b.clone() if b is not None else None
+    x_ref = utils.to_reference(x.clone(), ref_kind="compute")
+    w_ref = utils.to_reference(w.clone(), ref_kind="compute")
+    b_ref = (
+        utils.to_reference(b.clone(), ref_kind="compute")
+        if b is not None
+        else None
+    )
 
     x_custom = x.clone()
     w_custom = w.clone()
@@ -105,4 +107,10 @@ def test_accuracy_conv2d(
             groups=groups,
         )
 
-    torch.testing.assert_close(out_custom, out_ref, **get_tol(dtype))
+    utils.gems_assert_close(
+        out_custom,
+        out_ref,
+        dtype,
+        reduce_dim=_conv_reduce_dim(weight_shape),
+        atol=2e-2,
+    )

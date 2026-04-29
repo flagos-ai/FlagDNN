@@ -2,6 +2,8 @@ import pytest
 import torch
 
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
 MM_CASES = [
@@ -14,16 +16,16 @@ MM_CASES = [
     (16, 17, 15),
     (32, 64, 16),
 ]
+if cfg.QUICK_MODE:
+    MM_DTYPES = [torch.float32]
+else:
+    MM_DTYPES = [*utils.ALL_FLOAT_DTYPES, torch.complex64]
 
 
-def get_tol(dtype):
-    if dtype == torch.float16:
-        return dict(rtol=1e-2, atol=1e-2)
-    if dtype == torch.bfloat16:
-        return dict(rtol=2e-2, atol=2e-2)
-    if dtype in (torch.float32, torch.complex64):
-        return dict(rtol=1e-4, atol=1e-4)
-    return dict(rtol=1e-10, atol=1e-10)
+def _assert_mm_close(res, ref, dtype, reduce_dim=1, equal_nan=False):
+    utils.gems_assert_close(
+        res, ref, dtype, reduce_dim=reduce_dim, equal_nan=equal_nan
+    )
 
 
 def make_tensor(shape, dtype):
@@ -43,23 +45,12 @@ def make_tensor(shape, dtype):
 
 
 @pytest.mark.mm
-@pytest.mark.parametrize(
-    "dtype",
-    [
-        torch.float16,
-        torch.bfloat16,
-        torch.float32,
-        torch.float64,
-        torch.complex64,
-        torch.complex128,
-    ],
-)
+@pytest.mark.parametrize("dtype", MM_DTYPES)
 @pytest.mark.parametrize("m, k, n", MM_CASES)
 @pytest.mark.parametrize("use_out", [False, True])
 def test_accuracy_mm(dtype, m, k, n, use_out):
-    if dtype in (torch.float64, torch.complex128):
-        if not flag_dnn.runtime.device.support_fp64:
-            pytest.skip("Device does not support float64")
+    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
+        pytest.skip("Device does not support float64")
 
     a = make_tensor((m, k), dtype)
     b = make_tensor((k, n), dtype)
@@ -68,7 +59,9 @@ def test_accuracy_mm(dtype, m, k, n, use_out):
     a_custom = a.clone()
     b_custom = b.clone()
 
-    out_ref = torch.mm(a_ref, b_ref)
+    ref_a = utils.to_reference(a_ref, ref_kind="compute")
+    ref_b = utils.to_reference(b_ref, ref_kind="compute")
+    out_ref = torch.mm(ref_a, ref_b)
 
     if use_out:
         out_buf = torch.empty((m, n), dtype=dtype, device=flag_dnn.device)
@@ -76,14 +69,14 @@ def test_accuracy_mm(dtype, m, k, n, use_out):
             out_custom = torch.mm(a_custom, b_custom, out=out_buf)
 
         assert out_custom.data_ptr() == out_buf.data_ptr()
-        torch.testing.assert_close(out_buf, out_ref, **get_tol(dtype))
+        _assert_mm_close(out_buf, out_ref, dtype, reduce_dim=k)
     else:
         with flag_dnn.use_dnn():
             out_custom = torch.mm(a_custom, b_custom)
 
-    torch.testing.assert_close(out_custom, out_ref, **get_tol(dtype))
-    torch.testing.assert_close(a_custom, a_ref, **get_tol(dtype))
-    torch.testing.assert_close(b_custom, b_ref, **get_tol(dtype))
+    _assert_mm_close(out_custom, out_ref, dtype, reduce_dim=k)
+    torch.testing.assert_close(a_custom, a, rtol=0, atol=0)
+    torch.testing.assert_close(b_custom, b, rtol=0, atol=0)
 
 
 @pytest.mark.mm
@@ -93,12 +86,14 @@ def test_mm_out_dtype_fp32(dtype):
     b = make_tensor((9, 7), dtype)
     out = torch.empty((8, 7), dtype=torch.float32, device=flag_dnn.device)
 
-    ref = torch.mm(a, b, out_dtype=torch.float32)
+    ref_a = utils.to_reference(a, ref_kind="compute")
+    ref_b = utils.to_reference(b, ref_kind="compute")
+    ref = torch.mm(ref_a, ref_b).to(torch.float32)
     got = flag_dnn.ops.mm(a, b, out_dtype=torch.float32, out=out)
 
     assert got.data_ptr() == out.data_ptr()
     assert got.dtype == torch.float32
-    torch.testing.assert_close(got, ref, rtol=2e-3, atol=2e-3)
+    utils.gems_assert_close(got, ref, torch.float32, reduce_dim=9)
 
 
 @pytest.mark.mm
@@ -109,13 +104,15 @@ def test_mm_non_contiguous_inputs_and_out():
     out_base = torch.empty((3, 7), dtype=dtype, device=flag_dnn.device)
     out = out_base.t()
 
-    ref = torch.mm(a, b)
+    ref_a = utils.to_reference(a, ref_kind="compute")
+    ref_b = utils.to_reference(b, ref_kind="compute")
+    ref = torch.mm(ref_a, ref_b)
     with flag_dnn.use_dnn():
         got = torch.mm(a, b, out=out)
 
     assert got.data_ptr() == out.data_ptr()
     assert not out.is_contiguous()
-    torch.testing.assert_close(got, ref, **get_tol(dtype))
+    utils.gems_assert_close(got, ref, dtype, reduce_dim=5)
 
 
 @pytest.mark.mm
@@ -131,11 +128,15 @@ def test_mm_nan_inf_equal_nan():
         device=flag_dnn.device,
     )
 
-    ref = torch.mm(a, b)
+    ref_a = utils.to_reference(a, ref_kind="compute")
+    ref_b = utils.to_reference(b, ref_kind="compute")
+    ref = torch.mm(ref_a, ref_b)
     with flag_dnn.use_dnn():
         got = torch.mm(a, b)
 
-    torch.testing.assert_close(got, ref, rtol=1e-4, atol=1e-4, equal_nan=True)
+    utils.gems_assert_close(
+        got, ref, torch.float32, reduce_dim=2, equal_nan=True
+    )
 
 
 @pytest.mark.mm

@@ -1,40 +1,23 @@
 import pytest
 import torch
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
-SHAPES = [
-    (),
-    (1,),
-    (17,),
-    (32,),
-    (127,),
-    (1024,),
-    (5333,),
-    (17, 31),
-    (4, 8, 16),
-    (2, 3, 4, 5),
-    (1, 64, 7, 7),
-    (1024 * 1024,),
-]
-
-INTEGER_SHAPES = [(), (1,), (257,), (17, 31), (2, 3, 4, 5)]
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+    INT_DTYPES = [torch.int32]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
+    INT_DTYPES = utils.ALL_INT_DTYPES
 
 
-def _get_tolerances(dtype):
-    """辅助函数：根据数据类型获取容差"""
-    if dtype == torch.bfloat16:
-        return 1.6e-2, 1e-2
-    elif dtype == torch.float16:
-        return 1e-3, 1e-3
-    else:
-        return 1e-5, 1e-5
+SHAPES = utils.POINTWISE_SHAPES
 
 
 @pytest.mark.neg
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape", SHAPES)
 def test_accuracy_neg(dtype, shape):
     """最基础的全域测试"""
@@ -43,18 +26,16 @@ def test_accuracy_neg(dtype, shape):
 
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
-    rtol, atol = _get_tolerances(dtype)
-    ref_out = torch.neg(x)
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_out = torch.neg(ref_x)
     with flag_dnn.use_dnn():
         out = torch.neg(x)
 
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+    utils.gems_assert_close(out, ref_out, dtype)
 
 
 @pytest.mark.neg
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape", SHAPES)
 def test_accuracy_neg_mixed_values(dtype, shape):
     """细粒度测试：显式测试包含正负数的混合情况"""
@@ -63,18 +44,16 @@ def test_accuracy_neg_mixed_values(dtype, shape):
 
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
-    rtol, atol = _get_tolerances(dtype)
-    ref_out = torch.neg(x)
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_out = torch.neg(ref_x)
     with flag_dnn.use_dnn():
         out = torch.neg(x)
 
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+    utils.gems_assert_close(out, ref_out, dtype)
 
 
 @pytest.mark.neg
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape", SHAPES)
 def test_accuracy_neg_positive_values(dtype, shape):
     """细粒度测试：纯正数的情况"""
@@ -86,18 +65,16 @@ def test_accuracy_neg_positive_values(dtype, shape):
         + 0.1
     )
 
-    rtol, atol = _get_tolerances(dtype)
-    ref_out = torch.neg(x)
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_out = torch.neg(ref_x)
     with flag_dnn.use_dnn():
         out = torch.neg(x)
 
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+    utils.gems_assert_close(out, ref_out, dtype)
 
 
 @pytest.mark.neg
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape", SHAPES)
 def test_accuracy_neg_negative_values(dtype, shape):
     """细粒度测试：纯负数的情况"""
@@ -109,18 +86,16 @@ def test_accuracy_neg_negative_values(dtype, shape):
         - 0.1
     )
 
-    rtol, atol = _get_tolerances(dtype)
-    ref_out = torch.neg(x)
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_out = torch.neg(ref_x)
     with flag_dnn.use_dnn():
         out = torch.neg(x)
 
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+    utils.gems_assert_close(out, ref_out, dtype)
 
 
 @pytest.mark.neg
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 def test_accuracy_neg_empty_tensor(dtype):
     """边界情况：空张量测试"""
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -128,28 +103,27 @@ def test_accuracy_neg_empty_tensor(dtype):
 
     x = torch.randn(0, dtype=dtype, device=flag_dnn.device)
 
-    rtol, atol = _get_tolerances(dtype)
-    ref_out = torch.neg(x)
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_out = torch.neg(ref_x)
     with flag_dnn.use_dnn():
         out = torch.neg(x)
 
     assert out.shape == (0,)
     assert out.dtype == dtype
     assert out.device == x.device
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+    utils.gems_assert_close(out, ref_out, dtype)
 
 
 @pytest.mark.neg
-@pytest.mark.parametrize(
-    "dtype", [torch.int8, torch.int16, torch.int32, torch.int64]
-)
-@pytest.mark.parametrize("shape", INTEGER_SHAPES)
+@pytest.mark.parametrize("dtype", INT_DTYPES)
+@pytest.mark.parametrize("shape", SHAPES)
 def test_accuracy_neg_integer(dtype, shape):
     x = torch.randint(-9, 10, shape, dtype=dtype, device=flag_dnn.device)
 
-    ref_out = torch.neg(x)
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_out = torch.neg(ref_x)
     with flag_dnn.use_dnn():
         out = torch.neg(x)
 
     assert out.dtype == ref_out.dtype
-    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+    utils.gems_assert_equal(out, ref_out)

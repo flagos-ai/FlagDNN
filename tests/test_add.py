@@ -1,22 +1,19 @@
 import pytest
 import torch
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
-SHAPES = [
-    (),
-    (1,),
-    (17,),
-    (32,),
-    (127,),
-    (1024,),
-    (5333,),
-    (17, 31),
-    (4, 8, 16),
-    (2, 3, 4, 5),
-    (1, 64, 7, 7),
-    (1024 * 1024,),
-]
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+    NON_FLOAT_DTYPES = [torch.bool, torch.int32]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
+    NON_FLOAT_DTYPES = utils.BOOL_TYPES + utils.ALL_INT_DTYPES
+
+
+SHAPES = utils.POINTWISE_SHAPES
 
 BROADCAST_SHAPES = [
     ((4, 4), (4,)),  # 1D broadcast to 2D
@@ -24,14 +21,6 @@ BROADCAST_SHAPES = [
     ((1, 5), (5, 5)),  # 单一维度扩展
     ((2, 1, 4, 1), (1, 3, 1, 5)),  # 复杂高维双向广播
     ((), (17, 31)),  # 标量 Tensor 广播到矩阵
-]
-
-NON_FLOAT_DTYPES = [
-    torch.bool,
-    torch.int8,
-    torch.int16,
-    torch.int32,
-    torch.int64,
 ]
 
 
@@ -42,9 +31,7 @@ def _rand_non_float(shape, dtype):
 
 
 @pytest.mark.add
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape", SHAPES)
 def test_accuracy_add(dtype, shape):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -53,25 +40,18 @@ def test_accuracy_add(dtype, shape):
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
     y = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
-    # 针对不同数据类型动态设置容差 (Tolerance)
-    if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
-    elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
-    else:
-        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_y = utils.to_reference(y, ref_kind="compute")
 
-    ref_out = torch.add(x, y)
+    ref_out = torch.add(ref_x, ref_y)
     with flag_dnn.use_dnn():
         out = torch.add(x, y)
 
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+    utils.gems_assert_close(out, ref_out, dtype)
 
 
 @pytest.mark.add
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 def test_accuracy_add_empty_tensor(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -80,20 +60,21 @@ def test_accuracy_add_empty_tensor(dtype):
     x = torch.randn(0, dtype=dtype, device=flag_dnn.device)
     y = torch.randn(0, dtype=dtype, device=flag_dnn.device)
 
-    ref_out = torch.add(x, y)
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_y = utils.to_reference(y, ref_kind="compute")
+
+    ref_out = torch.add(ref_x, ref_y)
     with flag_dnn.use_dnn():
         out = torch.add(x, y)
 
     assert out.shape == (0,)
     assert out.dtype == dtype
     assert out.device == x.device
-    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+    utils.gems_assert_close(out, ref_out, dtype)
 
 
 @pytest.mark.add
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 def test_accuracy_add_scalar(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -101,25 +82,17 @@ def test_accuracy_add_scalar(dtype):
     x = torch.randn(100, dtype=dtype, device=flag_dnn.device)
     scalar = 3.14
 
-    # 针对不同数据类型动态设置容差 (Tolerance)
-    if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
-    elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
-    else:
-        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
+    ref_x = utils.to_reference(x, ref_kind="compute")
 
-    ref_out = torch.add(x, scalar)
+    ref_out = torch.add(ref_x, scalar)
     with flag_dnn.use_dnn():
         out = torch.add(x, scalar)
 
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+    utils.gems_assert_close(out, ref_out, dtype)
 
 
 @pytest.mark.add
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 def test_accuracy_add_alpha(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -128,25 +101,18 @@ def test_accuracy_add_alpha(dtype):
     y = torch.randn(100, dtype=dtype, device=flag_dnn.device)
     alpha = 2.5
 
-    # 针对不同数据类型动态设置容差 (Tolerance)
-    if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
-    elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
-    else:
-        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_y = utils.to_reference(y, ref_kind="compute")
 
-    ref_out = torch.add(x, y, alpha=alpha)
+    ref_out = torch.add(ref_x, ref_y, alpha=alpha)
     with flag_dnn.use_dnn():
         out = torch.add(x, y, alpha=alpha)
 
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+    utils.gems_assert_close(out, ref_out, dtype)
 
 
 @pytest.mark.add
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("input_shape, other_shape", BROADCAST_SHAPES)
 def test_accuracy_add_broadcast(dtype, input_shape, other_shape):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -155,19 +121,14 @@ def test_accuracy_add_broadcast(dtype, input_shape, other_shape):
     x = torch.randn(input_shape, dtype=dtype, device=flag_dnn.device)
     y = torch.randn(other_shape, dtype=dtype, device=flag_dnn.device)
 
-    # 针对不同数据类型动态设置容差 (Tolerance)
-    if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
-    elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
-    else:
-        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_y = utils.to_reference(y, ref_kind="compute")
 
-    ref_out = torch.add(x, y)
+    ref_out = torch.add(ref_x, ref_y)
     with flag_dnn.use_dnn():
         out = torch.add(x, y)
 
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+    utils.gems_assert_close(out, ref_out, dtype)
 
 
 @pytest.mark.add
@@ -179,12 +140,15 @@ def test_accuracy_add_bool_tensor():
         [True, True, False], dtype=torch.bool, device=flag_dnn.device
     )
 
-    ref_out = torch.add(x, y)
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_y = utils.to_reference(y, ref_kind="compute")
+
+    ref_out = torch.add(ref_x, ref_y)
     with flag_dnn.use_dnn():
         out = torch.add(x, y)
 
     assert out.dtype == torch.bool
-    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+    utils.gems_assert_equal(out, ref_out)
 
 
 @pytest.mark.add
@@ -194,12 +158,15 @@ def test_accuracy_add_non_float_dtype(dtype, shape):
     x = _rand_non_float(shape, dtype)
     y = _rand_non_float(shape, dtype)
 
-    ref_out = torch.add(x, y)
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_y = utils.to_reference(y, ref_kind="compute")
+
+    ref_out = torch.add(ref_x, ref_y)
     with flag_dnn.use_dnn():
         out = torch.add(x, y)
 
     assert out.dtype == ref_out.dtype
-    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+    utils.gems_assert_equal(out, ref_out)
 
 
 @pytest.mark.add
@@ -207,9 +174,12 @@ def test_accuracy_add_integer_alpha():
     x = torch.randint(-5, 6, (128,), dtype=torch.int32, device=flag_dnn.device)
     y = torch.randint(-5, 6, (128,), dtype=torch.int32, device=flag_dnn.device)
 
-    ref_out = torch.add(x, y, alpha=2)
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_y = utils.to_reference(y, ref_kind="compute")
+
+    ref_out = torch.add(ref_x, ref_y, alpha=2)
     with flag_dnn.use_dnn():
         out = torch.add(x, y, alpha=2)
 
     assert out.dtype == torch.int32
-    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+    utils.gems_assert_equal(out, ref_out)

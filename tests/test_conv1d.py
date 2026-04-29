@@ -3,6 +3,8 @@ import torch
 import torch.nn.functional as F
 
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
 # (
@@ -29,16 +31,14 @@ CONV1D_CASES = [
     ((3, 13), (4, 3, 3), True, 1, 1, 1, 1, True, False),
     ((2, 3, 18), (4, 3, 3), True, 1, 1, 1, 1, False, True),
 ]
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
 
 
-def get_tol(dtype):
-    if dtype == torch.float16:
-        return dict(rtol=2e-2, atol=2e-2)
-    if dtype == torch.bfloat16:
-        return dict(rtol=3e-2, atol=3e-2)
-    if dtype == torch.float32:
-        return dict(rtol=2e-2, atol=2e-2)
-    return dict(rtol=1e-12, atol=1e-12)
+def _conv_reduce_dim(weight_shape):
+    return max(weight_shape[1] * weight_shape[2], 1)
 
 
 def _make_tensor(shape, dtype, noncontiguous=False):
@@ -51,9 +51,7 @@ def _make_tensor(shape, dtype, noncontiguous=False):
 
 
 @pytest.mark.conv1d
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize(
     (
         "input_shape, weight_shape, has_bias, stride, padding, dilation, "
@@ -88,9 +86,13 @@ def test_accuracy_conv1d(
         )
     )
 
-    x_ref = x.detach()
-    w_ref = w.detach()
-    b_ref = b.detach() if b is not None else None
+    x_ref = utils.to_reference(x.detach(), ref_kind="compute")
+    w_ref = utils.to_reference(w.detach(), ref_kind="compute")
+    b_ref = (
+        utils.to_reference(b.detach(), ref_kind="compute")
+        if b is not None
+        else None
+    )
 
     out_ref = F.conv1d(
         x_ref,
@@ -114,7 +116,13 @@ def test_accuracy_conv1d(
         )
 
     assert out_custom.dim() == (2 if unbatched else 3)
-    torch.testing.assert_close(out_custom, out_ref, **get_tol(dtype))
+    utils.gems_assert_close(
+        out_custom,
+        out_ref,
+        dtype,
+        reduce_dim=_conv_reduce_dim(weight_shape),
+        atol=2e-2,
+    )
 
 
 @pytest.mark.conv1d

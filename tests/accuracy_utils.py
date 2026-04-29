@@ -1,83 +1,20 @@
 import importlib
 import itertools
 import random
-
+from typing import Literal, TypeAlias
 import numpy as np
 import torch
-
 import flag_dnn
+from .conftest import QUICK_MODE, TO_CPU
 
-QUICK_MODE = False
-TO_CPU = False
-GEN_SHAPE = False
-try:
-    import conftest
-
-    if hasattr(conftest, "QUICK_MODE"):
-        QUICK_MODE = conftest.QUICK_MODE
-    if hasattr(conftest, "TO_CPU"):
-        TO_CPU = conftest.TO_CPU
-except (ImportError, AttributeError):
-    pass
 
 fp64_is_supported = flag_dnn.runtime.device.support_fp64
 bf16_is_supported = flag_dnn.runtime.device.support_bf16
 int64_is_supported = flag_dnn.runtime.device.support_int64
 
-from .conftest import L1_n_start  # noqa: E402
-from .conftest import L1_n_end  # noqa: E402
-from .conftest import L1_n_step  # noqa: E402
-
-L1_n_start_val = int(L1_n_start)
-L1_n_end_val = int(L1_n_end)
-L1_n_step_val = int(L1_n_step)
-print(L1_n_start_val)
-print(L1_n_end_val)
-print(L1_n_step_val)
-
-
-def gen_shape_N(n_start, n_end, n_inc):
-    shape_list = [(num,) for num in range(n_start, n_end + 1, n_inc)]
-    print(shape_list)
-    return shape_list
-
-
-DEFAULT_SHAPES = [
-    (1024,),
-    (5333,),
-    (65536,),
-    (100000,),
-    (1048576,),
-    (3000000,),
-    (4194304,),
-    (10000000,),
-    (16777216,),
-    (33554432,),
-    (50000000,),
-    (67108864,),
-    (134217728,),
-]
-
-# axpy shape
-AXPY_SHAPES = DEFAULT_SHAPES
-if GEN_SHAPE:
-    AXPY_SHAPES.clear()
-    AXPY_SHAPES = gen_shape_N(L1_n_start_val, L1_n_end_val, L1_n_step_val)
-#
-
-# asum shape
-ASUM_SHAPES = DEFAULT_SHAPES
-if GEN_SHAPE:
-    ASUM_SHAPES.clear()
-    ASUM_SHAPES = gen_shape_N(L1_n_start_val, L1_n_end_val, L1_n_step_val)
-#
-
-# scal shape
-SCAL_SHAPES = DEFAULT_SHAPES
-if GEN_SHAPE:
-    SCAL_SHAPES.clear()
-    SCAL_SHAPES = gen_shape_N(L1_n_start_val, L1_n_end_val, L1_n_step_val)
-#
+ReferenceKind = Literal["compute", "logical", None]
+Shape: TypeAlias = tuple[int, ...]
+NormShape: TypeAlias = tuple[Shape, Shape]
 
 
 def TestForwardOnly():
@@ -122,27 +59,34 @@ sizes_2d_nr = [1] if QUICK_MODE else [1, 5, 1024]
 
 UT_SHAPES_1D = list((n,) for n in sizes_1d)
 UT_SHAPES_2D = list(itertools.product(sizes_2d_nr, sizes_2d_nc))
-POINTWISE_SHAPES = (
+
+POINTWISE_SHAPES: list[Shape] = (
     [(2, 19, 7)]
     if QUICK_MODE
     else [
-        (),  # type: ignore[list-item]
-        (1,),  # type: ignore[list-item]
-        (1024, 1024),  # type: ignore[list-item]
-        (20, 320, 15),  # type: ignore[list-item]
-        (16, 128, 64, 60),  # type: ignore[list-item]
-        (16, 7, 57, 32, 29),  # type: ignore[list-item]
+        (),
+        (1,),
+        (5333,),
+        (17, 31),
+        (1024, 1024),
+        (4, 8, 16),
+        (20, 320, 15),
+        (2, 3, 4, 5),
+        (1, 64, 7, 7),
+        (16, 128, 64, 60),
+        (16, 7, 57, 32, 29),
     ]
 )
-SPECIAL_SHAPES = (
+
+SPECIAL_SHAPES: list[Shape] = (
     [(2, 19, 7)]
     if QUICK_MODE
     else [
-        (1,),  # type: ignore[list-item]
-        (1024, 1024),  # type: ignore[list-item]
-        (20, 320, 15),  # type: ignore[list-item]
-        (16, 128, 64, 1280),  # type: ignore[list-item]
-        (16, 7, 57, 32, 29),  # type: ignore[list-item]
+        (1,),
+        (1024, 1024),
+        (20, 320, 15),
+        (16, 128, 64, 1280),
+        (16, 7, 57, 32, 29),
     ]
 )
 
@@ -155,55 +99,73 @@ FP8_QUANT_SHAPES = {
 }
 
 DISTRIBUTION_SHAPES = [(20, 320, 15)]
-REDUCTION_SHAPES = (
+
+REDUCTION_SHAPES: list[Shape] = (
     [(2, 32)]
     if QUICK_MODE
     else [
+        (1024,),
         (1, 2),
         (4096, 256),
-        (200, 40999, 3),  # type: ignore[list-item]
+        (2, 5000),
+        (200, 2560, 3),
+        (200, 40999, 3),
+        (2, 3, 4, 5),
     ]
 )
-REDUCTION_SMALL_SHAPES = (
-    [(1, 32)]
+
+NORM_SHAPES: list[NormShape] = (
+    [((2, 16), (16,))]
     if QUICK_MODE
     else [
-        (1, 2),
-        (4096, 256),
-        (200, 2560, 3),  # type: ignore[list-item]
+        ((32,), (32,)),
+        ((1024,), (1024,)),
+        ((2, 16), (16,)),
+        ((4, 8, 32), (32,)),
+        ((4, 8, 32), (8, 32)),
+        ((2, 4, 16, 16), (16, 16)),
+        ((2, 4, 16, 16), (4, 16, 16)),
     ]
 )
+
 STACK_SHAPES = [
     [(16,), (16,)],
     [(16, 256), (16, 256)],
     [(20, 320, 15), (20, 320, 15), (20, 320, 15)],
 ]
+
 CONTIGUOUS_SHAPE_STRIDES_1D = [
     ((1,), (1,)),
     ((1024,), (1,)),
     ((1000000,), (1,)),
 ]
+
 DILATED_SHAPE_STRIDES_1D = [
     ((1,), (2,)),
     ((1024,), (2,)),
     ((1000000,), (2,)),
 ]
+
 CONTIGUOUS_SHAPE_STRIDES_2D = [
     ((1, 1024), (1024, 1)),
     ((10000, 128), (128, 1)),
 ]
+
 TRANSPOSED_SHAPE_STRIDES_2D = [
     ((1024, 1), (1, 1024)),
     ((128, 10000), (1, 128)),
 ]
+
 CONTIGUOUS_SHAPE_STRIDES_3D = [
     ((20, 320, 15), (4800, 15, 1)),
     ((200, 40999, 3), (122997, 3, 1)),
 ]
+
 TRANSPOSED_SHAPE_STRIDES_3D = [
     ((320, 20, 15), (15, 4800, 1)),
     ((3, 40999, 200), (1, 3, 122997)),
 ]
+
 SHAPE_STRIDES = (
     CONTIGUOUS_SHAPE_STRIDES_1D
     + DILATED_SHAPE_STRIDES_1D
@@ -225,6 +187,14 @@ UPSAMPLE_SHAPES = [
 
 # 1D upsample uses (N, C, W) shapes derived from the 2D cases above.
 UPSAMPLE_SHAPES_1D = [s[:3] for s in UPSAMPLE_SHAPES]
+
+UPSAMPLE_SHAPES_3D = [
+    (4, 8, 32, 32, 32),
+    (3, 5, 17, 19, 23),
+    (2, 16, 8, 64, 64),
+    (12, 24, 16, 16, 16),
+    (1, 2, 63, 65, 67),
+]
 
 SWIGLU_SPECIAL_SHAPES = (
     [(2, 19, 8)]
@@ -277,18 +247,18 @@ KRON_SHAPES = [
     [(3, 3), (3, 3)],
     [(1, 1, 1), (2, 2, 2)],
 ]
-# Add some test cases with zeor-dimensional tensor and zero-sized tensors.
+
+
 PRIMARY_FLOAT_DTYPES = [torch.float16, torch.float32]
 FLOAT_DTYPES = (
     PRIMARY_FLOAT_DTYPES + [torch.bfloat16]
     if bf16_is_supported
     else PRIMARY_FLOAT_DTYPES
 )
-
 ALL_FLOAT_DTYPES = (
     FLOAT_DTYPES + [torch.float64] if fp64_is_supported else FLOAT_DTYPES
 )
-INT_DTYPES = [torch.int16, torch.int32]
+INT_DTYPES = [torch.int8, torch.int16, torch.int32]
 ALL_INT_DTYPES = (
     INT_DTYPES + [torch.int64] if int64_is_supported else INT_DTYPES
 )
@@ -301,18 +271,49 @@ STACK_DIM_LIST = [-2, -1, 0, 1]
 ARANGE_START = [0] if TO_CPU else [0, 1, 3]
 
 
-def to_reference(inp, upcast=False):
+def to_reference(inp, ref_kind: ReferenceKind = "compute"):
     if inp is None:
         return None
+
+    if not isinstance(inp, torch.Tensor):
+        return inp
+
     ref_inp = inp
+
     if TO_CPU:
         ref_inp = ref_inp.to("cpu")
-    if upcast:
+
+    if ref_kind is None:
+        return ref_inp
+
+    if ref_kind == "compute":
         if ref_inp.is_complex():
-            ref_inp = ref_inp.to(torch.complex128)
-        else:
-            ref_inp = ref_inp.to(torch.float64)
-    return ref_inp
+            return ref_inp.to(torch.complex128)
+
+        if ref_inp.is_floating_point():
+            return ref_inp.to(torch.float64)
+
+        return ref_inp
+
+    if ref_kind == "logical":
+        # 输出 bool 的算子，包括 comparison / logical / isxxx 等。
+
+        if ref_inp.dtype is torch.bool:
+            return ref_inp.to(torch.int64)
+
+        if ref_inp.is_complex():
+            return ref_inp.to(torch.complex128)
+
+        if ref_inp.is_floating_point():
+            # float16 / bfloat16 / float32 -> float64
+            # 避免小数转 int 后改变比较或 logical 语义。
+            return ref_inp.to(torch.float64)
+
+        # int / uint 类型 -> int64
+        # 比 int32 更安全，适合 eq/ne/lt/le/gt/ge 这类比较算子。
+        return ref_inp.to(torch.int64)
+
+    raise ValueError(f"Unsupported ref_kind: {ref_kind}")
 
 
 def to_cpu(res, ref):

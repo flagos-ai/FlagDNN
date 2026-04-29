@@ -1,22 +1,17 @@
 import pytest
 import torch
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
-SHAPES = [
-    (),
-    (1,),
-    (17,),
-    (32,),
-    (127,),
-    (1024,),
-    (5333,),
-    (17, 31),
-    (4, 8, 16),
-    (2, 3, 4, 5),
-    (1, 64, 7, 7),
-    (1024 * 1024,),
-]
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
+
+
+SHAPES = utils.POINTWISE_SHAPES
 
 BROADCAST_SHAPES = [
     ((4, 4), (4,)),  # 1D broadcast to 2D
@@ -37,9 +32,7 @@ def _get_positive_tensor(shape, dtype, device):
 
 
 @pytest.mark.pow
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape", SHAPES)
 def test_accuracy_pow_tensor(dtype, shape):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -50,25 +43,18 @@ def test_accuracy_pow_tensor(dtype, shape):
     # 指数可以用普通随机数 (负指数即为取倒数)
     y = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
-    # 针对不同数据类型动态设置容差 (Tolerance)
-    if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
-    elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
-    else:
-        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_y = utils.to_reference(y, ref_kind="compute")
 
-    ref_out = torch.pow(x, y)
+    ref_out = torch.pow(ref_x, ref_y)
     with flag_dnn.use_dnn():
         out = torch.pow(x, y)
 
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+    utils.gems_assert_close(out, ref_out, dtype)
 
 
 @pytest.mark.pow
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 def test_accuracy_pow_empty_tensor(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -77,27 +63,21 @@ def test_accuracy_pow_empty_tensor(dtype):
     x = torch.randn(0, dtype=dtype, device=flag_dnn.device)
     y = torch.randn(0, dtype=dtype, device=flag_dnn.device)
 
-    if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2
-    elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3
-    else:
-        rtol, atol = 1e-5, 1e-5
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_y = utils.to_reference(y, ref_kind="compute")
 
-    ref_out = torch.pow(x, y)
+    ref_out = torch.pow(ref_x, ref_y)
     with flag_dnn.use_dnn():
         out = torch.pow(x, y)
 
     assert out.shape == (0,)
     assert out.dtype == dtype
     assert out.device == x.device
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+    utils.gems_assert_close(out, ref_out, dtype)
 
 
 @pytest.mark.pow
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 def test_accuracy_pow_scalar_exponent(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -106,24 +86,17 @@ def test_accuracy_pow_scalar_exponent(dtype):
     x = _get_positive_tensor((100,), dtype, flag_dnn.device)
     scalar_exp = 2.5
 
-    if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2
-    elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3
-    else:
-        rtol, atol = 1e-5, 1e-5
+    ref_x = utils.to_reference(x, ref_kind="compute")
 
-    ref_out = torch.pow(x, scalar_exp)
+    ref_out = torch.pow(ref_x, scalar_exp)
     with flag_dnn.use_dnn():
         out = torch.pow(x, scalar_exp)
 
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+    utils.gems_assert_close(out, ref_out, dtype)
 
 
 @pytest.mark.pow
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 def test_accuracy_pow_scalar_base(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -132,24 +105,17 @@ def test_accuracy_pow_scalar_base(dtype):
     scalar_base = 3.14
     y = torch.randn(100, dtype=dtype, device=flag_dnn.device)
 
-    if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2
-    elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3
-    else:
-        rtol, atol = 1e-5, 1e-5
+    ref_y = utils.to_reference(y, ref_kind="compute")
 
-    ref_out = torch.pow(scalar_base, y)
+    ref_out = torch.pow(scalar_base, ref_y)
     with flag_dnn.use_dnn():
         out = torch.pow(scalar_base, y)
 
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+    utils.gems_assert_close(out, ref_out, dtype)
 
 
 @pytest.mark.pow
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("input_shape, other_shape", BROADCAST_SHAPES)
 def test_accuracy_pow_broadcast(dtype, input_shape, other_shape):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -158,18 +124,14 @@ def test_accuracy_pow_broadcast(dtype, input_shape, other_shape):
     x = _get_positive_tensor(input_shape, dtype, flag_dnn.device)
     y = torch.randn(other_shape, dtype=dtype, device=flag_dnn.device)
 
-    if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2
-    elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3
-    else:
-        rtol, atol = 1e-5, 1e-5
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_y = utils.to_reference(y, ref_kind="compute")
 
-    ref_out = torch.pow(x, y)
+    ref_out = torch.pow(ref_x, ref_y)
     with flag_dnn.use_dnn():
         out = torch.pow(x, y)
 
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+    utils.gems_assert_close(out, ref_out, dtype)
 
 
 @pytest.mark.pow
@@ -179,13 +141,16 @@ def test_accuracy_pow_integer_and_bool_dtype():
         [True, False, True], dtype=torch.bool, device=flag_dnn.device
     )
 
-    ref_int = torch.pow(x_int, 2.0)
-    ref_bool = torch.pow(x_bool, 2)
+    ref_x_int = utils.to_reference(x_int, ref_kind="compute")
+    ref_x_bool = utils.to_reference(x_bool, ref_kind="compute")
+
+    ref_int = torch.pow(ref_x_int, 2.0)
+    ref_bool = torch.pow(ref_x_bool, 2)
     with flag_dnn.use_dnn():
         out_int = torch.pow(x_int, 2.0)
         out_bool = torch.pow(x_bool, 2)
 
     assert out_int.dtype == torch.float32
     assert out_bool.dtype == torch.int64
-    torch.testing.assert_close(out_int, ref_int, rtol=0, atol=0)
-    torch.testing.assert_close(out_bool, ref_bool, rtol=0, atol=0)
+    utils.gems_assert_equal(out_int, ref_int)
+    utils.gems_assert_equal(out_bool, ref_bool)

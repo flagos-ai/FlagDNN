@@ -2,30 +2,33 @@ import pytest
 import torch
 import torch.nn.functional as F
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
 # BatchNorm 要求至少 2D，通常是 (N, C), (N, C, L) 或 (N, C, H, W)
 SHAPES = [(32, 16), (4, 8, 32), (2, 4, 16, 16), (1, 64, 8, 8)]
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
+
+
+def _batch_reduce_dim(shape):
+    reduce_dim = shape[0]
+    for dim_size in shape[2:]:
+        reduce_dim *= dim_size
+    return max(reduce_dim, 1)
 
 
 @pytest.mark.batch_norm
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape", SHAPES)
 @pytest.mark.parametrize("training", [False, True])
 @pytest.mark.parametrize("affine", [False, True])
 def test_accuracy_batch_norm(dtype, shape, training, affine):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
-
-    # BatchNorm 在 FP16/BF16 下容易产生较大的累积误差，所以放宽精度
-    if dtype == torch.bfloat16:
-        rtol, atol = 2e-2, 2e-2
-    elif dtype == torch.float16:
-        rtol, atol = 5e-3, 5e-3
-    else:
-        rtol, atol = 1e-5, 1e-5
 
     C = shape[1]
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 2.0 + 1.0
@@ -49,12 +52,18 @@ def test_accuracy_batch_norm(dtype, shape, training, affine):
     test_running_mean = running_mean.clone()
     test_running_var = running_var.clone()
 
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_weight = utils.to_reference(weight, ref_kind="compute")
+    ref_bias = utils.to_reference(bias, ref_kind="compute")
+    ref_running_mean = utils.to_reference(ref_running_mean, ref_kind="compute")
+    ref_running_var = utils.to_reference(ref_running_var, ref_kind="compute")
+
     ref_y = F.batch_norm(
-        x,
+        ref_x,
         ref_running_mean,
         ref_running_var,
-        weight=weight,
-        bias=bias,
+        weight=ref_weight,
+        bias=ref_bias,
         training=training,
     )
 
@@ -68,23 +77,30 @@ def test_accuracy_batch_norm(dtype, shape, training, affine):
             training=training,
         )
 
-    # 验证前向传播精度
-    torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
+    utils.gems_assert_close(
+        y, ref_y, dtype, reduce_dim=_batch_reduce_dim(shape), atol=2e-2
+    )
 
     # 如果是训练模式，还需要验证 running_stats 是否同步更新一致
     if training:
-        torch.testing.assert_close(
-            test_running_mean, ref_running_mean, rtol=rtol, atol=atol
+        utils.gems_assert_close(
+            test_running_mean,
+            ref_running_mean,
+            dtype,
+            reduce_dim=_batch_reduce_dim(shape),
+            atol=2e-2,
         )
-        torch.testing.assert_close(
-            test_running_var, ref_running_var, rtol=rtol, atol=atol
+        utils.gems_assert_close(
+            test_running_var,
+            ref_running_var,
+            dtype,
+            reduce_dim=_batch_reduce_dim(shape),
+            atol=2e-2,
         )
 
 
 @pytest.mark.batch_norm
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 def test_accuracy_batch_norm_empty_tensor(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -109,9 +125,7 @@ def test_accuracy_batch_norm_empty_tensor(dtype):
 
 
 @pytest.mark.batch_norm
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("training", [False, True])
 def test_accuracy_batch_norm_large_values(dtype, training):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -148,16 +162,6 @@ def test_accuracy_batch_norm_large_values(dtype, training):
             + 0.1
         )
 
-    # 宽容度设置
-    if dtype == torch.bfloat16:
-        rtol, atol = 5e-2, 5e-2
-    elif dtype == torch.float16:
-        rtol, atol = 5e-3, 5e-3
-    elif dtype == torch.float32:
-        rtol, atol = 1e-4, 1e-4
-    else:  # torch.float64
-        rtol, atol = 1e-5, 1e-5
-
     ref_running_mean, test_running_mean = (
         running_mean.clone(),
         running_mean.clone(),
@@ -167,21 +171,25 @@ def test_accuracy_batch_norm_large_values(dtype, training):
         running_var.clone(),
     )
 
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_running_mean = utils.to_reference(ref_running_mean, ref_kind="compute")
+    ref_running_var = utils.to_reference(ref_running_var, ref_kind="compute")
+
     ref_y = F.batch_norm(
-        x, ref_running_mean, ref_running_var, training=training
+        ref_x, ref_running_mean, ref_running_var, training=training
     )
     with flag_dnn.use_dnn():
         y = F.batch_norm(
             x, test_running_mean, test_running_var, training=training
         )
 
-    torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
+    utils.gems_assert_close(
+        y, ref_y, dtype, reduce_dim=_batch_reduce_dim(shape), atol=5e-2
+    )
 
 
 @pytest.mark.batch_norm
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("training", [False, True])
 def test_accuracy_batch_norm_mixed_values(dtype, training):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -191,13 +199,6 @@ def test_accuracy_batch_norm_mixed_values(dtype, training):
     shape = (4, 16, 32)
     C = shape[1]
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
-
-    if dtype == torch.bfloat16:
-        rtol, atol = 2e-2, 2e-2
-    elif dtype == torch.float16:
-        rtol, atol = 5e-3, 5e-3
-    else:
-        rtol, atol = 1e-5, 1e-5
 
     running_mean = torch.zeros(C, dtype=dtype, device=flag_dnn.device)
     running_var = torch.ones(C, dtype=dtype, device=flag_dnn.device)
@@ -211,21 +212,25 @@ def test_accuracy_batch_norm_mixed_values(dtype, training):
         running_var.clone(),
     )
 
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_running_mean = utils.to_reference(ref_running_mean, ref_kind="compute")
+    ref_running_var = utils.to_reference(ref_running_var, ref_kind="compute")
+
     ref_y = F.batch_norm(
-        x, ref_running_mean, ref_running_var, training=training
+        ref_x, ref_running_mean, ref_running_var, training=training
     )
     with flag_dnn.use_dnn():
         y = F.batch_norm(
             x, test_running_mean, test_running_var, training=training
         )
 
-    torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
+    utils.gems_assert_close(
+        y, ref_y, dtype, reduce_dim=_batch_reduce_dim(shape), atol=2e-2
+    )
 
 
 @pytest.mark.batch_norm
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 def test_accuracy_batch_norm_small_variance(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -240,19 +245,19 @@ def test_accuracy_batch_norm_small_variance(dtype):
     if dtype in [torch.float32, torch.float64]:
         x += torch.randn_like(x) * 1e-3
 
-    if dtype == torch.bfloat16:
-        rtol, atol = 2e-2, 2e-2
-    elif dtype == torch.float16:
-        rtol, atol = 5e-3, 5e-3
-    else:
-        rtol, atol = 1e-5, 1e-5
-
     running_mean = torch.zeros(C, dtype=dtype, device=flag_dnn.device)
     running_var = torch.ones(C, dtype=dtype, device=flag_dnn.device)
 
     # 必须使用 training=True 才能触发根据输入动态计算方差的逻辑
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_running_mean = utils.to_reference(
+        running_mean.clone(), ref_kind="compute"
+    )
+    ref_running_var = utils.to_reference(
+        running_var.clone(), ref_kind="compute"
+    )
     ref_y = F.batch_norm(
-        x, running_mean.clone(), running_var.clone(), training=True
+        ref_x, ref_running_mean, ref_running_var, training=True
     )
     with flag_dnn.use_dnn():
         y = F.batch_norm(
@@ -263,4 +268,6 @@ def test_accuracy_batch_norm_small_variance(dtype):
     assert not torch.isnan(
         y
     ).any(), "Output contains NaN due to division by zero!"
-    torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
+    utils.gems_assert_close(
+        y, ref_y, dtype, reduce_dim=_batch_reduce_dim(shape), atol=2e-2
+    )

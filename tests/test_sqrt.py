@@ -1,24 +1,19 @@
 import pytest
 import torch
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
-SHAPES = [
-    (),
-    (1,),
-    (17,),
-    (32,),
-    (127,),
-    (1024,),
-    (5333,),
-    (17, 31),
-    (4, 8, 16),
-    (2, 3, 4, 5),
-    (1, 64, 7, 7),
-    (1024 * 1024,),
-]
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+    NON_FLOAT_DTYPES = [torch.bool, torch.int32]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
+    NON_FLOAT_DTYPES = utils.BOOL_TYPES + utils.ALL_INT_DTYPES
 
-INTEGRAL_AND_BOOL_SHAPES = [(), (1,), (257,), (17, 31), (2, 3, 4, 5)]
+
+SHAPES = utils.POINTWISE_SHAPES
 
 
 def _get_non_negative_tensor(shape, dtype, device):
@@ -29,9 +24,7 @@ def _get_non_negative_tensor(shape, dtype, device):
 
 
 @pytest.mark.sqrt
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape", SHAPES)
 def test_accuracy_sqrt(dtype, shape):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -40,25 +33,17 @@ def test_accuracy_sqrt(dtype, shape):
     # 确保输入全为非负数
     x = _get_non_negative_tensor(shape, dtype, flag_dnn.device)
 
-    # 针对不同数据类型动态设置容差 (Tolerance)
-    if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
-    elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
-    else:
-        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
+    ref_x = utils.to_reference(x, ref_kind="compute")
 
-    ref_out = torch.sqrt(x)
+    ref_out = torch.sqrt(ref_x)
     with flag_dnn.use_dnn():
         out = torch.sqrt(x)
 
-    torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+    utils.gems_assert_close(out, ref_out, dtype)
 
 
 @pytest.mark.sqrt
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 def test_accuracy_sqrt_empty_tensor(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
@@ -66,21 +51,20 @@ def test_accuracy_sqrt_empty_tensor(dtype):
     # 测试空张量 (shape 为 0)
     x = torch.randn(0, dtype=dtype, device=flag_dnn.device)
 
-    ref_out = torch.sqrt(x)
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_out = torch.sqrt(ref_x)
     with flag_dnn.use_dnn():
         out = torch.sqrt(x)
 
     assert out.shape == (0,)
     assert out.dtype == dtype
     assert out.device == x.device
-    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+    utils.gems_assert_close(out, ref_out, dtype)
 
 
 @pytest.mark.sqrt
-@pytest.mark.parametrize(
-    "dtype", [torch.bool, torch.int8, torch.int16, torch.int32, torch.int64]
-)
-@pytest.mark.parametrize("shape", INTEGRAL_AND_BOOL_SHAPES)
+@pytest.mark.parametrize("dtype", NON_FLOAT_DTYPES)
+@pytest.mark.parametrize("shape", SHAPES)
 def test_accuracy_sqrt_integral_and_bool(dtype, shape):
     if dtype == torch.bool:
         x = torch.randint(0, 2, shape, dtype=dtype, device=flag_dnn.device)
@@ -88,9 +72,10 @@ def test_accuracy_sqrt_integral_and_bool(dtype, shape):
         base = torch.randint(0, 4, shape, dtype=dtype, device=flag_dnn.device)
         x = base * base
 
-    ref_out = torch.sqrt(x)
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_out = torch.sqrt(ref_x)
     with flag_dnn.use_dnn():
         out = torch.sqrt(x)
 
     assert out.dtype == torch.float32
-    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+    utils.gems_assert_equal(out, ref_out)

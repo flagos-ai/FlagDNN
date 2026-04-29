@@ -3,38 +3,26 @@ import torch
 import torch.nn.functional as F
 
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
+
+
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
 
 
 SOFTSHRINK_CASES = [
-    ((0,), 0.5),
-    ((1,), 0.5),
-    ((17,), 0.5),
-    ((1024,), 0.5),
-    ((4096,), 0.5),
-    ((2, 3), 0.5),
-    ((4, 5, 6), 0.5),
-    ((2, 3, 32, 32), 0.5),
-    ((1, 64, 112, 112), 0.5),
+    *[(shape, 0.5) for shape in [(0,), *utils.POINTWISE_SHAPES]],
     ((1024,), 0.0),
     ((1024,), 1.0),
     ((2, 3, 32, 32), 1.5),
 ]
 
 
-def get_tol(dtype):
-    if dtype == torch.float16:
-        return dict(rtol=1e-3, atol=1e-3)
-    if dtype == torch.bfloat16:
-        return dict(rtol=1e-2, atol=1e-2)
-    if dtype == torch.float32:
-        return dict(rtol=1e-6, atol=1e-6)
-    return dict(rtol=1e-12, atol=1e-12)
-
-
 @pytest.mark.softshrink
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape, lambd", SOFTSHRINK_CASES)
 def test_accuracy_softshrink(dtype, shape, lambd):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -45,18 +33,19 @@ def test_accuracy_softshrink(dtype, shape, lambd):
     x_ref = x.clone()
     x_custom = x.clone()
 
-    out_ref = F.softshrink(x_ref, lambd=lambd)
+    ref_x = utils.to_reference(x_ref, ref_kind="compute")
+    out_ref = F.softshrink(ref_x, lambd=lambd)
 
     with flag_dnn.use_dnn():
         out_custom = F.softshrink(x_custom, lambd=lambd)
 
-    torch.testing.assert_close(out_custom, out_ref, **get_tol(dtype))
+    utils.gems_assert_close(out_custom, out_ref, dtype)
 
     if x.numel() > 0:
         assert (
             out_custom.data_ptr() != x_custom.data_ptr()
         ), "softshrink should be out-of-place, but output shares input memory."
-        torch.testing.assert_close(x_custom, x, **get_tol(dtype))
+        torch.testing.assert_close(x_custom, x, rtol=0, atol=0)
 
 
 @pytest.mark.softshrink

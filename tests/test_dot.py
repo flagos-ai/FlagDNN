@@ -1,6 +1,8 @@
 import pytest
 import torch
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
 # (numel, use_out) 的组合测试用例
@@ -34,22 +36,14 @@ DOT_CASES = [
     (8191, False),
     (16384, False),
 ]
-
-
-def get_tol(dtype):
-    if dtype == torch.float16:
-        return dict(rtol=1e-3, atol=1e-3)
-    if dtype == torch.bfloat16:
-        return dict(rtol=1e-2, atol=1e-2)
-    if dtype == torch.float32:
-        return dict(rtol=1e-4, atol=1e-4)
-    return dict(rtol=1e-12, atol=1e-12)
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
 
 
 @pytest.mark.dot
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("numel, use_out", DOT_CASES)
 def test_accuracy_dot(dtype, numel, use_out):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -63,7 +57,9 @@ def test_accuracy_dot(dtype, numel, use_out):
     x_custom = x.clone()
     y_custom = y.clone()
 
-    out_ref = torch.dot(x_ref, y_ref)
+    ref_x = utils.to_reference(x_ref, ref_kind="compute")
+    ref_y = utils.to_reference(y_ref, ref_kind="compute")
+    out_ref = torch.dot(ref_x, ref_y)
 
     if use_out:
         out_buf = torch.empty((), dtype=dtype, device=flag_dnn.device)
@@ -82,8 +78,8 @@ def test_accuracy_dot(dtype, numel, use_out):
     assert out_custom.dim() == 0
     assert out_ref.dim() == 0
 
-    torch.testing.assert_close(out_custom, out_ref, **get_tol(dtype))
+    utils.gems_assert_close(out_custom, out_ref, dtype, reduce_dim=numel)
 
     # dot 不应修改输入
-    torch.testing.assert_close(x_custom, x_ref, **get_tol(dtype))
-    torch.testing.assert_close(y_custom, y_ref, **get_tol(dtype))
+    torch.testing.assert_close(x_custom, x, rtol=0, atol=0)
+    torch.testing.assert_close(y_custom, y, rtol=0, atol=0)

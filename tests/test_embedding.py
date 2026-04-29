@@ -3,9 +3,11 @@ import torch
 import torch.nn.functional as F
 
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
-DTYPES = [torch.float16, torch.bfloat16, torch.float32, torch.float64]
+DTYPES = [torch.float32] if cfg.QUICK_MODE else utils.ALL_FLOAT_DTYPES
 INDEX_DTYPES = [torch.int64, torch.int32]
 
 CASES = [
@@ -67,14 +69,15 @@ def test_accuracy_embedding(
     indices = _make_indices(shape, vocab_size, index_dtype, pattern)
     weight = _make_weight(vocab_size, embedding_dim, dtype)
 
-    ref = F.embedding(indices, weight)
+    ref_indices = utils.to_reference(indices, ref_kind=None)
+    ref_weight = utils.to_reference(weight, ref_kind="compute")
+    ref = F.embedding(ref_indices, ref_weight)
     with flag_dnn.use_dnn(include=["embedding"]):
         out = F.embedding(indices, weight)
 
     assert out.shape == ref.shape
-    assert out.dtype == ref.dtype
-    assert out.device == ref.device
-    torch.testing.assert_close(out, ref, rtol=0, atol=0, equal_nan=True)
+    assert out.dtype == dtype
+    utils.gems_assert_close(out, ref, dtype, atol=0, equal_nan=True)
 
 
 @pytest.mark.embedding
@@ -91,11 +94,13 @@ def test_embedding_non_contiguous_input_and_weight(dtype):
     assert not indices.is_contiguous()
     assert not weight.is_contiguous()
 
-    ref = F.embedding(indices, weight)
+    ref_indices = utils.to_reference(indices, ref_kind=None)
+    ref_weight = utils.to_reference(weight, ref_kind="compute")
+    ref = F.embedding(ref_indices, ref_weight)
     with flag_dnn.use_dnn(include=["embedding"]):
         out = F.embedding(indices, weight)
 
-    torch.testing.assert_close(out, ref, rtol=0, atol=0, equal_nan=True)
+    utils.gems_assert_close(out, ref, dtype, atol=0, equal_nan=True)
 
 
 @pytest.mark.embedding
@@ -108,11 +113,13 @@ def test_embedding_padding_idx_forward_value_is_unchanged(padding_idx):
         16, dtype=torch.float32, device=flag_dnn.device
     ).reshape(4, 4)
 
-    ref = F.embedding(indices, weight, padding_idx=padding_idx)
+    ref_indices = utils.to_reference(indices, ref_kind=None)
+    ref_weight = utils.to_reference(weight, ref_kind="compute")
+    ref = F.embedding(ref_indices, ref_weight, padding_idx=padding_idx)
     with flag_dnn.use_dnn(include=["embedding"]):
         out = F.embedding(indices, weight, padding_idx=padding_idx)
 
-    torch.testing.assert_close(out, ref, rtol=0, atol=0)
+    utils.gems_assert_close(out, ref, torch.float32, atol=0)
 
 
 @pytest.mark.embedding
@@ -134,12 +141,14 @@ def test_embedding_nan_inf_signed_zero_are_copied():
         device=flag_dnn.device,
     )
 
-    ref = F.embedding(indices, weight)
+    ref_indices = utils.to_reference(indices, ref_kind=None)
+    ref_weight = utils.to_reference(weight, ref_kind="compute")
+    ref = F.embedding(ref_indices, ref_weight)
     with flag_dnn.use_dnn(include=["embedding"]):
         out = F.embedding(indices, weight)
 
-    torch.testing.assert_close(out, ref, rtol=0, atol=0, equal_nan=True)
-    assert torch.signbit(out[0, 1]) == torch.signbit(ref[0, 1])
+    utils.gems_assert_close(out, ref, torch.float32, atol=0, equal_nan=True)
+    assert torch.signbit(out[0, 1]).item() == torch.signbit(ref[0, 1]).item()
 
 
 @pytest.mark.embedding

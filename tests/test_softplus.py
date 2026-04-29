@@ -3,18 +3,18 @@ import torch
 import torch.nn.functional as F
 
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
+
+
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
 
 
 SOFTPLUS_CASES = [
-    ((0,), 1.0, 20.0),
-    ((1,), 1.0, 20.0),
-    ((17,), 1.0, 20.0),
-    ((1024,), 1.0, 20.0),
-    ((4096,), 1.0, 20.0),
-    ((2, 3), 1.0, 20.0),
-    ((4, 5, 6), 1.0, 20.0),
-    ((2, 3, 32, 32), 1.0, 20.0),
-    ((1, 64, 112, 112), 1.0, 20.0),
+    *[(shape, 1.0, 20.0) for shape in [(0,), *utils.POINTWISE_SHAPES]],
     ((1024,), 0.5, 20.0),
     ((1024,), 2.0, 20.0),
     ((1024,), 1.0, 10.0),
@@ -24,20 +24,8 @@ SOFTPLUS_CASES = [
 ]
 
 
-def get_tol(dtype):
-    if dtype == torch.float16:
-        return dict(rtol=1e-3, atol=1e-3)
-    if dtype == torch.bfloat16:
-        return dict(rtol=1e-2, atol=1e-2)
-    if dtype == torch.float32:
-        return dict(rtol=1e-6, atol=1e-6)
-    return dict(rtol=1e-12, atol=1e-12)
-
-
 @pytest.mark.softplus
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape, beta, threshold", SOFTPLUS_CASES)
 def test_accuracy_softplus(dtype, shape, beta, threshold):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -48,18 +36,19 @@ def test_accuracy_softplus(dtype, shape, beta, threshold):
     x_ref = x.clone()
     x_custom = x.clone()
 
-    out_ref = F.softplus(x_ref, beta=beta, threshold=threshold)
+    ref_x = utils.to_reference(x_ref, ref_kind="compute")
+    out_ref = F.softplus(ref_x, beta=beta, threshold=threshold)
 
     with flag_dnn.use_dnn():
         out_custom = F.softplus(x_custom, beta=beta, threshold=threshold)
 
-    torch.testing.assert_close(out_custom, out_ref, **get_tol(dtype))
+    utils.gems_assert_close(out_custom, out_ref, dtype)
 
     if x.numel() > 0:
         assert (
             out_custom.data_ptr() != x_custom.data_ptr()
         ), "softplus should be out-of-place, but output shares input memory."
-        torch.testing.assert_close(x_custom, x, **get_tol(dtype))
+        torch.testing.assert_close(x_custom, x, rtol=0, atol=0)
 
 
 @pytest.mark.softplus

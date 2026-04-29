@@ -2,19 +2,24 @@ import pytest
 import torch
 import torch.nn.functional as F
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
-# (shape, lower, upper, training)
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
+
+
 RRELU_CASES = [
-    ((1,), 1.0 / 8, 1.0 / 3, False),
-    ((16,), 1.0 / 8, 1.0 / 3, False),
+    *[
+        (shape, 1.0 / 8, 1.0 / 3, False)
+        for shape in [(0,), (0, 3), *utils.POINTWISE_SHAPES]
+    ],
     ((1024,), 0.1, 0.3, False),
-    ((2, 3), 1.0 / 8, 1.0 / 3, False),
     ((4, 8, 16), 0.05, 0.4, False),
-    ((2, 3, 32, 32), 1.0 / 8, 1.0 / 3, False),
     ((1, 128, 64, 64), 0.2, 0.4, False),
-    ((0,), 1.0 / 8, 1.0 / 3, False),
-    ((0, 3), 1.0 / 8, 1.0 / 3, False),
 ]
 
 RRELU_TRAINING_CASES = [
@@ -26,22 +31,8 @@ RRELU_TRAINING_CASES = [
 ]
 
 
-def get_tol(dtype):
-    if dtype == torch.float16:
-        return dict(rtol=1e-3, atol=1e-3)
-    if dtype == torch.bfloat16:
-        return dict(rtol=1e-2, atol=1e-2)
-    if dtype == torch.float32:
-        return dict(rtol=1e-6, atol=1e-6)
-    if dtype == torch.float64:
-        return dict(rtol=1e-12, atol=1e-12)
-    return dict(rtol=1e-12, atol=1e-12)
-
-
 @pytest.mark.rrelu_
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape, lower, upper, training", RRELU_CASES)
 def test_accuracy_rrelu__inference(dtype, shape, lower, upper, training):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -52,7 +43,8 @@ def test_accuracy_rrelu__inference(dtype, shape, lower, upper, training):
     x_ref = x.clone()
     x_custom = x.clone()
 
-    out_ref = F.rrelu_(x_ref, lower=lower, upper=upper, training=training)
+    ref_x = utils.to_reference(x_ref, ref_kind="compute")
+    out_ref = F.rrelu_(ref_x, lower=lower, upper=upper, training=training)
 
     with flag_dnn.use_dnn():
         out_custom = F.rrelu_(
@@ -62,18 +54,16 @@ def test_accuracy_rrelu__inference(dtype, shape, lower, upper, training):
             training=training,
         )
 
-    torch.testing.assert_close(out_custom, out_ref, **get_tol(dtype))
+    utils.gems_assert_close(out_custom, out_ref, dtype)
 
     assert out_custom.data_ptr() == x_custom.data_ptr(), (
         "output is not modifying " "the input tensor directly."
     )
-    torch.testing.assert_close(x_custom, x_ref, **get_tol(dtype))
+    utils.gems_assert_close(x_custom, out_ref, dtype)
 
 
 @pytest.mark.rrelu_
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape, lower, upper, training", RRELU_TRAINING_CASES)
 def test_accuracy_rrelu__training_properties(
     dtype, shape, lower, upper, training
@@ -103,7 +93,7 @@ def test_accuracy_rrelu__training_properties(
     pos_mask = x_before > 0
     if pos_mask.any():
         torch.testing.assert_close(
-            out_custom[pos_mask], x_before[pos_mask], **get_tol(dtype)
+            out_custom[pos_mask], x_before[pos_mask], rtol=0, atol=0
         )
 
     # 负值位置：输出 / 输入 的 slope 应落在 [lower, upper]

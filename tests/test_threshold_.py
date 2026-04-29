@@ -2,10 +2,18 @@ import pytest
 import torch
 import torch.nn.functional as F
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
-# (shape, threshold_val, value_val) 的组合测试用例
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
+
+
 THRESHOLD_CASES = [
+    *[(shape, 0.0, 0.0) for shape in [(0,), *utils.POINTWISE_SHAPES]],
     # 1. 基础与经典形状
     ((1024,), 0.0, 0.0),  # 经典 ReLU 行为
     ((1024,), 1.5, 99.0),
@@ -52,20 +60,8 @@ THRESHOLD_CASES = [
 ]
 
 
-def get_tol(dtype):
-    if dtype == torch.float16:
-        return dict(rtol=1e-3, atol=1e-3)
-    if dtype == torch.bfloat16:
-        return dict(rtol=1e-2, atol=1e-2)
-    if dtype == torch.float32:
-        return dict(rtol=1e-6, atol=1e-6)
-    return dict(rtol=1e-12, atol=1e-12)
-
-
 @pytest.mark.threshold_
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape, threshold_val, value_val", THRESHOLD_CASES)
 def test_accuracy_threshold_(dtype, shape, threshold_val, value_val):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -76,14 +72,15 @@ def test_accuracy_threshold_(dtype, shape, threshold_val, value_val):
     x_ref = x.clone()
     x_custom = x.clone()
 
-    out_ref = F.threshold_(x_ref, threshold_val, value_val)
+    ref_x = utils.to_reference(x_ref, ref_kind="compute")
+    out_ref = F.threshold_(ref_x, threshold_val, value_val)
 
     with flag_dnn.use_dnn():
         out_custom = F.threshold_(x_custom, threshold_val, value_val)
 
-    torch.testing.assert_close(out_custom, out_ref, **get_tol(dtype))
+    utils.gems_assert_close(out_custom, out_ref, dtype, equal_nan=True)
 
     assert out_custom.data_ptr() == x_custom.data_ptr(), (
         "output is not modifying " "the input tensor directly."
     )
-    torch.testing.assert_close(x_custom, x_ref, **get_tol(dtype))
+    utils.gems_assert_close(x_custom, out_ref, dtype, equal_nan=True)

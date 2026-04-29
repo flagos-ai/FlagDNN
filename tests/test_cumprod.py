@@ -1,23 +1,36 @@
 import pytest
 import torch
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+    INT_DTYPES = [torch.int32]
+    BOOL_DTYPES = [torch.bool]
+    DIM_LIST = [0]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
+    INT_DTYPES = utils.ALL_INT_DTYPES
+    BOOL_DTYPES = utils.BOOL_TYPES
+    DIM_LIST = [0, 1]
+
+
+CUMPROD_SHAPES = utils.REDUCTION_SHAPES + [
+    (128, 256),
+    (128, 5000),
+]
 CUMPROD_CASES = [
-    # (shape, dim)
-    ((1024,), 0),
-    ((2, 3, 4, 5), 3),
-    ((2, 3, 4, 5), 0),
-    ((2, 3, 4, 5), -2),
-    ((128, 5000), 1),  # 长序列考验 FP16/BF16 精度
-    ((128, 256), 1),
+    (shape, dim)
+    for shape in CUMPROD_SHAPES
+    for dim in DIM_LIST
+    if dim < len(shape)
 ]
 
 
 @pytest.mark.cumprod
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape, dim", CUMPROD_CASES)
 def test_accuracy_cumprod(dtype, shape, dim):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -26,63 +39,58 @@ def test_accuracy_cumprod(dtype, shape, dim):
     # 防溢出策略
     if dtype.is_floating_point:
         # 围绕 1.0 波动
-        x = torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 0.1 + 1.0
+        inp = (
+            torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 0.1 + 1.0
+        )
     else:
         # 只有 1 和 -1，避开 int64 溢出
-        x = (
+        inp = (
             torch.randint(0, 2, shape, dtype=dtype, device=flag_dnn.device) * 2
             - 1
         )
 
-    # 动态宽容度策略：应对 fp16/bf16 的累乘误差墙
-    rtol, atol = 1e-3, 1e-3
-    if dtype in (torch.float16, torch.bfloat16):
-        d = dim if dim >= 0 else dim + len(shape)
-        N = shape[d]
-        if N > 1000:
-            rtol, atol = 3e-1, 3e-1
-        else:
-            rtol, atol = 5e-2, 5e-2
+    ref_inp = utils.to_reference(inp, ref_kind="compute")
 
-    if dtype in (torch.float16, torch.bfloat16):
-        # 显式指定 dtype=torch.float32，PyTorch内部累加将不损失精度，最后强制转换对齐类型
-        ref_out = torch.cumprod(x, dim=dim, dtype=torch.float32).to(dtype)
-    else:
-        ref_out = torch.cumprod(x, dim=dim)
+    ref_out = torch.cumprod(ref_inp, dim=dim)
 
     with flag_dnn.use_dnn():
-        out = torch.cumprod(x, dim=dim)
+        out = torch.cumprod(inp, dim=dim)
 
     if not dtype.is_floating_point:
-        torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+        utils.gems_assert_equal(out, ref_out)
     else:
-        torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+        utils.gems_assert_close(out, ref_out, dtype, reduce_dim=shape[dim])
 
 
 @pytest.mark.cumprod
 def test_accuracy_cumprod_empty():
-    x = torch.empty((2, 0, 3), dtype=torch.float32, device=flag_dnn.device)
-    ref_out = torch.cumprod(x, dim=1)
+    inp = torch.empty((2, 0, 3), dtype=torch.float32, device=flag_dnn.device)
+    ref_inp = utils.to_reference(inp, ref_kind=None)
+    ref_out = torch.cumprod(ref_inp, dim=1)
     with flag_dnn.use_dnn():
-        out = torch.cumprod(x, dim=1)
-    torch.testing.assert_close(out, ref_out)
+        out = torch.cumprod(inp, dim=1)
+    utils.gems_assert_close(out, ref_out, torch.float32)
 
 
 @pytest.mark.cumprod
-@pytest.mark.parametrize("dtype", [torch.bool, torch.int32, torch.int64])
+@pytest.mark.parametrize("dtype", BOOL_DTYPES + INT_DTYPES)
 def test_accuracy_cumprod_default_integer_output_dtype(dtype):
     if dtype == torch.bool:
-        x = torch.tensor(
+        inp = torch.tensor(
             [[True, True], [False, True]],
             dtype=dtype,
             device=flag_dnn.device,
         )
     else:
-        x = torch.tensor([[1, 2], [3, 4]], dtype=dtype, device=flag_dnn.device)
+        inp = torch.tensor(
+            [[1, 2], [3, 4]], dtype=dtype, device=flag_dnn.device
+        )
 
-    ref_out = torch.cumprod(x, dim=1)
+    ref_inp = utils.to_reference(inp, ref_kind="compute")
+
+    ref_out = torch.cumprod(ref_inp, dim=1)
     with flag_dnn.use_dnn():
-        out = torch.cumprod(x, dim=1)
+        out = torch.cumprod(inp, dim=1)
 
     assert out.dtype == torch.int64
-    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+    utils.gems_assert_equal(out, ref_out)

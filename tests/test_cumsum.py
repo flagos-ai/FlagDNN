@@ -1,24 +1,36 @@
 import pytest
 import torch
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+    INT_DTYPES = [torch.int32]
+    BOOL_DTYPES = [torch.bool]
+    DIM_LIST = [0]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
+    INT_DTYPES = utils.ALL_INT_DTYPES
+    BOOL_DTYPES = utils.BOOL_TYPES
+    DIM_LIST = [0, 1]
+
+
+CUMSUM_SHAPES = utils.REDUCTION_SHAPES + [
+    (128, 256),
+    (2, 5000),
+]
 CUMSUM_CASES = [
-    # (shape, dim)
-    ((1024,), 0),
-    ((2, 3, 4, 5), 3),
-    ((2, 3, 4, 5), 0),
-    ((2, 3, 4, 5), -2),
-    ((128, 256), 1),
-    ((128, 256), 0),
-    ((2, 5000), 1),
+    (shape, dim)
+    for shape in CUMSUM_SHAPES
+    for dim in DIM_LIST
+    if dim < len(shape)
 ]
 
 
 @pytest.mark.cumsum
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape, dim", CUMSUM_CASES)
 def test_accuracy_cumsum(dtype, shape, dim):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -26,70 +38,67 @@ def test_accuracy_cumsum(dtype, shape, dim):
 
     # 生成数据：浮点数稍微小点，防止累计求和时溢出
     if dtype.is_floating_point:
-        x = torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 0.1
+        inp = torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 0.1
     else:
-        x = torch.randint(-5, 5, shape, dtype=dtype, device=flag_dnn.device)
+        inp = torch.randint(-5, 5, shape, dtype=dtype, device=flag_dnn.device)
 
-    rtol, atol = 1e-3, 1e-3
-    if dtype in (torch.float16, torch.bfloat16):
-        # 如果归约的维度特别长 (比如 5000)，舍入误差会指数级放大
-        # 我们对超过 1000 的序列给予更合理的宽容度
-        d = dim if dim >= 0 else dim + len(shape)
-        N = shape[d]
-        if N > 1000:
-            rtol, atol = 2e-1, 2e-1  # 允许 0.2 左右的绝对误差
-        else:
-            rtol, atol = 5e-2, 5e-2
+    ref_inp = utils.to_reference(inp, ref_kind="compute")
 
-    ref_out = torch.cumsum(x, dim=dim)
+    ref_out = torch.cumsum(ref_inp, dim=dim)
     with flag_dnn.use_dnn():
-        out = torch.cumsum(x, dim=dim)
+        out = torch.cumsum(inp, dim=dim)
 
     # 整型的累加必须 100% 精确
     if not dtype.is_floating_point:
-        torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+        utils.gems_assert_equal(out, ref_out)
     else:
-        torch.testing.assert_close(out, ref_out, rtol=rtol, atol=atol)
+        utils.gems_assert_close(out, ref_out, dtype, reduce_dim=shape[dim])
 
 
 @pytest.mark.cumsum
 def test_accuracy_cumsum_out_param():
     """测试原地的 out 参数覆盖"""
-    x = torch.randn((10, 20), dtype=torch.float32, device=flag_dnn.device)
+    inp = torch.randn((10, 20), dtype=torch.float32, device=flag_dnn.device)
+    ref_inp = utils.to_reference(inp, ref_kind=None)
     out = torch.empty((10, 20), dtype=torch.float32, device=flag_dnn.device)
 
-    ref_out = torch.cumsum(x, dim=0)
+    ref_out = torch.cumsum(ref_inp, dim=0)
     with flag_dnn.use_dnn():
-        torch.cumsum(x, dim=0, out=out)
+        torch.cumsum(inp, dim=0, out=out)
 
-    torch.testing.assert_close(out, ref_out)
+    utils.gems_assert_close(out, ref_out, torch.float32)
 
 
 @pytest.mark.cumsum
 def test_accuracy_cumsum_empty():
     """测试极其刁钻的空张量边界情况"""
-    x = torch.empty((2, 0, 3), dtype=torch.float32, device=flag_dnn.device)
-    ref_out = torch.cumsum(x, dim=1)
+    inp = torch.empty((2, 0, 3), dtype=torch.float32, device=flag_dnn.device)
+    ref_inp = utils.to_reference(inp, ref_kind=None)
+    ref_out = torch.cumsum(ref_inp, dim=1)
     with flag_dnn.use_dnn():
-        out = torch.cumsum(x, dim=1)
-    torch.testing.assert_close(out, ref_out)
+        out = torch.cumsum(inp, dim=1)
+    utils.gems_assert_close(out, ref_out, torch.float32)
 
 
 @pytest.mark.cumsum
-@pytest.mark.parametrize("dtype", [torch.bool, torch.int32, torch.int64])
+@pytest.mark.parametrize("dtype", BOOL_DTYPES + INT_DTYPES)
 def test_accuracy_cumsum_default_integer_output_dtype(dtype):
     if dtype == torch.bool:
-        x = torch.tensor(
+        inp = torch.tensor(
             [[True, False], [True, True]],
             dtype=dtype,
             device=flag_dnn.device,
         )
     else:
-        x = torch.tensor([[1, 2], [3, 4]], dtype=dtype, device=flag_dnn.device)
+        inp = torch.tensor(
+            [[1, 2], [3, 4]], dtype=dtype, device=flag_dnn.device
+        )
 
-    ref_out = torch.cumsum(x, dim=1)
+    ref_inp = utils.to_reference(inp, ref_kind="compute")
+
+    ref_out = torch.cumsum(ref_inp, dim=1)
     with flag_dnn.use_dnn():
-        out = torch.cumsum(x, dim=1)
+        out = torch.cumsum(inp, dim=1)
 
     assert out.dtype == torch.int64
-    torch.testing.assert_close(out, ref_out, rtol=0, atol=0)
+    utils.gems_assert_equal(out, ref_out)

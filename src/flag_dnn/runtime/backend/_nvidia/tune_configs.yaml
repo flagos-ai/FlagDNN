@@ -1267,38 +1267,6 @@ logsigmoid:
     stages:
       - 1
       - 2
-conv2d_1x1:
-  - gen: true
-    param_map:
-      META:
-        BLOCK_OC: block_oc
-        BLOCK_HW: block_hw
-        BLOCK_K: block_k
-      num_warps: warps
-      num_stages: stages
-    # 256x256 tiles are too aggressive here: the accumulator alone is already
-    # huge and tends to destroy occupancy. Keep the search space realistic.
-    block_oc:
-      - 32
-      - 64
-      - 128
-    block_hw:
-      - 32
-      - 64
-      - 128
-    block_k:
-      - 16
-      - 32
-      - 64
-      - 128
-    warps:
-      - 4
-      - 8
-    stages:
-      - 2
-      - 3
-      - 4
-
 conv1d_gemm_v3:
   - gen: true
     param_map:
@@ -1323,7 +1291,6 @@ conv1d_gemm_v3:
       - 4
     stages:
       - 2
-
 conv1d_general:
   - gen: true
     param_map:
@@ -1337,7 +1304,6 @@ conv1d_general:
       - 4
     stages:
       - 1
-
 conv1d_depthwise_v5:
   - gen: true
     param_map:
@@ -1357,6 +1323,113 @@ conv1d_depthwise_v5:
       - 4
     stages:
       - 2
+conv2d_spatial:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_OC: block_oc
+        BLOCK_HW: block_hw
+        BLOCK_K: block_k
+      num_warps: warps
+      num_stages: stages
+    block_oc:
+      - 32
+      - 64
+      - 128
+    block_hw:
+      - 32
+      - 64
+      - 128
+    block_k:
+      - 32
+      - 64
+      - 128
+    warps:
+      - 4
+      - 8
+    stages:
+      - 3
+      - 4
+
+  # Small-HW, large-channel spatial conv.
+  # Mainly for NCHW 3x3 shapes like C=128/256/512 with OH*OW <= 28*28.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_OC: block_oc
+        BLOCK_HW: block_hw
+        BLOCK_K: block_k
+      num_warps: warps
+      num_stages: stages
+    block_oc:
+      - 128
+      - 256
+    block_hw:
+      - 16
+      - 32
+    block_k:
+      - 64
+      - 128
+      - 256
+    warps:
+      - 4
+      - 8
+    stages:
+      - 3
+
+conv2d_1x1:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_OC: block_oc
+        BLOCK_HW: block_hw
+        BLOCK_K: block_k
+      num_warps: warps
+      num_stages: stages
+    block_oc:
+      - 32
+      - 64
+      - 128
+    block_hw:
+      - 32
+      - 64
+      - 128
+    block_k:
+      - 32
+      - 64
+      - 128
+    warps:
+      - 4
+      - 8
+    stages:
+      - 3
+      - 4
+
+  # 1x1 medium-HW, large-Cout path.
+  # Mainly for [N,128,28,28] -> [256,128,1,1].
+  - gen: true
+    param_map:
+      META:
+        BLOCK_OC: block_oc
+        BLOCK_HW: block_hw
+        BLOCK_K: block_k
+      num_warps: warps
+      num_stages: stages
+    block_oc:
+      - 128
+      - 256
+    block_hw:
+      - 16
+      - 32
+    block_k:
+      - 64
+      - 128
+      - 256
+    warps:
+      - 4
+      - 8
+    stages:
+      - 3
 
 conv2d_dw_v2:
   - gen: true
@@ -1367,18 +1440,36 @@ conv2d_dw_v2:
       num_warps: warps
       num_stages: stages
     block_c:
+      - 4
+      - 8
       - 16
       - 32
       - 64
+    block_hw:
+      - 32
+      - 64
+      - 128
+    warps:
+      - 1
+      - 2
+      - 4
+    stages:
+      - 1
+
+conv2d_dw_c1:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_HW: block_hw
+      num_warps: warps
+      num_stages: stages
     block_hw:
       - 64
       - 128
       - 256
     warps:
-      - 2
-      - 4
-      - 8
-    stages:
       - 1
       - 2
-      - 3
+      - 4
+    stages:
+      - 1

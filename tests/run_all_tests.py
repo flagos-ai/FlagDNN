@@ -155,6 +155,7 @@ def main():
             "pytest",
             "-v",
             "-s",
+            "--ref=cpu",
             file_path,
         ]
 

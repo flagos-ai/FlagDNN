@@ -1,6 +1,8 @@
 import pytest
 import torch
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
 # (matrix_shape, use_out) 的组合测试用例
@@ -33,22 +35,14 @@ MV_CASES = [
     ((1, 128), True),
     ((128, 1), True),
 ]
-
-
-def get_tol(dtype):
-    if dtype == torch.float16:
-        return dict(rtol=1e-3, atol=1e-3)
-    if dtype == torch.bfloat16:
-        return dict(rtol=1e-2, atol=1e-2)
-    if dtype == torch.float32:
-        return dict(rtol=1e-4, atol=1e-4)
-    return dict(rtol=1e-12, atol=1e-12)
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
 
 
 @pytest.mark.mv
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("matrix_shape, use_out", MV_CASES)
 def test_accuracy_mv(dtype, matrix_shape, use_out):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -64,32 +58,27 @@ def test_accuracy_mv(dtype, matrix_shape, use_out):
     mat_custom = mat.clone()
     vec_custom = vec.clone()
 
-    if use_out:
-        out_ref_buf = torch.empty((m,), dtype=dtype, device=flag_dnn.device)
-        out_custom_buf = torch.empty((m,), dtype=dtype, device=flag_dnn.device)
+    ref_mat = utils.to_reference(mat_ref, ref_kind="compute")
+    ref_vec = utils.to_reference(vec_ref, ref_kind="compute")
+    out_ref = torch.mv(ref_mat, ref_vec)
 
-        out_ref = torch.mv(mat_ref, vec_ref, out=out_ref_buf)
+    if use_out:
+        out_custom_buf = torch.empty((m,), dtype=dtype, device=flag_dnn.device)
 
         with flag_dnn.use_dnn():
             out_custom = torch.mv(mat_custom, vec_custom, out=out_custom_buf)
 
-        torch.testing.assert_close(out_custom, out_ref, **get_tol(dtype))
+        utils.gems_assert_close(out_custom, out_ref, dtype, reduce_dim=n)
 
         assert out_custom.data_ptr() == out_custom_buf.data_ptr(), (
             "out is provided, but returned tensor does not share "
             "the output buffer memory."
         )
-
-        torch.testing.assert_close(
-            out_custom_buf, out_ref_buf, **get_tol(dtype)
-        )
     else:
-        out_ref = torch.mv(mat_ref, vec_ref)
-
         with flag_dnn.use_dnn():
             out_custom = torch.mv(mat_custom, vec_custom)
 
-        torch.testing.assert_close(out_custom, out_ref, **get_tol(dtype))
+        utils.gems_assert_close(out_custom, out_ref, dtype, reduce_dim=n)
 
         if out_custom.numel() > 0:
             assert (
@@ -99,5 +88,5 @@ def test_accuracy_mv(dtype, matrix_shape, use_out):
                 out_custom.data_ptr() != vec_custom.data_ptr()
             ), "Output unexpectedly shares memory with input vector."
 
-    torch.testing.assert_close(mat_custom, mat, **get_tol(dtype))
-    torch.testing.assert_close(vec_custom, vec, **get_tol(dtype))
+    torch.testing.assert_close(mat_custom, mat, rtol=0, atol=0)
+    torch.testing.assert_close(vec_custom, vec, rtol=0, atol=0)

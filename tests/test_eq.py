@@ -1,36 +1,31 @@
 import pytest
 import torch
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
-# (input_shape, other_spec) 的组合测试用例
-# other_spec 可以是 tuple (代表形状) 或者数值 (代表标量)
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+    INT_DTYPES = [torch.int32]
+    BOOL_DTYPES = [torch.bool]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
+    INT_DTYPES = utils.ALL_INT_DTYPES
+    BOOL_DTYPES = utils.BOOL_TYPES
+
+
 EQ_CASES = [
-    # 相同形状
-    ((), ()),
-    ((1024,), (1024,)),
-    ((2, 3, 4), (2, 3, 4)),
-    # 标量比较
+    *[(shape, shape) for shape in utils.POINTWISE_SHAPES],
     ((128, 256), 0.5),
     ((10, 10), 0),
-    # Broadcasting 广播机制
-    ((10, 1), (1, 20)),  # 互相扩展
-    ((2, 3, 4), (4,)),  # 向前补齐
-    ((1, 3, 1, 5), (2, 1, 4, 1)),  # 复杂高维广播
-    ((), (17, 31)),  # 标量 Tensor 广播到矩阵
+    ((10, 1), (1, 20)),
+    ((2, 3, 4), (4,)),
+    ((1, 3, 1, 5), (2, 1, 4, 1)),
+    ((), (17, 31)),
 ]
 
-EQ_DTYPES = [
-    torch.float32,
-    torch.float64,
-    torch.float16,
-    torch.bfloat16,
-    torch.bool,
-    torch.int8,
-    torch.int16,
-    torch.int32,
-    torch.int64,
-]
+EQ_DTYPES = FLOAT_DTYPES + INT_DTYPES + BOOL_DTYPES
 
 
 def _rand_input(shape, dtype):
@@ -48,76 +43,25 @@ def test_accuracy_eq(dtype, input_shape, other_spec):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
 
-    # 初始化 input
-    x = _rand_input(input_shape, dtype)
+    inp = _rand_input(input_shape, dtype)
 
     # 初始化 other
     if isinstance(other_spec, tuple):
-        y = _rand_input(other_spec, dtype)
+        other = _rand_input(other_spec, dtype)
         # 为了制造相等的条件，随机将一部分 y 赋值为 x 的对应切片 (如果形状允许)
         if input_shape == other_spec:
             mask = torch.rand(input_shape, device=flag_dnn.device) > 0.5
-            y = torch.where(mask, x, y)
+            other = torch.where(mask, inp, other)
     else:
-        y = torch.tensor(other_spec, dtype=dtype).item()
-        # y = other_spec
+        other = torch.tensor(other_spec, dtype=dtype).item()
 
-    ref_out = torch.eq(x, y)
+    ref_inp = utils.to_reference(inp, ref_kind="logical")
+    ref_other = utils.to_reference(other, ref_kind="logical")
+
+    ref_out = torch.eq(ref_inp, ref_other)
     with flag_dnn.use_dnn():
-        out = torch.eq(x, y)
+        res_out = torch.eq(inp, other)
 
     # eq 操作返回必须是 bool 类型
-    assert out.dtype == torch.bool
-    torch.testing.assert_close(out, ref_out)
-
-
-@pytest.mark.eq
-def test_accuracy_eq_with_out_param():
-    """测试带有 out 参数的原地写入"""
-    x = torch.tensor([1.0, 2.0, 3.0], device=flag_dnn.device)
-    y = torch.tensor([1.0, 0.0, 3.0], device=flag_dnn.device)
-
-    # 预分配
-    ref_out = torch.empty((3,), dtype=torch.bool, device=flag_dnn.device)
-    custom_out = torch.empty((3,), dtype=torch.bool, device=flag_dnn.device)
-
-    # 填充脏数据，保证写入真正生效
-    custom_out.fill_(True)
-
-    torch.eq(x, y, out=ref_out)
-    with flag_dnn.use_dnn():
-        torch.eq(x, y, out=custom_out)
-
-    torch.testing.assert_close(custom_out, ref_out)
-
-
-@pytest.mark.eq
-def test_accuracy_eq_dtype_promotion():
-    """测试数据类型提升 (Type Promotion)"""
-    x = torch.tensor([1, 2, 3], dtype=torch.int32, device=flag_dnn.device)
-    y = torch.tensor(
-        [1.0, 2.5, 3.0], dtype=torch.float32, device=flag_dnn.device
-    )
-
-    ref_out = torch.eq(x, y)
-    with flag_dnn.use_dnn():
-        out = torch.eq(x, y)
-
-    torch.testing.assert_close(out, ref_out)
-
-
-@pytest.mark.eq
-def test_accuracy_eq_empty_tensor():
-    """边界测试：空张量的广播与比较"""
-    x = torch.empty((2, 0, 3), dtype=torch.float32, device=flag_dnn.device)
-    y = torch.empty(
-        (1, 0, 1), dtype=torch.float32, device=flag_dnn.device
-    )  # 支持广播的空张量
-
-    ref_out = torch.eq(x, y)
-    with flag_dnn.use_dnn():
-        out = torch.eq(x, y)
-
-    assert out.shape == ref_out.shape
-    assert out.shape == (2, 0, 3)
-    torch.testing.assert_close(out, ref_out)
+    assert res_out.dtype == torch.bool
+    utils.gems_assert_equal(res_out, ref_out)

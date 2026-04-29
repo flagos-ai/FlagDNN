@@ -2,24 +2,25 @@ import pytest
 import torch
 import torch.nn.functional as F
 import flag_dnn
+from . import accuracy_utils as utils
+from . import conftest as cfg
 
 
-# 定义常用的形状和它们对应的归一化形状 (shape, normalized_shape)
-SHAPES_AND_NORM_SHAPES = [
-    ((32,), (32,)),  # 1D 张量，全局归一化
-    ((1024,), (1024,)),  # 1D 大张量
-    ((2, 16), (16,)),  # 2D 张量，归一化最后一维
-    ((4, 8, 32), (32,)),  # 3D 张量，归一化最后一维 (类似 NLP 中的 SeqLen)
-    ((4, 8, 32), (8, 32)),  # 3D 张量，归一化最后两维
-    ((2, 4, 16, 16), (16, 16)),  # 4D 张量，归一化空间维度 (类似 CV)
-    ((2, 4, 16, 16), (4, 16, 16)),  # 4D 张量，归一化除 Batch 外的所有维度
-]
+if cfg.QUICK_MODE:
+    FLOAT_DTYPES = [torch.float32]
+else:
+    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
+
+
+SHAPES_AND_NORM_SHAPES = utils.NORM_SHAPES
+
+
+def _norm_reduce_dim(normalized_shape):
+    return max(int(torch.tensor(normalized_shape).prod().item()), 1)
 
 
 @pytest.mark.layer_norm
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("shape, normalized_shape", SHAPES_AND_NORM_SHAPES)
 @pytest.mark.parametrize("elementwise_affine", [False, True])
 def test_accuracy_layer_norm(
@@ -29,14 +30,6 @@ def test_accuracy_layer_norm(
         pytest.skip("Device does not support float64")
 
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
-
-    # 针对不同数据类型动态设置容差 (Tolerance)
-    if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2  # BF16 精度极低，需要较宽松的容差
-    elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3  # FP16 中等宽松
-    else:
-        rtol, atol = 1e-5, 1e-5  # FP32 和 FP64 保持严格
 
     # 构建仿射变换参数
     weight, bias = None, None
@@ -48,17 +41,22 @@ def test_accuracy_layer_norm(
             normalized_shape, dtype=dtype, device=flag_dnn.device
         )
 
-    ref_y = F.layer_norm(x, normalized_shape, weight=weight, bias=bias)
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_weight = utils.to_reference(weight, ref_kind="compute")
+    ref_bias = utils.to_reference(bias, ref_kind="compute")
+    ref_y = F.layer_norm(
+        ref_x, normalized_shape, weight=ref_weight, bias=ref_bias
+    )
     with flag_dnn.use_dnn():
         y = F.layer_norm(x, normalized_shape, weight=weight, bias=bias)
 
-    torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
+    utils.gems_assert_close(
+        y, ref_y, dtype, reduce_dim=_norm_reduce_dim(normalized_shape)
+    )
 
 
 @pytest.mark.layer_norm
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("elementwise_affine", [False, True])
 def test_accuracy_layer_norm_empty_tensor(dtype, elementwise_affine):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -69,13 +67,6 @@ def test_accuracy_layer_norm_empty_tensor(dtype, elementwise_affine):
     normalized_shape = (16,)
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
-    if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2
-    elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3
-    else:
-        rtol, atol = 1e-5, 1e-5
-
     weight, bias = None, None
     if elementwise_affine:
         weight = torch.randn(
@@ -85,20 +76,25 @@ def test_accuracy_layer_norm_empty_tensor(dtype, elementwise_affine):
             normalized_shape, dtype=dtype, device=flag_dnn.device
         )
 
-    ref_y = F.layer_norm(x, normalized_shape, weight=weight, bias=bias)
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_weight = utils.to_reference(weight, ref_kind="compute")
+    ref_bias = utils.to_reference(bias, ref_kind="compute")
+    ref_y = F.layer_norm(
+        ref_x, normalized_shape, weight=ref_weight, bias=ref_bias
+    )
     with flag_dnn.use_dnn():
         y = F.layer_norm(x, normalized_shape, weight=weight, bias=bias)
 
     assert y.shape == shape
     assert y.dtype == dtype
     assert y.device == x.device
-    torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
+    utils.gems_assert_close(
+        y, ref_y, dtype, reduce_dim=_norm_reduce_dim(normalized_shape)
+    )
 
 
 @pytest.mark.layer_norm
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("elementwise_affine", [False, True])
 def test_accuracy_layer_norm_large_values(dtype, elementwise_affine):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -119,14 +115,6 @@ def test_accuracy_layer_norm_large_values(dtype, elementwise_affine):
             torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 100.0
             + 1000.0
         )
-
-    # 针对大数值平移，适当放宽低精度类型的阈值
-    if dtype == torch.bfloat16:
-        rtol, atol = 5e-2, 5e-2  # BF16 尾数极短，允许更大的误差
-    elif dtype == torch.float16:
-        rtol, atol = 1e-2, 1e-2  # FP16 允许更大的误差
-    else:
-        rtol, atol = 5e-4, 5e-4
 
     weight, bias = None, None
     if elementwise_affine:
@@ -158,17 +146,27 @@ def test_accuracy_layer_norm_large_values(dtype, elementwise_affine):
                 * 100.0
             )
 
-    ref_y = F.layer_norm(x, normalized_shape, weight=weight, bias=bias)
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_weight = utils.to_reference(weight, ref_kind="compute")
+    ref_bias = utils.to_reference(bias, ref_kind="compute")
+    ref_y = F.layer_norm(
+        ref_x, normalized_shape, weight=ref_weight, bias=ref_bias
+    )
     with flag_dnn.use_dnn():
         y = F.layer_norm(x, normalized_shape, weight=weight, bias=bias)
 
-    torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
+    atol = 5e-2 if dtype in (torch.float16, torch.bfloat16) else 5e-4
+    utils.gems_assert_close(
+        y,
+        ref_y,
+        dtype,
+        reduce_dim=_norm_reduce_dim(normalized_shape),
+        atol=atol,
+    )
 
 
 @pytest.mark.layer_norm
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64, torch.float16, torch.bfloat16]
-)
+@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
 @pytest.mark.parametrize("elementwise_affine", [False, True])
 def test_accuracy_layer_norm_mixed_values(dtype, elementwise_affine):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
@@ -179,13 +177,6 @@ def test_accuracy_layer_norm_mixed_values(dtype, elementwise_affine):
     normalized_shape = (8, 16)
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
 
-    if dtype == torch.bfloat16:
-        rtol, atol = 1.6e-2, 1e-2
-    elif dtype == torch.float16:
-        rtol, atol = 1e-3, 1e-3
-    else:
-        rtol, atol = 1e-5, 1e-5
-
     weight, bias = None, None
     if elementwise_affine:
         weight = torch.randn(
@@ -195,8 +186,15 @@ def test_accuracy_layer_norm_mixed_values(dtype, elementwise_affine):
             normalized_shape, dtype=dtype, device=flag_dnn.device
         )
 
-    ref_y = F.layer_norm(x, normalized_shape, weight=weight, bias=bias)
+    ref_x = utils.to_reference(x, ref_kind="compute")
+    ref_weight = utils.to_reference(weight, ref_kind="compute")
+    ref_bias = utils.to_reference(bias, ref_kind="compute")
+    ref_y = F.layer_norm(
+        ref_x, normalized_shape, weight=ref_weight, bias=ref_bias
+    )
     with flag_dnn.use_dnn():
         y = F.layer_norm(x, normalized_shape, weight=weight, bias=bias)
 
-    torch.testing.assert_close(y, ref_y, rtol=rtol, atol=atol)
+    utils.gems_assert_close(
+        y, ref_y, dtype, reduce_dim=_norm_reduce_dim(normalized_shape)
+    )
