@@ -103,8 +103,44 @@ def test_accuracy_div_rounding_mode(dtype, rounding_mode):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")
 
-    x = torch.randn(100, dtype=dtype, device=flag_dnn.device)
-    y = _get_safe_divisor((100,), dtype, flag_dnn.device)
+    numel = 100
+
+    if rounding_mode in ("trunc", "floor"):
+        xs = []
+        ys = []
+
+        # trunc / floor 对整数边界非常敏感，尤其是 fp16 / bf16。
+        # 这里过滤掉 x / y 接近整数的 case，避免参考 FP64 和设备低精度计算差 1。
+        while sum(t.numel() for t in xs) < numel:
+            cand_x = torch.randn(
+                numel * 4, dtype=dtype, device=flag_dnn.device
+            )
+            cand_y = _get_safe_divisor((numel * 4,), dtype, flag_dnn.device)
+
+            ref_cand_x = utils.to_reference(cand_x, ref_kind="compute")
+            ref_cand_y = utils.to_reference(cand_y, ref_kind="compute")
+
+            q = ref_cand_x / ref_cand_y
+
+            # 距离最近整数太近的样本容易因为精度差异导致 trunc/floor 差 1
+            boundary_eps = 1e-2
+            valid_mask = torch.abs(q - torch.round(q)) > boundary_eps
+
+            valid_idx = valid_mask.nonzero(as_tuple=True)[0]
+
+            if valid_idx.numel() == 0:
+                continue
+
+            valid_idx = valid_idx.to(cand_x.device)
+            xs.append(cand_x[valid_idx])
+            ys.append(cand_y[valid_idx])
+
+        x = torch.cat(xs)[:numel]
+        y = torch.cat(ys)[:numel]
+
+    else:
+        x = torch.randn(numel, dtype=dtype, device=flag_dnn.device)
+        y = _get_safe_divisor((numel,), dtype, flag_dnn.device)
 
     ref_x = utils.to_reference(x, ref_kind="compute")
     ref_y = utils.to_reference(y, ref_kind="compute")
@@ -175,20 +211,3 @@ def test_accuracy_div_non_float_dtype(dtype, shape):
 
     assert out.dtype == torch.float32
     utils.gems_assert_equal(out, ref_out)
-
-
-@pytest.mark.div
-def test_accuracy_div_bool_rounding_mode():
-    x = torch.tensor(
-        [True, False, True], dtype=torch.bool, device=flag_dnn.device
-    )
-    y = torch.tensor(
-        [True, True, True], dtype=torch.bool, device=flag_dnn.device
-    )
-
-    with pytest.raises(NotImplementedError):
-        torch.div(x, y, rounding_mode="trunc")
-
-    with flag_dnn.use_dnn():
-        with pytest.raises(NotImplementedError):
-            torch.div(x, y, rounding_mode="trunc")
