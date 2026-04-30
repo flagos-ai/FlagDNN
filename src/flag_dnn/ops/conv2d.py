@@ -1,11 +1,9 @@
 import logging
-import os
 import weakref
 from collections import OrderedDict
 from typing import Callable, Optional, Sequence, Tuple, Union
 
 import torch
-import torch.nn.functional as F
 import triton
 import triton.language as tl
 
@@ -17,28 +15,22 @@ logger = logging.getLogger(__name__)
 
 # Tuning spaces.
 _CONV2D_SPATIAL_CONFIGS = runtime.get_tuned_config("conv2d_spatial")
+_CONV2D_SPATIAL_NCHW_PACKED_CONFIGS = runtime.get_tuned_config(
+    "conv2d_spatial_nchw_packed"
+)
 _CONV2D_1X1_CONFIGS = runtime.get_tuned_config("conv2d_1x1")
+_CONV2D_1X1_NCHW_M_CONFIGS = runtime.get_tuned_config("conv2d_1x1_nchw_m")
 _DW_CONV2D_V2_CONFIGS = runtime.get_tuned_config("conv2d_dw_v2")
 _DW_CONV2D_C1_CONFIGS = runtime.get_tuned_config("conv2d_dw_c1")
 
-# Selective fallback is enabled by default.
-# Disable with:
-#   FLAG_DNN_CONV2D_VENDOR_FALLBACK=0
-_VENDOR_FALLBACK = (
-    os.environ.get("FLAG_DNN_CONV2D_VENDOR_FALLBACK", "1") != "0"
-)
-
-# Small LRU cache for packed weights. The cache verifies tensor identity
-# with a weakref, so a later tensor that happens to reuse the same data_ptr
-# cannot get a stale packed weight.
-_PACKED_WEIGHT_CACHE: OrderedDict[
-    tuple,
-    tuple[weakref.ReferenceType[torch.Tensor], torch.Tensor],
-] = OrderedDict()
+# Small LRU cache for packed weights.  The cache verifies tensor identity with a
+# weakref, so a later tensor that happens to reuse the same data_ptr cannot get a
+# stale packed weight.
+_PACKED_WEIGHT_CACHE: "OrderedDict[tuple, tuple[weakref.ReferenceType[torch.Tensor], torch.Tensor]]" = (OrderedDict())
 _PACKED_WEIGHT_CACHE_MAX = 32
 
-# Grouped program ordering, as in the Triton matmul tutorial, generally
-# improves L2 reuse for the implicit-GEMM kernels.
+# Grouped program ordering generally improves
+# L2 reuse for implicit-GEMM kernels.
 _GROUP_SIZE_M = 8
 
 
@@ -141,6 +133,18 @@ def _check_conv2d_inputs(
         raise RuntimeError(f"bias shape mismatch, expected ({c_out},)")
 
 
+def _dtype_id(dtype: torch.dtype) -> int:
+    if dtype == torch.float16:
+        return 0
+    if dtype == torch.bfloat16:
+        return 1
+    if dtype == torch.float32:
+        return 2
+    if dtype == torch.float64:
+        return 3
+    return -1
+
+
 def _input_has_fast_channel_stride(x: torch.Tensor) -> bool:
     return x.dim() == 4 and x.stride(1) == 1
 
@@ -227,11 +231,9 @@ def _pack_weight_1x1_cl(weight: torch.Tensor, groups: int) -> torch.Tensor:
 def _pack_weight_spatial_cl(weight: torch.Tensor, groups: int) -> torch.Tensor:
     # [Cout, CinG, KH, KW] -> [G, CinG, KH, KW, CoutG]
     #
-    # Important:
     # conv2d_spatial_cl_kernel uses offs_k flattened as:
     #   ic * KH * KW + kh * KW + kw
-    # so the packed weight must use [CinG, KH, KW, CoutG] order inside each
-    # group.
+    # so the packed weight must use [CinG, KH, KW, CoutG] order inside each group.
     key = _weight_cache_key("spatial_cl_cin_khw", weight, groups)
 
     def _fn() -> torch.Tensor:
@@ -253,7 +255,7 @@ def _pack_weight_spatial_nchw_khw_oci(
 ) -> torch.Tensor:
     # [Cout, CinG, KH, KW] -> [G, KH, KW, CoutG, CinG]
     #
-    # This is used by the optimized packed-KHW NCHW spatial kernel.
+    # Used by the optimized NCHW packed-KHW spatial kernel.
     # The kernel loops kh/kw statically and performs tl.dot over CinG only,
     # avoiding div/mod by KH*KW inside the hot K loop.
     key = _weight_cache_key("spatial_nchw_khw_oci", weight, groups)
@@ -271,117 +273,8 @@ def _pack_weight_spatial_nchw_khw_oci(
     return _cache_get_or_create(key, weight, _fn)
 
 
-def _native_conv2d(
-    input: torch.Tensor,
-    weight: torch.Tensor,
-    bias: Optional[torch.Tensor],
-    stride: Tuple[int, int],
-    padding_2d: Tuple[int, int, int, int],
-    dilation: Tuple[int, int],
-    groups: int,
-) -> torch.Tensor:
-    pad_top, pad_bottom, pad_left, pad_right = padding_2d
-
-    # Symmetric padding path.
-    if pad_top == pad_bottom and pad_left == pad_right:
-        return F.conv2d(
-            input,
-            weight,
-            bias,
-            stride=stride,
-            padding=(pad_top, pad_left),
-            dilation=dilation,
-            groups=groups,
-        )
-
-    # General asymmetric padding path, needed for padding="same" in some cases.
-    x = F.pad(input, (pad_left, pad_right, pad_top, pad_bottom))
-    return F.conv2d(
-        x,
-        weight,
-        bias,
-        stride=stride,
-        padding=(0, 0),
-        dilation=dilation,
-        groups=groups,
-    )
-
-
-def _should_use_vendor_conv2d(
-    input: torch.Tensor,
-    weight: torch.Tensor,
-    stride: Tuple[int, int],
-    dilation: Tuple[int, int],
-    groups: int,
-    oh: int,
-    ow: int,
-) -> bool:
-    if not _VENDOR_FALLBACK:
-        return False
-    if not input.is_cuda:
-        return False
-    if input.dtype not in (torch.float16, torch.bfloat16, torch.float32):
-        return False
-
-    # Keep channels-last on Triton custom path.
-    # The poor shapes in the report are NCHW/default layout.
-    if _input_has_fast_channel_stride(input):
-        return False
-
-    n, c_in, _, _ = input.shape
-    c_out, c_per_group, kh, kw = weight.shape
-    hw = oh * ow
-
-    is_depthwise = groups == c_in and c_per_group == 1 and c_out == c_in
-
-    # Report failures:
-    # [32,128,28,28] x [128,128,3,3]
-    # [32,256,14,14] x [256,256,3,3]
-    # [32,512,7,7]   x [512,512,3,3]
-    #
-    # Direct implicit-GEMM loses to PyTorch/cuDNN transform/Winograd style
-    # algorithms here.  Keep high-speed Triton paths for the other spatial
-    # shapes that already win.
-    if (
-        groups == 1
-        and kh == 3
-        and kw == 3
-        and stride == (1, 1)
-        and dilation == (1, 1)
-        and c_in >= 128
-        and c_out >= 128
-        and hw <= 28 * 28
-    ):
-        return True
-
-    # Report failure:
-    # [32,128,28,28] x [256,128,1,1]
-    if (
-        groups == 1
-        and kh == 1
-        and kw == 1
-        and stride == (1, 1)
-        and dilation == (1, 1)
-        and n >= 16
-        and c_in == 128
-        and c_out >= 256
-        and 512 <= hw <= 1024
-    ):
-        return True
-
-    # Report failures:
-    # [16,32,112,112] depthwise 3x3
-    # [16,128,28,28]  depthwise 5x5
-    if is_depthwise and stride == (1, 1) and dilation == (1, 1):
-        if c_in <= 32 and kh == 3 and kw == 3 and hw >= 112 * 112:
-            return True
-        if c_in >= 64 and kh * kw >= 25 and hw <= 28 * 28:
-            return True
-
-    return False
-
-
 def _use_packed_spatial_nchw(
+    dtype: torch.dtype,
     groups: int,
     kh: int,
     kw: int,
@@ -392,15 +285,105 @@ def _use_packed_spatial_nchw(
     oh: int,
     ow: int,
 ) -> bool:
+    if groups != 1:
+        return False
+    if kh != 3 or kw != 3:
+        return False
+    if stride != (1, 1):
+        return False
+
+    hw = oh * ow
+
+    # fp32 weak shapes:
+    #   [32,64,56,56]  x [64,64,3,3]
+    #   [16,64,56,56]  x [64,64,3,3], dilation=2
+    #   [16,128,28,28] x [128,128,3,3], dilation=4
+    if dtype == torch.float32 and cin_per_group >= 64 and cout_per_group >= 64:
+        return True
+
+    # fp16/bf16 weak large-channel 3x3 family.
     return (
-        groups == 1
-        and kh == 3
-        and kw == 3
-        and stride == (1, 1)
-        and dilation == (1, 1)
+        dilation == (1, 1)
         and cin_per_group >= 128
         and cout_per_group >= 128
-        and oh * ow <= 28 * 28
+        and hw <= 28 * 28
+    )
+
+
+def _use_1x1_nchw_m_kernel(
+    dtype: torch.dtype,
+    groups: int,
+    kh: int,
+    kw: int,
+    dilation: Tuple[int, int],
+    cin_per_group: int,
+    cout_per_group: int,
+    oh: int,
+    ow: int,
+) -> bool:
+    if groups != 1:
+        return False
+    if kh != 1 or kw != 1 or dilation != (1, 1):
+        return False
+
+    hw = oh * ow
+
+    # fp32 weak path:
+    #   [32,256,14,14] x [512,256,1,1]
+    # plus [32,128,28,28] x [256,128,1,1], which is safe for this path.
+    if dtype == torch.float32:
+        return cin_per_group >= 128 and cout_per_group >= 256
+
+    # fp16/bf16 original weak path:
+    #   [32,128,28,28] x [256,128,1,1]
+    #
+    # Avoid changing [32,256,14,14] x [512,256,1,1] for fp16/bf16 because
+    # the old NCHW 1x1 kernel was already fast there.
+    return (
+        dtype in (torch.float16, torch.bfloat16)
+        and cin_per_group == 128
+        and cout_per_group >= 256
+        and 512 <= hw <= 1024
+    )
+
+
+def _use_spatial_nchw_m_kernel(
+    dtype: torch.dtype,
+    groups: int,
+    is_depthwise: bool,
+    kh: int,
+    kw: int,
+    stride: Tuple[int, int],
+    dilation: Tuple[int, int],
+    cin_per_group: int,
+    cout_per_group: int,
+    oh: int,
+    ow: int,
+) -> bool:
+    """Use an OC x global-M NCHW implicit-GEMM kernel for weak 3x3 cases.
+
+    The older NCHW spatial kernels tile only within one batch item.  For the
+    small-spatial high-channel cases in the benchmark this creates many tiny
+    GEMMs and weak L2 reuse.  This path keeps the output in NCHW order, but lets
+    M = N * OH * OW span batches, so stores remain contiguous along HW while the
+    tile is large enough for Tensor Core/TF32 paths.
+    """
+    if groups != 1 or is_depthwise:
+        return False
+    if kh != 3 or kw != 3 or stride != (1, 1):
+        return False
+
+    hw = oh * ow
+
+    if dtype == torch.float32:
+        return cin_per_group >= 64 and cout_per_group >= 64
+
+    return (
+        dtype in (torch.float16, torch.bfloat16)
+        and dilation == (1, 1)
+        and cin_per_group >= 256
+        and cout_per_group >= 256
+        and hw <= 14 * 14
     )
 
 
@@ -430,7 +413,16 @@ def _use_depthwise_c1_nchw(
 @libentry()
 @libtuner(
     configs=_CONV2D_1X1_CONFIGS,
-    key=["OH", "OW", "CIN_PER_GROUP", "COUT_PER_GROUP"],
+    key=[
+        "OH",
+        "OW",
+        "CIN_PER_GROUP",
+        "COUT_PER_GROUP",
+        "STRIDE_H",
+        "STRIDE_W",
+        "HAS_BIAS",
+        "DTYPE_ID",
+    ],
     warmup=5,
     rep=10,
 )
@@ -458,6 +450,7 @@ def conv2d_1x1_nchw_kernel(
     BLOCK_HW: tl.constexpr,
     BLOCK_K: tl.constexpr,
     GROUP_M: tl.constexpr,
+    DTYPE_ID: tl.constexpr,
 ):
     pid = tl.program_id(0)
     pid_bg = tl.program_id(1)
@@ -516,7 +509,7 @@ def conv2d_1x1_nchw_kernel(
             + ic_local[None, :]
         )
         w = tl.load(w_ptrs, mask=mask_oc[:, None] & mask_k[None, :], other=0.0)
-        acc = tl.dot(w, x, acc)
+        acc = tl.dot(w, x, acc, input_precision="tf32")
 
     oc_global = group_idx * COUT_PER_GROUP + offs_oc
     if HAS_BIAS:
@@ -533,8 +526,276 @@ def conv2d_1x1_nchw_kernel(
 
 @libentry()
 @libtuner(
+    configs=_CONV2D_1X1_NCHW_M_CONFIGS,
+    key=[
+        "M",
+        "OH",
+        "OW",
+        "CIN_PER_GROUP",
+        "COUT_PER_GROUP",
+        "STRIDE_H",
+        "STRIDE_W",
+        "HAS_BIAS",
+        "DTYPE_ID",
+    ],
+    warmup=5,
+    rep=10,
+)
+@triton.jit
+def conv2d_1x1_nchw_m_kernel(
+    x_ptr,
+    w_ptr,
+    bias_ptr,
+    y_ptr,
+    M,
+    XH: tl.constexpr,
+    XW: tl.constexpr,
+    OH: tl.constexpr,
+    OW: tl.constexpr,
+    C_IN: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    GROUPS: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_TOP: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    HAS_BIAS: tl.constexpr,
+    BLOCK_OC: tl.constexpr,
+    BLOCK_HW: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+    GROUP_M: tl.constexpr,
+    DTYPE_ID: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    pid_g = tl.program_id(1)
+
+    HW = OH * OW
+
+    num_pid_m = tl.cdiv(M, BLOCK_HW)
+    num_pid_n = tl.cdiv(COUT_PER_GROUP, BLOCK_OC)
+    num_pid_in_group = GROUP_M * num_pid_n
+    group_id = pid // num_pid_in_group
+    first_pid_m = group_id * GROUP_M
+    group_size_m = min(num_pid_m - first_pid_m, GROUP_M)
+    pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
+    pid_n = (pid % num_pid_in_group) // group_size_m
+
+    offs_m = pid_m * BLOCK_HW + tl.arange(0, BLOCK_HW)
+    offs_oc = pid_n * BLOCK_OC + tl.arange(0, BLOCK_OC)
+    offs_k_base = tl.arange(0, BLOCK_K)
+
+    mask_m = offs_m < M
+    mask_oc = offs_oc < COUT_PER_GROUP
+
+    batch_idx = offs_m // HW
+    hw = offs_m - batch_idx * HW
+    oh = hw // OW
+    ow = hw - oh * OW
+
+    ih = oh * STRIDE_H - PAD_TOP
+    iw = ow * STRIDE_W - PAD_LEFT
+    valid_hw = mask_m & (ih >= 0) & (ih < XH) & (iw >= 0) & (iw < XW)
+
+    acc = tl.zeros((BLOCK_HW, BLOCK_OC), dtype=tl.float32)
+
+    for k0 in range(0, CIN_PER_GROUP, BLOCK_K):
+        offs_k = k0 + offs_k_base
+        mask_k = offs_k < CIN_PER_GROUP
+        ic_global = pid_g * CIN_PER_GROUP + offs_k
+
+        x_ptrs = (
+            x_ptr
+            + batch_idx[:, None] * (C_IN * XH * XW)
+            + ic_global[None, :] * (XH * XW)
+            + ih[:, None] * XW
+            + iw[:, None]
+        )
+        x = tl.load(
+            x_ptrs,
+            mask=valid_hw[:, None] & mask_k[None, :],
+            other=0.0,
+        )
+
+        # Packed [G, CinG, CoutG]
+        w_ptrs = (
+            w_ptr
+            + pid_g * (CIN_PER_GROUP * COUT_PER_GROUP)
+            + offs_k[:, None] * COUT_PER_GROUP
+            + offs_oc[None, :]
+        )
+        w = tl.load(
+            w_ptrs,
+            mask=mask_k[:, None] & mask_oc[None, :],
+            other=0.0,
+        )
+
+        acc = tl.dot(x, w, acc, input_precision="tf32")
+
+    oc_global = pid_g * COUT_PER_GROUP + offs_oc
+
+    if HAS_BIAS:
+        bias = tl.load(bias_ptr + oc_global, mask=mask_oc, other=0.0)
+        acc += bias[None, :]
+
+    y_ptrs = (
+        y_ptr
+        + batch_idx[:, None] * (C_OUT * OH * OW)
+        + oc_global[None, :] * (OH * OW)
+        + hw[:, None]
+    )
+    tl.store(
+        y_ptrs,
+        acc.to(y_ptr.dtype.element_ty),
+        mask=mask_m[:, None] & mask_oc[None, :],
+    )
+
+
+@libentry()
+@libtuner(
+    configs=_CONV2D_1X1_NCHW_M_CONFIGS,
+    key=[
+        "M",
+        "OH",
+        "OW",
+        "CIN_PER_GROUP",
+        "COUT_PER_GROUP",
+        "STRIDE_H",
+        "STRIDE_W",
+        "HAS_BIAS",
+        "DTYPE_ID",
+    ],
+    warmup=5,
+    rep=10,
+)
+@triton.jit
+def conv2d_1x1_nchw_m_oc_kernel(
+    x_ptr,
+    w_ptr,
+    bias_ptr,
+    y_ptr,
+    M,
+    XH: tl.constexpr,
+    XW: tl.constexpr,
+    OH: tl.constexpr,
+    OW: tl.constexpr,
+    C_IN: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    GROUPS: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_TOP: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    HAS_BIAS: tl.constexpr,
+    BLOCK_OC: tl.constexpr,
+    BLOCK_HW: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+    GROUP_M: tl.constexpr,
+    DTYPE_ID: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    pid_g = tl.program_id(1)
+
+    HW = OH * OW
+
+    num_pid_m = tl.cdiv(M, BLOCK_HW)
+    num_pid_n = tl.cdiv(COUT_PER_GROUP, BLOCK_OC)
+    num_pid_in_group = GROUP_M * num_pid_n
+    group_id = pid // num_pid_in_group
+    first_pid_m = group_id * GROUP_M
+    group_size_m = min(num_pid_m - first_pid_m, GROUP_M)
+    pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
+    pid_n = (pid % num_pid_in_group) // group_size_m
+
+    offs_m = pid_m * BLOCK_HW + tl.arange(0, BLOCK_HW)
+    offs_oc = pid_n * BLOCK_OC + tl.arange(0, BLOCK_OC)
+    offs_k_base = tl.arange(0, BLOCK_K)
+
+    mask_m = offs_m < M
+    mask_oc = offs_oc < COUT_PER_GROUP
+
+    batch_idx = offs_m // HW
+    hw = offs_m - batch_idx * HW
+    oh = hw // OW
+    ow = hw - oh * OW
+
+    ih = oh * STRIDE_H - PAD_TOP
+    iw = ow * STRIDE_W - PAD_LEFT
+    valid_hw = mask_m & (ih >= 0) & (ih < XH) & (iw >= 0) & (iw < XW)
+
+    acc = tl.zeros((BLOCK_OC, BLOCK_HW), dtype=tl.float32)
+
+    for k0 in range(0, CIN_PER_GROUP, BLOCK_K):
+        offs_k = k0 + offs_k_base
+        mask_k = offs_k < CIN_PER_GROUP
+        ic_global = pid_g * CIN_PER_GROUP + offs_k
+
+        x_ptrs = (
+            x_ptr
+            + batch_idx[None, :] * (C_IN * XH * XW)
+            + ic_global[:, None] * (XH * XW)
+            + ih[None, :] * XW
+            + iw[None, :]
+        )
+        x = tl.load(
+            x_ptrs,
+            mask=mask_k[:, None] & valid_hw[None, :],
+            other=0.0,
+        )
+
+        # Packed [G, CoutG, CinG]
+        w_ptrs = (
+            w_ptr
+            + (pid_g * COUT_PER_GROUP + offs_oc[:, None]) * CIN_PER_GROUP
+            + offs_k[None, :]
+        )
+        w = tl.load(
+            w_ptrs,
+            mask=mask_oc[:, None] & mask_k[None, :],
+            other=0.0,
+        )
+
+        acc = tl.dot(w, x, acc, input_precision="tf32")
+
+    oc_global = pid_g * COUT_PER_GROUP + offs_oc
+
+    if HAS_BIAS:
+        bias = tl.load(bias_ptr + oc_global, mask=mask_oc, other=0.0)
+        acc += bias[:, None]
+
+    y_ptrs = (
+        y_ptr
+        + batch_idx[None, :] * (C_OUT * OH * OW)
+        + oc_global[:, None] * (OH * OW)
+        + hw[None, :]
+    )
+    tl.store(
+        y_ptrs,
+        acc.to(y_ptr.dtype.element_ty),
+        mask=mask_oc[:, None] & mask_m[None, :],
+    )
+
+
+@libentry()
+@libtuner(
     configs=_CONV2D_SPATIAL_CONFIGS,
-    key=["OH", "OW", "KH", "KW", "CIN_PER_GROUP", "COUT_PER_GROUP"],
+    key=[
+        "OH",
+        "OW",
+        "KH",
+        "KW",
+        "CIN_PER_GROUP",
+        "COUT_PER_GROUP",
+        "STRIDE_H",
+        "STRIDE_W",
+        "DIL_H",
+        "DIL_W",
+        "HAS_BIAS",
+        "DTYPE_ID",
+    ],
     warmup=5,
     rep=10,
 )
@@ -566,6 +827,7 @@ def conv2d_spatial_nchw_kernel(
     BLOCK_HW: tl.constexpr,
     BLOCK_K: tl.constexpr,
     GROUP_M: tl.constexpr,
+    DTYPE_ID: tl.constexpr,
 ):
     pid = tl.program_id(0)
     pid_bg = tl.program_id(1)
@@ -638,7 +900,7 @@ def conv2d_spatial_nchw_kernel(
             + offs_k[None, :]
         )
         w = tl.load(w_ptrs, mask=mask_oc[:, None] & mask_k[None, :], other=0.0)
-        acc = tl.dot(w, x, acc)
+        acc = tl.dot(w, x, acc, input_precision="tf32")
 
     oc_global = group_idx * COUT_PER_GROUP + offs_oc
     if HAS_BIAS:
@@ -655,8 +917,21 @@ def conv2d_spatial_nchw_kernel(
 
 @libentry()
 @libtuner(
-    configs=_CONV2D_SPATIAL_CONFIGS,
-    key=["OH", "OW", "KH", "KW", "CIN_PER_GROUP", "COUT_PER_GROUP"],
+    configs=_CONV2D_SPATIAL_NCHW_PACKED_CONFIGS,
+    key=[
+        "OH",
+        "OW",
+        "KH",
+        "KW",
+        "CIN_PER_GROUP",
+        "COUT_PER_GROUP",
+        "STRIDE_H",
+        "STRIDE_W",
+        "DIL_H",
+        "DIL_W",
+        "HAS_BIAS",
+        "DTYPE_ID",
+    ],
     warmup=5,
     rep=10,
 )
@@ -688,6 +963,7 @@ def conv2d_spatial_nchw_packed_khw_kernel(
     BLOCK_HW: tl.constexpr,
     BLOCK_K: tl.constexpr,
     GROUP_M: tl.constexpr,
+    DTYPE_ID: tl.constexpr,
 ):
     pid = tl.program_id(0)
     pid_bg = tl.program_id(1)
@@ -766,7 +1042,7 @@ def conv2d_spatial_nchw_packed_khw_kernel(
                     other=0.0,
                 )
 
-                acc = tl.dot(w, x, acc)
+                acc = tl.dot(w, x, acc, input_precision="tf32")
 
     oc_global = group_idx * COUT_PER_GROUP + offs_oc
     if HAS_BIAS:
@@ -783,8 +1059,305 @@ def conv2d_spatial_nchw_packed_khw_kernel(
 
 @libentry()
 @libtuner(
+    configs=_CONV2D_SPATIAL_CONFIGS,
+    key=[
+        "M",
+        "OH",
+        "OW",
+        "KH",
+        "KW",
+        "CIN_PER_GROUP",
+        "COUT_PER_GROUP",
+        "STRIDE_H",
+        "STRIDE_W",
+        "DIL_H",
+        "DIL_W",
+        "HAS_BIAS",
+        "DTYPE_ID",
+    ],
+    warmup=5,
+    rep=10,
+)
+@triton.jit
+def conv2d_spatial_nchw_m_kernel(
+    x_ptr,
+    w_ptr,
+    bias_ptr,
+    y_ptr,
+    M,
+    XH: tl.constexpr,
+    XW: tl.constexpr,
+    OH: tl.constexpr,
+    OW: tl.constexpr,
+    C_IN: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    GROUPS: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_TOP: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    HAS_BIAS: tl.constexpr,
+    BLOCK_OC: tl.constexpr,
+    BLOCK_HW: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+    GROUP_M: tl.constexpr,
+    DTYPE_ID: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    pid_g = tl.program_id(1)
+
+    HW = OH * OW
+    KDIM = CIN_PER_GROUP * KH * KW
+    KERNEL_AREA = KH * KW
+
+    num_pid_m = tl.cdiv(M, BLOCK_HW)
+    num_pid_n = tl.cdiv(COUT_PER_GROUP, BLOCK_OC)
+    num_pid_in_group = GROUP_M * num_pid_n
+    group_id = pid // num_pid_in_group
+    first_pid_m = group_id * GROUP_M
+    group_size_m = min(num_pid_m - first_pid_m, GROUP_M)
+    pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
+    pid_n = (pid % num_pid_in_group) // group_size_m
+
+    offs_m = pid_m * BLOCK_HW + tl.arange(0, BLOCK_HW)
+    offs_oc = pid_n * BLOCK_OC + tl.arange(0, BLOCK_OC)
+    offs_k_base = tl.arange(0, BLOCK_K)
+
+    mask_m = offs_m < M
+    mask_oc = offs_oc < COUT_PER_GROUP
+
+    batch_idx = offs_m // HW
+    hw = offs_m - batch_idx * HW
+    oh = hw // OW
+    ow = hw - oh * OW
+
+    acc = tl.zeros((BLOCK_OC, BLOCK_HW), dtype=tl.float32)
+
+    for k0 in range(0, KDIM, BLOCK_K):
+        offs_k = k0 + offs_k_base
+        mask_k = offs_k < KDIM
+
+        ic_local = offs_k // KERNEL_AREA
+        rem_k = offs_k - ic_local * KERNEL_AREA
+        kh_idx = rem_k // KW
+        kw_idx = rem_k - kh_idx * KW
+        ic_global = pid_g * CIN_PER_GROUP + ic_local
+
+        ih = oh[None, :] * STRIDE_H - PAD_TOP + kh_idx[:, None] * DIL_H
+        iw = ow[None, :] * STRIDE_W - PAD_LEFT + kw_idx[:, None] * DIL_W
+        valid = (
+            mask_k[:, None]
+            & mask_m[None, :]
+            & (ih >= 0)
+            & (ih < XH)
+            & (iw >= 0)
+            & (iw < XW)
+        )
+
+        x_ptrs = (
+            x_ptr
+            + batch_idx[None, :] * (C_IN * XH * XW)
+            + ic_global[:, None] * (XH * XW)
+            + ih * XW
+            + iw
+        )
+        x = tl.load(x_ptrs, mask=valid, other=0.0)
+
+        # Contiguous OIHW flattened as [G, CoutG, CinG*KH*KW].
+        w_ptrs = (
+            w_ptr
+            + (pid_g * COUT_PER_GROUP + offs_oc[:, None]) * KDIM
+            + offs_k[None, :]
+        )
+        w = tl.load(w_ptrs, mask=mask_oc[:, None] & mask_k[None, :], other=0.0)
+        acc = tl.dot(w, x, acc, input_precision="tf32")
+
+    oc_global = pid_g * COUT_PER_GROUP + offs_oc
+    if HAS_BIAS:
+        bias = tl.load(bias_ptr + oc_global, mask=mask_oc, other=0.0)
+        acc += bias[:, None]
+
+    y_ptrs = (
+        y_ptr
+        + batch_idx[None, :] * (C_OUT * OH * OW)
+        + oc_global[:, None] * (OH * OW)
+        + hw[None, :]
+    )
+    tl.store(
+        y_ptrs,
+        acc.to(y_ptr.dtype.element_ty),
+        mask=mask_oc[:, None] & mask_m[None, :],
+    )
+
+
+@libentry()
+@libtuner(
+    configs=_CONV2D_SPATIAL_NCHW_PACKED_CONFIGS,
+    key=[
+        "M",
+        "OH",
+        "OW",
+        "KH",
+        "KW",
+        "CIN_PER_GROUP",
+        "COUT_PER_GROUP",
+        "STRIDE_H",
+        "STRIDE_W",
+        "DIL_H",
+        "DIL_W",
+        "HAS_BIAS",
+        "DTYPE_ID",
+    ],
+    warmup=5,
+    rep=10,
+)
+@triton.jit
+def conv2d_spatial_nchw_m_packed_khw_kernel(
+    x_ptr,
+    w_ptr,
+    bias_ptr,
+    y_ptr,
+    M,
+    XH: tl.constexpr,
+    XW: tl.constexpr,
+    OH: tl.constexpr,
+    OW: tl.constexpr,
+    C_IN: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    GROUPS: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_TOP: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    HAS_BIAS: tl.constexpr,
+    BLOCK_OC: tl.constexpr,
+    BLOCK_HW: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+    GROUP_M: tl.constexpr,
+    DTYPE_ID: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    pid_g = tl.program_id(1)
+
+    HW = OH * OW
+
+    num_pid_m = tl.cdiv(M, BLOCK_HW)
+    num_pid_n = tl.cdiv(COUT_PER_GROUP, BLOCK_OC)
+    num_pid_in_group = GROUP_M * num_pid_n
+    group_id = pid // num_pid_in_group
+    first_pid_m = group_id * GROUP_M
+    group_size_m = min(num_pid_m - first_pid_m, GROUP_M)
+    pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
+    pid_n = (pid % num_pid_in_group) // group_size_m
+
+    offs_m = pid_m * BLOCK_HW + tl.arange(0, BLOCK_HW)
+    offs_oc = pid_n * BLOCK_OC + tl.arange(0, BLOCK_OC)
+    offs_k_base = tl.arange(0, BLOCK_K)
+
+    mask_m = offs_m < M
+    mask_oc = offs_oc < COUT_PER_GROUP
+
+    batch_idx = offs_m // HW
+    hw = offs_m - batch_idx * HW
+    oh = hw // OW
+    ow = hw - oh * OW
+
+    acc = tl.zeros((BLOCK_OC, BLOCK_HW), dtype=tl.float32)
+
+    # Static kh/kw loops remove div/mod by KH*KW from the K loop while M spans
+    # all batch items.  Accumulator orientation is OC x M so NCHW stores are
+    # contiguous along the HW dimension.
+    for kh in tl.static_range(0, KH):
+        ih = oh * STRIDE_H - PAD_TOP + kh * DIL_H
+        valid_h = (ih >= 0) & (ih < XH)
+
+        for kw in tl.static_range(0, KW):
+            iw = ow * STRIDE_W - PAD_LEFT + kw * DIL_W
+            valid_hw = mask_m & valid_h & (iw >= 0) & (iw < XW)
+
+            for k0 in range(0, CIN_PER_GROUP, BLOCK_K):
+                ic_local = k0 + offs_k_base
+                mask_k = ic_local < CIN_PER_GROUP
+                ic_global = pid_g * CIN_PER_GROUP + ic_local
+
+                x_ptrs = (
+                    x_ptr
+                    + batch_idx[None, :] * (C_IN * XH * XW)
+                    + ic_global[:, None] * (XH * XW)
+                    + ih[None, :] * XW
+                    + iw[None, :]
+                )
+                x = tl.load(
+                    x_ptrs,
+                    mask=mask_k[:, None] & valid_hw[None, :],
+                    other=0.0,
+                )
+
+                # Packed [G, KH, KW, CoutG, CinG].
+                w_ptrs = (
+                    w_ptr
+                    + (
+                        (
+                            ((pid_g * KH + kh) * KW + kw) * COUT_PER_GROUP
+                            + offs_oc[:, None]
+                        )
+                        * CIN_PER_GROUP
+                    )
+                    + ic_local[None, :]
+                )
+                w = tl.load(
+                    w_ptrs,
+                    mask=mask_oc[:, None] & mask_k[None, :],
+                    other=0.0,
+                )
+
+                acc = tl.dot(w, x, acc, input_precision="tf32")
+
+    oc_global = pid_g * COUT_PER_GROUP + offs_oc
+    if HAS_BIAS:
+        bias = tl.load(bias_ptr + oc_global, mask=mask_oc, other=0.0)
+        acc += bias[:, None]
+
+    y_ptrs = (
+        y_ptr
+        + batch_idx[None, :] * (C_OUT * OH * OW)
+        + oc_global[:, None] * (OH * OW)
+        + hw[None, :]
+    )
+    tl.store(
+        y_ptrs,
+        acc.to(y_ptr.dtype.element_ty),
+        mask=mask_oc[:, None] & mask_m[None, :],
+    )
+
+
+@libentry()
+@libtuner(
     configs=_DW_CONV2D_V2_CONFIGS,
-    key=["M", "C_IN", "KH", "KW"],
+    key=[
+        "M",
+        "C_IN",
+        "KH",
+        "KW",
+        "STRIDE_H",
+        "STRIDE_W",
+        "DIL_H",
+        "DIL_W",
+        "HAS_BIAS",
+        "DTYPE_ID",
+    ],
     warmup=5,
     rep=10,
 )
@@ -811,6 +1384,7 @@ def depthwise_conv2d_nchw_kernel(
     HAS_BIAS: tl.constexpr,
     BLOCK_C: tl.constexpr,
     BLOCK_HW: tl.constexpr,
+    DTYPE_ID: tl.constexpr,
 ):
     pid_hw = tl.program_id(0)
     pid_c = tl.program_id(1)
@@ -876,7 +1450,18 @@ def depthwise_conv2d_nchw_kernel(
 @libentry()
 @libtuner(
     configs=_DW_CONV2D_C1_CONFIGS,
-    key=["M", "C_IN", "KH", "KW"],
+    key=[
+        "M",
+        "C_IN",
+        "KH",
+        "KW",
+        "STRIDE_H",
+        "STRIDE_W",
+        "DIL_H",
+        "DIL_W",
+        "HAS_BIAS",
+        "DTYPE_ID",
+    ],
     warmup=5,
     rep=10,
 )
@@ -902,6 +1487,7 @@ def depthwise_conv2d_nchw_c1_kernel(
     KW: tl.constexpr,
     HAS_BIAS: tl.constexpr,
     BLOCK_HW: tl.constexpr,
+    DTYPE_ID: tl.constexpr,
 ):
     pid_hw = tl.program_id(0)
     c = tl.program_id(1)
@@ -952,7 +1538,16 @@ def depthwise_conv2d_nchw_c1_kernel(
 @libentry()
 @libtuner(
     configs=_CONV2D_1X1_CONFIGS,
-    key=["OH", "OW", "CIN_PER_GROUP", "COUT_PER_GROUP"],
+    key=[
+        "OH",
+        "OW",
+        "CIN_PER_GROUP",
+        "COUT_PER_GROUP",
+        "STRIDE_H",
+        "STRIDE_W",
+        "HAS_BIAS",
+        "DTYPE_ID",
+    ],
     warmup=5,
     rep=10,
 )
@@ -986,18 +1581,19 @@ def conv2d_1x1_cl_kernel(
     BLOCK_HW: tl.constexpr,
     BLOCK_K: tl.constexpr,
     GROUP_M: tl.constexpr,
+    DTYPE_ID: tl.constexpr,
 ):
     pid = tl.program_id(0)
     pid_g = tl.program_id(1)
 
-    tl.assume(x_stride_n > 0)
-    tl.assume(x_stride_c > 0)
-    tl.assume(x_stride_h > 0)
-    tl.assume(x_stride_w > 0)
-    tl.assume(y_stride_n > 0)
-    tl.assume(y_stride_c > 0)
-    tl.assume(y_stride_h > 0)
-    tl.assume(y_stride_w > 0)
+    # tl.assume(x_stride_n > 0)
+    # tl.assume(x_stride_c > 0)
+    # tl.assume(x_stride_h > 0)
+    # tl.assume(x_stride_w > 0)
+    # tl.assume(y_stride_n > 0)
+    # tl.assume(y_stride_c > 0)
+    # tl.assume(y_stride_h > 0)
+    # tl.assume(y_stride_w > 0)
 
     num_pid_m = tl.cdiv(M, BLOCK_HW)
     num_pid_n = tl.cdiv(COUT_PER_GROUP, BLOCK_OC)
@@ -1048,7 +1644,7 @@ def conv2d_1x1_cl_kernel(
             + offs_n[None, :]
         )
         w = tl.load(w_ptrs, mask=mask_k[:, None] & mask_n[None, :], other=0.0)
-        acc = tl.dot(a, w, acc)
+        acc = tl.dot(a, w, acc, input_precision="tf32")
 
     oc_global = pid_g * COUT_PER_GROUP + offs_n
     if HAS_BIAS:
@@ -1072,7 +1668,20 @@ def conv2d_1x1_cl_kernel(
 @libentry()
 @libtuner(
     configs=_CONV2D_SPATIAL_CONFIGS,
-    key=["OH", "OW", "KH", "KW", "CIN_PER_GROUP", "COUT_PER_GROUP"],
+    key=[
+        "OH",
+        "OW",
+        "KH",
+        "KW",
+        "CIN_PER_GROUP",
+        "COUT_PER_GROUP",
+        "STRIDE_H",
+        "STRIDE_W",
+        "DIL_H",
+        "DIL_W",
+        "HAS_BIAS",
+        "DTYPE_ID",
+    ],
     warmup=5,
     rep=10,
 )
@@ -1110,18 +1719,19 @@ def conv2d_spatial_cl_kernel(
     BLOCK_HW: tl.constexpr,
     BLOCK_K: tl.constexpr,
     GROUP_M: tl.constexpr,
+    DTYPE_ID: tl.constexpr,
 ):
     pid = tl.program_id(0)
     pid_g = tl.program_id(1)
 
-    tl.assume(x_stride_n > 0)
-    tl.assume(x_stride_c > 0)
-    tl.assume(x_stride_h > 0)
-    tl.assume(x_stride_w > 0)
-    tl.assume(y_stride_n > 0)
-    tl.assume(y_stride_c > 0)
-    tl.assume(y_stride_h > 0)
-    tl.assume(y_stride_w > 0)
+    # tl.assume(x_stride_n > 0)
+    # tl.assume(x_stride_c > 0)
+    # tl.assume(x_stride_h > 0)
+    # tl.assume(x_stride_w > 0)
+    # tl.assume(y_stride_n > 0)
+    # tl.assume(y_stride_c > 0)
+    # tl.assume(y_stride_h > 0)
+    # tl.assume(y_stride_w > 0)
 
     KDIM = CIN_PER_GROUP * KH * KW
     KERNEL_AREA = KH * KW
@@ -1181,7 +1791,6 @@ def conv2d_spatial_cl_kernel(
         a = tl.load(x_ptrs, mask=valid, other=0.0)
 
         # Packed [G, CinG, KH, KW, CoutG].
-        # offs_k order is ic * KH * KW + kh * KW + kw.
         w_ptrs = (
             w_ptr
             + pid_g * (KDIM * COUT_PER_GROUP)
@@ -1189,7 +1798,7 @@ def conv2d_spatial_cl_kernel(
             + offs_n[None, :]
         )
         w = tl.load(w_ptrs, mask=mask_k[:, None] & mask_n[None, :], other=0.0)
-        acc = tl.dot(a, w, acc)
+        acc = tl.dot(a, w, acc, input_precision="tf32")
 
     oc_global = pid_g * COUT_PER_GROUP + offs_n
     if HAS_BIAS:
@@ -1213,7 +1822,18 @@ def conv2d_spatial_cl_kernel(
 @libentry()
 @libtuner(
     configs=_DW_CONV2D_V2_CONFIGS,
-    key=["M", "C_IN", "KH", "KW"],
+    key=[
+        "M",
+        "C_IN",
+        "KH",
+        "KW",
+        "STRIDE_H",
+        "STRIDE_W",
+        "DIL_H",
+        "DIL_W",
+        "HAS_BIAS",
+        "DTYPE_ID",
+    ],
     warmup=5,
     rep=10,
 )
@@ -1248,19 +1868,20 @@ def depthwise_conv2d_cl_kernel(
     HAS_BIAS: tl.constexpr,
     BLOCK_C: tl.constexpr,
     BLOCK_HW: tl.constexpr,
+    DTYPE_ID: tl.constexpr,
 ):
     pid_hw = tl.program_id(0)
     pid_c = tl.program_id(1)
     pid_n = tl.program_id(2)
 
-    tl.assume(x_stride_n > 0)
-    tl.assume(x_stride_c > 0)
-    tl.assume(x_stride_h > 0)
-    tl.assume(x_stride_w > 0)
-    tl.assume(y_stride_n > 0)
-    tl.assume(y_stride_c > 0)
-    tl.assume(y_stride_h > 0)
-    tl.assume(y_stride_w > 0)
+    # tl.assume(x_stride_n > 0)
+    # tl.assume(x_stride_c > 0)
+    # tl.assume(x_stride_h > 0)
+    # tl.assume(x_stride_w > 0)
+    # tl.assume(y_stride_n > 0)
+    # tl.assume(y_stride_c > 0)
+    # tl.assume(y_stride_h > 0)
+    # tl.assume(y_stride_w > 0)
 
     offs_hw = pid_hw * BLOCK_HW + tl.arange(0, BLOCK_HW)
     offs_c = pid_c * BLOCK_C + tl.arange(0, BLOCK_C)
@@ -1321,23 +1942,203 @@ def depthwise_conv2d_cl_kernel(
     )
 
 
+@triton.jit
+def depthwise_conv2d_fp64_nchw_c1_kernel(
+    x_ptr,
+    w_ptr,
+    bias_ptr,
+    y_ptr,
+    M: tl.constexpr,
+    XH: tl.constexpr,
+    XW: tl.constexpr,
+    OH: tl.constexpr,
+    OW: tl.constexpr,
+    C_IN: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_TOP: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    HAS_BIAS: tl.constexpr,
+    BLOCK_HW: tl.constexpr,
+):
+    pid_hw = tl.program_id(0)
+    c = tl.program_id(1)
+    n = tl.program_id(2)
+
+    offs_hw = pid_hw * BLOCK_HW + tl.arange(0, BLOCK_HW)
+    mask_hw = offs_hw < M
+
+    oh = offs_hw // OW
+    ow = offs_hw - oh * OW
+
+    x_base = x_ptr + n * (C_IN * XH * XW) + c * (XH * XW)
+    y_base = y_ptr + n * (C_IN * OH * OW) + c * (OH * OW)
+
+    acc = tl.zeros((BLOCK_HW,), dtype=tl.float64)
+
+    for kh in tl.static_range(0, KH):
+        ih = oh * STRIDE_H - PAD_TOP + kh * DIL_H
+        valid_h = (ih >= 0) & (ih < XH)
+
+        for kw in tl.static_range(0, KW):
+            iw = ow * STRIDE_W - PAD_LEFT + kw * DIL_W
+            valid_hw = mask_hw & valid_h & (iw >= 0) & (iw < XW)
+
+            x = tl.load(x_base + ih * XW + iw, mask=valid_hw, other=0.0).to(
+                tl.float64
+            )
+            ww = tl.load(w_ptr + (kh * KW + kw) * C_IN + c).to(tl.float64)
+            acc += x * ww
+
+    if HAS_BIAS:
+        acc += tl.load(bias_ptr + c).to(tl.float64)
+
+    tl.store(y_base + offs_hw, acc, mask=mask_hw)
+
+
+@triton.jit
+def conv2d_fp64_nchw_m_tile_kernel(
+    x_ptr,
+    w_ptr,
+    bias_ptr,
+    y_ptr,
+    M,
+    XH: tl.constexpr,
+    XW: tl.constexpr,
+    OH: tl.constexpr,
+    OW: tl.constexpr,
+    C_IN: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    GROUPS: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_TOP: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    HAS_BIAS: tl.constexpr,
+    BLOCK_OC: tl.constexpr,
+    BLOCK_HW: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+    GROUP_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    pid_g = tl.program_id(1)
+
+    HW = OH * OW
+
+    num_pid_m = tl.cdiv(M, BLOCK_HW)
+    num_pid_n = tl.cdiv(COUT_PER_GROUP, BLOCK_OC)
+    num_pid_in_group = GROUP_M * num_pid_n
+    group_id = pid // num_pid_in_group
+    first_pid_m = group_id * GROUP_M
+    group_size_m = min(num_pid_m - first_pid_m, GROUP_M)
+    pid_m = first_pid_m + ((pid % num_pid_in_group) % group_size_m)
+    pid_n = (pid % num_pid_in_group) // group_size_m
+
+    offs_m = pid_m * BLOCK_HW + tl.arange(0, BLOCK_HW)
+    offs_oc = pid_n * BLOCK_OC + tl.arange(0, BLOCK_OC)
+
+    mask_m = offs_m < M
+    mask_oc = offs_oc < COUT_PER_GROUP
+
+    batch_idx = offs_m // HW
+    hw = offs_m - batch_idx * HW
+    oh = hw // OW
+    ow = hw - oh * OW
+
+    oc_global = pid_g * COUT_PER_GROUP + offs_oc
+    acc = tl.zeros((BLOCK_OC, BLOCK_HW), dtype=tl.float64)
+
+    if HAS_BIAS:
+        bias = tl.load(bias_ptr + oc_global, mask=mask_oc, other=0.0).to(
+            tl.float64
+        )
+        acc += bias[:, None]
+
+    # FP64 cannot rely on Tensor Core tl.dot in a portable way here.  Instead we
+    # compute an OC x M tile and reduce K through small static chunks, reusing
+    # each loaded input vector across BLOCK_OC output channels and each loaded
+    # weight vector across BLOCK_HW spatial/batch positions.
+    for kh in tl.static_range(0, KH):
+        ih = oh * STRIDE_H - PAD_TOP + kh * DIL_H
+        valid_h = (ih >= 0) & (ih < XH)
+
+        for kw in tl.static_range(0, KW):
+            iw = ow * STRIDE_W - PAD_LEFT + kw * DIL_W
+            valid_hw = mask_m & valid_h & (iw >= 0) & (iw < XW)
+
+            for k0 in range(0, CIN_PER_GROUP, BLOCK_K):
+                for kk in tl.static_range(0, BLOCK_K):
+                    ic_local = k0 + kk
+                    mask_k = ic_local < CIN_PER_GROUP
+                    ic_global = pid_g * CIN_PER_GROUP + ic_local
+
+                    x = tl.load(
+                        x_ptr
+                        + batch_idx * (C_IN * XH * XW)
+                        + ic_global * (XH * XW)
+                        + ih * XW
+                        + iw,
+                        mask=valid_hw & mask_k,
+                        other=0.0,
+                    ).to(tl.float64)
+
+                    w = tl.load(
+                        w_ptr
+                        + oc_global * (CIN_PER_GROUP * KH * KW)
+                        + (ic_local * KH + kh) * KW
+                        + kw,
+                        mask=mask_oc & mask_k,
+                        other=0.0,
+                    ).to(tl.float64)
+
+                    acc += w[:, None] * x[None, :]
+
+    y_ptrs = (
+        y_ptr
+        + batch_idx[None, :] * (C_OUT * OH * OW)
+        + oc_global[:, None] * (OH * OW)
+        + hw[None, :]
+    )
+    tl.store(y_ptrs, acc, mask=mask_oc[:, None] & mask_m[None, :])
+
+
 # -----------------------------------------------------------------------------
-# FP64 fallback kernel.  tl.dot intentionally is not used for FP64 because the
-# official tl.dot dtype set does not include float64 inputs/accumulators.
+# FP64 kernel
+# -----------------------------------------------------------------------------
+#
+# This replaces the old fp64 scalar kernel.  The old version used:
+#
+#   for ci in tl.static_range(0, CIN_PER_GROUP)
+#
+# which fully unrolled large channel counts and could make Triton JIT appear to
+# hang.  This version uses dynamic K-blocks.  It is not meant to beat cuDNN; it
+# is meant to be correct and not hang while staying purely Triton.
 # -----------------------------------------------------------------------------
 
 
 @triton.jit
-def conv2d_fp64_scalar_kernel(
+def conv2d_fp64_vector_kernel(
     x_ptr,
     w_ptr,
     bias_ptr,
     y_ptr,
     total_elements,
+    KDIM: tl.constexpr,
     XH: tl.constexpr,
     XW: tl.constexpr,
     OH: tl.constexpr,
     OW: tl.constexpr,
+    C_IN: tl.constexpr,
     C_OUT: tl.constexpr,
     COUT_PER_GROUP: tl.constexpr,
     CIN_PER_GROUP: tl.constexpr,
@@ -1350,61 +2151,75 @@ def conv2d_fp64_scalar_kernel(
     KH: tl.constexpr,
     KW: tl.constexpr,
     HAS_BIAS: tl.constexpr,
-    BLOCK_SIZE: tl.constexpr,
+    BLOCK_E: tl.constexpr,
+    BLOCK_K: tl.constexpr,
 ):
     pid = tl.program_id(0)
-    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    mask = offsets < total_elements
 
-    ow = offsets % OW
-    oh = (offsets // OW) % OH
-    oc = (offsets // (OH * OW)) % C_OUT
-    batch = offsets // (C_OUT * OH * OW)
+    offs_e = pid * BLOCK_E + tl.arange(0, BLOCK_E)
+    mask_e = offs_e < total_elements
+
+    ow = offs_e % OW
+    oh = (offs_e // OW) % OH
+    oc = (offs_e // (OH * OW)) % C_OUT
+    batch = offs_e // (C_OUT * OH * OW)
+
     group = oc // COUT_PER_GROUP
+    kernel_area = KH * KW
 
-    acc = tl.zeros((BLOCK_SIZE,), dtype=tl.float64)
+    acc = tl.zeros((BLOCK_E,), dtype=tl.float64)
+
     if HAS_BIAS:
-        acc += tl.load(bias_ptr + oc, mask=mask, other=0.0).to(tl.float64)
+        b = tl.load(bias_ptr + oc, mask=mask_e, other=0.0).to(tl.float64)
+        acc += b
 
-    for kh in tl.static_range(0, KH):
-        ih = oh * STRIDE_H - PAD_TOP + kh * DIL_H
-        valid_h = (ih >= 0) & (ih < XH)
-        for kw in tl.static_range(0, KW):
-            iw = ow * STRIDE_W - PAD_LEFT + kw * DIL_W
-            valid = mask & valid_h & (iw >= 0) & (iw < XW)
-            for ci in tl.static_range(0, CIN_PER_GROUP):
-                ic = group * CIN_PER_GROUP + ci
-                x = tl.load(
-                    x_ptr
-                    + batch
-                    * (
-                        CIN_PER_GROUP
-                        * tl.cdiv(C_OUT, COUT_PER_GROUP)
-                        * XH
-                        * XW
-                    )
-                    + ic * (XH * XW)
-                    + ih * XW
-                    + iw,
-                    mask=valid,
-                    other=0.0,
-                ).to(tl.float64)
-                weight = tl.load(
-                    w_ptr
-                    + oc * (CIN_PER_GROUP * KH * KW)
-                    + ci * (KH * KW)
-                    + kh * KW
-                    + kw,
-                    mask=mask,
-                    other=0.0,
-                ).to(tl.float64)
-                acc += x * weight
+    offs_k_base = tl.arange(0, BLOCK_K)
 
-    tl.store(
-        y_ptr + batch * (C_OUT * OH * OW) + oc * (OH * OW) + oh * OW + ow,
-        acc.to(y_ptr.dtype.element_ty),
-        mask=mask,
-    )
+    for k0 in range(0, KDIM, BLOCK_K):
+        offs_k = k0 + offs_k_base
+        mask_k = offs_k < KDIM
+
+        ic_local = offs_k // kernel_area
+        rem = offs_k - ic_local * kernel_area
+        kh_idx = rem // KW
+        kw_idx = rem - kh_idx * KW
+
+        ic_global = group[None, :] * CIN_PER_GROUP + ic_local[:, None]
+
+        ih = oh[None, :] * STRIDE_H - PAD_TOP + kh_idx[:, None] * DIL_H
+        iw = ow[None, :] * STRIDE_W - PAD_LEFT + kw_idx[:, None] * DIL_W
+
+        valid = (
+            mask_k[:, None]
+            & mask_e[None, :]
+            & (ih >= 0)
+            & (ih < XH)
+            & (iw >= 0)
+            & (iw < XW)
+        )
+
+        x_ptrs = (
+            x_ptr
+            + batch[None, :] * (C_IN * XH * XW)
+            + ic_global * (XH * XW)
+            + ih * XW
+            + iw
+        )
+        x = tl.load(x_ptrs, mask=valid, other=0.0).to(tl.float64)
+
+        w_ptrs = (
+            w_ptr + oc[None, :] * (CIN_PER_GROUP * KH * KW) + offs_k[:, None]
+        )
+        ww = tl.load(
+            w_ptrs,
+            mask=mask_k[:, None] & mask_e[None, :],
+            other=0.0,
+        ).to(tl.float64)
+
+        acc += tl.sum(x * ww, axis=0)
+
+    y_ptrs = y_ptr + batch * (C_OUT * OH * OW) + oc * (OH * OW) + oh * OW + ow
+    tl.store(y_ptrs, acc.to(y_ptr.dtype.element_ty), mask=mask_e)
 
 
 # -----------------------------------------------------------------------------
@@ -1458,19 +2273,14 @@ def conv2d(
 
     is_depthwise = groups == c_in and c_per_group == 1 and c_out == c_in
     is_1x1 = kh == 1 and kw == 1 and dilation == (1, 1)
+    dtype_id = _dtype_id(input.dtype)
 
-    # Selective vendor fallback:
-    # This is intentionally placed before layout conversion and before Triton
-    # launches, so the report's weak shapes get native PyTorch/cuDNN behavior.
-    if _should_use_vendor_conv2d(
-        input, weight, stride, dilation, groups, oh, ow
-    ):
-        return _native_conv2d(
-            input, weight, bias, stride, padding_2d, dilation, groups
-        )
-
-    # FP64 correctness path.  It is intentionally scalar; FP64 conv is not the
-    # target of the fast Tensor-Core kernels.
+    # FP64 path: pure Triton kernels only.
+    #
+    # The old fp64 fallback reduced one flattened output vector at a time.  This
+    # version computes OC x global-M tiles, which reuses each input vector across
+    # multiple output channels and each weight vector across multiple spatial /
+    # batch positions.  It intentionally avoids high-level Torch GEMM calls.
     if input.dtype == torch.float64:
         if not input.is_contiguous():
             input = input.contiguous()
@@ -1480,23 +2290,73 @@ def conv2d(
         output = torch.empty(
             (n, c_out, oh, ow), device=input.device, dtype=input.dtype
         )
-        total = n * c_out * oh * ow
-        block_size = 128
 
         with torch_device_fn.device(input.device):
-            conv2d_fp64_scalar_kernel[(triton.cdiv(total, block_size),)](
+            if is_depthwise:
+                w_dw = _pack_depthwise_weight_khw_c(weight, groups)
+                block_hw = 256 if kh * kw <= 9 else 128
+
+                depthwise_conv2d_fp64_nchw_c1_kernel[
+                    (triton.cdiv(oh * ow, block_hw), c_in, n)
+                ](
+                    input,
+                    w_dw,
+                    bias if bias is not None else output,
+                    output,
+                    oh * ow,
+                    h,
+                    w,
+                    oh,
+                    ow,
+                    c_in,
+                    stride[0],
+                    stride[1],
+                    pad_top,
+                    pad_left,
+                    dilation[0],
+                    dilation[1],
+                    kh,
+                    kw,
+                    HAS_BIAS=bias is not None,
+                    BLOCK_HW=block_hw,
+                )
+                return output
+
+            m = n * oh * ow
+
+            # Keep fp64 tiles modest to control register pressure.  1x1 and
+            # group-conv have smaller K and can use a slightly wider OC tile;
+            # dense 3x3 high-channel cases use a narrower OC tile.
+            if is_1x1 or groups > 1:
+                block_oc = 16
+                block_hw = 16
+                block_k = 8
+            else:
+                block_oc = 8 if cin_per_group >= 256 else 16
+                block_hw = 16
+                block_k = 8
+
+            grid_fp64 = (
+                triton.cdiv(m, block_hw)
+                * triton.cdiv(cout_per_group, block_oc),
+                groups,
+            )
+
+            conv2d_fp64_nchw_m_tile_kernel[grid_fp64](
                 input,
                 weight,
                 bias if bias is not None else output,
                 output,
-                total,
+                m,
                 h,
                 w,
                 oh,
                 ow,
+                c_in,
                 c_out,
-                cout_per_group,
                 cin_per_group,
+                cout_per_group,
+                groups,
                 stride[0],
                 stride[1],
                 pad_top,
@@ -1506,8 +2366,14 @@ def conv2d(
                 kh,
                 kw,
                 HAS_BIAS=bias is not None,
-                BLOCK_SIZE=block_size,
+                BLOCK_OC=block_oc,
+                BLOCK_HW=block_hw,
+                BLOCK_K=block_k,
+                GROUP_M=_GROUP_SIZE_M,
+                num_warps=4,
+                num_stages=1,
             )
+
         return output
 
     use_channels_last = _input_has_fast_channel_stride(input)
@@ -1559,6 +2425,7 @@ def conv2d(
                     kh,
                     kw,
                     HAS_BIAS=bias is not None,
+                    DTYPE_ID=dtype_id,
                 )
                 return output
 
@@ -1599,6 +2466,7 @@ def conv2d(
                     pad_left,
                     HAS_BIAS=bias is not None,
                     GROUP_M=_GROUP_SIZE_M,
+                    DTYPE_ID=dtype_id,
                 )
                 return output
 
@@ -1642,6 +2510,7 @@ def conv2d(
                 kw,
                 HAS_BIAS=bias is not None,
                 GROUP_M=_GROUP_SIZE_M,
+                DTYPE_ID=dtype_id,
             )
             return output
 
@@ -1687,6 +2556,7 @@ def conv2d(
                     kh,
                     kw,
                     HAS_BIAS=bias is not None,
+                    DTYPE_ID=dtype_id,
                 )
                 return output
 
@@ -1717,10 +2587,57 @@ def conv2d(
                 kh,
                 kw,
                 HAS_BIAS=bias is not None,
+                DTYPE_ID=dtype_id,
             )
             return output
 
         if is_1x1:
+            if _use_1x1_nchw_m_kernel(
+                input.dtype,
+                groups,
+                kh,
+                kw,
+                dilation,
+                cin_per_group,
+                cout_per_group,
+                oh,
+                ow,
+            ):
+                w_1x1_m = _pack_weight_1x1_nchw(weight, groups)
+                m = n * oh * ow
+
+                def grid_1x1_nchw_m_oc(meta):
+                    return (
+                        triton.cdiv(m, meta["BLOCK_HW"])
+                        * triton.cdiv(cout_per_group, meta["BLOCK_OC"]),
+                        groups,
+                    )
+
+                conv2d_1x1_nchw_m_oc_kernel[grid_1x1_nchw_m_oc](
+                    input,
+                    w_1x1_m,
+                    bias if bias is not None else output,
+                    output,
+                    m,
+                    h,
+                    w,
+                    oh,
+                    ow,
+                    c_in,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    groups,
+                    stride[0],
+                    stride[1],
+                    pad_top,
+                    pad_left,
+                    HAS_BIAS=bias is not None,
+                    GROUP_M=_GROUP_SIZE_M,
+                    DTYPE_ID=dtype_id,
+                )
+                return output
+
             w_1x1 = _pack_weight_1x1_nchw(weight, groups)
 
             def grid_1x1_nchw(meta):
@@ -1750,6 +2667,7 @@ def conv2d(
                 pad_left,
                 HAS_BIAS=bias is not None,
                 GROUP_M=_GROUP_SIZE_M,
+                DTYPE_ID=dtype_id,
             )
             return output
 
@@ -1760,7 +2678,91 @@ def conv2d(
                 n * groups,
             )
 
+        if _use_spatial_nchw_m_kernel(
+            input.dtype,
+            groups,
+            is_depthwise,
+            kh,
+            kw,
+            stride,
+            dilation,
+            cin_per_group,
+            cout_per_group,
+            oh,
+            ow,
+        ):
+            m = n * oh * ow
+
+            def grid_spatial_nchw_m(meta):
+                return (
+                    triton.cdiv(m, meta["BLOCK_HW"])
+                    * triton.cdiv(cout_per_group, meta["BLOCK_OC"]),
+                    groups,
+                )
+
+            if input.dtype == torch.float32:
+                conv2d_spatial_nchw_m_kernel[grid_spatial_nchw_m](
+                    input,
+                    weight,
+                    bias if bias is not None else output,
+                    output,
+                    m,
+                    h,
+                    w,
+                    oh,
+                    ow,
+                    c_in,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    groups,
+                    stride[0],
+                    stride[1],
+                    pad_top,
+                    pad_left,
+                    dilation[0],
+                    dilation[1],
+                    kh,
+                    kw,
+                    HAS_BIAS=bias is not None,
+                    GROUP_M=_GROUP_SIZE_M,
+                    DTYPE_ID=dtype_id,
+                )
+            else:
+                w_spatial_nchw_m = _pack_weight_spatial_nchw_khw_oci(
+                    weight, groups
+                )
+                conv2d_spatial_nchw_m_packed_khw_kernel[grid_spatial_nchw_m](
+                    input,
+                    w_spatial_nchw_m,
+                    bias if bias is not None else output,
+                    output,
+                    m,
+                    h,
+                    w,
+                    oh,
+                    ow,
+                    c_in,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    groups,
+                    stride[0],
+                    stride[1],
+                    pad_top,
+                    pad_left,
+                    dilation[0],
+                    dilation[1],
+                    kh,
+                    kw,
+                    HAS_BIAS=bias is not None,
+                    GROUP_M=_GROUP_SIZE_M,
+                    DTYPE_ID=dtype_id,
+                )
+            return output
+
         if _use_packed_spatial_nchw(
+            input.dtype,
             groups,
             kh,
             kw,
@@ -1797,6 +2799,7 @@ def conv2d(
                 kw,
                 HAS_BIAS=bias is not None,
                 GROUP_M=_GROUP_SIZE_M,
+                DTYPE_ID=dtype_id,
             )
         else:
             conv2d_spatial_nchw_kernel[grid_spatial_nchw](
@@ -1823,6 +2826,7 @@ def conv2d(
                 kw,
                 HAS_BIAS=bias is not None,
                 GROUP_M=_GROUP_SIZE_M,
+                DTYPE_ID=dtype_id,
             )
 
         return output

@@ -1333,6 +1333,7 @@ conv2d_spatial:
       num_warps: warps
       num_stages: stages
     block_oc:
+      - 16
       - 32
       - 64
       - 128
@@ -1351,8 +1352,6 @@ conv2d_spatial:
       - 3
       - 4
 
-  # Small-HW, large-channel spatial conv.
-  # Mainly for NCHW 3x3 shapes like C=128/256/512 with OH*OW <= 28*28.
   - gen: true
     param_map:
       META:
@@ -1367,6 +1366,61 @@ conv2d_spatial:
     block_hw:
       - 16
       - 32
+      - 64
+    block_k:
+      - 64
+      - 128
+      - 256
+    warps:
+      - 4
+      - 8
+    stages:
+      - 3
+
+conv2d_spatial_nchw_packed:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_OC: block_oc
+        BLOCK_HW: block_hw
+        BLOCK_K: block_k
+      num_warps: warps
+      num_stages: stages
+    block_oc:
+      - 16
+      - 32
+      - 64
+      - 128
+    block_hw:
+      - 32
+      - 64
+      - 128
+    block_k:
+      - 32
+      - 64
+      - 128
+    warps:
+      - 4
+      - 8
+    stages:
+      - 3
+      - 4
+
+  - gen: true
+    param_map:
+      META:
+        BLOCK_OC: block_oc
+        BLOCK_HW: block_hw
+        BLOCK_K: block_k
+      num_warps: warps
+      num_stages: stages
+    block_oc:
+      - 128
+      - 256
+    block_hw:
+      - 16
+      - 32
+      - 64
     block_k:
       - 64
       - 128
@@ -1405,8 +1459,6 @@ conv2d_1x1:
       - 3
       - 4
 
-  # 1x1 medium-HW, large-Cout path.
-  # Mainly for [N,128,28,28] -> [256,128,1,1].
   - gen: true
     param_map:
       META:
@@ -1421,6 +1473,7 @@ conv2d_1x1:
     block_hw:
       - 16
       - 32
+      - 64
     block_k:
       - 64
       - 128
@@ -1430,6 +1483,35 @@ conv2d_1x1:
       - 8
     stages:
       - 3
+
+conv2d_1x1_nchw_m:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_OC: block_oc
+        BLOCK_HW: block_hw
+        BLOCK_K: block_k
+      num_warps: warps
+      num_stages: stages
+    block_oc:
+      - 64
+      - 128
+      - 256
+    block_hw:
+      - 16
+      - 32
+      - 64
+      - 128
+    block_k:
+      - 64
+      - 128
+      - 256
+    warps:
+      - 4
+      - 8
+    stages:
+      - 3
+      - 4
 
 conv2d_dw_v2:
   - gen: true
