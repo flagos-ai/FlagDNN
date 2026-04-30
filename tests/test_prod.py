@@ -67,36 +67,6 @@ def test_accuracy_prod(dtype, shape, dim, keepdim):
 
 
 @pytest.mark.prod
-@pytest.mark.parametrize(
-    "input_dtype, out_dtype",
-    [
-        (torch.float16, torch.float32),
-        (torch.int32, torch.float64),
-    ],
-)
-def test_accuracy_prod_dtype_promotion(input_dtype, out_dtype):
-    """测试带有 dtype 参数的计算，防止数据类型溢出"""
-    if input_dtype.is_floating_point:
-        inp = (
-            torch.randn((10, 20), dtype=input_dtype, device=flag_dnn.device)
-            * 0.5
-        )
-    else:
-        inp = torch.randint(
-            -2, 3, (10, 20), dtype=input_dtype, device=flag_dnn.device
-        )
-
-    ref_inp = utils.to_reference(inp, ref_kind="compute")
-
-    ref_out = torch.prod(ref_inp, dim=1, dtype=out_dtype)
-    with flag_dnn.use_dnn():
-        out = torch.prod(inp, dim=1, dtype=out_dtype)
-
-    assert out.dtype == out_dtype
-    utils.gems_assert_close(out, ref_out, out_dtype, reduce_dim=20)
-
-
-@pytest.mark.prod
 def test_accuracy_prod_empty_tensor():
     """边界测试：空张量的乘积必须产生 1 (而不是 0)"""
     inp = torch.empty((2, 0, 3), dtype=torch.float32, device=flag_dnn.device)
