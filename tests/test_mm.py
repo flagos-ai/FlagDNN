@@ -202,3 +202,21 @@ def test_mm_iluvatar_small_shape_out_dtype_fp32():
     assert got.data_ptr() == out.data_ptr()
     assert got.dtype == torch.float32
     utils.gems_assert_close(got, ref, torch.float32, reduce_dim=16)
+
+
+@pytest.mark.mm
+@pytest.mark.parametrize("m, k, n", [(256, 4, 256), (256, 16, 256)])
+def test_mm_iluvatar_fp32_skinny_k_large_output(m, k, n):
+    if flag_dnn.runtime.device.vendor_name != "iluvatar":
+        pytest.skip("Iluvatar-specific regression test")
+
+    dtype = torch.float32
+    a = make_tensor((m, k), dtype)
+    b = make_tensor((k, n), dtype)
+
+    ref_a = utils.to_reference(a, ref_kind="compute")
+    ref_b = utils.to_reference(b, ref_kind="compute")
+    ref = torch.mm(ref_a, ref_b)
+    got = flag_dnn.ops.mm(a, b)
+
+    _assert_mm_close(got, ref, dtype, reduce_dim=k)
