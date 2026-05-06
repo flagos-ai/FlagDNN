@@ -10,7 +10,6 @@ MM_CASES = [
     (0, 3, 4),
     (2, 0, 4),
     (2, 3, 0),
-    # (1, 1, 1), # Iluvatar/CoreX 上可能触发 _mm_kernel 编译器问题
     (2, 3, 4),
     (7, 5, 3),
     (16, 17, 15),
@@ -166,3 +165,40 @@ def test_mm_mismatched_dtype():
     with flag_dnn.use_dnn():
         with pytest.raises(RuntimeError):
             torch.mm(a, b)
+
+
+@pytest.mark.mm
+@pytest.mark.parametrize("m, k, n", [(1, 1, 1), (16, 16, 1)])
+def test_mm_iluvatar_small_shape_direct_call(m, k, n):
+    if flag_dnn.runtime.device.vendor_name != "iluvatar":
+        pytest.skip("Iluvatar-specific regression test")
+
+    dtype = torch.float16
+    a = make_tensor((m, k), dtype)
+    b = make_tensor((k, n), dtype)
+
+    ref_a = utils.to_reference(a, ref_kind="compute")
+    ref_b = utils.to_reference(b, ref_kind="compute")
+    ref = torch.mm(ref_a, ref_b)
+    got = flag_dnn.ops.mm(a, b)
+
+    _assert_mm_close(got, ref, dtype, reduce_dim=k)
+
+
+@pytest.mark.mm
+def test_mm_iluvatar_small_shape_out_dtype_fp32():
+    if flag_dnn.runtime.device.vendor_name != "iluvatar":
+        pytest.skip("Iluvatar-specific regression test")
+
+    a = make_tensor((16, 16), torch.float16)
+    b = make_tensor((16, 1), torch.float16)
+    out = torch.empty((16, 1), dtype=torch.float32, device=flag_dnn.device)
+
+    ref_a = utils.to_reference(a, ref_kind="compute")
+    ref_b = utils.to_reference(b, ref_kind="compute")
+    ref = torch.mm(ref_a, ref_b).to(torch.float32)
+    got = flag_dnn.ops.mm(a, b, out_dtype=torch.float32, out=out)
+
+    assert got.data_ptr() == out.data_ptr()
+    assert got.dtype == torch.float32
+    utils.gems_assert_close(got, ref, torch.float32, reduce_dim=16)

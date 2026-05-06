@@ -2,6 +2,7 @@
 DNN operations
 """
 
+from flag_dnn import runtime
 from flag_dnn.ops.relu import relu
 from flag_dnn.ops.gelu import gelu
 from flag_dnn.ops.silu import silu
@@ -144,3 +145,6 @@ __all__ = [
     "embedding",
     "embedding_renorm_",
 ]
+
+
+runtime.replace_customized_ops(globals())
