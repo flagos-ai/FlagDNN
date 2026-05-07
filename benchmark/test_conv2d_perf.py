@@ -1,3 +1,4 @@
+import os
 from typing import Generator, Sequence, Tuple, Union
 
 import pytest
@@ -95,6 +96,14 @@ class Conv2dBenchmark(Benchmark):
             ((16, 64, 56, 56), (64, 1, 3, 3), False, 1, 1, 1, 64),
             ((16, 128, 28, 28), (128, 1, 5, 5), False, 1, 2, 1, 128),
         ]
+        only = os.getenv("FLAGDNN_CONV2D_PERF_SHAPE_IDS")
+        if only:
+            selected = {int(item) for item in only.split(",") if item.strip()}
+            self.shapes = [
+                shape
+                for idx, shape in enumerate(self.shapes)
+                if idx in selected
+            ]
         return None
 
     @staticmethod
