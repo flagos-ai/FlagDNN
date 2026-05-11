@@ -72,6 +72,12 @@ from flag_dnn.ops.tanh import tanh
 from flag_dnn.ops.logsigmoid import logsigmoid
 from flag_dnn.ops.embedding import embedding
 from flag_dnn.ops.embedding import embedding_renorm_
+from flag_dnn.ops.cummin import cummin
+from flag_dnn.ops.cummax import cummax
+from flag_dnn.ops.lt import lt
+from flag_dnn.ops.le import le
+from flag_dnn.ops.gt import gt
+from flag_dnn.ops.ge import ge
 
 
 __all__ = [
@@ -144,6 +150,12 @@ __all__ = [
     "logsigmoid",
     "embedding",
     "embedding_renorm_",
+    "cummin",
+    "cummax",
+    "lt",
+    "le",
+    "gt",
+    "ge",
 ]
 
 

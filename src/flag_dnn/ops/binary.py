@@ -124,6 +124,14 @@ def binary_tensor_kernel(
         res = x == y
     elif OP_TYPE == "ne":
         res = x != y
+    elif OP_TYPE == "lt":
+        res = x < y
+    elif OP_TYPE == "le":
+        res = x <= y
+    elif OP_TYPE == "ge":
+        res = x >= y
+    elif OP_TYPE == "gt":
+        res = x > y
 
     # 结果强制转换回输出张量的目标类型，防止隐式提升导致的错误
     tl.store(out_ptr + offsets, res.to(out_ptr.dtype.element_ty), mask=mask)
@@ -170,6 +178,14 @@ def binary_scalar_kernel(
         res = x == other_val
     elif OP_TYPE == "ne":
         res = x != other_val
+    elif OP_TYPE == "lt":
+        res = x < other_val
+    elif OP_TYPE == "le":
+        res = x <= other_val
+    elif OP_TYPE == "ge":
+        res = x >= other_val
+    elif OP_TYPE == "gt":
+        res = x > other_val
 
     tl.store(out_ptr + offsets, res.to(out_ptr.dtype.element_ty), mask=mask)
 
@@ -274,6 +290,14 @@ def binary_broadcast_tensor_kernel(
         res = x == y
     elif OP_TYPE == "ne":
         res = x != y
+    elif OP_TYPE == "lt":
+        res = x < y
+    elif OP_TYPE == "le":
+        res = x <= y
+    elif OP_TYPE == "ge":
+        res = x >= y
+    elif OP_TYPE == "gt":
+        res = x > y
 
     tl.store(out_ptr + offsets, res.to(out_ptr.dtype.element_ty), mask=mask)
 
@@ -333,7 +357,8 @@ def _infer_binary_out_dtype(
     rounding_mode: Optional[str],
     op_type: str,
 ) -> torch.dtype:
-    if op_type in ("eq", "ne"):
+    comparison_ops = ["eq", "ne", "lt", "le", "ge", "gt"]
+    if op_type in comparison_ops:
         return torch.bool
 
     if op_type == "div":
@@ -390,7 +415,8 @@ def binary(
                 f"\"div_{rounding_mode}_cuda\" not implemented for 'Bool'"
             )
 
-    if op_type not in ["add", "sub", "mul", "div", "eq", "ne"]:
+    
+    if op_type not in ["add", "sub", "mul", "div", "eq", "ne", "lt", "le", "ge", "gt"]:
         raise RuntimeError(f"Unsupported OP_TYPE={op_type} in binary")
 
     _validate_binary_args(input, other, alpha, op_type)

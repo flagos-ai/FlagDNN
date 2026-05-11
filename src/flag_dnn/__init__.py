@@ -74,6 +74,12 @@ from flag_dnn.ops import (  # noqa: F401
     logsigmoid,
     embedding,
     embedding_renorm_,
+    cummin,
+    cummax,
+    lt,
+    le,
+    gt,
+    ge,
 )
 from flag_dnn.config import aten_patch_list, resolve_user_setting
 from flag_dnn.runtime.register import Register
@@ -156,6 +162,12 @@ _FULL_CONFIG = (
     ("log_sigmoid", logsigmoid),
     ("embedding", embedding),
     ("embedding_renorm_", embedding_renorm_),
+    ("cummin", cummin),
+    ("cummax", cummax),
+    ("lt", lt),
+    ("le", le),
+    ("gt", gt),
+    ("ge", ge),
 )
 
 FULL_CONFIG_BY_FUNC: dict = {}
