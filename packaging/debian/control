@@ -1,0 +1,21 @@
+Source: flag-dnn
+Section: python
+Priority: optional
+Maintainer: FlagOS Contributors <contact@flagos.io>
+Build-Depends: debhelper-compat (= 13),
+               dh-python,
+               python3-all,
+               python3-setuptools,
+               python3-wheel,
+               pybuild-plugin-pyproject
+Standards-Version: 4.6.2
+Homepage: https://github.com/flagos-ai/FlagDNN
+Vcs-Browser: https://github.com/flagos-ai/FlagDNN
+Vcs-Git: https://github.com/flagos-ai/FlagDNN.git
+Rules-Requires-Root: no
+
+Package: python3-flag-dnn
+Architecture: all
+Depends: ${python3:Depends}, ${misc:Depends}, python3-torch, python3-yaml, python3-sqlalchemy, python3-packaging, python3-pybind11
+Description: FlagDNN — deep neural network primitives for FlagOS
+ Collection of DNN operators (convolutions, normalizations, activations) targeting FlagOS-supported accelerators via Triton kernels.
