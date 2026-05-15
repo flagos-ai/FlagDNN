@@ -1324,6 +1324,8 @@ conv1d_depthwise_v5:
     stages:
       - 2
 conv2d_spatial:
+  # Generic NCHW implicit-GEMM fallback. Keep K=32 in the search because fp32
+  # TF32 cases in the latest report regressed with only K=64/128 choices.
   - gen: true
     param_map:
       META:
@@ -1332,25 +1334,11 @@ conv2d_spatial:
         BLOCK_K: block_k
       num_warps: warps
       num_stages: stages
-    block_oc:
-      - 16
-      - 32
-      - 64
-      - 128
-    block_hw:
-      - 32
-      - 64
-      - 128
-    block_k:
-      - 32
-      - 64
-      - 128
-    warps:
-      - 4
-      - 8
-    stages:
-      - 3
-      - 4
+    block_oc: [32, 64, 128]
+    block_hw: [64, 128]
+    block_k: [32, 64]
+    warps: [4]
+    stages: [3]
 
   - gen: true
     param_map:
@@ -1360,25 +1348,15 @@ conv2d_spatial:
         BLOCK_K: block_k
       num_warps: warps
       num_stages: stages
-    block_oc:
-      - 128
-      - 256
-    block_hw:
-      - 16
-      - 32
-      - 64
-      - 128
-    block_k:
-      - 64
-      - 128
-      - 256
-    warps:
-      - 4
-      - 8
-    stages:
-      - 3
+    block_oc: [128, 256]
+    block_hw: [32, 64]
+    block_k: [64, 128]
+    warps: [4]
+    stages: [3]
 
 conv2d_spatial_nchw_packed:
+  # Packed KHW path, also used by the new global interior/border split kernels.
+  # General fp32/fp16/bf16 3x3 search.
   - gen: true
     param_map:
       META:
@@ -1387,27 +1365,14 @@ conv2d_spatial_nchw_packed:
         BLOCK_K: block_k
       num_warps: warps
       num_stages: stages
-    block_oc:
-      - 16
-      - 32
-      - 64
-      - 128
-    block_hw:
-      - 32
-      - 64
-      - 128
-      - 256
-    block_k:
-      - 32
-      - 64
-      - 128
-    warps:
-      - 4
-      - 8
-    stages:
-      - 3
-      - 4
+    block_oc: [32, 64, 128]
+    block_hw: [64, 128]
+    block_k: [32, 64]
+    warps: [4]
+    stages: [3]
 
+  # High-channel global-split 14x14/7x7 family.  M spans N, so HW=64/128 keeps
+  # Tensor Core/TF32 tiles filled without the Winograd transform overhead.
   - gen: true
     param_map:
       META:
@@ -1416,25 +1381,31 @@ conv2d_spatial_nchw_packed:
         BLOCK_K: block_k
       num_warps: warps
       num_stages: stages
-    block_oc:
-      - 128
-      - 256
-    block_hw:
-      - 16
-      - 32
-      - 64
-      - 128
-    block_k:
-      - 64
-      - 128
-      - 256
-    warps:
-      - 4
-      - 8
-    stages:
-      - 3
+    block_oc: [128, 256]
+    block_hw: [64, 128]
+    block_k: [64, 128]
+    warps: [4, 8]
+    stages: [3]
+
+  # Per-batch split fallback for very small border/interior bands when the
+  # global split predicate does not apply.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_OC: block_oc
+        BLOCK_HW: block_hw
+        BLOCK_K: block_k
+      num_warps: warps
+      num_stages: stages
+    block_oc: [128, 256]
+    block_hw: [16, 32]
+    block_k: [64, 128]
+    warps: [4]
+    stages: [3]
 
 conv2d_1x1:
+  # Per-batch NCHW 1x1 pad0/general path.  Add K=32 for fp32 small-C cases and
+  # keep the larger OC/HW options that are good for fp16/bf16.
   - gen: true
     param_map:
       META:
@@ -1443,25 +1414,11 @@ conv2d_1x1:
         BLOCK_K: block_k
       num_warps: warps
       num_stages: stages
-    block_oc:
-      - 32
-      - 64
-      - 128
-    block_hw:
-      - 32
-      - 64
-      - 128
-      - 256
-    block_k:
-      - 32
-      - 64
-      - 128
-    warps:
-      - 4
-      - 8
-    stages:
-      - 3
-      - 4
+    block_oc: [64, 128]
+    block_hw: [128, 256]
+    block_k: [32, 64]
+    warps: [4]
+    stages: [3]
 
   - gen: true
     param_map:
@@ -1471,25 +1428,15 @@ conv2d_1x1:
         BLOCK_K: block_k
       num_warps: warps
       num_stages: stages
-    block_oc:
-      - 128
-      - 256
-    block_hw:
-      - 16
-      - 32
-      - 64
-      - 128
-    block_k:
-      - 64
-      - 128
-      - 256
-    warps:
-      - 4
-      - 8
-    stages:
-      - 3
+    block_oc: [128, 256]
+    block_hw: [64, 128]
+    block_k: [64, 128, 256]
+    warps: [4]
+    stages: [3]
 
 conv2d_1x1_nchw_m:
+  # M-spanning 1x1 path.  Slightly broader than the previous slim space because
+  # fp32 1x1 still has several <1 speedup cases.
   - gen: true
     param_map:
       META:
@@ -1498,25 +1445,25 @@ conv2d_1x1_nchw_m:
         BLOCK_K: block_k
       num_warps: warps
       num_stages: stages
-    block_oc:
-      - 64
-      - 128
-      - 256
-    block_hw:
-      - 16
-      - 32
-      - 64
-      - 128
-    block_k:
-      - 64
-      - 128
-      - 256
-    warps:
-      - 4
-      - 8
-    stages:
-      - 3
-      - 4
+    block_oc: [128, 256]
+    block_hw: [64, 128, 256]
+    block_k: [64, 128]
+    warps: [4]
+    stages: [3]
+
+  - gen: true
+    param_map:
+      META:
+        BLOCK_OC: block_oc
+        BLOCK_HW: block_hw
+        BLOCK_K: block_k
+      num_warps: warps
+      num_stages: stages
+    block_oc: [64]
+    block_hw: [128, 256]
+    block_k: [32, 64]
+    warps: [4]
+    stages: [3]
 
 conv2d_dw_v2:
   - gen: true
@@ -1526,22 +1473,10 @@ conv2d_dw_v2:
         BLOCK_HW: block_hw
       num_warps: warps
       num_stages: stages
-    block_c:
-      - 4
-      - 8
-      - 16
-      - 32
-      - 64
-    block_hw:
-      - 32
-      - 64
-      - 128
-    warps:
-      - 1
-      - 2
-      - 4
-    stages:
-      - 1
+    block_c: [8, 16, 32, 64]
+    block_hw: [64, 128]
+    warps: [1, 2]
+    stages: [1]
 
 conv2d_dw_c1:
   - gen: true
@@ -1550,13 +1485,6 @@ conv2d_dw_c1:
         BLOCK_HW: block_hw
       num_warps: warps
       num_stages: stages
-    block_hw:
-      - 64
-      - 128
-      - 256
-    warps:
-      - 1
-      - 2
-      - 4
-    stages:
-      - 1
+    block_hw: [128, 256]
+    warps: [1, 2]
+    stages: [1]
