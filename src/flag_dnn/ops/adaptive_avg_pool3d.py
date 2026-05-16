@@ -3,7 +3,6 @@ import math
 from typing import Tuple, Union
 
 import torch
-import torch.nn.functional as F
 import triton
 import triton.language as tl
 
@@ -199,26 +198,6 @@ def _should_use_global_pool3d_fused(nc: int, dhw: int) -> bool:
     if nc <= 8:
         return True
     return nc <= 16 and dhw >= 131072
-
-
-def _should_use_native_global_pool3d(
-    input: torch.Tensor,
-    nc: int,
-    dhw: int,
-    od: int,
-    oh: int,
-    ow: int,
-) -> bool:
-    # Native global pooling is stronger for narrow-channel half-precision cases
-    # where Triton's launch/coordination overhead dominates.
-    return (
-        od == 1
-        and oh == 1
-        and ow == 1
-        and input.dtype in (torch.float16, torch.bfloat16)
-        and nc <= 16
-        and dhw >= 131072
-    )
 
 
 # Default global pooling kernel with autotuning
@@ -609,10 +588,6 @@ def adaptive_avg_pool3d(
         NC = N * C
         DHW = D * H * W
         OD_OH_OW = OD * OH * OW
-
-        if _should_use_native_global_pool3d(input, NC, DHW, OD, OH, OW):
-            out = F.adaptive_avg_pool3d(input, (OD, OH, OW))
-            return out.squeeze(0) if is_4d else out
 
         if OD == 1 and OH == 1 and OW == 1:
             # Small DHW, large NC: batch channels in a 2D tile

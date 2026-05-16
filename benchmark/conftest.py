@@ -24,9 +24,24 @@ device = flag_dnn.device
 vendor_name = flag_dnn.vendor_name
 recordLogger = logging.getLogger("flag_dnn_benchmark")
 recordLogger.propagate = False
+REGISTERED_MARKS = set()
+TEST_RESULTS = {}
+REPORT_FILE = "benchmark_result.json"
+
+
+def update_result(op, data):
+    if not Config.record_json:
+        return
+
+    TEST_RESULTS.setdefault(op, {})
+    TEST_RESULTS[op].setdefault("details", [])
+    TEST_RESULTS[op]["details"].append(data)
 
 
 def emit_record_logger(message: str) -> None:
+    if not Config.record_log:
+        return
+
     if recordLogger.handlers:
         handler = recordLogger.handlers[0]
         if getattr(handler, "stream", None) is None:
@@ -50,6 +65,8 @@ class BenchConfig:
             self.warm_up = 1
             self.repetition = 1
         self.record_log = False
+        self.record_json = False
+        self.output = REPORT_FILE
         self.user_desired_dtypes = None
         self.user_desired_metrics = None
         self.shape_file = os.path.join(
@@ -144,18 +161,44 @@ def pytest_addoption(parser):
         ),
     )
 
-    parser.addoption(
-        "--record",
-        action="store",
-        default="none",
-        required=False,
-        choices=["none", "log"],
-        help="Benchmark info recorded in log files or not",
-    )
+    try:
+        parser.addoption(
+            "--record",
+            action="store",
+            default="none",
+            required=False,
+            choices=["none", "log", "json"],
+            help="Benchmark info recorded in log/json files or not",
+        )
+        parser.addoption(
+            "--output",
+            default=REPORT_FILE,
+            help="Path to benchmark JSON report.",
+        )
+    except ValueError:
+        # Mixed test+benchmark pytest runs may already register --record in
+        # tests/conftest.py. Reuse the existing option in that case.
+        pass
+
+    try:
+        parser.addoption(
+            "--collect-marks",
+            action="store_true",
+            help="Collect benchmark marker information without executing tests.",
+        )
+    except ValueError:
+        pass
 
 
 def pytest_configure(config):
     global Config  # noqa: F824
+    global REGISTERED_MARKS
+    global REPORT_FILE
+
+    REGISTERED_MARKS = {
+        marker.split(":")[0].strip() for marker in config.getini("markers")
+    }
+
     mode_value = config.getoption(
         "--mode" if vendor_name != "kunlunxin" else "--fg_mode"
     )
@@ -187,6 +230,11 @@ def pytest_configure(config):
     Config.shape_file = shape_file_str
 
     Config.record_log = config.getoption("--record") == "log"
+    Config.record_json = config.getoption("--record") == "json"
+    if Config.record_json:
+        Config.output = config.getoption("--output")
+        REPORT_FILE = Config.output
+
     if Config.record_log:
         cmd_args = [
             arg.replace(".py", "").replace("=", "_").replace("/", "_")
@@ -287,3 +335,85 @@ def extract_and_log_op_attributes(request):
     yield
     if Config.record_log and op_attributes:
         emit_record_logger(json.dumps(op_attributes, indent=2))
+
+
+def get_reason(report):
+    if hasattr(report.longrepr, "reprcrash"):
+        return report.longrepr.reprcrash.message
+    if isinstance(report.longrepr, tuple):
+        return report.longrepr[2]
+    return str(report.longrepr)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    out = yield
+    report = out.get_result()
+    all_marks = [mark.name for mark in item.iter_markers()]
+    marks = [mark for mark in all_marks if mark not in BUILTIN_MARKS]
+    report.opid = marks[0] if marks else item.nodeid
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_logreport(report):
+    if not Config.record_json:
+        return
+
+    op = getattr(report, "opid", report.nodeid)
+    TEST_RESULTS.setdefault(op, {})
+
+    if report.when == "setup":
+        if report.outcome == "skipped":
+            TEST_RESULTS[op]["result"] = "skipped"
+            TEST_RESULTS[op]["reason"] = get_reason(report)
+            TEST_RESULTS[op]["test_case"] = report.nodeid
+    elif report.when == "call":
+        TEST_RESULTS[op]["result"] = report.outcome
+        TEST_RESULTS[op]["test_case"] = report.nodeid
+        if report.outcome in ["skipped", "failed"]:
+            TEST_RESULTS[op]["reason"] = get_reason(report)
+        else:
+            TEST_RESULTS[op]["reason"] = None
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    if not Config.record_json:
+        return
+
+    data = TEST_RESULTS
+    if os.path.exists(REPORT_FILE):
+        with open(REPORT_FILE, "r") as file:
+            existing_data = json.load(file)
+        existing_data.update(TEST_RESULTS)
+        data = existing_data
+
+    with open(REPORT_FILE, "w") as file:
+        json.dump(data, file, indent=2, default=str)
+
+
+def pytest_collection_modifyitems(session, config, items):
+    if not config.getoption("--collect-marks"):
+        return
+
+    report = []
+    for item in items:
+        data = {
+            "test_case": item.name,
+            "file": item.location[0],
+        }
+        if item.cls:
+            data["class"] = item.cls.__name__
+        if item.originalname:
+            data["function"] = item.originalname
+
+        all_marks = list(item.iter_markers())
+        op_marks = [
+            mark.name
+            for mark in all_marks
+            if mark.name not in BUILTIN_MARKS and mark.name not in REGISTERED_MARKS
+        ]
+        data["marks"] = op_marks
+        report.append(data)
+
+    print(json.dumps(report, indent=2))
+    pytest.exit("Collected benchmark marks.", returncode=0)

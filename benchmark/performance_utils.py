@@ -2,6 +2,7 @@ import gc
 import importlib
 import os
 import time
+from dataclasses import asdict
 from typing import Any, Generator, List, Optional, Tuple
 
 import pytest
@@ -25,7 +26,7 @@ from .attri_util import (
     OperationAttribute,
     check_metric_dependencies,
 )
-from .conftest import Config, emit_record_logger
+from .conftest import Config, emit_record_logger, update_result
 
 torch_backend_device = flag_dnn.runtime.torch_backend_device
 torch_device_fn = flag_dnn.runtime.torch_device_fn
@@ -194,9 +195,20 @@ class Benchmark:
                 f" can't be supported by"
                 f" this op '{self.op_name}'"
             )
-        self.to_bench_dtypes = (
+        to_bench_dtypes = (
             user_desired_dtypes if user_desired_dtypes else self.dtypes
         )
+        if (
+            torch.float64 in to_bench_dtypes
+            and not flag_dnn.runtime.device.support_fp64
+        ):
+            to_bench_dtypes = [
+                dtype for dtype in to_bench_dtypes if dtype != torch.float64
+            ]
+            if not to_bench_dtypes:
+                pytest.skip("Device does not support float64")
+
+        self.to_bench_dtypes = to_bench_dtypes
 
     def set_shapes(self, shape_file_path: Optional[List[Any]] = None):
         # Validate user-spicified shapes files
@@ -297,7 +309,10 @@ class Benchmark:
         return parsed_args if parsed_args else parsed_kwargs
 
     def init_default_config(self):
-        self.set_shapes(self.DEFAULT_SHAPE_FILES)
+        shape_file = self.DEFAULT_SHAPE_FILES
+        if not os.path.isabs(shape_file):
+            shape_file = os.path.join(os.path.dirname(__file__), shape_file)
+        self.set_shapes(shape_file)
 
     def init_user_config(self):
         # TODO: device setting
@@ -459,7 +474,7 @@ class Benchmark:
                                 self.gems_op, *args, **kwargs
                             )
                         else:
-                            with flag_dnn.use_gems():
+                            with flag_dnn.use_dnn():
                                 metric.latency = self.get_latency(
                                     self.torch_op, *args, **kwargs
                                 )
@@ -495,6 +510,7 @@ class Benchmark:
                 result=metrics,
             )
             print(result)
+            update_result(self.op_name, asdict(result))
             emit_record_logger(result.to_json())
 
 
