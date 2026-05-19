@@ -5,8 +5,12 @@ import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
-import torch
-
+from flag_dnn.graph.device import (
+    create_runtime_device_event,
+    has_runtime_device_tensor,
+    synchronize_current_runtime_device,
+    synchronize_runtime_device,
+)
 from flag_dnn.graph.plan import ExecutionPlan
 
 
@@ -104,15 +108,18 @@ class GraphAutotuner:
         _synchronize(runtime_inputs)
 
         start = time.perf_counter()
-        if _has_cuda(runtime_inputs):
-            starter = torch.cuda.Event(enable_timing=True)
-            ender = torch.cuda.Event(enable_timing=True)
-            starter.record()
-            for _ in range(max(self.repeat, 1)):
-                plan.run(*runtime_inputs)
-            ender.record()
-            torch.cuda.synchronize()
-            return float(starter.elapsed_time(ender)) / max(self.repeat, 1)
+        if _has_runtime_device(runtime_inputs):
+            starter = create_runtime_device_event(enable_timing=True)
+            ender = create_runtime_device_event(enable_timing=True)
+            if starter is not None and ender is not None:
+                starter.record()
+                for _ in range(max(self.repeat, 1)):
+                    plan.run(*runtime_inputs)
+                ender.record()
+                synchronize_current_runtime_device()
+                return float(starter.elapsed_time(ender)) / max(
+                    self.repeat, 1
+                )
 
         for _ in range(max(self.repeat, 1)):
             plan.run(*runtime_inputs)
@@ -143,12 +150,10 @@ class GraphAutotuner:
         return "unknown"
 
 
-def _has_cuda(values: tuple[Any, ...]) -> bool:
-    return any(
-        isinstance(value, torch.Tensor) and value.is_cuda for value in values
-    )
+def _has_runtime_device(values: tuple[Any, ...]) -> bool:
+    return has_runtime_device_tensor(values)
 
 
 def _synchronize(values: tuple[Any, ...]) -> None:
-    if _has_cuda(values):
-        torch.cuda.synchronize()
+    if _has_runtime_device(values):
+        synchronize_runtime_device(values)

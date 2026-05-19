@@ -5,6 +5,7 @@ from typing import Any, Callable, Optional
 
 import torch
 
+from flag_dnn.graph.device import has_runtime_device_tensor
 from flag_dnn.graph.tensor import (
     TensorSpec,
     canonical_dtype,
@@ -1008,6 +1009,26 @@ def _run_bias_add(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
     return x + _format_bias(x, bias)
 
 
+def _torch_maximum(left: Any, right: Any) -> Any:
+    if isinstance(left, torch.Tensor) and isinstance(right, torch.Tensor):
+        return torch.maximum(left, right)
+    if isinstance(left, torch.Tensor):
+        other = torch.as_tensor(
+            right,
+            dtype=torch.result_type(left, right),
+            device=left.device,
+        )
+        return torch.maximum(left, other)
+    if isinstance(right, torch.Tensor):
+        other = torch.as_tensor(
+            left,
+            dtype=torch.result_type(left, right),
+            device=right.device,
+        )
+        return torch.maximum(other, right)
+    return left if left >= right else right
+
+
 def _run_binary(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
         op_type = attrs["op_type"]
@@ -1024,7 +1045,7 @@ def _run_binary(flag_ops: Any) -> RunFn:
         name = attrs.get("name", "")
 
         if op_type == "add":
-            if _cuda_available(inputs):
+            if _runtime_backend_available(inputs):
                 if not isinstance(left, torch.Tensor) and isinstance(
                     right, torch.Tensor
                 ):
@@ -1044,7 +1065,7 @@ def _run_binary(flag_ops: Any) -> RunFn:
                 )
             return torch.add(left, right, alpha=alpha)
         if op_type == "sub":
-            if _cuda_available(inputs) and isinstance(left, torch.Tensor):
+            if _runtime_backend_available(inputs) and isinstance(left, torch.Tensor):
                 return flag_ops.sub(
                     left,
                     right,
@@ -1054,7 +1075,7 @@ def _run_binary(flag_ops: Any) -> RunFn:
                 )
             return torch.sub(left, right, alpha=alpha)
         if op_type == "mul":
-            if _cuda_available(inputs):
+            if _runtime_backend_available(inputs):
                 if not isinstance(left, torch.Tensor) and isinstance(
                     right, torch.Tensor
                 ):
@@ -1073,7 +1094,7 @@ def _run_binary(flag_ops: Any) -> RunFn:
                     )
             return torch.mul(left, right)
         if op_type == "div":
-            if _cuda_available(inputs) and isinstance(left, torch.Tensor):
+            if _runtime_backend_available(inputs) and isinstance(left, torch.Tensor):
                 return flag_ops.div(
                     left,
                     right,
@@ -1083,7 +1104,7 @@ def _run_binary(flag_ops: Any) -> RunFn:
                 )
             return torch.div(left, right, rounding_mode=rounding_mode)
         if op_type == "pow":
-            if _cuda_available(inputs) and (
+            if _runtime_backend_available(inputs) and (
                 isinstance(left, torch.Tensor) or isinstance(right, torch.Tensor)
             ):
                 return flag_ops.pow(
@@ -1093,9 +1114,28 @@ def _run_binary(flag_ops: Any) -> RunFn:
                     name=name,
                 )
             return torch.pow(left, right)
+        if op_type == "max":
+            if _runtime_backend_available(inputs):
+                if not isinstance(left, torch.Tensor) and isinstance(
+                    right, torch.Tensor
+                ):
+                    return flag_ops.max(
+                        right,
+                        left,
+                        compute_data_type=compute_data_type,
+                        name=name,
+                    )
+                if isinstance(left, torch.Tensor):
+                    return flag_ops.max(
+                        left,
+                        right,
+                        compute_data_type=compute_data_type,
+                        name=name,
+                    )
+            return _torch_maximum(left, right)
         if op_type in ("eq", "ne", "lt", "le", "gt", "ge"):
             torch_fn = getattr(torch, op_type)
-            if _cuda_available(inputs):
+            if _runtime_backend_available(inputs):
                 if isinstance(left, torch.Tensor):
                     return getattr(flag_ops, op_type)(
                         left,
@@ -1124,16 +1164,14 @@ def _run_binary(flag_ops: Any) -> RunFn:
     return run
 
 
-def _cuda_available(inputs: list[Any]) -> bool:
-    return any(
-        isinstance(value, torch.Tensor) and value.is_cuda for value in inputs
-    )
+def _runtime_backend_available(inputs: list[Any]) -> bool:
+    return has_runtime_device_tensor(inputs)
 
 
 def _run_relu(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
         x = inputs[0]
-        if _cuda_available(inputs):
+        if _runtime_backend_available(inputs):
             return flag_ops.relu(x, inplace=attrs.get("inplace", False))
         return torch.nn.functional.relu(x, inplace=attrs.get("inplace", False))
 
@@ -1144,7 +1182,7 @@ def _run_gelu(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
         x = inputs[0]
         approximate = attrs.get("approximate", "none")
-        if _cuda_available(inputs):
+        if _runtime_backend_available(inputs):
             return flag_ops.gelu(x, approximate=approximate)
         return torch.nn.functional.gelu(x, approximate=approximate)
 
@@ -1233,7 +1271,7 @@ def _run_conv2d(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
         bias = inputs[2] if len(inputs) > 2 else None
         op_attrs = _public_attrs(attrs)
-        if _cuda_available(inputs):
+        if _runtime_backend_available(inputs):
             return flag_ops.conv2d(
                 inputs[0],
                 inputs[1],
@@ -1258,7 +1296,7 @@ def _run_conv2d(flag_ops: Any) -> RunFn:
 
 def _run_mm(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
-        if _cuda_available(inputs):
+        if _runtime_backend_available(inputs):
             out_dtype = attrs.get("out_dtype")
             return flag_ops.mm(
                 inputs[0],
@@ -1293,7 +1331,7 @@ def _run_fused_conv2d_bias_relu(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
         op_attrs = _public_attrs(attrs)
         implementation = attrs.get("_implementation", "triton_fused")
-        if _cuda_available(inputs) and implementation == "triton_fused":
+        if _runtime_backend_available(inputs) and implementation == "triton_fused":
             try:
                 from flag_dnn.graph.kernels import fused_conv2d_bias_relu
 
@@ -1310,7 +1348,7 @@ def _run_fused_conv2d_bias_relu(flag_ops: Any) -> RunFn:
             except NotImplementedError:
                 pass
         y = _run_conv2d(flag_ops)(inputs, op_attrs)
-        if _cuda_available(inputs):
+        if _runtime_backend_available(inputs):
             return flag_ops.relu(y)
         return torch.nn.functional.relu(y)
 
@@ -1386,6 +1424,7 @@ def register_default_ops() -> None:
         "sub",
         "mul",
         "div",
+        "max",
         "eq",
         "ne",
         "lt",

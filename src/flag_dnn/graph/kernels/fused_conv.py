@@ -6,6 +6,7 @@ import torch
 import triton
 import triton.language as tl
 
+from flag_dnn.graph.device import is_runtime_device_tensor
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import triton_lang_extension as tle
 
@@ -69,8 +70,10 @@ def fused_conv2d_bias_relu(
     groups: int = 1,
     config: Optional[dict[str, Any]] = None,
 ) -> torch.Tensor:
-    if not input.is_cuda:
-        raise NotImplementedError("fused_conv2d_bias_relu requires CUDA input")
+    if not is_runtime_device_tensor(input):
+        raise NotImplementedError(
+            "fused_conv2d_bias_relu requires runtime device input"
+        )
     if groups != 1:
         raise NotImplementedError(
             "fused_conv2d_bias_relu currently supports groups=1"

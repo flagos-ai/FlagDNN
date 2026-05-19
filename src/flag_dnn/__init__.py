@@ -27,6 +27,7 @@ from flag_dnn.ops import (  # noqa: F401
     group_norm,
     layer_norm,
     leaky_relu,
+    max,
     max_pool1d,
     max_pool2d,
     max_pool3d,

@@ -120,6 +120,8 @@ def binary_tensor_kernel(
             res = tl.where(res >= 0, tl.math.floor(res), tl.math.ceil(res))
         elif ROUND_MODE == 2:
             res = tl.math.floor(res)
+    elif OP_TYPE == "max":
+        res = tl.where(x >= y, x, y)
     elif OP_TYPE == "eq":
         res = x == y
     elif OP_TYPE == "ne":
@@ -174,6 +176,8 @@ def binary_scalar_kernel(
             res = tl.where(res >= 0, tl.math.floor(res), tl.math.ceil(res))
         elif ROUND_MODE == 2:
             res = tl.math.floor(res)
+    elif OP_TYPE == "max":
+        res = tl.where(x >= other_val, x, other_val)
     elif OP_TYPE == "eq":
         res = x == other_val
     elif OP_TYPE == "ne":
@@ -286,6 +290,8 @@ def binary_broadcast_tensor_kernel(
         elif ROUND_MODE == 2:
             # floor (向下取整)
             res = tl.math.floor(res)
+    elif OP_TYPE == "max":
+        res = tl.where(x >= y, x, y)
     elif OP_TYPE == "eq":
         res = x == y
     elif OP_TYPE == "ne":
@@ -416,7 +422,19 @@ def binary(
             )
 
     
-    if op_type not in ["add", "sub", "mul", "div", "eq", "ne", "lt", "le", "ge", "gt"]:
+    if op_type not in [
+        "add",
+        "sub",
+        "mul",
+        "div",
+        "max",
+        "eq",
+        "ne",
+        "lt",
+        "le",
+        "ge",
+        "gt",
+    ]:
         raise RuntimeError(f"Unsupported OP_TYPE={op_type} in binary")
 
     _validate_binary_args(input, other, alpha, op_type)

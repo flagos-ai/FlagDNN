@@ -29,6 +29,7 @@ from flag_dnn.ops.sub import sub
 from flag_dnn.ops.mul import mul
 from flag_dnn.ops.div import div
 from flag_dnn.ops.pow import pow
+from flag_dnn.ops.max import max
 from flag_dnn.ops.sqrt import sqrt
 from flag_dnn.ops.abs import abs
 from flag_dnn.ops.neg import neg
@@ -172,6 +173,7 @@ __all__ = [
     "mul",
     "div",
     "pow",
+    "max",
     "sqrt",
     "abs",
     "neg",

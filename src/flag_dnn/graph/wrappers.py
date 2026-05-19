@@ -20,6 +20,7 @@ GRAPH_AWARE_OPS = (
     "mul",
     "div",
     "pow",
+    "max",
     "eq",
     "ne",
     "lt",
