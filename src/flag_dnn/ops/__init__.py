@@ -3,6 +3,12 @@ DNN operations
 """
 
 from flag_dnn import runtime
+from flag_dnn.ops.identity import identity
+from flag_dnn.ops.reshape import reshape
+from flag_dnn.ops.transpose import transpose
+from flag_dnn.ops.slice import slice
+from flag_dnn.ops.concatenate import concatenate
+from flag_dnn.ops.gen_index import gen_index
 from flag_dnn.ops.relu import relu
 from flag_dnn.ops.gelu import gelu
 from flag_dnn.ops.silu import silu
@@ -81,6 +87,12 @@ from flag_dnn.ops.ge import ge
 
 
 __all__ = [
+    "identity",
+    "reshape",
+    "transpose",
+    "slice",
+    "concatenate",
+    "gen_index",
     "relu",
     "gelu",
     "silu",
@@ -160,3 +172,7 @@ __all__ = [
 
 
 runtime.replace_customized_ops(globals())
+
+from flag_dnn.graph.wrappers import install_graph_wrappers  # noqa: E402
+
+install_graph_wrappers(globals())

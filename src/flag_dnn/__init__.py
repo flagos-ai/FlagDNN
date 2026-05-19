@@ -80,6 +80,12 @@ from flag_dnn.ops import (  # noqa: F401
     le,
     gt,
     ge,
+    identity,
+    reshape,
+    transpose,
+    slice,
+    concatenate,
+    gen_index,
 )
 from flag_dnn.config import aten_patch_list, resolve_user_setting
 from flag_dnn.runtime.register import Register
@@ -342,10 +348,84 @@ def all_registered_keys():
     return current_work_registrar.get_all_keys()
 
 
+import importlib as _importlib  # noqa: E402
+
+graph = _importlib.import_module("flag_dnn.graph")
+from flag_dnn.graph import (  # noqa: E402,F401
+    AutotuneResult,
+    BackendCapability,
+    BufferBlock,
+    CompiledGraph,
+    ExecutionPlan,
+    ExecutionStep,
+    Graph,
+    GraphCapture,
+    GraphAutotuner,
+    GraphBackend,
+    GraphFunction,
+    GraphTensor,
+    GraphValue,
+    KernelCandidate,
+    KernelSelector,
+    MemoryPlan,
+    OpNode,
+    OpSchema,
+    PlanCache,
+    PlanCacheKey,
+    TensorAllocation,
+    TensorSpec,
+    TorchFallbackBackend,
+    TritonCudaBackend,
+    compile,
+    current_capture,
+    get_default_plan_cache,
+    get_op_schema,
+    is_capturing,
+    register_op,
+    resolve_backend,
+)
+from flag_dnn.graph.wrappers import install_graph_wrappers  # noqa: E402
+
+install_graph_wrappers(globals())
+
+
 __all__ = [
     "enable",
     "only_enable",
     "use_dnn",
     "all_registered_ops",
     "all_registered_keys",
+    "AutotuneResult",
+    "BackendCapability",
+    "BufferBlock",
+    "CompiledGraph",
+    "ExecutionPlan",
+    "ExecutionStep",
+    "Graph",
+    "GraphCapture",
+    "GraphAutotuner",
+    "GraphBackend",
+    "GraphFunction",
+    "GraphTensor",
+    "GraphValue",
+    "KernelCandidate",
+    "KernelSelector",
+    "MemoryPlan",
+    "OpNode",
+    "OpSchema",
+    "PlanCache",
+    "PlanCacheKey",
+    "TensorAllocation",
+    "TensorSpec",
+    "TorchFallbackBackend",
+    "TritonCudaBackend",
+    "bias_add",
+    "compile",
+    "current_capture",
+    "get_default_plan_cache",
+    "get_op_schema",
+    "graph",
+    "is_capturing",
+    "register_op",
+    "resolve_backend",
 ]
