@@ -1029,137 +1029,210 @@ def _torch_maximum(left: Any, right: Any) -> Any:
     return left if left >= right else right
 
 
-def _run_binary(flag_ops: Any) -> RunFn:
+def _binary_operands(
+    inputs: list[Any], attrs: dict[str, Any]
+) -> tuple[Any, Any]:
+    left = inputs[0]
+    if len(inputs) > 1:
+        right = inputs[1]
+    else:
+        right = attrs["other"]
+    if attrs.get("reverse"):
+        return right, left
+    return left, right
+
+
+def _run_binary(flag_ops: Any, op_type: str) -> RunFn:
+    if op_type == "add":
+        return _run_binary_add(flag_ops)
+    if op_type == "sub":
+        return _run_binary_sub(flag_ops)
+    if op_type == "mul":
+        return _run_binary_mul(flag_ops)
+    if op_type == "div":
+        return _run_binary_div(flag_ops)
+    if op_type == "pow":
+        return _run_binary_pow(flag_ops)
+    if op_type == "max":
+        return _run_binary_max(flag_ops)
+    if op_type in ("eq", "ne", "lt", "le", "gt", "ge"):
+        return _run_binary_cmp(flag_ops, op_type)
+    raise RuntimeError(f"unsupported graph binary op: {op_type}")
+
+
+def _run_binary_add(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
-        op_type = attrs["op_type"]
-        left = inputs[0]
-        if len(inputs) > 1:
-            right = inputs[1]
-        else:
-            right = attrs["other"]
-        if attrs.get("reverse"):
-            left, right = right, left
+        left, right = _binary_operands(inputs, attrs)
         alpha = attrs.get("alpha", 1)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if _runtime_backend_available(inputs):
+            if not isinstance(left, torch.Tensor) and isinstance(
+                right, torch.Tensor
+            ):
+                return flag_ops.add(
+                    right,
+                    left,
+                    alpha=alpha,
+                    compute_data_type=compute_data_type,
+                    name=name,
+                )
+            return flag_ops.add(
+                left,
+                right,
+                alpha=alpha,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        return torch.add(left, right, alpha=alpha)
+
+    return run
+
+
+def _run_binary_sub(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        left, right = _binary_operands(inputs, attrs)
+        alpha = attrs.get("alpha", 1)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if _runtime_backend_available(inputs) and isinstance(left, torch.Tensor):
+            return flag_ops.sub(
+                left,
+                right,
+                alpha=alpha,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        return torch.sub(left, right, alpha=alpha)
+
+    return run
+
+
+def _run_binary_mul(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        left, right = _binary_operands(inputs, attrs)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if _runtime_backend_available(inputs):
+            if not isinstance(left, torch.Tensor) and isinstance(
+                right, torch.Tensor
+            ):
+                return flag_ops.mul(
+                    right,
+                    left,
+                    compute_data_type=compute_data_type,
+                    name=name,
+                )
+            if isinstance(left, torch.Tensor):
+                return flag_ops.mul(
+                    left,
+                    right,
+                    compute_data_type=compute_data_type,
+                    name=name,
+                )
+        return torch.mul(left, right)
+
+    return run
+
+
+def _run_binary_div(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        left, right = _binary_operands(inputs, attrs)
         rounding_mode = attrs.get("rounding_mode")
         compute_data_type = attrs.get("compute_data_type")
         name = attrs.get("name", "")
+        if _runtime_backend_available(inputs) and isinstance(left, torch.Tensor):
+            return flag_ops.div(
+                left,
+                right,
+                rounding_mode=rounding_mode,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        return torch.div(left, right, rounding_mode=rounding_mode)
 
-        if op_type == "add":
-            if _runtime_backend_available(inputs):
-                if not isinstance(left, torch.Tensor) and isinstance(
-                    right, torch.Tensor
-                ):
-                    return flag_ops.add(
-                        right,
-                        left,
-                        alpha=alpha,
-                        compute_data_type=compute_data_type,
-                        name=name,
-                    )
-                return flag_ops.add(
-                    left,
-                    right,
-                    alpha=alpha,
-                    compute_data_type=compute_data_type,
-                    name=name,
-                )
-            return torch.add(left, right, alpha=alpha)
-        if op_type == "sub":
-            if _runtime_backend_available(inputs) and isinstance(left, torch.Tensor):
-                return flag_ops.sub(
-                    left,
-                    right,
-                    alpha=alpha,
-                    compute_data_type=compute_data_type,
-                    name=name,
-                )
-            return torch.sub(left, right, alpha=alpha)
-        if op_type == "mul":
-            if _runtime_backend_available(inputs):
-                if not isinstance(left, torch.Tensor) and isinstance(
-                    right, torch.Tensor
-                ):
-                    return flag_ops.mul(
-                        right,
-                        left,
-                        compute_data_type=compute_data_type,
-                        name=name,
-                    )
-                if isinstance(left, torch.Tensor):
-                    return flag_ops.mul(
-                        left,
-                        right,
-                        compute_data_type=compute_data_type,
-                        name=name,
-                    )
-            return torch.mul(left, right)
-        if op_type == "div":
-            if _runtime_backend_available(inputs) and isinstance(left, torch.Tensor):
-                return flag_ops.div(
-                    left,
-                    right,
-                    rounding_mode=rounding_mode,
-                    compute_data_type=compute_data_type,
-                    name=name,
-                )
-            return torch.div(left, right, rounding_mode=rounding_mode)
-        if op_type == "pow":
-            if _runtime_backend_available(inputs) and (
-                isinstance(left, torch.Tensor) or isinstance(right, torch.Tensor)
+    return run
+
+
+def _run_binary_pow(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        left, right = _binary_operands(inputs, attrs)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if _runtime_backend_available(inputs) and (
+            isinstance(left, torch.Tensor) or isinstance(right, torch.Tensor)
+        ):
+            return flag_ops.pow(
+                left,
+                right,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        return torch.pow(left, right)
+
+    return run
+
+
+def _run_binary_max(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        left, right = _binary_operands(inputs, attrs)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if _runtime_backend_available(inputs):
+            if not isinstance(left, torch.Tensor) and isinstance(
+                right, torch.Tensor
             ):
-                return flag_ops.pow(
+                return flag_ops.max(
+                    right,
+                    left,
+                    compute_data_type=compute_data_type,
+                    name=name,
+                )
+            if isinstance(left, torch.Tensor):
+                return flag_ops.max(
                     left,
                     right,
                     compute_data_type=compute_data_type,
                     name=name,
                 )
-            return torch.pow(left, right)
-        if op_type == "max":
-            if _runtime_backend_available(inputs):
-                if not isinstance(left, torch.Tensor) and isinstance(
-                    right, torch.Tensor
-                ):
-                    return flag_ops.max(
-                        right,
-                        left,
-                        compute_data_type=compute_data_type,
-                        name=name,
-                    )
-                if isinstance(left, torch.Tensor):
-                    return flag_ops.max(
-                        left,
-                        right,
-                        compute_data_type=compute_data_type,
-                        name=name,
-                    )
-            return _torch_maximum(left, right)
-        if op_type in ("eq", "ne", "lt", "le", "gt", "ge"):
-            torch_fn = getattr(torch, op_type)
-            if _runtime_backend_available(inputs):
-                if isinstance(left, torch.Tensor):
-                    return getattr(flag_ops, op_type)(
-                        left,
-                        right,
-                        compute_data_type=compute_data_type,
-                        name=name,
-                    )
-                if isinstance(right, torch.Tensor):
-                    reverse_op = {
-                        "eq": "eq",
-                        "ne": "ne",
-                        "lt": "gt",
-                        "le": "ge",
-                        "gt": "lt",
-                        "ge": "le",
-                    }[op_type]
-                    return getattr(flag_ops, reverse_op)(
-                        right,
-                        left,
-                        compute_data_type=compute_data_type,
-                        name=name,
-                    )
-            return torch_fn(left, right)
-        raise RuntimeError(f"unsupported graph binary op: {op_type}")
+        return _torch_maximum(left, right)
+
+    return run
+
+
+def _run_binary_cmp(flag_ops: Any, op_type: str) -> RunFn:
+    torch_fn = getattr(torch, op_type)
+    flag_fn = getattr(flag_ops, op_type)
+    reverse_op = {
+        "eq": "eq",
+        "ne": "ne",
+        "lt": "gt",
+        "le": "ge",
+        "gt": "lt",
+        "ge": "le",
+    }[op_type]
+    reverse_flag_fn = getattr(flag_ops, reverse_op)
+
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        left, right = _binary_operands(inputs, attrs)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if _runtime_backend_available(inputs):
+            if isinstance(left, torch.Tensor):
+                return flag_fn(
+                    left,
+                    right,
+                    compute_data_type=compute_data_type,
+                    name=name,
+                )
+            if isinstance(right, torch.Tensor):
+                return reverse_flag_fn(
+                    right,
+                    left,
+                    compute_data_type=compute_data_type,
+                    name=name,
+                )
+        return torch_fn(left, right)
 
     return run
 
@@ -1437,7 +1510,7 @@ def register_default_ops() -> None:
                 name=op_type,
                 normalize_fn=_normalize_binary(op_type),
                 shape_fn=_binary_shape,
-                run_fn=_run_binary(flag_ops),
+                run_fn=_run_binary(flag_ops, op_type),
             )
         )
 
@@ -1446,7 +1519,7 @@ def register_default_ops() -> None:
             name="pow",
             normalize_fn=_normalize_pow,
             shape_fn=_binary_shape,
-            run_fn=_run_binary(flag_ops),
+            run_fn=_run_binary(flag_ops, "pow"),
         )
     )
 
@@ -1456,7 +1529,7 @@ def register_default_ops() -> None:
                 name=alias_name,
                 normalize_fn=_normalize_cmp_alias(alias_name, op_type),
                 shape_fn=_binary_shape,
-                run_fn=_run_binary(flag_ops),
+                run_fn=_run_binary(flag_ops, op_type),
             )
         )
 
