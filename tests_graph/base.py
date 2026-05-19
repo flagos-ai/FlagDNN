@@ -29,6 +29,8 @@ def cudnn_data_type(dtype):
         return cudnn.data_type.FLOAT
     if dtype == torch.float64:
         return cudnn.data_type.DOUBLE
+    if dtype == torch.bool:
+        return cudnn.data_type.BOOLEAN
     raise TypeError(f"Unsupported dtype for cuDNN frontend: {dtype}")
 
 

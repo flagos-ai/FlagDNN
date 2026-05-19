@@ -8,5 +8,8 @@ def eq(
     other: Union[torch.Tensor, float, int, bool],
     *,
     out: Optional[torch.Tensor] = None,
+    compute_data_type=None,
+    name: str = "",
 ) -> torch.Tensor:
+    del compute_data_type, name
     return binary(input, other, out=out, op_type="eq")

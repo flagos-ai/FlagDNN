@@ -615,6 +615,23 @@ def _normalize_unary(
     return normalize
 
 
+_CMP_ALIAS_TO_OP = {
+    "cmp_eq": "eq",
+    "cmp_neq": "ne",
+    "cmp_lt": "lt",
+    "cmp_le": "le",
+    "cmp_gt": "gt",
+    "cmp_ge": "ge",
+}
+
+
+def _pop_operand(params: dict[str, Any], names: tuple[str, ...]) -> Any:
+    for name in names:
+        if name in params:
+            return params.pop(name)
+    return None
+
+
 def _normalize_binary(op_type: str) -> NormalizeFn:
     def normalize(ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]):
         if len(args) > 2:
@@ -625,13 +642,17 @@ def _normalize_binary(op_type: str) -> NormalizeFn:
                 "FlagDNN graph does not support out tensors"
             )
         params.pop("out", None)
-        left = args[0] if args else params.pop("input", None)
+        left = (
+            args[0]
+            if args
+            else _pop_operand(params, ("input", "a", "input0"))
+        )
         if left is None:
             raise TypeError(f"{op_type} missing input tensor")
         if len(args) >= 2:
             right = args[1]
         else:
-            right = params.pop("other", None)
+            right = _pop_operand(params, ("other", "b", "input1"))
         if right is None:
             raise TypeError(f"{op_type} missing other operand")
         attrs = {
@@ -643,6 +664,93 @@ def _normalize_binary(op_type: str) -> NormalizeFn:
         input_ids = [ctx.as_value(left, name_hint="input")]
         if ctx.is_tensor_like(right):
             input_ids.append(ctx.as_value(right, name_hint="other"))
+        else:
+            attrs["other"] = right
+        return input_ids, attrs
+
+    return normalize
+
+
+def _normalize_pow(
+    ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[list[int], dict]:
+    if len(args) > 2:
+        raise TypeError("pow expects at most two positional args")
+    params = dict(kwargs)
+    if "out" in params and params["out"] is not None:
+        raise NotImplementedError("FlagDNN graph does not support out tensors")
+    params.pop("out", None)
+    left = (
+        args[0]
+        if args
+        else _pop_operand(params, ("input", "input0", "a"))
+    )
+    if left is None:
+        raise TypeError("pow missing input tensor")
+    if len(args) >= 2:
+        right = args[1]
+    else:
+        right = _pop_operand(params, ("exponent", "input1", "other", "b"))
+    if right is None:
+        raise TypeError("pow missing exponent operand")
+    attrs = {
+        "op_type": "pow",
+        "alpha": 1,
+        "rounding_mode": None,
+        "compute_data_type": params.pop("compute_data_type", None),
+        "name": params.pop("name", ""),
+    }
+    if params:
+        raise TypeError(f"pow got unsupported graph attrs: {sorted(params)}")
+    input_ids = [ctx.as_value(left, name_hint="input")]
+    if ctx.is_tensor_like(right):
+        input_ids.append(ctx.as_value(right, name_hint="exponent"))
+    else:
+        attrs["other"] = right
+    return input_ids, attrs
+
+
+def _normalize_cmp_alias(alias_name: str, op_type: str) -> NormalizeFn:
+    def normalize(ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]):
+        if len(args) > 2:
+            raise TypeError(
+                f"{alias_name} expects at most two positional args"
+            )
+        params = dict(kwargs)
+        if "out" in params and params["out"] is not None:
+            raise NotImplementedError(
+                "FlagDNN graph does not support out tensors"
+            )
+        params.pop("out", None)
+        left = (
+            args[0]
+            if args
+            else _pop_operand(params, ("input", "a", "input0"))
+        )
+        if left is None:
+            raise TypeError(f"{alias_name} missing input tensor")
+        if len(args) >= 2:
+            right = args[1]
+        else:
+            right = _pop_operand(
+                params, ("comparison", "other", "b", "input1")
+            )
+        if right is None:
+            raise TypeError(f"{alias_name} missing comparison operand")
+        attrs = {
+            "op_type": op_type,
+            "alpha": 1,
+            "rounding_mode": None,
+            "compute_data_type": params.pop("compute_data_type", None),
+            "name": params.pop("name", ""),
+        }
+        if params:
+            raise TypeError(
+                f"{alias_name} got unsupported graph attrs: {sorted(params)}"
+            )
+        input_ids = [ctx.as_value(left, name_hint="input")]
+        if ctx.is_tensor_like(right):
+            input_ids.append(ctx.as_value(right, name_hint="comparison"))
         else:
             attrs["other"] = right
         return input_ids, attrs
@@ -912,6 +1020,9 @@ def _run_binary(flag_ops: Any) -> RunFn:
             left, right = right, left
         alpha = attrs.get("alpha", 1)
         rounding_mode = attrs.get("rounding_mode")
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+
         if op_type == "add":
             if _cuda_available(inputs):
                 if not isinstance(left, torch.Tensor) and isinstance(
@@ -921,35 +1032,93 @@ def _run_binary(flag_ops: Any) -> RunFn:
                         right,
                         left,
                         alpha=alpha,
-                        compute_data_type=attrs.get("compute_data_type"),
-                        name=attrs.get("name", ""),
+                        compute_data_type=compute_data_type,
+                        name=name,
                     )
                 return flag_ops.add(
                     left,
                     right,
                     alpha=alpha,
-                    compute_data_type=attrs.get("compute_data_type"),
-                    name=attrs.get("name", ""),
+                    compute_data_type=compute_data_type,
+                    name=name,
                 )
             return torch.add(left, right, alpha=alpha)
         if op_type == "sub":
+            if _cuda_available(inputs) and isinstance(left, torch.Tensor):
+                return flag_ops.sub(
+                    left,
+                    right,
+                    alpha=alpha,
+                    compute_data_type=compute_data_type,
+                    name=name,
+                )
             return torch.sub(left, right, alpha=alpha)
         if op_type == "mul":
+            if _cuda_available(inputs):
+                if not isinstance(left, torch.Tensor) and isinstance(
+                    right, torch.Tensor
+                ):
+                    return flag_ops.mul(
+                        right,
+                        left,
+                        compute_data_type=compute_data_type,
+                        name=name,
+                    )
+                if isinstance(left, torch.Tensor):
+                    return flag_ops.mul(
+                        left,
+                        right,
+                        compute_data_type=compute_data_type,
+                        name=name,
+                    )
             return torch.mul(left, right)
         if op_type == "div":
+            if _cuda_available(inputs) and isinstance(left, torch.Tensor):
+                return flag_ops.div(
+                    left,
+                    right,
+                    rounding_mode=rounding_mode,
+                    compute_data_type=compute_data_type,
+                    name=name,
+                )
             return torch.div(left, right, rounding_mode=rounding_mode)
-        if op_type == "eq":
-            return torch.eq(left, right)
-        if op_type == "ne":
-            return torch.ne(left, right)
-        if op_type == "lt":
-            return torch.lt(left, right)
-        if op_type == "le":
-            return torch.le(left, right)
-        if op_type == "gt":
-            return torch.gt(left, right)
-        if op_type == "ge":
-            return torch.ge(left, right)
+        if op_type == "pow":
+            if _cuda_available(inputs) and (
+                isinstance(left, torch.Tensor) or isinstance(right, torch.Tensor)
+            ):
+                return flag_ops.pow(
+                    left,
+                    right,
+                    compute_data_type=compute_data_type,
+                    name=name,
+                )
+            return torch.pow(left, right)
+        if op_type in ("eq", "ne", "lt", "le", "gt", "ge"):
+            torch_fn = getattr(torch, op_type)
+            if _cuda_available(inputs):
+                if isinstance(left, torch.Tensor):
+                    return getattr(flag_ops, op_type)(
+                        left,
+                        right,
+                        compute_data_type=compute_data_type,
+                        name=name,
+                    )
+                if isinstance(right, torch.Tensor):
+                    reverse_op = {
+                        "eq": "eq",
+                        "ne": "ne",
+                        "lt": "gt",
+                        "le": "ge",
+                        "gt": "lt",
+                        "ge": "le",
+                    }[op_type]
+                    return getattr(flag_ops, reverse_op)(
+                        right,
+                        left,
+                        compute_data_type=compute_data_type,
+                        name=name,
+                    )
+            return torch_fn(left, right)
         raise RuntimeError(f"unsupported graph binary op: {op_type}")
 
     return run
@@ -1228,6 +1397,25 @@ def register_default_ops() -> None:
             OpSchema(
                 name=op_type,
                 normalize_fn=_normalize_binary(op_type),
+                shape_fn=_binary_shape,
+                run_fn=_run_binary(flag_ops),
+            )
+        )
+
+    register_op(
+        OpSchema(
+            name="pow",
+            normalize_fn=_normalize_pow,
+            shape_fn=_binary_shape,
+            run_fn=_run_binary(flag_ops),
+        )
+    )
+
+    for alias_name, op_type in _CMP_ALIAS_TO_OP.items():
+        register_op(
+            OpSchema(
+                name=alias_name,
+                normalize_fn=_normalize_cmp_alias(alias_name, op_type),
                 shape_fn=_binary_shape,
                 run_fn=_run_binary(flag_ops),
             )

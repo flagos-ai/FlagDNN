@@ -209,7 +209,10 @@ def pow(
     exponent: Union[torch.Tensor, int, float],
     *,
     out: Optional[torch.Tensor] = None,
+    compute_data_type=None,
+    name: str = "",
 ) -> torch.Tensor:
+    del compute_data_type, name
     logger.debug("FLAG_DNN POW")
 
     input_is_tensor = isinstance(input, torch.Tensor)

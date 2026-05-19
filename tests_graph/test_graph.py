@@ -135,3 +135,21 @@ def test_graph_ops_namespace_add_capture():
     assert [node.op_type for node in compiled.graph.nodes] == ["add"]
     assert compiled.graph.nodes[0].attrs["name"] == "add"
     torch.testing.assert_close(compiled(x, y), x + y)
+
+def test_graph_ops_namespace_sub_capture():
+    @flag_dnn.graph
+    def fn(x, y):
+        return flag_dnn.ops.sub(
+            x,
+            y,
+            compute_data_type="float32",
+            name="sub",
+        )
+
+    x = torch.randn(4, 5)
+    y = torch.randn(4, 5)
+    compiled = flag_dnn.compile(fn, inputs=[x, y], options={"cache": None})
+
+    assert [node.op_type for node in compiled.graph.nodes] == ["sub"]
+    assert compiled.graph.nodes[0].attrs["name"] == "sub"
+    torch.testing.assert_close(compiled(x, y), x - y)

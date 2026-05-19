@@ -9,5 +9,8 @@ def sub(
     *,
     alpha: Union[int, float] = 1,
     out: Optional[torch.Tensor] = None,
+    compute_data_type=None,
+    name: str = "",
 ) -> torch.Tensor:
+    del compute_data_type, name
     return binary(input, other, out=out, op_type="sub", alpha=alpha)

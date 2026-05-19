@@ -79,7 +79,13 @@ TARGET_OPERATORS = [
     "conv2d",
 ]
 
-TEST_DIR = "benchmark"  # 性能测试文件所在目录
+TEST_DIRS = tuple(
+    item.strip()
+    for item in os.getenv(
+        "FLAGDNN_PERF_TEST_DIRS", "benchmark,benchmark_graph"
+    ).split(",")
+    if item.strip()
+)  # 性能测试文件所在目录
 LOG_DIR = "perf_logs"  # 单个测试日志的存放目录
 
 # 运行状态汇总，例如 total / passed / failed / details
@@ -221,7 +227,7 @@ def parse_perf_output(stdout_text):
         # (dtype=torch.float16, mode=kernel, level=comprehensive)
         op_match = re.search(
             r"Operator:\s*(?P<operator>[A-Za-z0-9_]+)\s*"
-            r"Performance Test"
+            r"(?:[A-Za-z0-9_ ]+)?Performance Test"
             r"(?:\s*\((?P<meta>[^)]*)\))?",
             line,
         )
@@ -310,11 +316,16 @@ def main():
 
     # 收集并过滤测试文件
     all_test_files = sorted(
-        glob.glob(os.path.join(TEST_DIR, "test_*_perf.py"))
+        path
+        for test_dir in TEST_DIRS
+        for path in glob.glob(os.path.join(test_dir, "test_*_perf.py"))
     )
 
     if not all_test_files:
-        print(f"未在 {TEST_DIR} 目录下找到任何 test_*_perf.py 文件。")
+        print(
+            f"未在 {', '.join(TEST_DIRS)} 目录下找到任何 "
+            "test_*_perf.py 文件。"
+        )
         return
 
     test_files = []
@@ -355,7 +366,8 @@ def main():
 
     for idx, file_path in enumerate(test_files, 1):
         file_name = os.path.basename(file_path)
-        log_file = os.path.join(LOG_DIR, f"{file_name}.log")
+        log_name = file_path.replace(os.sep, "_")
+        log_file = os.path.join(LOG_DIR, f"{log_name}.log")
 
         print(
             f"[{idx}/{len(test_files)}] 正在测速: {file_name:<35}",

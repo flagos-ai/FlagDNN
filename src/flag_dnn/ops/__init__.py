@@ -85,6 +85,65 @@ from flag_dnn.ops.le import le
 from flag_dnn.ops.gt import gt
 from flag_dnn.ops.ge import ge
 
+def cmp_eq(input, comparison, *, out=None, compute_data_type=None, name=""):
+    return eq(
+        input,
+        comparison,
+        out=out,
+        compute_data_type=compute_data_type,
+        name=name,
+    )
+
+
+def cmp_neq(input, comparison, *, out=None, compute_data_type=None, name=""):
+    return ne(
+        input,
+        comparison,
+        out=out,
+        compute_data_type=compute_data_type,
+        name=name,
+    )
+
+
+def cmp_lt(input, comparison, *, out=None, compute_data_type=None, name=""):
+    return lt(
+        input,
+        comparison,
+        out=out,
+        compute_data_type=compute_data_type,
+        name=name,
+    )
+
+
+def cmp_le(input, comparison, *, out=None, compute_data_type=None, name=""):
+    return le(
+        input,
+        comparison,
+        out=out,
+        compute_data_type=compute_data_type,
+        name=name,
+    )
+
+
+def cmp_gt(input, comparison, *, out=None, compute_data_type=None, name=""):
+    return gt(
+        input,
+        comparison,
+        out=out,
+        compute_data_type=compute_data_type,
+        name=name,
+    )
+
+
+def cmp_ge(input, comparison, *, out=None, compute_data_type=None, name=""):
+    return ge(
+        input,
+        comparison,
+        out=out,
+        compute_data_type=compute_data_type,
+        name=name,
+    )
+
 
 __all__ = [
     "identity",
@@ -124,6 +183,12 @@ __all__ = [
     "cumprod",
     "eq",
     "ne",
+    "cmp_eq",
+    "cmp_neq",
+    "cmp_lt",
+    "cmp_le",
+    "cmp_gt",
+    "cmp_ge",
     "max_pool1d",
     "max_pool3d",
     "avg_pool1d",
