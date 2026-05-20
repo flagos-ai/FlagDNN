@@ -88,27 +88,157 @@ def to_pair(value):
     return list(value)
 
 
+def to_spatial_tuple(value, rank):
+    if isinstance(value, int):
+        return (value,) * rank
+    result = tuple(int(v) for v in value)
+    if len(result) != rank:
+        raise RuntimeError(f"expected length {rank}, got {value}")
+    return result
+
+
+def normalize_conv_padding(rank, padding=0, pre_padding=None, post_padding=None):
+    if pre_padding is not None or post_padding is not None:
+        if pre_padding is None or post_padding is None:
+            raise RuntimeError("both pre_padding and post_padding are required")
+        return (
+            to_spatial_tuple(pre_padding, rank),
+            to_spatial_tuple(post_padding, rank),
+        )
+    pad = to_spatial_tuple(padding, rank)
+    return pad, pad
+
+
 def conv_out_dim(input_size, pad_before, pad_after, dilation, kernel, stride):
     return (
         input_size + pad_before + pad_after - dilation * (kernel - 1) - 1
     ) // stride + 1
 
 
-def conv2d_output_shape(input_shape, weight_shape, stride, padding, dilation):
-    stride = to_pair(stride)
-    padding = to_pair(padding)
-    dilation = to_pair(dilation)
+def conv1d_output_shape(
+    input_shape,
+    weight_shape,
+    stride,
+    padding=0,
+    dilation=1,
+    pre_padding=None,
+    post_padding=None,
+):
+    stride = to_spatial_tuple(stride, 1)
+    dilation = to_spatial_tuple(dilation, 1)
+    pre, post = normalize_conv_padding(
+        1, padding, pre_padding=pre_padding, post_padding=post_padding
+    )
+    n, _, length = input_shape
+    c_out, _, kernel = weight_shape
+    out_l = conv_out_dim(
+        length, pre[0], post[0], dilation[0], kernel, stride[0]
+    )
+    return n, c_out, out_l
+
+
+def conv2d_output_shape(
+    input_shape,
+    weight_shape,
+    stride,
+    padding=0,
+    dilation=1,
+    pre_padding=None,
+    post_padding=None,
+):
+    stride = to_spatial_tuple(stride, 2)
+    dilation = to_spatial_tuple(dilation, 2)
+    pre, post = normalize_conv_padding(
+        2, padding, pre_padding=pre_padding, post_padding=post_padding
+    )
     n, _, h, w = input_shape
     c_out, _, kh, kw = weight_shape
-    oh = conv_out_dim(h, padding[0], padding[0], dilation[0], kh, stride[0])
-    ow = conv_out_dim(w, padding[1], padding[1], dilation[1], kw, stride[1])
+    oh = conv_out_dim(h, pre[0], post[0], dilation[0], kh, stride[0])
+    ow = conv_out_dim(w, pre[1], post[1], dilation[1], kw, stride[1])
     return n, c_out, oh, ow
+
+
+def conv3d_output_shape(
+    input_shape,
+    weight_shape,
+    stride,
+    padding=0,
+    dilation=1,
+    pre_padding=None,
+    post_padding=None,
+):
+    stride = to_spatial_tuple(stride, 3)
+    dilation = to_spatial_tuple(dilation, 3)
+    pre, post = normalize_conv_padding(
+        3, padding, pre_padding=pre_padding, post_padding=post_padding
+    )
+    n, _, d, h, w = input_shape
+    c_out, _, kd, kh, kw = weight_shape
+    od = conv_out_dim(d, pre[0], post[0], dilation[0], kd, stride[0])
+    oh = conv_out_dim(h, pre[1], post[1], dilation[1], kh, stride[1])
+    ow = conv_out_dim(w, pre[2], post[2], dilation[2], kw, stride[2])
+    return n, c_out, od, oh, ow
 
 
 def channels_last_randn(shape, dtype, device):
     return torch.randn(shape, device=device, dtype=dtype).contiguous(
         memory_format=torch.channels_last
     )
+
+
+def conv1d_output_template(
+    input_shape,
+    weight_shape,
+    stride,
+    padding,
+    dilation,
+    dtype,
+    device,
+    pre_padding=None,
+    post_padding=None,
+):
+    shape = conv1d_output_shape(
+        input_shape,
+        weight_shape,
+        stride,
+        padding,
+        dilation,
+        pre_padding=pre_padding,
+        post_padding=post_padding,
+    )
+    # cuDNN frontend infers NCW output with NWC-style dense strides.
+    return torch.empty_strided(
+        shape,
+        (shape[1] * shape[2], 1, shape[1]),
+        device=device,
+        dtype=dtype,
+    )
+
+
+def conv3d_output_template(
+    input_shape,
+    weight_shape,
+    stride,
+    padding,
+    dilation,
+    dtype,
+    device,
+    pre_padding=None,
+    post_padding=None,
+):
+    return torch.empty(
+        conv3d_output_shape(
+            input_shape,
+            weight_shape,
+            stride,
+            padding,
+            dilation,
+            pre_padding=pre_padding,
+            post_padding=post_padding,
+        ),
+        device=device,
+        dtype=dtype,
+    ).contiguous(memory_format=torch.channels_last_3d)
 
 
 def conv2d_output_template(
@@ -119,10 +249,18 @@ def conv2d_output_template(
     dilation,
     dtype,
     device,
+    pre_padding=None,
+    post_padding=None,
 ):
     return torch.empty(
         conv2d_output_shape(
-            input_shape, weight_shape, stride, padding, dilation
+            input_shape,
+            weight_shape,
+            stride,
+            padding,
+            dilation,
+            pre_padding=pre_padding,
+            post_padding=post_padding,
         ),
         device=device,
         dtype=dtype,

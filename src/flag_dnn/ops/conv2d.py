@@ -65,7 +65,7 @@ def _conv_out_dim(
 def _normalize_padding(
     weight: torch.Tensor,
     stride: Tuple[int, int],
-    padding: Union[str, int, Tuple[int, int]],
+    padding: Union[str, int, Tuple[int, ...]],
     dilation: Tuple[int, int],
 ) -> Tuple[int, int, int, int]:
     if isinstance(padding, str):
@@ -83,8 +83,23 @@ def _normalize_padding(
             pad_top, pad_left = pad_h // 2, pad_w // 2
             return (pad_top, pad_h - pad_top, pad_left, pad_w - pad_left)
         raise RuntimeError("padding must be 'valid', 'same', int, or tuple")
-    pad_h, pad_w = _pair(padding)
-    return (pad_h, pad_h, pad_w, pad_w)
+    if isinstance(padding, int):
+        pad_h, pad_w = padding, padding
+        return (pad_h, pad_h, pad_w, pad_w)
+    if len(padding) == 2:
+        pad_h, pad_w = int(padding[0]), int(padding[1])
+        return (pad_h, pad_h, pad_w, pad_w)
+    if len(padding) == 4:
+        pad_top, pad_bottom, pad_left, pad_right = (
+            int(padding[0]),
+            int(padding[1]),
+            int(padding[2]),
+            int(padding[3]),
+        )
+        return (pad_top, pad_bottom, pad_left, pad_right)
+    raise RuntimeError(
+        "padding must be an int, length-2 tuple, or length-4 tuple"
+    )
 
 
 def _check_conv2d_inputs(
@@ -3577,7 +3592,7 @@ def conv2d(
     weight: torch.Tensor,
     bias: Optional[torch.Tensor] = None,
     stride: Union[int, Tuple[int, int]] = 1,
-    padding: Union[str, int, Tuple[int, int]] = 0,
+    padding: Union[str, int, Tuple[int, ...]] = 0,
     dilation: Union[int, Tuple[int, int]] = 1,
     groups: int = 1,
 ) -> torch.Tensor:

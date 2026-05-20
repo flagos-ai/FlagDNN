@@ -37,6 +37,7 @@ GRAPH_AWARE_OPS = (
     "relu",
     "gelu",
     "conv2d",
+    "conv_fprop",
     "mm",
     "sqrt",
     "abs",

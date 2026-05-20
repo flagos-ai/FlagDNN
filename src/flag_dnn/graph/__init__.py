@@ -8,6 +8,7 @@ from flag_dnn.graph.cache import (
 )
 from flag_dnn.graph.autotune import AutotuneResult, GraphAutotuner
 from flag_dnn.graph.backend import (
+    AutoBackend,
     BackendCapability,
     GraphBackend,
     KernelCandidate,
@@ -42,6 +43,7 @@ class _CallableGraphModule(types.ModuleType):
 sys.modules[__name__].__class__ = _CallableGraphModule
 
 __all__ = [
+    "AutoBackend",
     "AutotuneResult",
     "BackendCapability",
     "BufferBlock",

@@ -408,29 +408,128 @@ def _conv_out_dim(
     ) // stride + 1
 
 
+def _tuple_n(value: Any, rank: int, name: str) -> tuple[int, ...]:
+    if isinstance(value, int):
+        return (int(value),) * rank
+    result = tuple(int(v) for v in value)
+    if len(result) != rank:
+        raise RuntimeError(f"{name} must have length {rank}, got {value}")
+    return result
+
+
+def _normalize_convolution_mode(convolution_mode: Any) -> None:
+    if convolution_mode is None:
+        return
+    mode = str(convolution_mode).rsplit(".", 1)[-1].upper()
+    if mode == "CROSS_CORRELATION":
+        return
+    if mode == "CONVOLUTION":
+        raise NotImplementedError(
+            "graph conv_fprop currently supports CROSS_CORRELATION only"
+        )
+    raise RuntimeError(
+        "convolution_mode must be CROSS_CORRELATION or CONVOLUTION"
+    )
+
+
+def _conv_spatial_rank_from_values(
+    image: Any, weight: Any, op_type: str
+) -> int:
+    image_rank = _rank_of(image)
+    weight_rank = _rank_of(weight)
+    if image_rank == 2 and weight_rank == 3:
+        return 1
+    if image_rank >= 3 and image_rank == weight_rank:
+        return image_rank - 2
+    raise RuntimeError(
+        f"graph {op_type} expects matching 1D/2D/3D convolution shapes, "
+        f"got image rank {image_rank} and weight rank {weight_rank}"
+    )
+
+
+def _normalize_conv_padding_from_attrs(
+    weight: TensorSpec,
+    stride: tuple[int, ...],
+    dilation: tuple[int, ...],
+    attrs: dict[str, Any],
+    op_type: str,
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    rank = len(stride)
+    pre_padding = attrs.get("pre_padding")
+    post_padding = attrs.get("post_padding")
+    padding = attrs.get("padding")
+
+    if pre_padding is not None or post_padding is not None:
+        if padding is not None:
+            raise TypeError(
+                f"graph {op_type} accepts either padding or "
+                "pre_padding/post_padding"
+            )
+        if pre_padding is None or post_padding is None:
+            raise TypeError(
+                f"graph {op_type} requires both pre_padding and post_padding"
+            )
+        return (
+            _tuple_n(pre_padding, rank, "pre_padding"),
+            _tuple_n(post_padding, rank, "post_padding"),
+        )
+
+    if padding is None:
+        padding = 0
+    if isinstance(padding, str):
+        if padding == "valid":
+            zeros = (0,) * rank
+            return zeros, zeros
+        if padding == "same":
+            if any(dim != 1 for dim in stride):
+                raise RuntimeError(
+                    "padding='same' is not supported for strided convolutions"
+                )
+            pre = []
+            post = []
+            for axis in range(rank):
+                kernel = int(weight.shape[2 + axis])
+                effective_kernel = dilation[axis] * (kernel - 1) + 1
+                total_pad = max(effective_kernel - 1, 0)
+                before = total_pad // 2
+                pre.append(before)
+                post.append(total_pad - before)
+            return tuple(pre), tuple(post)
+        raise RuntimeError("padding must be 'valid', 'same', int, or tuple")
+
+    if isinstance(padding, int):
+        values = (int(padding),) * rank
+        return values, values
+
+    values = tuple(int(v) for v in padding)
+    if len(values) == rank:
+        return values, values
+    if len(values) == 2 * rank:
+        pre = tuple(values[2 * axis] for axis in range(rank))
+        post = tuple(values[2 * axis + 1] for axis in range(rank))
+        return pre, post
+    raise RuntimeError(
+        f"padding must have length {rank} or {2 * rank}, got {padding}"
+    )
+
+
+
 def _normalize_padding_from_spec(
     weight: TensorSpec,
     stride: tuple[int, int],
     padding: Any,
     dilation: tuple[int, int],
 ) -> tuple[int, int, int, int]:
-    if isinstance(padding, str):
-        if padding == "valid":
-            return 0, 0, 0, 0
-        if padding == "same":
-            if stride != (1, 1):
-                raise RuntimeError(
-                    "padding='same' is not supported for strided convolutions"
-                )
-            kh, kw = int(weight.shape[2]), int(weight.shape[3])
-            eff_kh = dilation[0] * (kh - 1) + 1
-            eff_kw = dilation[1] * (kw - 1) + 1
-            pad_h, pad_w = max(eff_kh - 1, 0), max(eff_kw - 1, 0)
-            pad_top, pad_left = pad_h // 2, pad_w // 2
-            return pad_top, pad_h - pad_top, pad_left, pad_w - pad_left
-        raise RuntimeError("padding must be 'valid', 'same', int, or tuple")
-    pad_h, pad_w = _pair(padding)
-    return pad_h, pad_h, pad_w, pad_w
+    pre, post = _normalize_conv_padding_from_attrs(
+        weight,
+        stride,
+        dilation,
+        {"padding": padding},
+        "conv2d",
+    )
+    if len(pre) != 2:
+        raise RuntimeError("graph conv2d expects 2D padding")
+    return pre[0], post[0], pre[1], post[1]
 
 
 def _conv2d_shape(
@@ -472,6 +571,69 @@ def _conv2d_shape(
         TensorSpec(
             name="",
             shape=(n, c_out, max(oh, 0), max(ow, 0)),
+            dtype=x.dtype,
+            layout=x.layout,
+            device=x.device,
+        )
+    ]
+
+
+def _conv_fprop_shape(
+    input_specs: list[TensorSpec], attrs: dict[str, Any]
+) -> list[TensorSpec]:
+    x, weight = input_specs[0], input_specs[1]
+    rank = _conv_spatial_rank_from_values(x, weight, "conv_fprop")
+
+    stride = _tuple_n(attrs.get("stride", 1), rank, "stride")
+    dilation = _tuple_n(attrs.get("dilation", 1), rank, "dilation")
+    _normalize_convolution_mode(attrs.get("convolution_mode"))
+    pre_padding, post_padding = _normalize_conv_padding_from_attrs(
+        weight, stride, dilation, attrs, "conv_fprop"
+    )
+    groups = int(attrs.get("groups", 1))
+
+    if rank == 1 and len(x.shape) == 2:
+        leading_shape: tuple[Any, ...] = ()
+        c_in = x.shape[0]
+        spatial_shape = x.shape[1:]
+    else:
+        leading_shape = (x.shape[0],)
+        c_in = x.shape[1]
+        spatial_shape = x.shape[2:]
+
+    c_out = weight.shape[0]
+    c_per_group = weight.shape[1]
+    kernel_shape = weight.shape[2:]
+    static_values = (c_in, c_out, c_per_group) + spatial_shape + kernel_shape
+    if not all(isinstance(v, int) for v in static_values):
+        raise NotImplementedError(
+            "graph conv_fprop dynamic shapes are not enabled"
+        )
+    if int(c_in) % groups != 0:
+        raise RuntimeError("graph conv_fprop input channels must divide groups")
+    if int(c_per_group) != int(c_in) // groups:
+        raise RuntimeError("graph conv_fprop weight channel mismatch")
+
+    out_spatial = []
+    for axis in range(rank):
+        out_dim = _conv_out_dim(
+            int(spatial_shape[axis]),
+            pre_padding[axis],
+            post_padding[axis],
+            dilation[axis],
+            int(kernel_shape[axis]),
+            stride[axis],
+        )
+        if out_dim < 0:
+            raise RuntimeError(
+                "computed graph conv_fprop output size is negative"
+            )
+        out_spatial.append(max(out_dim, 0))
+
+    return [
+        TensorSpec(
+            name="",
+            shape=leading_shape + (c_out,) + tuple(out_spatial),
             dtype=x.dtype,
             layout=x.layout,
             device=x.device,
@@ -810,6 +972,64 @@ def _normalize_conv2d(
     if bias is not None:
         input_ids.append(ctx.as_value(bias, "bias"))
     return input_ids, params
+
+
+def _normalize_conv_fprop(
+    ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[list[int], dict]:
+    if len(args) > 3:
+        raise TypeError("conv_fprop got too many positional args")
+    names = ["image", "weight", "padding"]
+    defaults = {
+        "padding": None,
+        "pre_padding": None,
+        "post_padding": None,
+        "stride": 1,
+        "dilation": 1,
+        "convolution_mode": "CROSS_CORRELATION",
+        "compute_data_type": None,
+        "name": "",
+        "groups": 1,
+    }
+    params = defaults.copy()
+    params.update(kwargs)
+    for idx, arg in enumerate(args):
+        name = names[idx]
+        if name in kwargs:
+            raise TypeError(f"conv_fprop got multiple values for {name}")
+        params[name] = arg
+
+    image = params.pop("image", None)
+    weight = params.pop("weight", None)
+    if image is None or weight is None:
+        raise TypeError("conv_fprop missing image or weight")
+
+    rank = _conv_spatial_rank_from_values(image, weight, "conv_fprop")
+    params["stride"] = _tuple_n(params["stride"], rank, "stride")
+    params["dilation"] = _tuple_n(params["dilation"], rank, "dilation")
+    _normalize_convolution_mode(params.get("convolution_mode"))
+
+    padding = params.get("padding")
+    pre_padding = params.get("pre_padding")
+    post_padding = params.get("post_padding")
+    if pre_padding is not None or post_padding is not None:
+        if padding is not None:
+            raise TypeError(
+                "conv_fprop accepts either padding or pre_padding/post_padding"
+            )
+        if pre_padding is None or post_padding is None:
+            raise TypeError(
+                "conv_fprop requires both pre_padding and post_padding"
+            )
+        params["pre_padding"] = _tuple_n(pre_padding, rank, "pre_padding")
+        params["post_padding"] = _tuple_n(post_padding, rank, "post_padding")
+    elif padding is not None and not isinstance(padding, str):
+        params["padding"] = _tuple_n(padding, rank, "padding")
+
+    return [
+        ctx.as_value(image, "image"),
+        ctx.as_value(weight, "weight"),
+    ], params
 
 
 def _normalize_mm(
@@ -1269,6 +1489,15 @@ def _run_unary_torch(torch_fn: Callable[[Any], Any]) -> RunFn:
     return run
 
 
+def _run_abs(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        if _runtime_backend_available(inputs):
+            return flag_ops.abs(inputs[0])
+        return torch.abs(inputs[0])
+
+    return run
+
+
 def _run_identity(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
         return flag_ops.identity(
@@ -1363,6 +1592,104 @@ def _run_conv2d(flag_ops: Any) -> RunFn:
             dilation=op_attrs.get("dilation", 1),
             groups=op_attrs.get("groups", 1),
         )
+
+    return run
+
+
+def _torch_conv_fprop(
+    image: torch.Tensor, weight: torch.Tensor, attrs: dict[str, Any]
+) -> torch.Tensor:
+    rank = _conv_spatial_rank_from_values(image, weight, "conv_fprop")
+    _normalize_convolution_mode(attrs.get("convolution_mode"))
+    stride = _tuple_n(attrs.get("stride", 1), rank, "stride")
+    dilation = _tuple_n(attrs.get("dilation", 1), rank, "dilation")
+    groups = int(attrs.get("groups", 1))
+    padding = attrs.get("padding")
+    pre_padding = attrs.get("pre_padding")
+    post_padding = attrs.get("post_padding")
+    pad_for_conv: Any = 0
+    explicit_pad = None
+
+    if pre_padding is not None or post_padding is not None:
+        if pre_padding is None or post_padding is None:
+            raise TypeError(
+                "conv_fprop requires both pre_padding and post_padding"
+            )
+        pre = _tuple_n(pre_padding, rank, "pre_padding")
+        post = _tuple_n(post_padding, rank, "post_padding")
+        if pre == post:
+            pad_for_conv = pre[0] if rank == 1 else pre
+        elif rank == 1:
+            explicit_pad = (pre[0], post[0])
+        elif rank == 2:
+            explicit_pad = (pre[1], post[1], pre[0], post[0])
+        else:
+            explicit_pad = (
+                pre[2],
+                post[2],
+                pre[1],
+                post[1],
+                pre[0],
+                post[0],
+            )
+    elif padding is None:
+        pad_for_conv = 0
+    elif isinstance(padding, str):
+        pad_for_conv = padding
+    else:
+        normalized = _tuple_n(padding, rank, "padding")
+        pad_for_conv = normalized[0] if rank == 1 else normalized
+
+    if explicit_pad is not None:
+        image = torch.nn.functional.pad(image, explicit_pad)
+    if rank == 1:
+        return torch.nn.functional.conv1d(
+            image,
+            weight,
+            stride=stride,
+            padding=pad_for_conv,
+            dilation=dilation,
+            groups=groups,
+        )
+    if rank == 2:
+        return torch.nn.functional.conv2d(
+            image,
+            weight,
+            stride=stride,
+            padding=pad_for_conv,
+            dilation=dilation,
+            groups=groups,
+        )
+    return torch.nn.functional.conv3d(
+        image,
+        weight,
+        stride=stride,
+        padding=pad_for_conv,
+        dilation=dilation,
+        groups=groups,
+    )
+
+
+def _run_conv_fprop(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        op_attrs = _public_attrs(attrs)
+        if _runtime_backend_available(inputs):
+            return flag_ops.conv_fprop(
+                inputs[0],
+                inputs[1],
+                padding=op_attrs.get("padding"),
+                pre_padding=op_attrs.get("pre_padding"),
+                post_padding=op_attrs.get("post_padding"),
+                stride=op_attrs.get("stride", 1),
+                dilation=op_attrs.get("dilation", 1),
+                convolution_mode=op_attrs.get(
+                    "convolution_mode", "CROSS_CORRELATION"
+                ),
+                compute_data_type=op_attrs.get("compute_data_type"),
+                name=op_attrs.get("name", ""),
+                groups=op_attrs.get("groups", 1),
+            )
+        return _torch_conv_fprop(inputs[0], inputs[1], op_attrs)
 
     return run
 
@@ -1571,6 +1898,15 @@ def register_default_ops() -> None:
     )
     register_op(
         OpSchema(
+            name="conv_fprop",
+            normalize_fn=_normalize_conv_fprop,
+            shape_fn=_conv_fprop_shape,
+            run_fn=_run_conv_fprop(flag_ops),
+            fusible=True,
+        )
+    )
+    register_op(
+        OpSchema(
             name="fused_conv2d_bias_relu",
             normalize_fn=_normalize_conv2d,
             shape_fn=_conv2d_shape,
@@ -1590,7 +1926,6 @@ def register_default_ops() -> None:
 
     for name, torch_fn in (
         ("sqrt", torch.sqrt),
-        ("abs", torch.abs),
         ("neg", torch.neg),
         ("tanh", torch.tanh),
         ("silu", torch.nn.functional.silu),
@@ -1604,6 +1939,18 @@ def register_default_ops() -> None:
                 fusible=True,
             )
         )
+
+    register_op(
+        OpSchema(
+            name="abs",
+            normalize_fn=_normalize_unary(
+                "abs", ("compute_data_type", "name")
+            ),
+            shape_fn=_shape_like_first,
+            run_fn=_run_abs(flag_ops),
+            fusible=True,
+        )
+    )
 
     register_op(
         OpSchema(

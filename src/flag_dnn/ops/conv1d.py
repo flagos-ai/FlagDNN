@@ -42,7 +42,7 @@ def _conv_out_dim(
 def _normalize_padding(
     weight: torch.Tensor,
     stride: int,
-    padding: Union[str, int, Tuple[int]],
+    padding: Union[str, int, Tuple[int, ...]],
     dilation: int,
 ) -> Tuple[int, int]:
     if isinstance(padding, str):
@@ -60,10 +60,20 @@ def _normalize_padding(
             return pad_left, total_pad - pad_left
         raise RuntimeError("padding must be 'valid', 'same', int, or tuple")
 
-    pad = _single(padding, "padding")
-    if pad < 0:
+    if isinstance(padding, int):
+        pad_left, pad_right = padding, padding
+    else:
+        if len(padding) == 1:
+            pad_left = pad_right = int(padding[0])
+        elif len(padding) == 2:
+            pad_left, pad_right = int(padding[0]), int(padding[1])
+        else:
+            raise RuntimeError(
+                "padding must be an int, length-1 tuple, or length-2 tuple"
+            )
+    if pad_left < 0 or pad_right < 0:
         raise RuntimeError("negative padding is not supported")
-    return pad, pad
+    return pad_left, pad_right
 
 
 def _any_requires_grad(
@@ -418,7 +428,7 @@ def conv1d(
     weight: torch.Tensor,
     bias: Optional[torch.Tensor] = None,
     stride: Union[int, Tuple[int]] = 1,
-    padding: Union[str, int, Tuple[int]] = 0,
+    padding: Union[str, int, Tuple[int, ...]] = 0,
     dilation: Union[int, Tuple[int]] = 1,
     groups: int = 1,
 ) -> torch.Tensor:

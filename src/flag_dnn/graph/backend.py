@@ -151,9 +151,50 @@ class TritonCudaBackend(GraphBackend):
         return super().candidates_for_node(node, graph, input_specs)
 
 
+class AutoBackend(GraphBackend):
+    name = "auto"
+
+    def __init__(self) -> None:
+        self.backends: tuple[GraphBackend, ...] = (
+            TritonCudaBackend(),
+            TorchFallbackBackend(),
+        )
+
+    def is_available(self) -> bool:
+        return any(backend.is_available() for backend in self.backends)
+
+    def capability(self) -> BackendCapability:
+        return BackendCapability(
+            name=self.name,
+            notes=("Composite backend candidate selector",),
+        )
+
+    def supports(self, graph: Graph, input_specs: list[TensorSpec]) -> bool:
+        return any(
+            backend.supports(graph, input_specs) for backend in self.backends
+        )
+
+    def candidates_for_node(
+        self, node: OpNode, graph: Graph, input_specs: list[TensorSpec]
+    ) -> list[KernelCandidate]:
+        candidates: list[KernelCandidate] = []
+        for backend in self.backends:
+            if isinstance(backend, TorchFallbackBackend) and candidates:
+                continue
+            if not backend.supports(graph, input_specs):
+                continue
+            candidates.extend(
+                backend.candidates_for_node(node, graph, input_specs)
+            )
+        candidates.sort(key=lambda candidate: candidate.priority)
+        return candidates
+
+
 def resolve_backend(name: str) -> GraphBackend:
-    if name in ("auto", "triton_cuda", "cuda", "triton"):
-        backend = TritonCudaBackend()
-        if backend.is_available() or name != "auto":
-            return backend
+    if name == "auto":
+        return AutoBackend()
+    if name in ("triton_cuda", "cuda", "triton"):
+        return TritonCudaBackend()
+    if name == "torch":
+        return TorchFallbackBackend()
     return TorchFallbackBackend()

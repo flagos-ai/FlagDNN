@@ -11,6 +11,8 @@ IDENTITY_SHAPES = (
     (4, 32, 128),
 )
 
+ABS_SHAPES = IDENTITY_SHAPES
+
 POINTWISE_BINARY_CASES = (
     ((2, 3, 4), (2, 3, 4)),
     ((1, 8, 16), (1, 8, 16)),

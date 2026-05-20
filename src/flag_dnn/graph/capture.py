@@ -168,6 +168,7 @@ def compile(
         flagdnn_version=_flagdnn_version(),
     )
     plan = cache.get(key, captured_graph) if cache is not None else None
+    validate_inputs = bool(compile_options.get("validate_inputs", True))
     if plan is None:
         planner = Planner(backend=backend, options=compile_options)
         plan = planner.build_plan(
@@ -176,10 +177,12 @@ def compile(
             output_structure,
             runtime_inputs=runtime_inputs,
         )
+        plan.debug_info["validate_inputs"] = validate_inputs
         if cache is not None:
             cache.put(key, plan)
     else:
         plan.debug_info["output_structure"] = output_structure
+        plan.debug_info["validate_inputs"] = validate_inputs
     return CompiledGraph(plan)
 
 

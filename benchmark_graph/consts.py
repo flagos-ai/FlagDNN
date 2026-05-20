@@ -18,6 +18,8 @@ CUDNN_IDENTITY_SHAPES = (
     (8, 1024, 2048),
 )
 
+CUDNN_ABS_SHAPES = CUDNN_IDENTITY_SHAPES
+
 CUDNN_POINTWISE_BINARY_SHAPES = (
     # Power-of-two aligned shapes.
     ((32, 256, 256), (32, 256, 256)),
@@ -74,6 +76,19 @@ CUDNN_GEN_INDEX_SHAPES = (
     ((16, 64, 128), 1),
     ((32, 128, 256), 2),
     ((4, 64, 128, 32), 3),
+)
+
+CUDNN_CONV_FPROP_SHAPES = (
+    # (input_shape, weight_shape, stride, padding, pre_padding, post_padding, dilation)
+    ((16, 32, 256), (64, 32, 3), 1, 1, None, None, 1),
+    ((8, 64, 255), (96, 64, 5), 2, None, (2,), (1,), 1),
+    ((8, 32, 32, 32), (64, 32, 3, 3), 1, 1, None, None, 1),
+    ((8, 64, 28, 28), (128, 64, 1, 1), 1, 0, None, None, 1),
+    ((8, 64, 56, 56), (128, 64, 3, 3), 2, 1, None, None, 1),
+    ((4, 64, 32, 32), (64, 64, 3, 3), 1, 2, None, None, 2),
+    ((4, 32, 35, 37), (48, 32, 3, 5), (1, 2), None, (1, 0), (1, 2), 1),
+    ((2, 8, 8, 16, 16), (16, 8, 3, 3, 3), 1, 1, None, None, 1),
+    ((1, 8, 10, 12, 14), (12, 8, 2, 3, 3), 1, None, (1, 0, 1), (0, 1, 2), 1),
 )
 
 

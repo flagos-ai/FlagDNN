@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 import torch
 
 from flag_dnn.graph.plan import ExecutionPlan
+from flag_dnn.graph.prepared_ops import prepare_run_fn
 from flag_dnn.graph.registry import get_op_schema
 from flag_dnn.graph.tensor import canonical_dtype
 
 
-RunFn = Callable[[list[Any], dict[str, Any]], Any]
+RunFn = Callable[[Sequence[Any], dict[str, Any]], Any]
 
 
 @dataclass(frozen=True)
@@ -46,11 +47,18 @@ class _InputSource:
 class _SingleStepFastPath:
     step: _PreparedStep
     input_sources: tuple[_InputSource, ...]
+    input_indices: Optional[tuple[int, ...]] = None
+    passthrough_inputs: bool = False
 
     def run(self, inputs: tuple[Any, ...]) -> Any:
-        step_inputs = [
-            source.resolve(inputs) for source in self.input_sources
-        ]
+        if self.passthrough_inputs:
+            step_inputs = inputs
+        elif self.input_indices is not None:
+            step_inputs = tuple(inputs[index] for index in self.input_indices)
+        else:
+            step_inputs = tuple(
+                source.resolve(inputs) for source in self.input_sources
+            )
         return self.step.run_fn(step_inputs, self.step.attrs)
 
 
@@ -58,6 +66,7 @@ class _SingleStepFastPath:
 class _PreparedPlan:
     input_count: int
     input_checks: tuple[_InputCheck, ...]
+    validate_inputs: bool
     constants: dict[int, Any]
     steps: tuple[_PreparedStep, ...]
     flat_output_ids: tuple[int, ...]
@@ -73,8 +82,9 @@ def execute_plan(plan: ExecutionPlan, inputs: tuple[Any, ...]) -> Any:
             f"got {len(inputs)}"
         )
 
-    for check, actual in zip(prepared.input_checks, inputs):
-        _validate_prepared_input(check, actual)
+    if prepared.validate_inputs:
+        for check, actual in zip(prepared.input_checks, inputs):
+            _validate_prepared_input(check, actual)
 
     if prepared.fast_path is not None:
         return prepared.fast_path.run(inputs)
@@ -108,8 +118,13 @@ def execute_plan(plan: ExecutionPlan, inputs: tuple[Any, ...]) -> Any:
 
 def _get_prepared_plan(plan: ExecutionPlan) -> _PreparedPlan:
     output_structure = plan.debug_info.get("output_structure")
+    validate_inputs = bool(plan.debug_info.get("validate_inputs", True))
     prepared = getattr(plan, "_prepared_executor", None)
-    if prepared is None or prepared.output_structure != output_structure:
+    if (
+        prepared is None
+        or prepared.output_structure != output_structure
+        or prepared.validate_inputs != validate_inputs
+    ):
         prepared = _prepare_plan(plan, output_structure)
         setattr(plan, "_prepared_executor", prepared)
     return prepared
@@ -127,27 +142,37 @@ def _prepare_plan(
         for value_id, value in plan.graph.values.items()
         if value.is_constant
     }
-    steps = tuple(
-        _PreparedStep(
-            run_fn=get_op_schema(step.op_type).run_fn,
-            inputs=tuple(step.inputs),
-            outputs=tuple(step.outputs),
-            attrs=dict(step.attrs),
+    steps = []
+    for step in plan.steps:
+        attrs = dict(step.attrs)
+        default_run_fn = get_op_schema(step.op_type).run_fn
+        input_specs = tuple(
+            plan.graph.values[value_id].spec for value_id in step.inputs
         )
-        for step in plan.steps
-    )
+        steps.append(
+            _PreparedStep(
+                run_fn=prepare_run_fn(
+                    step.op_type, attrs, input_specs, default_run_fn
+                ),
+                inputs=tuple(step.inputs),
+                outputs=tuple(step.outputs),
+                attrs=attrs,
+            )
+        )
+    prepared_steps = tuple(steps)
     flat_output_ids = tuple(plan.graph.outputs)
     fast_path = _make_single_step_fast_path(
         plan,
-        steps,
+        prepared_steps,
         constants,
         output_structure,
     )
     return _PreparedPlan(
         input_count=len(plan.graph.inputs),
         input_checks=input_checks,
+        validate_inputs=bool(plan.debug_info.get("validate_inputs", True)),
         constants=constants,
-        steps=steps,
+        steps=prepared_steps,
         flat_output_ids=flat_output_ids,
         output_structure=output_structure,
         fast_path=fast_path,
@@ -187,18 +212,31 @@ def _make_single_step_fast_path(
         value_id: index for index, value_id in enumerate(plan.graph.inputs)
     }
     input_sources = []
+    input_indices = []
+    direct_inputs_only = True
     for value_id in step.inputs:
         if value_id in input_positions:
-            input_sources.append(
-                _InputSource(input_index=input_positions[value_id])
-            )
+            index = input_positions[value_id]
+            input_sources.append(_InputSource(input_index=index))
+            input_indices.append(index)
         elif value_id in constants:
             input_sources.append(
                 _InputSource(constant_value=constants[value_id])
             )
+            direct_inputs_only = False
         else:
             return None
-    return _SingleStepFastPath(step=step, input_sources=tuple(input_sources))
+    indices = tuple(input_indices) if direct_inputs_only else None
+    passthrough_inputs = (
+        indices is not None
+        and indices == tuple(range(len(plan.graph.inputs)))
+    )
+    return _SingleStepFastPath(
+        step=step,
+        input_sources=tuple(input_sources),
+        input_indices=indices,
+        passthrough_inputs=passthrough_inputs,
+    )
 
 
 def _is_leaf_output(output_structure: Any) -> bool:
