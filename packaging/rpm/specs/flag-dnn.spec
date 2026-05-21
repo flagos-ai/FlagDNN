@@ -7,8 +7,7 @@ Summary:        FlagDNN — DNN primitives for FlagOS
 
 License:        Apache-2.0
 URL:            https://github.com/flagos-ai/FlagDNN
-Source0:        flag-dnn-%{version}.tar.gz
-
+Source0:        %{url}/archive/v%{version}/flag-dnn-%{version}.tar.gz
 BuildArch:      noarch
 BuildRequires:  python3-devel
 BuildRequires:  python3-setuptools >= 60
