@@ -16,7 +16,8 @@ Rules-Requires-Root: no
 
 Package: python3-flag-dnn
 Architecture: all
+# Note: python3-torch is pulled in automatically via ${python3:Depends}
+# from pyproject.toml's runtime dependencies; no need to list it here.
 Depends: ${python3:Depends}, ${misc:Depends}, python3-yaml, python3-sqlalchemy, python3-packaging, python3-pybind11
-Recommends: python3-torch
 Description: FlagDNN — deep neural network primitives for FlagOS
  Collection of DNN operators (convolutions, normalizations, activations) targeting FlagOS-supported accelerators via Triton kernels.

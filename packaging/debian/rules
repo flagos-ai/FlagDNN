@@ -14,13 +14,16 @@ export PYBUILD_NAME = flag_dnn
 # on import failures. Fixed with && short-circuit.
 override_dh_auto_test:
 	@echo "=== smoke find_spec test ==="
-	@for d in .pybuild/cpython3_*/build $(CURDIR)/src $(CURDIR); do \
+	@found=0; \
+	for d in .pybuild/cpython3_*/build $(CURDIR)/src $(CURDIR); do \
 	    if [ -d "$$d/flag_dnn" ]; then \
 	        echo "Found build dir: $$d"; \
 	        PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$$d" python3 -c \
 	            "import importlib.util; s = importlib.util.find_spec('flag_dnn'); assert s and s.origin, 'flag_dnn not findable'; print('OK: flag_dnn at', s.origin)" \
-	            && exit 0; \
+	            && found=1 && break; \
 	        echo "ERROR: find_spec failed"; exit 1; \
 	    fi; \
 	done; \
-	echo "ERROR: could not find a built flag_dnn module"; exit 1
+	if [ "$$found" -ne 1 ]; then \
+	    echo "ERROR: could not find a built flag_dnn module"; exit 1; \
+	fi
