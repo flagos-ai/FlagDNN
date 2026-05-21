@@ -15,15 +15,15 @@ from benchmark_graph import consts
 
 class DivBenchmark(CudnnCompareBenchmark):
     op_name = "div"
-    shapes = consts.CUDNN_DIV_SHAPES
+    shapes = consts.DIV_SHAPES
     shape_ids_env = "FLAGDNN_CUDNN_DIV_PERF_SHAPE_IDS"
 
     def make_inputs(self, case, dtype):
         self.case = case
         x_shape, y_shape = case
-        x = torch.randn(x_shape, device=flag_dnn.device, dtype=dtype)
-        y = torch.randn(y_shape, device=flag_dnn.device, dtype=dtype).abs()
-        y = y + 0.5
+        x = consts.pointwise_randn(x_shape, dtype, flag_dnn.device)
+        y = consts.pointwise_randn(y_shape, dtype, flag_dnn.device).abs()
+        y = consts.pointwise_layout(y + 0.5)
         return x, y
 
     def build_cudnn_runner(self, inputs):
@@ -86,7 +86,7 @@ class DivBenchmark(CudnnCompareBenchmark):
                 flag_dnn.TensorSpec.from_tensor(x, "x"),
                 flag_dnn.TensorSpec.from_tensor(y, "y"),
             ],
-            options={"cache": None},
+            options=consts.compile_options(),
         )
         assert [node.op_type for node in compiled.graph.nodes] == ["div"]
 

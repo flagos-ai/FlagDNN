@@ -15,14 +15,14 @@ from benchmark_graph import consts
 
 class PowBenchmark(CudnnCompareBenchmark):
     op_name = "pow"
-    shapes = consts.CUDNN_POW_SHAPES
+    shapes = consts.POW_SHAPES
     shape_ids_env = "FLAGDNN_CUDNN_POW_PERF_SHAPE_IDS"
 
     def make_inputs(self, case, dtype):
         self.case = case
         x_shape, y_shape = case
-        x = torch.rand(x_shape, device=flag_dnn.device, dtype=dtype) + 0.5
-        y = torch.rand(y_shape, device=flag_dnn.device, dtype=dtype) * 2.0
+        x = consts.pointwise_layout(consts.pointwise_rand(x_shape, dtype, flag_dnn.device) + 0.5)
+        y = consts.pointwise_layout(consts.pointwise_rand(y_shape, dtype, flag_dnn.device) * 2.0)
         return x, y
 
     def build_cudnn_runner(self, inputs):
@@ -85,7 +85,7 @@ class PowBenchmark(CudnnCompareBenchmark):
                 flag_dnn.TensorSpec.from_tensor(x, "x"),
                 flag_dnn.TensorSpec.from_tensor(y, "y"),
             ],
-            options={"cache": None},
+            options=consts.compile_options(),
         )
         assert [node.op_type for node in compiled.graph.nodes] == ["pow"]
 

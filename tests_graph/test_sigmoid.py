@@ -8,65 +8,60 @@ from tests_graph.base import (
 import torch
 
 import flag_dnn
-from tests_graph import consts
 from tests import accuracy_utils as utils
+from tests_graph import consts
 
 
-def _cudnn_slice(x, slices, cudnn_handle):
+def _cudnn_sigmoid(x, cudnn_handle):
     graph = cudnn_graph(x.dtype, cudnn_handle)
     x_tensor = graph.tensor_like(x)
-    y_tensor = graph.slice(
+    y_tensor = graph.sigmoid(
         input=x_tensor,
-        slices=list(slices),
         compute_data_type=cudnn.data_type.FLOAT,
-        name="slice",
-    )
-    output_template = torch.empty(
-        tuple(x[tuple(slices)].shape),
-        device=x.device,
-        dtype=x.dtype,
+        name="sigmoid",
     )
     return execute_cudnn_graph(
         graph,
         {x_tensor: x},
         y_tensor,
-        output_template,
+        torch.empty_like(x),
         cudnn_handle,
-        "slice",
+        "sigmoid",
     )
 
 
-def _run_flag_dnn_slice_graph(x, slices):
+def _run_flag_dnn_sigmoid_graph(x):
     @flag_dnn.graph
-    def flag_dnn_slice_graph(x):
-        return flag_dnn.slice(
+    def flag_dnn_sigmoid_graph(x):
+        return flag_dnn.sigmoid(
             x,
-            slices,
             compute_data_type="float32",
-            name="slice",
+            name="sigmoid",
         )
 
     compiled = flag_dnn.compile(
-        flag_dnn_slice_graph,
+        flag_dnn_sigmoid_graph,
         inputs=[flag_dnn.TensorSpec.from_tensor(x, "x")],
         options={"cache": None},
     )
-    assert [node.op_type for node in compiled.graph.nodes] == ["slice"]
+    assert [node.op_type for node in compiled.graph.nodes] == ["sigmoid"]
+    assert compiled.graph.nodes[0].attrs["compute_data_type"] == "float32"
+    assert compiled.graph.nodes[0].attrs["name"] == "sigmoid"
     return compiled.run(x.clone())
 
 
 @pytest.mark.cudnn_frontend
-@pytest.mark.slice
+@pytest.mark.sigmoid
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
-@pytest.mark.parametrize("case", consts.SLICE_CASES)
-def test_graph_slice_matches_cudnn_frontend(cudnn_handle, dtype, case):
+@pytest.mark.parametrize("shape", consts.SIGMOID_SHAPES)
+def test_graph_sigmoid_matches_cudnn_frontend(cudnn_handle, dtype, shape):
     torch.manual_seed(0)
-    shape, slices = case
     x = consts.pointwise_randn(shape, dtype, flag_dnn.device)
 
-    cudnn_out = _cudnn_slice(x, slices, cudnn_handle)
-    flag_dnn_out = _run_flag_dnn_slice_graph(x, slices)
+    cudnn_out = _cudnn_sigmoid(x, cudnn_handle)
+    flag_dnn_out = _run_flag_dnn_sigmoid_graph(x)
 
-    utils.gems_assert_equal(flag_dnn_out, cudnn_out)
+    atol = 5e-2 if dtype == torch.bfloat16 else 2e-2
+    utils.gems_assert_close(flag_dnn_out, cudnn_out, dtype, atol=atol)

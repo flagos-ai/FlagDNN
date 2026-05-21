@@ -14,9 +14,9 @@ from tests import accuracy_utils as utils
 
 def _make_inputs(case, dtype):
     x_shape, y_shape = case
-    x = torch.randn(x_shape, device=flag_dnn.device, dtype=dtype)
-    y = torch.randn(y_shape, device=flag_dnn.device, dtype=dtype).abs()
-    y = y + 0.5
+    x = consts.pointwise_randn(x_shape, dtype, flag_dnn.device)
+    y = consts.pointwise_randn(y_shape, dtype, flag_dnn.device).abs()
+    y = consts.pointwise_layout(y + 0.5)
     return x, y
 
 

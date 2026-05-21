@@ -13,13 +13,13 @@ from benchmark_graph import consts
 
 class TransposeBenchmark(CudnnCompareBenchmark):
     op_name = "transpose"
-    shapes = consts.CUDNN_TRANSPOSE_SHAPES
+    shapes = consts.TRANSPOSE_SHAPES
     shape_ids_env = "FLAGDNN_CUDNN_TRANSPOSE_PERF_SHAPE_IDS"
 
     def make_inputs(self, case, dtype):
         self.case = case
         shape, _ = case
-        x = torch.randn(shape, device=flag_dnn.device, dtype=dtype)
+        x = consts.pointwise_randn(shape, dtype, flag_dnn.device)
         return (x,)
 
     def build_cudnn_runner(self, inputs):
@@ -83,7 +83,7 @@ class TransposeBenchmark(CudnnCompareBenchmark):
         compiled = flag_dnn.compile(
             flag_dnn_transpose_graph,
             inputs=[flag_dnn.TensorSpec.from_tensor(x, "x")],
-            options={"cache": None},
+            options=consts.compile_options(),
         )
         assert [node.op_type for node in compiled.graph.nodes] == ["transpose"]
 

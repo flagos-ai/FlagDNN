@@ -15,14 +15,14 @@ from benchmark_graph import consts
 
 class MaxBenchmark(CudnnCompareBenchmark):
     op_name = "max"
-    shapes = consts.CUDNN_MAX_SHAPES
+    shapes = consts.MAX_SHAPES
     shape_ids_env = "FLAGDNN_CUDNN_MAX_PERF_SHAPE_IDS"
 
     def make_inputs(self, case, dtype):
         self.case = case
         x_shape, y_shape = case
-        x = torch.randn(x_shape, device=flag_dnn.device, dtype=dtype)
-        y = torch.randn(y_shape, device=flag_dnn.device, dtype=dtype)
+        x = consts.pointwise_randn(x_shape, dtype, flag_dnn.device)
+        y = consts.pointwise_randn(y_shape, dtype, flag_dnn.device)
         return x, y
 
     def build_cudnn_runner(self, inputs):
@@ -85,7 +85,7 @@ class MaxBenchmark(CudnnCompareBenchmark):
                 flag_dnn.TensorSpec.from_tensor(x, "x"),
                 flag_dnn.TensorSpec.from_tensor(y, "y"),
             ],
-            options={"cache": None},
+            options=consts.compile_options(),
         )
         assert [node.op_type for node in compiled.graph.nodes] == ["max"]
 

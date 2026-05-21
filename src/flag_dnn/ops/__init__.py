@@ -78,6 +78,7 @@ from flag_dnn.ops.glu import glu
 from flag_dnn.ops.celu import celu
 from flag_dnn.ops.celu_ import celu_
 from flag_dnn.ops.tanh import tanh
+from flag_dnn.ops.sigmoid import sigmoid
 from flag_dnn.ops.logsigmoid import logsigmoid
 from flag_dnn.ops.embedding import embedding
 from flag_dnn.ops.embedding import embedding_renorm_
@@ -230,6 +231,7 @@ __all__ = [
     "celu",
     "celu_",
     "tanh",
+    "sigmoid",
     "logsigmoid",
     "embedding",
     "embedding_renorm_",

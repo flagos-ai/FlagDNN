@@ -10,6 +10,11 @@ from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
 from flag_dnn.utils.type_utils import is_bool_dtype
+from flag_dnn.ops.binary import (
+    can_use_flat_output,
+    empty_like_preserve_dense_layout,
+    is_dense_flat_tensor,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -54,21 +59,28 @@ def abs(
             f"\"abs\" not implemented for '{input.dtype}'"
         )
 
-    if not input.is_contiguous():
-        assert False, "input must be contiguous."
-        input = input.contiguous()
+    if not is_dense_flat_tensor(input):
+        raise NotImplementedError(
+            "flag_dnn abs currently supports contiguous or NHWC "
+            "channels-last input only"
+        )
 
     out_dtype = input.dtype
     out_shape = input.shape
 
     # 输出内存分配
     if out is None:
-        out = torch.empty(out_shape, dtype=out_dtype, device=input.device)
+        out = empty_like_preserve_dense_layout(input, out_dtype)
     else:
         assert (
             out.shape == out_shape
         ), f"out shape {out.shape} mismatch with input shape {out_shape}"
         out_dtype = out.dtype
+        if not can_use_flat_output(out, input):
+            raise NotImplementedError(
+                "flag_dnn abs currently requires out to share input's "
+                "dense flat layout"
+            )
 
     n_elements = out.numel()
     if n_elements == 0:

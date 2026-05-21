@@ -88,7 +88,7 @@ def format_perf_result(op_name, dtype, metrics):
 
 class CudnnCompareBenchmark:
     op_name = ""
-    dtypes = consts.CUDNN_COMPARE_FLOAT_DTYPES
+    dtypes = consts.COMPARE_FLOAT_DTYPES
     shapes = ()
     shape_ids_env = ""
 

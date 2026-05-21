@@ -21,6 +21,40 @@ from flag_dnn.utils.type_utils import (
 logger = logging.getLogger(__name__)
 
 
+def is_dense_flat_tensor(tensor: torch.Tensor) -> bool:
+    return tensor.is_contiguous() or (
+        tensor.dim() == 4
+        and tensor.is_contiguous(memory_format=torch.channels_last)
+    )
+
+
+def has_same_dense_flat_layout(
+    left: torch.Tensor, right: torch.Tensor
+) -> bool:
+    return (
+        tuple(left.shape) == tuple(right.shape)
+        and is_dense_flat_tensor(left)
+        and is_dense_flat_tensor(right)
+        and tuple(left.stride()) == tuple(right.stride())
+    )
+
+
+def can_use_flat_output(
+    output: torch.Tensor, source: torch.Tensor
+) -> bool:
+    return (
+        tuple(output.shape) == tuple(source.shape)
+        and is_dense_flat_tensor(output)
+        and tuple(output.stride()) == tuple(source.stride())
+    )
+
+
+def empty_like_preserve_dense_layout(
+    source: torch.Tensor, dtype: torch.dtype
+) -> torch.Tensor:
+    return torch.empty_like(source, dtype=dtype)
+
+
 # 维度坍缩：合并连续维度，丢弃 size=1 的维度，将任意 N 维化简为最小维度
 def collapse_dims(shape, strides_a, strides_b):
     if not shape:
@@ -388,10 +422,6 @@ def binary(
 ) -> torch.Tensor:
     logger.debug(f"FLAG_DNN {op_type.upper()})")
 
-    if not input.is_contiguous():
-        assert False, "input must be contiguous."
-        input = input.contiguous()
-
     is_other_tensor = isinstance(other, torch.Tensor)
     out_shape = (
         torch.broadcast_shapes(
@@ -440,8 +470,24 @@ def binary(
     _validate_binary_args(input, other, alpha, op_type)
     out_dtype = _infer_binary_out_dtype(input, other, rounding_mode, op_type)
 
+    flat_layout_source = None
+    if is_other_tensor:
+        if has_same_dense_flat_layout(input, other):  # type: ignore[arg-type]
+            flat_layout_source = input
+    elif is_dense_flat_tensor(input):
+        flat_layout_source = input
+
     if out is None:
-        out = torch.empty(out_shape, dtype=out_dtype, device=input.device)
+        if flat_layout_source is not None and tuple(out_shape) == tuple(
+            flat_layout_source.shape
+        ):
+            out = empty_like_preserve_dense_layout(
+                flat_layout_source, out_dtype
+            )
+        else:
+            out = torch.empty(
+                out_shape, dtype=out_dtype, device=input.device
+            )
     else:
         assert (
             out.shape == out_shape
@@ -458,9 +504,10 @@ def binary(
         if is_other_tensor:
             # 形状一致且连续，走一维 Kernel
             if (
-                input.shape == other.shape  # type: ignore[union-attr]
-                and input.is_contiguous()
-                and other.is_contiguous()  # type: ignore[union-attr]
+                has_same_dense_flat_layout(
+                    input, other  # type: ignore[arg-type]
+                )
+                and can_use_flat_output(out, input)
             ):
                 binary_tensor_kernel[grid](
                     input,
@@ -473,6 +520,12 @@ def binary(
                 )
             # broadcast
             else:
+                if not out.is_contiguous():
+                    raise NotImplementedError(
+                        "flag_dnn binary broadcast currently requires "
+                        "contiguous out unless all operands share a dense "
+                        "flat layout"
+                    )
                 # 仅逻辑扩展，不触发显存复制
                 in_exp = input.expand(out_shape)
                 oth_exp = other.expand(out_shape)  # type: ignore[union-attr]
@@ -507,6 +560,14 @@ def binary(
                 other_val = int(other)
             else:
                 other_val = float(other)
+            if not (
+                is_dense_flat_tensor(input)
+                and can_use_flat_output(out, input)
+            ):
+                raise NotImplementedError(
+                    "flag_dnn binary scalar currently requires input and "
+                    "out to share a dense flat layout"
+                )
             binary_scalar_kernel[grid](
                 input,
                 out,

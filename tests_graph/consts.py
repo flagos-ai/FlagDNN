@@ -1,3 +1,5 @@
+import torch
+
 IDENTITY_SHAPES = (
     (1, 1, 1),
     (2, 3, 4),
@@ -11,13 +13,36 @@ IDENTITY_SHAPES = (
     (4, 32, 128),
 )
 
-ABS_SHAPES = IDENTITY_SHAPES
+# cuDNN frontend rejects raw 1D pointwise descriptors and returns
+# incorrect values for raw 2D descriptors on this backend. Keep
+# runnable 3D wrappers plus 4D channels-last/NHWC cases.
+POINTWISE_UNARY_SHAPES = (
+    # Power-of-two aligned shapes.
+    (1, 1, 16),
+    (2, 4, 8),
+    (1, 4, 8, 16),
+    (2, 4, 8, 16),
+    # Non-power-of-two shapes.
+    (1, 3, 17),
+    (3, 5, 7),
+    (1, 3, 5, 7),
+    (2, 3, 5, 7),
+)
+
+ABS_SHAPES = POINTWISE_UNARY_SHAPES
+SIGMOID_SHAPES = POINTWISE_UNARY_SHAPES
 
 POINTWISE_BINARY_CASES = (
-    ((2, 3, 4), (2, 3, 4)),
-    ((1, 8, 16), (1, 8, 16)),
-    ((4, 5, 6), (4, 5, 6)),
-    ((5, 7, 11), (5, 7, 11)),
+    # Power-of-two aligned shapes.
+    ((1, 1, 16), (1, 1, 16)),
+    ((2, 4, 8), (2, 4, 8)),
+    ((1, 4, 8, 16), (1, 4, 8, 16)),
+    ((2, 4, 8, 16), (2, 4, 8, 16)),
+    # Non-power-of-two shapes.
+    ((1, 3, 17), (1, 3, 17)),
+    ((3, 5, 7), (3, 5, 7)),
+    ((1, 3, 5, 7), (1, 3, 5, 7)),
+    ((2, 3, 5, 7), (2, 3, 5, 7)),
 )
 
 ADD_CASES = POINTWISE_BINARY_CASES
@@ -27,6 +52,21 @@ DIV_CASES = POINTWISE_BINARY_CASES
 POW_CASES = POINTWISE_BINARY_CASES
 MAX_CASES = POINTWISE_BINARY_CASES
 CMP_CASES = POINTWISE_BINARY_CASES
+
+
+def pointwise_layout(tensor):
+    # 4D logical NCHW shapes use channels-last strides to match cuDNN NHWC.
+    if tensor.dim() == 4:
+        return tensor.contiguous(memory_format=torch.channels_last)
+    return tensor
+
+
+def pointwise_randn(shape, dtype, device):
+    return pointwise_layout(torch.randn(shape, device=device, dtype=dtype))
+
+
+def pointwise_rand(shape, dtype, device):
+    return pointwise_layout(torch.rand(shape, device=device, dtype=dtype))
 
 RESHAPE_CASES = (
     ((2, 3, 4), (6, 4)),

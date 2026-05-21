@@ -56,7 +56,7 @@ def _run_flag_dnn_identity_graph(x):
 @pytest.mark.parametrize("shape", consts.IDENTITY_SHAPES)
 def test_graph_identity_matches_cudnn_frontend(cudnn_handle, dtype, shape):
     torch.manual_seed(0)
-    x = torch.randn(shape, device=flag_dnn.device, dtype=dtype)
+    x = consts.pointwise_randn(shape, dtype, flag_dnn.device)
 
     cudnn_out = _cudnn_identity(x, cudnn_handle)
     flag_dnn_out = _run_flag_dnn_identity_graph(x)

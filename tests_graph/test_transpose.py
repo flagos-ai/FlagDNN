@@ -64,7 +64,7 @@ def _run_flag_dnn_transpose_graph(x, permutation):
 def test_graph_transpose_matches_cudnn_frontend(cudnn_handle, dtype, case):
     torch.manual_seed(0)
     shape, permutation = case
-    x = torch.randn(shape, device=flag_dnn.device, dtype=dtype)
+    x = consts.pointwise_randn(shape, dtype, flag_dnn.device)
 
     cudnn_out = _cudnn_transpose(x, permutation, cudnn_handle)
     flag_dnn_out = _run_flag_dnn_transpose_graph(x, permutation)

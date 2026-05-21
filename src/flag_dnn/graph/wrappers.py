@@ -43,6 +43,7 @@ GRAPH_AWARE_OPS = (
     "abs",
     "neg",
     "tanh",
+    "sigmoid",
     "silu",
 )
 

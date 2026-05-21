@@ -88,7 +88,7 @@ def _empty_conv_output(shape, dtype, device):
 
 class ConvFpropBenchmark(CudnnCompareBenchmark):
     op_name = "conv_fprop"
-    shapes = consts.CUDNN_CONV_FPROP_SHAPES
+    shapes = consts.CONV_FPROP_SHAPES
     shape_ids_env = "FLAGDNN_CUDNN_CONV_FPROP_PERF_SHAPE_IDS"
 
     def make_inputs(self, case, dtype):

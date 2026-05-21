@@ -13,11 +13,11 @@ from benchmark_graph import consts
 
 class AbsBenchmark(CudnnCompareBenchmark):
     op_name = "abs"
-    shapes = consts.CUDNN_ABS_SHAPES
+    shapes = consts.ABS_SHAPES
     shape_ids_env = "FLAGDNN_CUDNN_ABS_PERF_SHAPE_IDS"
 
     def make_inputs(self, shape, dtype):
-        x = torch.randn(shape, device=flag_dnn.device, dtype=dtype)
+        x = consts.pointwise_randn(shape, dtype, flag_dnn.device)
         return (x,)
 
     def build_cudnn_runner(self, inputs):
@@ -73,7 +73,7 @@ class AbsBenchmark(CudnnCompareBenchmark):
         compiled = flag_dnn.compile(
             flag_dnn_abs_graph,
             inputs=[flag_dnn.TensorSpec.from_tensor(x, "x")],
-            options={"cache": None},
+            options=consts.compile_options(),
         )
         assert [node.op_type for node in compiled.graph.nodes] == ["abs"]
         def run():

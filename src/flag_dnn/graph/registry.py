@@ -1498,6 +1498,21 @@ def _run_abs(flag_ops: Any) -> RunFn:
     return run
 
 
+def _run_sigmoid(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        if _runtime_backend_available(inputs):
+            return flag_ops.sigmoid(
+                inputs[0],
+                compute_data_type=attrs.get("compute_data_type"),
+                name=attrs.get("name", ""),
+            )
+        raise NotImplementedError(
+            "FlagDNN graph sigmoid requires runtime device input"
+        )
+
+    return run
+
+
 def _run_identity(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
         return flag_ops.identity(
@@ -1939,6 +1954,18 @@ def register_default_ops() -> None:
                 fusible=True,
             )
         )
+
+    register_op(
+        OpSchema(
+            name="sigmoid",
+            normalize_fn=_normalize_unary(
+                "sigmoid", ("compute_data_type", "name")
+            ),
+            shape_fn=_shape_like_first,
+            run_fn=_run_sigmoid(flag_ops),
+            fusible=True,
+        )
+    )
 
     register_op(
         OpSchema(

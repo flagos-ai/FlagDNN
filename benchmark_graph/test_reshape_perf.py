@@ -13,7 +13,7 @@ from benchmark_graph import consts
 
 class ReshapeBenchmark(CudnnCompareBenchmark):
     op_name = "reshape"
-    shapes = consts.CUDNN_RESHAPE_SHAPES
+    shapes = consts.RESHAPE_SHAPES
     shape_ids_env = "FLAGDNN_CUDNN_RESHAPE_PERF_SHAPE_IDS"
 
     def make_inputs(self, case, dtype):
@@ -79,7 +79,7 @@ class ReshapeBenchmark(CudnnCompareBenchmark):
         compiled = flag_dnn.compile(
             flag_dnn_reshape_graph,
             inputs=[flag_dnn.TensorSpec.from_tensor(x, "x")],
-            options={"cache": None},
+            options=consts.compile_options(),
         )
         assert [node.op_type for node in compiled.graph.nodes] == ["reshape"]
 

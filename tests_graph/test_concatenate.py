@@ -66,7 +66,7 @@ def test_graph_concatenate_matches_cudnn_frontend(cudnn_handle, dtype, case):
     torch.manual_seed(0)
     shapes, axis = case
     inputs = [
-        torch.randn(shape, device=flag_dnn.device, dtype=dtype)
+        consts.pointwise_randn(shape, dtype, flag_dnn.device)
         for shape in shapes
     ]
 

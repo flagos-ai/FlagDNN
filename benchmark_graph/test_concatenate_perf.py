@@ -13,14 +13,14 @@ from benchmark_graph import consts
 
 class ConcatenateBenchmark(CudnnCompareBenchmark):
     op_name = "concatenate"
-    shapes = consts.CUDNN_CONCATENATE_SHAPES
+    shapes = consts.CONCATENATE_SHAPES
     shape_ids_env = "FLAGDNN_CUDNN_CONCATENATE_PERF_SHAPE_IDS"
 
     def make_inputs(self, case, dtype):
         self.case = case
         shapes, _ = case
         return tuple(
-            torch.randn(shape, device=flag_dnn.device, dtype=dtype)
+            consts.pointwise_randn(shape, dtype, flag_dnn.device)
             for shape in shapes
         )
 
@@ -87,7 +87,7 @@ class ConcatenateBenchmark(CudnnCompareBenchmark):
                 flag_dnn.TensorSpec.from_tensor(item, f"x{index}")
                 for index, item in enumerate(inputs)
             ],
-            options={"cache": None},
+            options=consts.compile_options(),
         )
         assert [node.op_type for node in compiled.graph.nodes] == [
             "concatenate"

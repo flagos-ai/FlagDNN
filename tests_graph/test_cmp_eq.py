@@ -14,8 +14,8 @@ from tests import accuracy_utils as utils
 
 def _make_inputs(case, dtype):
     x_shape, y_shape = case
-    x = torch.randn(x_shape, device=flag_dnn.device, dtype=dtype)
-    y = torch.randn(y_shape, device=flag_dnn.device, dtype=dtype)
+    x = consts.pointwise_randn(x_shape, dtype, flag_dnn.device)
+    y = consts.pointwise_randn(y_shape, dtype, flag_dnn.device)
     if x.numel() == y.numel():
         y_flat = y.reshape(-1)
         x_flat = x.reshape(-1)

@@ -13,7 +13,7 @@ from benchmark_graph import consts
 
 class GenIndexBenchmark(CudnnCompareBenchmark):
     op_name = "gen_index"
-    shapes = consts.CUDNN_GEN_INDEX_SHAPES
+    shapes = consts.GEN_INDEX_SHAPES
     shape_ids_env = "FLAGDNN_CUDNN_GEN_INDEX_PERF_SHAPE_IDS"
 
     def make_inputs(self, case, dtype):
@@ -80,7 +80,7 @@ class GenIndexBenchmark(CudnnCompareBenchmark):
         compiled = flag_dnn.compile(
             flag_dnn_gen_index_graph,
             inputs=[flag_dnn.TensorSpec.from_tensor(x, "x")],
-            options={"cache": None},
+            options=consts.compile_options(),
         )
         assert [node.op_type for node in compiled.graph.nodes] == ["gen_index"]
 

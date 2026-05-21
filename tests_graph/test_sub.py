@@ -71,8 +71,8 @@ def _run_flag_dnn_sub_graph(x, y):
 def test_graph_sub_matches_cudnn_frontend(cudnn_handle, dtype, case):
     torch.manual_seed(0)
     x_shape, y_shape = case
-    x = torch.randn(x_shape, device=flag_dnn.device, dtype=dtype)
-    y = torch.randn(y_shape, device=flag_dnn.device, dtype=dtype)
+    x = consts.pointwise_randn(x_shape, dtype, flag_dnn.device)
+    y = consts.pointwise_randn(y_shape, dtype, flag_dnn.device)
 
     cudnn_out = _cudnn_sub(x, y, cudnn_handle)
     flag_dnn_out = _run_flag_dnn_sub_graph(x, y)

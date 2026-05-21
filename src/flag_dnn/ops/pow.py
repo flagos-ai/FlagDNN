@@ -13,7 +13,14 @@ from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
-from flag_dnn.ops.binary import collapse_dims, pad_to_max_dims
+from flag_dnn.ops.binary import (
+    can_use_flat_output,
+    collapse_dims,
+    empty_like_preserve_dense_layout,
+    has_same_dense_flat_layout,
+    is_dense_flat_tensor,
+    pad_to_max_dims,
+)
 from flag_dnn.utils.type_utils import (
     is_bool_dtype,
     is_integral_dtype,
@@ -218,17 +225,17 @@ def pow(
     input_is_tensor = isinstance(input, torch.Tensor)
     exp_is_tensor = isinstance(exponent, torch.Tensor)
 
-    if input_is_tensor and (
-        not input.is_contiguous()  # type: ignore[union-attr]
-    ):
-        assert False, "input must be contiguous."
-        input = input.contiguous()
+    if input_is_tensor and not is_dense_flat_tensor(input):
+        raise NotImplementedError(
+            "flag_dnn pow currently supports contiguous or NHWC "
+            "channels-last tensor input only"
+        )
 
-    if exp_is_tensor and (
-        not exponent.is_contiguous()  # type: ignore[union-attr]
-    ):
-        assert False, "exponent must be contiguous."
-        exponent = exponent.contiguous()
+    if exp_is_tensor and not is_dense_flat_tensor(exponent):
+        raise NotImplementedError(
+            "flag_dnn pow currently supports contiguous or NHWC "
+            "channels-last tensor exponent only"
+        )
 
     if not (input_is_tensor or exp_is_tensor):
         raise TypeError("At least one of input or exponent must be a Tensor")
@@ -267,9 +274,25 @@ def pow(
     ):
         out_dtype = torch.bool
 
+    flat_layout_source = None
+    if input_is_tensor and exp_is_tensor:
+        if has_same_dense_flat_layout(input, exponent):
+            flat_layout_source = input
+    elif input_is_tensor and is_dense_flat_tensor(input):
+        flat_layout_source = input
+    elif exp_is_tensor and is_dense_flat_tensor(exponent):
+        flat_layout_source = exponent
+
     # 输出内存分配
     if out is None:
-        out = torch.empty(out_shape, dtype=out_dtype, device=device)
+        if flat_layout_source is not None and tuple(out_shape) == tuple(
+            flat_layout_source.shape
+        ):
+            out = empty_like_preserve_dense_layout(
+                flat_layout_source, out_dtype
+            )
+        else:
+            out = torch.empty(out_shape, dtype=out_dtype, device=device)
     else:
         assert (
             out.shape == out_shape
@@ -287,13 +310,16 @@ def pow(
         if (
             input_is_tensor
             and exp_is_tensor
-            and (
-                input.shape  # type: ignore[union-attr]
-                == exponent.shape  # type: ignore[union-attr]
-            )
+            and has_same_dense_flat_layout(input, exponent)
+            and can_use_flat_output(out, input)
         ):
             pow_tensor_kernel[grid](input, exponent, out, n_elements)
         elif input_is_tensor and exp_is_tensor:
+            if not out.is_contiguous():
+                raise NotImplementedError(
+                    "flag_dnn pow broadcast currently requires contiguous "
+                    "out unless operands share a dense flat layout"
+                )
             input_exp = input.expand(out_shape)  # type: ignore[union-attr]
             exponent_exp = exponent.expand(  # type: ignore[union-attr]
                 out_shape
@@ -319,10 +345,20 @@ def pow(
                 *f_sy,  # 传入 sy0 到 sy5
             )
         elif input_is_tensor:
+            if not can_use_flat_output(out, input):
+                raise NotImplementedError(
+                    "flag_dnn pow scalar exponent currently requires input "
+                    "and out to share a dense flat layout"
+                )
             pow_scalar_exponent_kernel[grid](
                 input, out, n_elements, float(exponent)
             )
         else:
+            if not can_use_flat_output(out, exponent):
+                raise NotImplementedError(
+                    "flag_dnn pow scalar base currently requires exponent "
+                    "and out to share a dense flat layout"
+                )
             pow_scalar_base_kernel[grid](
                 exponent, out, n_elements, float(input)
             )

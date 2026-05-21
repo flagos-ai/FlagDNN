@@ -70,7 +70,12 @@ def execute_cudnn_graph(
     except (cudnn.cudnnGraphNotSupportedError, RuntimeError) as exc:
         skip_unsupported_cudnn_graph(exc, op_name)
 
-    output = torch.empty_like(output_template)
+    output = torch.empty_strided(
+        tuple(output_value.get_dim()),
+        tuple(output_value.get_stride()),
+        device=output_template.device,
+        dtype=output_template.dtype,
+    )
     workspace = torch.empty(
         graph.get_workspace_size(),
         device=output_template.device,
