@@ -15,7 +15,7 @@ export PYBUILD_NAME = flag_dnn
 override_dh_auto_test:
 	@echo "=== smoke find_spec test ==="
 	@found=0; \
-	for d in .pybuild/cpython3_*/build $(CURDIR)/src $(CURDIR); do \
+	for d in .pybuild/cpython3_*/build; do \
 	    if [ -d "$$d/flag_dnn" ]; then \
 	        echo "Found build dir: $$d"; \
 	        PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$$d" python3 -c \

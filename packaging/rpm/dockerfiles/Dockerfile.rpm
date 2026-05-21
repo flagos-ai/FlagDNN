@@ -14,9 +14,10 @@ COPY . /workspace/FlagDNN
 
 RUN SPEC_VERSION=$(grep '^Version:' /workspace/FlagDNN/packaging/rpm/specs/flag-dnn.spec | awk '{print $2}') && \
     tar czf /root/rpmbuild/SOURCES/flag-dnn-${SPEC_VERSION}.tar.gz \
-        -C /workspace \
-        --transform "s|^FlagDNN|flag-dnn-${SPEC_VERSION}|" \
-        FlagDNN
+        -C /workspace/FlagDNN \
+        --exclude='./.git' \
+        --transform "s|^\./|flag-dnn-${SPEC_VERSION}/|" \
+        .
 
 RUN rpmbuild -ba /workspace/FlagDNN/packaging/rpm/specs/flag-dnn.spec 2>&1 || \
     { echo "=== build failed ==="; \
