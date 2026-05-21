@@ -64,10 +64,7 @@ def transpose(
     if out is None:
         return result
 
-    if out.shape != result.shape:
-        raise RuntimeError(
-            f"transpose out shape {tuple(out.shape)} does not match result "
-            f"shape {tuple(result.shape)}"
-        )
-    out.copy_(result)
-    return out
+    raise NotImplementedError(
+        "flag_dnn transpose is a view-only graph utility; materialized "
+        "transpose(out=...) requires a dedicated Triton layout-copy kernel"
+    )

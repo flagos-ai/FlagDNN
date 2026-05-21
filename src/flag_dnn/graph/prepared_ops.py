@@ -5,10 +5,28 @@ from typing import Any, Callable, Optional, Sequence
 import torch
 
 from flag_dnn import runtime
-from flag_dnn.graph.device import has_runtime_device_tensor
+from flag_dnn.graph.device import is_runtime_device_tensor
 from flag_dnn.graph.tensor import TensorSpec
 
 RunFn = Callable[[Sequence[Any], dict[str, Any]], Any]
+
+
+def _require_runtime_backend(inputs: Sequence[Any], op_type: str) -> None:
+    tensor_inputs = [value for value in inputs if isinstance(value, torch.Tensor)]
+    if not tensor_inputs or not all(
+        is_runtime_device_tensor(value) for value in tensor_inputs
+    ):
+        raise NotImplementedError(
+            f"FlagDNN graph {op_type} requires runtime device tensors; "
+            "torch fallback is disabled"
+        )
+
+
+def _unsupported_triton_path(op_type: str, detail: str) -> None:
+    raise NotImplementedError(
+        f"FlagDNN graph {op_type} has no Triton path for {detail}; "
+        "torch fallback is disabled"
+    )
 
 
 def prepare_run_fn(
@@ -84,6 +102,7 @@ def _prepare_pointwise(
         from flag_dnn.ops.abs import abs as abs_op
 
         def run(inputs: Sequence[Any], _attrs: dict[str, Any]) -> Any:
+            _require_runtime_backend(inputs, "abs")
             return abs_op(inputs[0])
 
         return run
@@ -94,8 +113,25 @@ def _prepare_pointwise(
         name = attrs.get("name", "")
 
         def run(inputs: Sequence[Any], _attrs: dict[str, Any]) -> Any:
+            _require_runtime_backend(inputs, "sigmoid")
             return sigmoid(
                 inputs[0], compute_data_type=compute_data_type, name=name
+            )
+
+        return run
+    if op_type == "sigmoid_backward":
+        from flag_dnn.ops.sigmoid_backward import sigmoid_backward
+
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+
+        def run(inputs: Sequence[Any], _attrs: dict[str, Any]) -> Any:
+            _require_runtime_backend(inputs, "sigmoid_backward")
+            return sigmoid_backward(
+                inputs[0],
+                inputs[1],
+                compute_data_type=compute_data_type,
+                name=name,
             )
 
         return run
@@ -124,6 +160,7 @@ def _prepare_binary_pointwise(
     rounding_mode = attrs.get("rounding_mode")
 
     def run(inputs: Sequence[Any], _attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs, op_type)
         left, right = _pointwise_operands(inputs, attrs)
         if op_type == "add":
             if isinstance(left, torch.Tensor):
@@ -160,7 +197,7 @@ def _prepare_binary_pointwise(
                     left,
                     op_type=_POINTWISE_CMP_REVERSE[op_type],
                 )
-        return default_run_fn(inputs, attrs)
+        _unsupported_triton_path(op_type, "operand combination")
 
     return run
 
@@ -174,12 +211,13 @@ def _prepare_pow_pointwise(
     name = attrs.get("name", "")
 
     def run(inputs: Sequence[Any], _attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs, "pow")
         left, right = _pointwise_operands(inputs, attrs)
         if isinstance(left, torch.Tensor) or isinstance(right, torch.Tensor):
             return pow_op(
                 left, right, compute_data_type=compute_data_type, name=name
             )
-        return default_run_fn(inputs, attrs)
+        _unsupported_triton_path("pow", "two scalar operands")
 
     return run
 
@@ -211,47 +249,28 @@ def _prepare_conv_fprop(
         attrs.get("pre_padding"),
         attrs.get("post_padding"),
     )
-    runtime_specs = all(
-        _is_runtime_device_spec(spec) for spec in input_specs[:2]
-    )
-
     if rank == 1:
         stride_arg = stride[0]
         dilation_arg = dilation[0]
 
         def run(inputs: Sequence[Any], _attrs: dict[str, Any]) -> Any:
-            if runtime_specs or has_runtime_device_tensor(inputs):
-                return conv1d(
-                    inputs[0],
-                    inputs[1],
-                    stride=stride_arg,
-                    padding=padding,
-                    dilation=dilation_arg,
-                    groups=groups,
-                )
-            return default_run_fn(inputs, attrs)
+            _require_runtime_backend(inputs, "conv_fprop")
+            return conv1d(
+                inputs[0],
+                inputs[1],
+                stride=stride_arg,
+                padding=padding,
+                dilation=dilation_arg,
+                groups=groups,
+            )
 
         return run
 
     if rank == 2:
 
         def run(inputs: Sequence[Any], _attrs: dict[str, Any]) -> Any:
-            if runtime_specs or has_runtime_device_tensor(inputs):
-                return conv2d(
-                    inputs[0],
-                    inputs[1],
-                    stride=stride,
-                    padding=padding,
-                    dilation=dilation,
-                    groups=groups,
-                )
-            return default_run_fn(inputs, attrs)
-
-        return run
-
-    def run(inputs: Sequence[Any], _attrs: dict[str, Any]) -> Any:
-        if runtime_specs or has_runtime_device_tensor(inputs):
-            return conv3d(
+            _require_runtime_backend(inputs, "conv_fprop")
+            return conv2d(
                 inputs[0],
                 inputs[1],
                 stride=stride,
@@ -259,7 +278,19 @@ def _prepare_conv_fprop(
                 dilation=dilation,
                 groups=groups,
             )
-        return default_run_fn(inputs, attrs)
+
+        return run
+
+    def run(inputs: Sequence[Any], _attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs, "conv_fprop")
+        return conv3d(
+            inputs[0],
+            inputs[1],
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            groups=groups,
+        )
 
     return run
 

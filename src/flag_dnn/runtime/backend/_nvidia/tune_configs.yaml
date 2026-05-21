@@ -1267,6 +1267,25 @@ sigmoid:
     stages:
       - 1
       - 2
+sigmoid_backward:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 2
+      - 4
+      - 8
+    stages:
+      - 1
+      - 2
 logsigmoid:
   - gen: true
     param_map:

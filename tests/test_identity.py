@@ -42,8 +42,7 @@ def test_accuracy_identity(dtype, shape):
 
     assert out.dtype == inp.dtype
     assert out.shape == inp.shape
-    if inp.numel() > 0:
-        assert out.data_ptr() != inp.data_ptr()
+    assert out.data_ptr() == inp.data_ptr()
     utils.gems_assert_equal(out, ref)
 
 
@@ -76,6 +75,5 @@ def test_graph_identity_capture_and_run():
     assert compiled.graph.nodes[0].attrs["name"] == "identity"
 
     out = compiled.run(x)
-    if x.numel() > 0:
-        assert out.data_ptr() != x.data_ptr()
+    assert out.data_ptr() == x.data_ptr()
     utils.gems_assert_equal(out, x)

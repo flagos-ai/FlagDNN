@@ -44,6 +44,7 @@ GRAPH_AWARE_OPS = (
     "neg",
     "tanh",
     "sigmoid",
+    "sigmoid_backward",
     "silu",
 )
 
@@ -86,7 +87,9 @@ def eager_bias_add(input: torch.Tensor, bias: torch.Tensor) -> torch.Tensor:
         shape = [1] * input.dim()
         shape[1] = bias.numel()
         bias = bias.reshape(shape)
-    return input + bias
+    from flag_dnn.ops.add import add
+
+    return add(input, bias)
 
 
 def _contains_graph_tensor(value: Any) -> bool:

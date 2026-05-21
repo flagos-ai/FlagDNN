@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 import flag_dnn
@@ -25,27 +26,30 @@ def test_graph_capture_fuses_bias_relu_and_eliminates_dead_node():
     assert compiled.plan.debug_info["fusion"]["bias_activation_fused"] == 1
 
 
-def test_graph_executor_cpu_fallback_matches_torch():
+def test_graph_executor_rejects_cpu_without_torch_fallback():
     @flag_dnn.graph
     def fn(x, bias):
         return flag_dnn.relu(flag_dnn.bias_add(x, bias))
 
     x = torch.randn(2, 3, 4)
     bias = torch.randn(3)
-    compiled = flag_dnn.compile(fn, inputs=[x, bias], options={"cache": None})
-
-    out = compiled.run(x, bias)
-    ref = torch.relu(x + bias.reshape(1, 3, 1))
-    torch.testing.assert_close(out, ref)
+    with pytest.raises(RuntimeError, match="no execution candidates"):
+        flag_dnn.compile(fn, inputs=[x, bias], options={"cache": None})
 
 
+def test_graph_torch_backend_is_not_available():
+    with pytest.raises(ValueError, match="no longer supports torch fallback"):
+        flag_dnn.resolve_backend("torch")
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_graph_operator_overload_capture():
     @flag_dnn.graph
     def fn(x, y):
         return flag_dnn.relu(x + y)
 
-    x = torch.randn(4, 5)
-    y = torch.randn(4, 5)
+    x = torch.randn(4, 5, device=flag_dnn.device)
+    y = torch.randn(4, 5, device=flag_dnn.device)
     compiled = flag_dnn.compile(fn, inputs=[x, y], options={"cache": None})
 
     op_types = [node.op_type for node in compiled.graph.nodes]
@@ -101,23 +105,22 @@ def test_graph_memory_plan_cache_hit():
     assert second.plan.debug_info["cache_layer"] == "memory"
 
 
-def test_graph_autotune_framework_records_candidates_on_cpu():
+def test_graph_autotune_rejects_cpu_without_torch_fallback():
     @flag_dnn.graph
     def fn(x, bias):
         return flag_dnn.relu(flag_dnn.bias_add(x, bias))
 
     x = torch.randn(2, 3)
     bias = torch.randn(3)
-    compiled = flag_dnn.compile(
-        fn,
-        inputs=[x, bias],
-        options={"cache": None, "autotune": True, "autotune_repeat": 1},
-    )
+    with pytest.raises(RuntimeError, match="no execution candidates"):
+        flag_dnn.compile(
+            fn,
+            inputs=[x, bias],
+            options={"cache": None, "autotune": True, "autotune_repeat": 1},
+        )
 
-    assert "autotune" in compiled.plan.debug_info
-    assert compiled.plan.debug_info["autotune"]["enabled"] is True
-    assert compiled.plan.debug_info["candidate_count"] >= 1
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_graph_ops_namespace_add_capture():
     @flag_dnn.graph
     def fn(x, y):
@@ -128,14 +131,16 @@ def test_graph_ops_namespace_add_capture():
             name="add",
         )
 
-    x = torch.randn(4, 5)
-    y = torch.randn(4, 5)
+    x = torch.randn(4, 5, device=flag_dnn.device)
+    y = torch.randn(4, 5, device=flag_dnn.device)
     compiled = flag_dnn.compile(fn, inputs=[x, y], options={"cache": None})
 
     assert [node.op_type for node in compiled.graph.nodes] == ["add"]
     assert compiled.graph.nodes[0].attrs["name"] == "add"
     torch.testing.assert_close(compiled(x, y), x + y)
 
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_graph_ops_namespace_sub_capture():
     @flag_dnn.graph
     def fn(x, y):
@@ -146,8 +151,8 @@ def test_graph_ops_namespace_sub_capture():
             name="sub",
         )
 
-    x = torch.randn(4, 5)
-    y = torch.randn(4, 5)
+    x = torch.randn(4, 5, device=flag_dnn.device)
+    y = torch.randn(4, 5, device=flag_dnn.device)
     compiled = flag_dnn.compile(fn, inputs=[x, y], options={"cache": None})
 
     assert [node.op_type for node in compiled.graph.nodes] == ["sub"]

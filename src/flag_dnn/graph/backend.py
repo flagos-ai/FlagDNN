@@ -73,16 +73,6 @@ class GraphBackend:
         ]
 
 
-class TorchFallbackBackend(GraphBackend):
-    name = "torch"
-
-    def capability(self) -> BackendCapability:
-        return BackendCapability(
-            name=self.name,
-            supports_autotune=True,
-            notes=("CPU/CUDA semantic fallback backend",),
-        )
-
 
 class TritonCudaBackend(GraphBackend):
     name = "triton_cuda"
@@ -122,7 +112,6 @@ class TritonCudaBackend(GraphBackend):
                     constraints={
                         "groups": 1,
                         "activation": "relu",
-                        "fallback": "composite_if_unsupported",
                     },
                     configs=(
                         {
@@ -133,20 +122,6 @@ class TritonCudaBackend(GraphBackend):
                         },
                     ),
                 ),
-                KernelCandidate(
-                    name="fused_conv2d_bias_relu.composite",
-                    backend=self.name,
-                    op_type=node.op_type,
-                    implementation="composite",
-                    priority=50,
-                    supported_dtypes=(
-                        "float16",
-                        "bfloat16",
-                        "float32",
-                        "float64",
-                    ),
-                    constraints={"fallback": "conv2d_bias_then_activation"},
-                ),
             ]
         return super().candidates_for_node(node, graph, input_specs)
 
@@ -155,10 +130,7 @@ class AutoBackend(GraphBackend):
     name = "auto"
 
     def __init__(self) -> None:
-        self.backends: tuple[GraphBackend, ...] = (
-            TritonCudaBackend(),
-            TorchFallbackBackend(),
-        )
+        self.backends: tuple[GraphBackend, ...] = (TritonCudaBackend(),)
 
     def is_available(self) -> bool:
         return any(backend.is_available() for backend in self.backends)
@@ -179,8 +151,6 @@ class AutoBackend(GraphBackend):
     ) -> list[KernelCandidate]:
         candidates: list[KernelCandidate] = []
         for backend in self.backends:
-            if isinstance(backend, TorchFallbackBackend) and candidates:
-                continue
             if not backend.supports(graph, input_specs):
                 continue
             candidates.extend(
@@ -196,5 +166,5 @@ def resolve_backend(name: str) -> GraphBackend:
     if name in ("triton_cuda", "cuda", "triton"):
         return TritonCudaBackend()
     if name == "torch":
-        return TorchFallbackBackend()
-    return TorchFallbackBackend()
+        raise ValueError("FlagDNN graph no longer supports torch fallback")
+    raise ValueError(f"unsupported FlagDNN graph backend: {name}")

@@ -2,6 +2,8 @@ from typing import Any, Optional
 
 import torch
 
+from flag_dnn.ops.identity import _copy_dense_flat
+
 
 def _normalize_shape(shape: Any) -> tuple[int, ...]:
     if shape is None:
@@ -13,6 +15,17 @@ def _normalize_shape(shape: Any) -> tuple[int, ...]:
     return tuple(int(dim) for dim in shape)
 
 
+def _view_only(input: torch.Tensor, shape: Any) -> torch.Tensor:
+    target_shape = _normalize_shape(shape)
+    try:
+        return input.view(target_shape)
+    except RuntimeError as exc:
+        raise NotImplementedError(
+            "flag_dnn reshape is a view-only graph utility; materializing "
+            "non-view reshapes is not enabled"
+        ) from exc
+
+
 def reshape(
     input: torch.Tensor,
     shape: Any,
@@ -21,14 +34,15 @@ def reshape(
     name: str = "",
     reshape_mode: Any = "VIEW_ONLY",
 ) -> torch.Tensor:
-    """Reshape ``input`` to ``shape``.
+    """Reshape ``input`` as a graph utility view.
 
-    ``name`` and ``reshape_mode`` are accepted for cuDNN Frontend style graph
-    compatibility. Eager execution follows ``torch.reshape`` semantics.
+    The no-``out`` path is intentionally view-only.  It does not use torch's
+    materializing ``reshape`` fallback.  ``out`` requests materialization and is
+    limited to dense contiguous views copied by a Triton kernel.
     """
     del name, reshape_mode
 
-    result = torch.reshape(input, _normalize_shape(shape))
+    result = _view_only(input, shape)
     if out is None:
         return result
 
@@ -37,5 +51,9 @@ def reshape(
             f"reshape out shape {tuple(out.shape)} does not match result "
             f"shape {tuple(result.shape)}"
         )
-    out.copy_(result)
-    return out
+    if out.dtype != result.dtype:
+        raise RuntimeError(
+            f"reshape out dtype {out.dtype} does not match result dtype "
+            f"{result.dtype}"
+        )
+    return _copy_dense_flat(result, out)

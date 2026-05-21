@@ -65,10 +65,7 @@ def slice(
     if out is None:
         return result
 
-    if out.shape != result.shape:
-        raise RuntimeError(
-            f"slice out shape {tuple(out.shape)} does not match result "
-            f"shape {tuple(result.shape)}"
-        )
-    out.copy_(result)
-    return out
+    raise NotImplementedError(
+        "flag_dnn slice is a view-only graph utility; materialized "
+        "slice(out=...) requires a dedicated Triton strided-copy kernel"
+    )

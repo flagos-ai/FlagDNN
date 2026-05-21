@@ -4,7 +4,7 @@ import copy
 import hashlib
 from typing import Any, Optional
 
-from flag_dnn.graph.backend import KernelCandidate, resolve_backend
+from flag_dnn.graph.backend import resolve_backend
 from flag_dnn.graph.graph import Graph
 from flag_dnn.graph.memory import allocate_memory
 from flag_dnn.graph.plan import ExecutionPlan, ExecutionStep
@@ -30,15 +30,6 @@ class KernelSelector:
             node_candidates = self.backend.candidates_for_node(
                 node, graph, input_specs
             )
-            if not node_candidates:
-                node_candidates = [
-                    KernelCandidate(
-                        name=node.op_type,
-                        backend=self.backend.name,
-                        op_type=node.op_type,
-                        implementation="default",
-                    )
-                ]
             per_node_candidates.append((node, node_candidates))
 
         plans = []

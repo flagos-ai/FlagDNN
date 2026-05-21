@@ -9,8 +9,7 @@ def apply_fusion_pass(graph: Graph) -> Graph:
 
     Long patterns are matched first so short rewrites do not destroy a better
     candidate.  The graph IR can now represent conv2d+bias+relu as one fused
-    node; planner/backend selection decides whether it runs through a native
-    Triton fused kernel or a composite fallback.
+    node; planner/backend selection must choose a native FlagDNN Triton path.
     """
 
     stats = graph.attrs.setdefault("fusion", {})

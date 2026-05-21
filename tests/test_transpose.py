@@ -58,10 +58,8 @@ def test_transpose_dim_swap_and_out_argument():
     inp = torch.randn((2, 3, 4), device=flag_dnn.device)
     out = torch.empty((4, 3, 2), device=flag_dnn.device)
 
-    result = flag_dnn.transpose(inp, 0, 2, out=out)
-
-    assert result is out
-    utils.gems_assert_equal(out, torch.transpose(inp, 0, 2))
+    with pytest.raises(NotImplementedError, match="view-only graph utility"):
+        flag_dnn.transpose(inp, 0, 2, out=out)
 
 
 @pytest.mark.transpose

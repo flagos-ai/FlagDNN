@@ -77,6 +77,7 @@ TARGET_OPERATORS = [
     "embedding",
     "conv1d",
     "conv2d",
+    "conv3d",
 ]
 
 TEST_DIR = "tests"  # 测试文件所在目录

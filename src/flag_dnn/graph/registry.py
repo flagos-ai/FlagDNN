@@ -5,7 +5,7 @@ from typing import Any, Callable, Optional
 
 import torch
 
-from flag_dnn.graph.device import has_runtime_device_tensor
+from flag_dnn.graph.device import is_runtime_device_tensor
 from flag_dnn.graph.tensor import (
     TensorSpec,
     canonical_dtype,
@@ -778,6 +778,66 @@ def _normalize_unary(
     return normalize
 
 
+def _normalize_activation_backward(op_type: str) -> NormalizeFn:
+    def normalize(ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]):
+        if len(args) > 2:
+            raise TypeError(f"{op_type} expects at most two positional args")
+        params = dict(kwargs)
+        if "out" in params and params["out"] is not None:
+            raise NotImplementedError(
+                "FlagDNN graph does not support out tensors"
+            )
+        params.pop("out", None)
+        loss = args[0] if args else params.pop("loss", None)
+        if loss is None:
+            raise TypeError(f"{op_type} missing loss tensor")
+        if len(args) >= 2:
+            x = args[1]
+        else:
+            x = params.pop("input", None)
+        if x is None:
+            raise TypeError(f"{op_type} missing input tensor")
+        attrs = {
+            "compute_data_type": params.pop("compute_data_type", None),
+            "name": params.pop("name", ""),
+        }
+        if params:
+            raise TypeError(
+                f"{op_type} got unsupported graph attrs: {sorted(params)}"
+            )
+        return [
+            ctx.as_value(loss, name_hint="loss"),
+            ctx.as_value(x, name_hint="input"),
+        ], attrs
+
+    return normalize
+
+
+def _activation_backward_shape(
+    input_specs: list[TensorSpec], attrs: dict[str, Any]
+) -> list[TensorSpec]:
+    loss, x = input_specs[0], input_specs[1]
+    if loss.shape != x.shape:
+        raise RuntimeError(
+            "graph activation backward expects loss and input to have the "
+            f"same shape, got {loss.shape} and {x.shape}"
+        )
+    return [
+        TensorSpec(
+            name="",
+            shape=x.shape,
+            dtype=canonical_dtype(
+                torch.result_type(
+                    torch.empty((), dtype=torch_dtype(loss.dtype)),
+                    torch.empty((), dtype=torch_dtype(x.dtype)),
+                )
+            ),
+            layout=x.layout,
+            device=x.device,
+        )
+    ]
+
+
 _CMP_ALIAS_TO_OP = {
     "cmp_eq": "eq",
     "cmp_neq": "ne",
@@ -1224,29 +1284,35 @@ def _format_bias(
     return bias
 
 
-def _run_bias_add(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
-    x, bias = inputs
-    return x + _format_bias(x, bias)
+def _runtime_backend_available(inputs: list[Any]) -> bool:
+    tensor_inputs = [value for value in inputs if isinstance(value, torch.Tensor)]
+    return bool(tensor_inputs) and all(
+        is_runtime_device_tensor(value) for value in tensor_inputs
+    )
 
 
-def _torch_maximum(left: Any, right: Any) -> Any:
-    if isinstance(left, torch.Tensor) and isinstance(right, torch.Tensor):
-        return torch.maximum(left, right)
-    if isinstance(left, torch.Tensor):
-        other = torch.as_tensor(
-            right,
-            dtype=torch.result_type(left, right),
-            device=left.device,
+def _require_runtime_backend(inputs: list[Any], op_type: str) -> None:
+    if not _runtime_backend_available(inputs):
+        raise NotImplementedError(
+            f"FlagDNN graph {op_type} requires runtime device tensors; "
+            "torch fallback is disabled"
         )
-        return torch.maximum(left, other)
-    if isinstance(right, torch.Tensor):
-        other = torch.as_tensor(
-            left,
-            dtype=torch.result_type(left, right),
-            device=right.device,
-        )
-        return torch.maximum(other, right)
-    return left if left >= right else right
+
+
+def _unsupported_triton_path(op_type: str, detail: str) -> None:
+    raise NotImplementedError(
+        f"FlagDNN graph {op_type} has no Triton path for {detail}; "
+        "torch fallback is disabled"
+    )
+
+
+def _run_bias_add(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "bias_add")
+        x, bias = inputs
+        return flag_ops.add(x, _format_bias(x, bias))
+
+    return run
 
 
 def _binary_operands(
@@ -1282,21 +1348,22 @@ def _run_binary(flag_ops: Any, op_type: str) -> RunFn:
 
 def _run_binary_add(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "add")
         left, right = _binary_operands(inputs, attrs)
         alpha = attrs.get("alpha", 1)
         compute_data_type = attrs.get("compute_data_type")
         name = attrs.get("name", "")
-        if _runtime_backend_available(inputs):
-            if not isinstance(left, torch.Tensor) and isinstance(
-                right, torch.Tensor
-            ):
-                return flag_ops.add(
-                    right,
-                    left,
-                    alpha=alpha,
-                    compute_data_type=compute_data_type,
-                    name=name,
-                )
+        if not isinstance(left, torch.Tensor) and isinstance(
+            right, torch.Tensor
+        ):
+            return flag_ops.add(
+                right,
+                left,
+                alpha=alpha,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        if isinstance(left, torch.Tensor):
             return flag_ops.add(
                 left,
                 right,
@@ -1304,18 +1371,19 @@ def _run_binary_add(flag_ops: Any) -> RunFn:
                 compute_data_type=compute_data_type,
                 name=name,
             )
-        return torch.add(left, right, alpha=alpha)
+        _unsupported_triton_path("add", "two scalar operands")
 
     return run
 
 
 def _run_binary_sub(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "sub")
         left, right = _binary_operands(inputs, attrs)
         alpha = attrs.get("alpha", 1)
         compute_data_type = attrs.get("compute_data_type")
         name = attrs.get("name", "")
-        if _runtime_backend_available(inputs) and isinstance(left, torch.Tensor):
+        if isinstance(left, torch.Tensor):
             return flag_ops.sub(
                 left,
                 right,
@@ -1323,45 +1391,46 @@ def _run_binary_sub(flag_ops: Any) -> RunFn:
                 compute_data_type=compute_data_type,
                 name=name,
             )
-        return torch.sub(left, right, alpha=alpha)
+        _unsupported_triton_path("sub", "scalar left operand")
 
     return run
 
 
 def _run_binary_mul(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "mul")
         left, right = _binary_operands(inputs, attrs)
         compute_data_type = attrs.get("compute_data_type")
         name = attrs.get("name", "")
-        if _runtime_backend_available(inputs):
-            if not isinstance(left, torch.Tensor) and isinstance(
-                right, torch.Tensor
-            ):
-                return flag_ops.mul(
-                    right,
-                    left,
-                    compute_data_type=compute_data_type,
-                    name=name,
-                )
-            if isinstance(left, torch.Tensor):
-                return flag_ops.mul(
-                    left,
-                    right,
-                    compute_data_type=compute_data_type,
-                    name=name,
-                )
-        return torch.mul(left, right)
+        if not isinstance(left, torch.Tensor) and isinstance(
+            right, torch.Tensor
+        ):
+            return flag_ops.mul(
+                right,
+                left,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        if isinstance(left, torch.Tensor):
+            return flag_ops.mul(
+                left,
+                right,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path("mul", "two scalar operands")
 
     return run
 
 
 def _run_binary_div(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "div")
         left, right = _binary_operands(inputs, attrs)
         rounding_mode = attrs.get("rounding_mode")
         compute_data_type = attrs.get("compute_data_type")
         name = attrs.get("name", "")
-        if _runtime_backend_available(inputs) and isinstance(left, torch.Tensor):
+        if isinstance(left, torch.Tensor):
             return flag_ops.div(
                 left,
                 right,
@@ -1369,59 +1438,57 @@ def _run_binary_div(flag_ops: Any) -> RunFn:
                 compute_data_type=compute_data_type,
                 name=name,
             )
-        return torch.div(left, right, rounding_mode=rounding_mode)
+        _unsupported_triton_path("div", "scalar left operand")
 
     return run
 
 
 def _run_binary_pow(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "pow")
         left, right = _binary_operands(inputs, attrs)
         compute_data_type = attrs.get("compute_data_type")
         name = attrs.get("name", "")
-        if _runtime_backend_available(inputs) and (
-            isinstance(left, torch.Tensor) or isinstance(right, torch.Tensor)
-        ):
+        if isinstance(left, torch.Tensor) or isinstance(right, torch.Tensor):
             return flag_ops.pow(
                 left,
                 right,
                 compute_data_type=compute_data_type,
                 name=name,
             )
-        return torch.pow(left, right)
+        _unsupported_triton_path("pow", "two scalar operands")
 
     return run
 
 
 def _run_binary_max(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "max")
         left, right = _binary_operands(inputs, attrs)
         compute_data_type = attrs.get("compute_data_type")
         name = attrs.get("name", "")
-        if _runtime_backend_available(inputs):
-            if not isinstance(left, torch.Tensor) and isinstance(
-                right, torch.Tensor
-            ):
-                return flag_ops.max(
-                    right,
-                    left,
-                    compute_data_type=compute_data_type,
-                    name=name,
-                )
-            if isinstance(left, torch.Tensor):
-                return flag_ops.max(
-                    left,
-                    right,
-                    compute_data_type=compute_data_type,
-                    name=name,
-                )
-        return _torch_maximum(left, right)
+        if not isinstance(left, torch.Tensor) and isinstance(
+            right, torch.Tensor
+        ):
+            return flag_ops.max(
+                right,
+                left,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        if isinstance(left, torch.Tensor):
+            return flag_ops.max(
+                left,
+                right,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path("max", "two scalar operands")
 
     return run
 
 
 def _run_binary_cmp(flag_ops: Any, op_type: str) -> RunFn:
-    torch_fn = getattr(torch, op_type)
     flag_fn = getattr(flag_ops, op_type)
     reverse_op = {
         "eq": "eq",
@@ -1434,80 +1501,85 @@ def _run_binary_cmp(flag_ops: Any, op_type: str) -> RunFn:
     reverse_flag_fn = getattr(flag_ops, reverse_op)
 
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, op_type)
         left, right = _binary_operands(inputs, attrs)
         compute_data_type = attrs.get("compute_data_type")
         name = attrs.get("name", "")
-        if _runtime_backend_available(inputs):
-            if isinstance(left, torch.Tensor):
-                return flag_fn(
-                    left,
-                    right,
-                    compute_data_type=compute_data_type,
-                    name=name,
-                )
-            if isinstance(right, torch.Tensor):
-                return reverse_flag_fn(
-                    right,
-                    left,
-                    compute_data_type=compute_data_type,
-                    name=name,
-                )
-        return torch_fn(left, right)
+        if isinstance(left, torch.Tensor):
+            return flag_fn(
+                left,
+                right,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        if isinstance(right, torch.Tensor):
+            return reverse_flag_fn(
+                right,
+                left,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path(op_type, "two scalar operands")
 
     return run
 
 
-def _runtime_backend_available(inputs: list[Any]) -> bool:
-    return has_runtime_device_tensor(inputs)
-
-
 def _run_relu(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
-        x = inputs[0]
-        if _runtime_backend_available(inputs):
-            return flag_ops.relu(x, inplace=attrs.get("inplace", False))
-        return torch.nn.functional.relu(x, inplace=attrs.get("inplace", False))
+        _require_runtime_backend(inputs, "relu")
+        return flag_ops.relu(inputs[0], inplace=attrs.get("inplace", False))
 
     return run
 
 
 def _run_gelu(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
-        x = inputs[0]
-        approximate = attrs.get("approximate", "none")
-        if _runtime_backend_available(inputs):
-            return flag_ops.gelu(x, approximate=approximate)
-        return torch.nn.functional.gelu(x, approximate=approximate)
+        _require_runtime_backend(inputs, "gelu")
+        return flag_ops.gelu(
+            inputs[0], approximate=attrs.get("approximate", "none")
+        )
 
     return run
 
 
-def _run_unary_torch(torch_fn: Callable[[Any], Any]) -> RunFn:
+def _run_unary_flag(flag_ops: Any, op_type: str) -> RunFn:
+    flag_fn = getattr(flag_ops, op_type)
+
     def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
-        return torch_fn(inputs[0])
+        _require_runtime_backend(inputs, op_type)
+        return flag_fn(inputs[0])
 
     return run
 
 
 def _run_abs(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
-        if _runtime_backend_available(inputs):
-            return flag_ops.abs(inputs[0])
-        return torch.abs(inputs[0])
+        _require_runtime_backend(inputs, "abs")
+        return flag_ops.abs(inputs[0])
 
     return run
 
 
 def _run_sigmoid(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
-        if _runtime_backend_available(inputs):
-            return flag_ops.sigmoid(
-                inputs[0],
-                compute_data_type=attrs.get("compute_data_type"),
-                name=attrs.get("name", ""),
-            )
-        raise NotImplementedError(
-            "FlagDNN graph sigmoid requires runtime device input"
+        _require_runtime_backend(inputs, "sigmoid")
+        return flag_ops.sigmoid(
+            inputs[0],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_sigmoid_backward(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "sigmoid_backward")
+        return flag_ops.sigmoid_backward(
+            inputs[0],
+            inputs[1],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
         )
 
     return run
@@ -1515,6 +1587,7 @@ def _run_sigmoid(flag_ops: Any) -> RunFn:
 
 def _run_identity(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "identity")
         return flag_ops.identity(
             inputs[0],
             compute_data_type=attrs.get("compute_data_type"),
@@ -1526,6 +1599,7 @@ def _run_identity(flag_ops: Any) -> RunFn:
 
 def _run_reshape(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "reshape")
         return flag_ops.reshape(
             inputs[0],
             attrs["shape"],
@@ -1538,6 +1612,7 @@ def _run_reshape(flag_ops: Any) -> RunFn:
 
 def _run_transpose(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "transpose")
         return flag_ops.transpose(
             inputs[0],
             attrs["permutation"],
@@ -1550,6 +1625,7 @@ def _run_transpose(flag_ops: Any) -> RunFn:
 
 def _run_slice(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "slice")
         return flag_ops.slice(
             inputs[0],
             attrs.get("slices", ()),
@@ -1562,6 +1638,7 @@ def _run_slice(flag_ops: Any) -> RunFn:
 
 def _run_concatenate(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "concatenate")
         return flag_ops.concatenate(
             inputs,
             attrs["axis"],
@@ -1574,6 +1651,7 @@ def _run_concatenate(flag_ops: Any) -> RunFn:
 
 def _run_gen_index(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "gen_index")
         return flag_ops.gen_index(
             inputs[0],
             attrs["axis"],
@@ -1586,19 +1664,10 @@ def _run_gen_index(flag_ops: Any) -> RunFn:
 
 def _run_conv2d(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "conv2d")
         bias = inputs[2] if len(inputs) > 2 else None
         op_attrs = _public_attrs(attrs)
-        if _runtime_backend_available(inputs):
-            return flag_ops.conv2d(
-                inputs[0],
-                inputs[1],
-                bias=bias,
-                stride=op_attrs.get("stride", 1),
-                padding=op_attrs.get("padding", 0),
-                dilation=op_attrs.get("dilation", 1),
-                groups=op_attrs.get("groups", 1),
-            )
-        return torch.nn.functional.conv2d(
+        return flag_ops.conv2d(
             inputs[0],
             inputs[1],
             bias=bias,
@@ -1611,161 +1680,85 @@ def _run_conv2d(flag_ops: Any) -> RunFn:
     return run
 
 
-def _torch_conv_fprop(
-    image: torch.Tensor, weight: torch.Tensor, attrs: dict[str, Any]
-) -> torch.Tensor:
-    rank = _conv_spatial_rank_from_values(image, weight, "conv_fprop")
-    _normalize_convolution_mode(attrs.get("convolution_mode"))
-    stride = _tuple_n(attrs.get("stride", 1), rank, "stride")
-    dilation = _tuple_n(attrs.get("dilation", 1), rank, "dilation")
-    groups = int(attrs.get("groups", 1))
-    padding = attrs.get("padding")
-    pre_padding = attrs.get("pre_padding")
-    post_padding = attrs.get("post_padding")
-    pad_for_conv: Any = 0
-    explicit_pad = None
-
-    if pre_padding is not None or post_padding is not None:
-        if pre_padding is None or post_padding is None:
-            raise TypeError(
-                "conv_fprop requires both pre_padding and post_padding"
-            )
-        pre = _tuple_n(pre_padding, rank, "pre_padding")
-        post = _tuple_n(post_padding, rank, "post_padding")
-        if pre == post:
-            pad_for_conv = pre[0] if rank == 1 else pre
-        elif rank == 1:
-            explicit_pad = (pre[0], post[0])
-        elif rank == 2:
-            explicit_pad = (pre[1], post[1], pre[0], post[0])
-        else:
-            explicit_pad = (
-                pre[2],
-                post[2],
-                pre[1],
-                post[1],
-                pre[0],
-                post[0],
-            )
-    elif padding is None:
-        pad_for_conv = 0
-    elif isinstance(padding, str):
-        pad_for_conv = padding
-    else:
-        normalized = _tuple_n(padding, rank, "padding")
-        pad_for_conv = normalized[0] if rank == 1 else normalized
-
-    if explicit_pad is not None:
-        image = torch.nn.functional.pad(image, explicit_pad)
-    if rank == 1:
-        return torch.nn.functional.conv1d(
-            image,
-            weight,
-            stride=stride,
-            padding=pad_for_conv,
-            dilation=dilation,
-            groups=groups,
-        )
-    if rank == 2:
-        return torch.nn.functional.conv2d(
-            image,
-            weight,
-            stride=stride,
-            padding=pad_for_conv,
-            dilation=dilation,
-            groups=groups,
-        )
-    return torch.nn.functional.conv3d(
-        image,
-        weight,
-        stride=stride,
-        padding=pad_for_conv,
-        dilation=dilation,
-        groups=groups,
-    )
-
-
 def _run_conv_fprop(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "conv_fprop")
         op_attrs = _public_attrs(attrs)
-        if _runtime_backend_available(inputs):
-            return flag_ops.conv_fprop(
-                inputs[0],
-                inputs[1],
-                padding=op_attrs.get("padding"),
-                pre_padding=op_attrs.get("pre_padding"),
-                post_padding=op_attrs.get("post_padding"),
-                stride=op_attrs.get("stride", 1),
-                dilation=op_attrs.get("dilation", 1),
-                convolution_mode=op_attrs.get(
-                    "convolution_mode", "CROSS_CORRELATION"
-                ),
-                compute_data_type=op_attrs.get("compute_data_type"),
-                name=op_attrs.get("name", ""),
-                groups=op_attrs.get("groups", 1),
-            )
-        return _torch_conv_fprop(inputs[0], inputs[1], op_attrs)
+        return flag_ops.conv_fprop(
+            inputs[0],
+            inputs[1],
+            padding=op_attrs.get("padding"),
+            pre_padding=op_attrs.get("pre_padding"),
+            post_padding=op_attrs.get("post_padding"),
+            stride=op_attrs.get("stride", 1),
+            dilation=op_attrs.get("dilation", 1),
+            convolution_mode=op_attrs.get(
+                "convolution_mode", "CROSS_CORRELATION"
+            ),
+            compute_data_type=op_attrs.get("compute_data_type"),
+            name=op_attrs.get("name", ""),
+            groups=op_attrs.get("groups", 1),
+        )
 
     return run
 
 
 def _run_mm(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
-        if _runtime_backend_available(inputs):
-            out_dtype = attrs.get("out_dtype")
-            return flag_ops.mm(
-                inputs[0],
-                inputs[1],
-                out_dtype=torch_dtype(out_dtype) if out_dtype else None,
-            )
-        out = torch.mm(inputs[0], inputs[1])
+        _require_runtime_backend(inputs, "mm")
         out_dtype = attrs.get("out_dtype")
-        if out_dtype:
-            out = out.to(torch_dtype(out_dtype))
-        return out
+        return flag_ops.mm(
+            inputs[0],
+            inputs[1],
+            out_dtype=torch_dtype(out_dtype) if out_dtype else None,
+        )
 
     return run
 
 
-def _run_fused_bias_relu(
-    inputs: list[Any], attrs: dict[str, Any]
-) -> torch.Tensor:
-    return torch.nn.functional.relu(_run_bias_add(inputs, attrs))
+def _run_fused_bias_relu(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "fused_bias_relu")
+        x, bias = inputs
+        y = flag_ops.add(x, _format_bias(x, bias))
+        return flag_ops.relu(y)
+
+    return run
 
 
-def _run_fused_bias_gelu(
-    inputs: list[Any], attrs: dict[str, Any]
-) -> torch.Tensor:
-    approximate = attrs.get("approximate", "none")
-    return torch.nn.functional.gelu(
-        _run_bias_add(inputs, attrs), approximate=approximate
-    )
+def _run_fused_bias_gelu(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "fused_bias_gelu")
+        x, bias = inputs
+        y = flag_ops.add(x, _format_bias(x, bias))
+        return flag_ops.gelu(
+            y, approximate=attrs.get("approximate", "none")
+        )
+
+    return run
 
 
 def _run_fused_conv2d_bias_relu(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
-        op_attrs = _public_attrs(attrs)
+        _require_runtime_backend(inputs, "fused_conv2d_bias_relu")
         implementation = attrs.get("_implementation", "triton_fused")
-        if _runtime_backend_available(inputs) and implementation == "triton_fused":
-            try:
-                from flag_dnn.graph.kernels import fused_conv2d_bias_relu
+        if implementation != "triton_fused":
+            _unsupported_triton_path(
+                "fused_conv2d_bias_relu", f"implementation={implementation}"
+            )
+        op_attrs = _public_attrs(attrs)
+        from flag_dnn.graph.kernels import fused_conv2d_bias_relu
 
-                return fused_conv2d_bias_relu(
-                    inputs[0],
-                    inputs[1],
-                    inputs[2],
-                    stride=op_attrs.get("stride", 1),
-                    padding=op_attrs.get("padding", 0),
-                    dilation=op_attrs.get("dilation", 1),
-                    groups=op_attrs.get("groups", 1),
-                    config=attrs.get("_kernel_config"),
-                )
-            except NotImplementedError:
-                pass
-        y = _run_conv2d(flag_ops)(inputs, op_attrs)
-        if _runtime_backend_available(inputs):
-            return flag_ops.relu(y)
-        return torch.nn.functional.relu(y)
+        return fused_conv2d_bias_relu(
+            inputs[0],
+            inputs[1],
+            inputs[2],
+            stride=op_attrs.get("stride", 1),
+            padding=op_attrs.get("padding", 0),
+            dilation=op_attrs.get("dilation", 1),
+            groups=op_attrs.get("groups", 1),
+            config=attrs.get("_kernel_config"),
+        )
 
     return run
 
@@ -1880,7 +1873,7 @@ def register_default_ops() -> None:
             name="bias_add",
             normalize_fn=_normalize_bias_add,
             shape_fn=_bias_add_shape,
-            run_fn=_run_bias_add,
+            run_fn=_run_bias_add(flag_ops),
             fusible=True,
         )
     )
@@ -1939,18 +1932,13 @@ def register_default_ops() -> None:
         )
     )
 
-    for name, torch_fn in (
-        ("sqrt", torch.sqrt),
-        ("neg", torch.neg),
-        ("tanh", torch.tanh),
-        ("silu", torch.nn.functional.silu),
-    ):
+    for name in ("sqrt", "neg", "tanh", "silu"):
         register_op(
             OpSchema(
                 name=name,
                 normalize_fn=_normalize_unary(name),
                 shape_fn=_shape_like_first,
-                run_fn=_run_unary_torch(torch_fn),
+                run_fn=_run_unary_flag(flag_ops, name),
                 fusible=True,
             )
         )
@@ -1964,6 +1952,15 @@ def register_default_ops() -> None:
             shape_fn=_shape_like_first,
             run_fn=_run_sigmoid(flag_ops),
             fusible=True,
+        )
+    )
+
+    register_op(
+        OpSchema(
+            name="sigmoid_backward",
+            normalize_fn=_normalize_activation_backward("sigmoid_backward"),
+            shape_fn=_activation_backward_shape,
+            run_fn=_run_sigmoid_backward(flag_ops),
         )
     )
 
@@ -1984,7 +1981,7 @@ def register_default_ops() -> None:
             name="fused_bias_relu",
             normalize_fn=_normalize_bias_add,
             shape_fn=_bias_add_shape,
-            run_fn=_run_fused_bias_relu,
+            run_fn=_run_fused_bias_relu(flag_ops),
             fusible=True,
         )
     )
@@ -1993,7 +1990,7 @@ def register_default_ops() -> None:
             name="fused_bias_gelu",
             normalize_fn=_normalize_bias_add,
             shape_fn=_bias_add_shape,
-            run_fn=_run_fused_bias_gelu,
+            run_fn=_run_fused_bias_gelu(flag_ops),
             fusible=True,
         )
     )

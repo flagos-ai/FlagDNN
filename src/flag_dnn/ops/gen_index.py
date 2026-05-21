@@ -1,6 +1,11 @@
 from typing import Any, Optional
 
 import torch
+import triton
+import triton.language as tl
+
+from flag_dnn.runtime import torch_device_fn
+from flag_dnn.utils import triton_lang_extension as tle
 
 _DTYPE_ALIASES = {
     "boolean": torch.bool,
@@ -29,6 +34,23 @@ _DTYPE_ALIASES = {
     "torch.int32": torch.int32,
     "torch.int64": torch.int64,
 }
+
+_BLOCK_SIZE = 1024
+
+
+@triton.jit
+def _gen_index_kernel(
+    out_ptr,
+    n_elements,
+    axis_size,
+    inner_size,
+    BLOCK_SIZE: tl.constexpr,
+):
+    pid = tle.program_id(0)
+    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < n_elements
+    axis_index = (offsets // inner_size) % axis_size
+    tl.store(out_ptr + offsets, axis_index, mask=mask)
 
 
 def _normalize_axis(axis: int, ndim: int) -> int:
@@ -61,6 +83,13 @@ def _dtype_from_compute_data_type(compute_data_type: Any) -> torch.dtype:
     )
 
 
+def _inner_size(shape: tuple[int, ...], axis: int) -> int:
+    result = 1
+    for dim in shape[axis + 1 :]:
+        result *= int(dim)
+    return result
+
+
 def gen_index(
     input: torch.Tensor,
     axis: int,
@@ -69,23 +98,50 @@ def gen_index(
     compute_data_type: Any = None,
     name: str = "",
 ) -> torch.Tensor:
-    """Generate per-element indices along ``axis`` with ``input`` shape."""
+    """Generate per-element indices along ``axis`` with ``input`` shape.
+
+    This is a real data-producing utility op, so the graph/eager path uses a
+    Triton kernel instead of building an expanded framework tensor.
+    """
     del name
 
     axis = _normalize_axis(axis, input.dim())
     dtype = _dtype_from_compute_data_type(compute_data_type)
-    index = torch.arange(input.shape[axis], device=input.device, dtype=dtype)
-    view_shape = [1] * input.dim()
-    view_shape[axis] = input.shape[axis]
-    result = index.reshape(view_shape).expand(input.shape).clone()
-
     if out is None:
-        return result
+        out = torch.empty(tuple(input.shape), device=input.device, dtype=dtype)
+    else:
+        if tuple(out.shape) != tuple(input.shape):
+            raise RuntimeError(
+                f"gen_index out shape {tuple(out.shape)} does not match "
+                f"input shape {tuple(input.shape)}"
+            )
+        if out.dtype != dtype:
+            raise RuntimeError(
+                f"gen_index out dtype {out.dtype} does not match requested "
+                f"dtype {dtype}"
+            )
+        if not out.is_contiguous():
+            raise NotImplementedError(
+                "flag_dnn gen_index currently requires contiguous out"
+            )
 
-    if out.shape != result.shape:
-        raise RuntimeError(
-            f"gen_index out shape {tuple(out.shape)} does not match result "
-            f"shape {tuple(result.shape)}"
+    n_elements = out.numel()
+    if n_elements == 0:
+        return out
+
+    inner_size = _inner_size(tuple(input.shape), axis)
+    axis_size = int(input.shape[axis])
+
+    def grid(meta):
+        return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+
+    with torch_device_fn.device(input.device):
+        _gen_index_kernel[grid](
+            out,
+            n_elements,
+            axis_size,
+            inner_size,
+            BLOCK_SIZE=_BLOCK_SIZE,
+            num_warps=4,
         )
-    out.copy_(result)
     return out

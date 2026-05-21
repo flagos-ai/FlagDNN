@@ -87,10 +87,8 @@ def test_slice_out_argument():
     ]
     out = torch.empty((2, 2, 5), device=flag_dnn.device)
 
-    result = flag_dnn.slice(inp, slices, out=out)
-
-    assert result is out
-    utils.gems_assert_equal(out, inp[tuple(slices)])
+    with pytest.raises(NotImplementedError, match="view-only graph utility"):
+        flag_dnn.slice(inp, slices, out=out)
 
 
 @pytest.mark.slice
