@@ -721,7 +721,17 @@ def _binary_result_dtype(
     input_specs: list[TensorSpec],
     attrs: dict[str, Any],
 ) -> str:
-    if op_type in ("eq", "ne", "lt", "le", "ge", "gt"):
+    if op_type in (
+        "eq",
+        "ne",
+        "lt",
+        "le",
+        "ge",
+        "gt",
+        "logical_and",
+        "logical_or",
+        "logical_not",
+    ):
         return "bool"
     if len(input_specs) > 1:
         left = torch.empty((), dtype=torch_dtype(input_specs[0].dtype))
@@ -1745,6 +1755,14 @@ def _run_binary(flag_ops: Any, op_type: str) -> RunFn:
         return _run_binary_pow(flag_ops)
     if op_type == "max":
         return _run_binary_max(flag_ops)
+    if op_type in ("min", "minimum"):
+        return _run_binary_min(flag_ops)
+    if op_type == "maximum":
+        return _run_binary_maximum(flag_ops)
+    if op_type in ("logical_and", "logical_or"):
+        return _run_binary_logical(flag_ops, op_type)
+    if op_type == "add_square":
+        return _run_add_square(flag_ops)
     if op_type in ("eq", "ne", "lt", "le", "gt", "ge"):
         return _run_binary_cmp(flag_ops, op_type)
     raise RuntimeError(f"unsupported graph binary op: {op_type}")
@@ -1892,6 +1910,102 @@ def _run_binary_max(flag_ops: Any) -> RunFn:
     return run
 
 
+def _run_binary_min(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "min")
+        left, right = _binary_operands(inputs, attrs)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if not isinstance(left, torch.Tensor) and isinstance(
+            right, torch.Tensor
+        ):
+            return flag_ops.minimum(
+                right,
+                left,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        if isinstance(left, torch.Tensor):
+            return flag_ops.minimum(
+                left,
+                right,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path("min", "two scalar operands")
+
+    return run
+
+
+def _run_binary_maximum(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "maximum")
+        left, right = _binary_operands(inputs, attrs)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if not isinstance(left, torch.Tensor) and isinstance(
+            right, torch.Tensor
+        ):
+            return flag_ops.maximum(
+                right,
+                left,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        if isinstance(left, torch.Tensor):
+            return flag_ops.maximum(
+                left,
+                right,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path("maximum", "two scalar operands")
+
+    return run
+
+
+def _run_binary_logical(flag_ops: Any, op_type: str) -> RunFn:
+    flag_fn = getattr(flag_ops, op_type)
+
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, op_type)
+        left, right = _binary_operands(inputs, attrs)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if not isinstance(left, torch.Tensor) and isinstance(
+            right, torch.Tensor
+        ):
+            return flag_fn(
+                right,
+                left,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        if isinstance(left, torch.Tensor):
+            return flag_fn(
+                left,
+                right,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path(op_type, "two scalar operands")
+
+    return run
+
+
+def _run_add_square(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "add_square")
+        return flag_ops.add_square(
+            inputs[0],
+            inputs[1],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
 def _run_binary_cmp(flag_ops: Any, op_type: str) -> RunFn:
     flag_fn = getattr(flag_ops, op_type)
     reverse_op = {
@@ -2025,6 +2139,18 @@ def _run_unary_flag(flag_ops: Any, op_type: str) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
         _require_runtime_backend(inputs, op_type)
         return flag_fn(inputs[0])
+
+    return run
+
+
+def _run_logical_not(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "logical_not")
+        return flag_ops.logical_not(
+            inputs[0],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
 
     return run
 
@@ -2423,6 +2549,12 @@ def register_default_ops() -> None:
         "mul",
         "div",
         "max",
+        "min",
+        "minimum",
+        "maximum",
+        "logical_and",
+        "logical_or",
+        "add_square",
         "eq",
         "ne",
         "lt",
@@ -2672,16 +2804,30 @@ def register_default_ops() -> None:
         )
     )
 
-    for name in ("sqrt", "neg", "tanh", "silu"):
+    for name in ("sqrt", "square", "rsqrt", "exp", "log", "neg", "tanh", "silu"):
         register_op(
             OpSchema(
                 name=name,
-                normalize_fn=_normalize_unary(name),
+                normalize_fn=_normalize_unary(
+                    name, ("compute_data_type", "name")
+                ),
                 shape_fn=_shape_like_first,
                 run_fn=_run_unary_flag(flag_ops, name),
                 fusible=True,
             )
         )
+
+    register_op(
+        OpSchema(
+            name="logical_not",
+            normalize_fn=_normalize_unary(
+                "logical_not", ("compute_data_type", "name")
+            ),
+            shape_fn=_shape_like_first,
+            run_fn=_run_logical_not(flag_ops),
+            fusible=True,
+        )
+    )
 
     register_op(
         OpSchema(

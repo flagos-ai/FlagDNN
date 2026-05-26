@@ -36,6 +36,7 @@ from flag_dnn.ops.scale import scale
 from flag_dnn.ops.div import div
 from flag_dnn.ops.pow import pow
 from flag_dnn.ops.max import max
+from flag_dnn.ops.min import min
 from flag_dnn.ops.sqrt import sqrt
 from flag_dnn.ops.abs import abs
 from flag_dnn.ops.neg import neg
@@ -93,6 +94,7 @@ from flag_dnn.ops.logsigmoid import logsigmoid
 from flag_dnn.ops.isinf import isinf
 from flag_dnn.ops.isnan import isnan
 from flag_dnn.ops.square import square
+from flag_dnn.ops.add_square import add_square
 from flag_dnn.ops.rsqrt import rsqrt
 from flag_dnn.ops.positive import positive
 from flag_dnn.ops.log import log
@@ -103,6 +105,9 @@ from flag_dnn.ops.maximum import maximum
 from flag_dnn.ops.bitwise_and import bitwise_and
 from flag_dnn.ops.bitwise_or import bitwise_or
 from flag_dnn.ops.bitwise_xor import bitwise_xor
+from flag_dnn.ops.logical_and import logical_and
+from flag_dnn.ops.logical_or import logical_or
+from flag_dnn.ops.logical_not import logical_not
 from flag_dnn.ops.one_hot import one_hot
 from flag_dnn.ops.kl_div import kl_div
 from flag_dnn.ops.mse_loss import mse_loss
@@ -223,6 +228,7 @@ __all__ = [
     "div",
     "pow",
     "max",
+    "min",
     "sqrt",
     "abs",
     "neg",
@@ -286,6 +292,7 @@ __all__ = [
     "isinf",
     "isnan",
     "square",
+    "add_square",
     "rsqrt",
     "positive",
     "log",
@@ -296,6 +303,9 @@ __all__ = [
     "bitwise_and",
     "bitwise_or",
     "bitwise_xor",
+    "logical_and",
+    "logical_or",
+    "logical_not",
     "one_hot",
     "kl_div",
     "mse_loss",

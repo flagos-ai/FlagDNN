@@ -35,6 +35,9 @@ POINTWISE_UNARY_SHAPES = (
 )
 
 ABS_SHAPES = POINTWISE_UNARY_SHAPES
+EXP_SHAPES = POINTWISE_UNARY_SHAPES
+LOG_SHAPES = POINTWISE_UNARY_SHAPES
+RSQRT_SHAPES = POINTWISE_UNARY_SHAPES
 SIGMOID_SHAPES = POINTWISE_UNARY_SHAPES
 RELU_SHAPES = POINTWISE_UNARY_SHAPES
 SWISH_SHAPES = POINTWISE_UNARY_SHAPES
@@ -61,6 +64,9 @@ MUL_SHAPES = POINTWISE_BINARY_SHAPES
 DIV_SHAPES = POINTWISE_BINARY_SHAPES
 POW_SHAPES = POINTWISE_BINARY_SHAPES
 MAX_SHAPES = POINTWISE_BINARY_SHAPES
+MIN_SHAPES = POINTWISE_BINARY_SHAPES
+ADD_SQUARE_SHAPES = POINTWISE_BINARY_SHAPES
+LOGICAL_SHAPES = POINTWISE_BINARY_SHAPES
 CMP_SHAPES = POINTWISE_BINARY_SHAPES
 SIGMOID_BACKWARD_SHAPES = POINTWISE_BINARY_SHAPES
 SCALE_SHAPES = POINTWISE_BINARY_SHAPES
@@ -84,6 +90,16 @@ def pointwise_randn(shape, dtype, device):
 
 def pointwise_rand(shape, dtype, device):
     return pointwise_layout(torch.rand(shape, device=device, dtype=dtype))
+
+
+def pointwise_positive(shape, dtype, device, offset=0.1):
+    return pointwise_layout(
+        torch.rand(shape, device=device, dtype=dtype) + offset
+    )
+
+
+def pointwise_bool(shape, device):
+    return pointwise_layout(torch.rand(shape, device=device) > 0.5)
 
 
 RESHAPE_SHAPES = (

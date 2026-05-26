@@ -2,10 +2,10 @@ from typing import Optional
 
 import torch
 
-from flag_dnn.ops.unary import unary
+from flag_dnn.ops.bitwise_not import bitwise_not
 
 
-def bitwise_not(
+def logical_not(
     input: torch.Tensor,
     *,
     out: Optional[torch.Tensor] = None,
@@ -13,4 +13,6 @@ def bitwise_not(
     name: str = "",
 ) -> torch.Tensor:
     del compute_data_type, name
-    return unary(input, out=out, op_type="bitwise_not")
+    if input.dtype != torch.bool:
+        raise RuntimeError("logical_not expects bool input tensors")
+    return bitwise_not(input, out=out)

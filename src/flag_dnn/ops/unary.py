@@ -142,55 +142,58 @@ def unary_strided_kernel(
     sx5,
     OP_TYPE: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
+    TILES_PER_PROGRAM: tl.constexpr,
 ):
     pid = tl.program_id(0)
-    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    mask = offsets < n_elements
+    base = pid * BLOCK_SIZE * TILES_PER_PROGRAM
+    for i in tl.static_range(TILES_PER_PROGRAM):
+        offsets = base + i * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+        mask = offsets < n_elements
 
-    idx5 = offsets % s5
-    rem4 = offsets // s5
+        idx5 = offsets % s5
+        rem4 = offsets // s5
 
-    idx4 = rem4 % s4
-    rem3 = rem4 // s4
+        idx4 = rem4 % s4
+        rem3 = rem4 // s4
 
-    idx3 = rem3 % s3
-    rem2 = rem3 // s3
+        idx3 = rem3 % s3
+        rem2 = rem3 // s3
 
-    idx2 = rem2 % s2
-    rem1 = rem2 // s2
+        idx2 = rem2 % s2
+        rem1 = rem2 // s2
 
-    idx1 = rem1 % s1
-    idx0 = rem1 // s1
+        idx1 = rem1 % s1
+        idx0 = rem1 // s1
 
-    x_off = (
-        idx0 * sx0
-        + idx1 * sx1
-        + idx2 * sx2
-        + idx3 * sx3
-        + idx4 * sx4
-        + idx5 * sx5
-    )
+        x_off = (
+            idx0 * sx0
+            + idx1 * sx1
+            + idx2 * sx2
+            + idx3 * sx3
+            + idx4 * sx4
+            + idx5 * sx5
+        )
 
-    x = tl.load(x_ptr + x_off, mask=mask)
+        x = tl.load(x_ptr + x_off, mask=mask)
 
-    if OP_TYPE == "isinf":
-        res = (x == float("inf")) | (x == float("-inf"))
-    elif OP_TYPE == "isnan":
-        res = ~(x == x)
-    elif OP_TYPE == "square":
-        res = x * x
-    elif OP_TYPE == "rsqrt":
-        res = tl.math.rsqrt(x.to(tl.float32)).to(x.dtype)
-    elif OP_TYPE == "positive":
-        res = x
-    elif OP_TYPE == "log":
-        res = (tl.math.log2(x.to(tl.float32)) * 0.6931471805599453).to(x.dtype)
-    elif OP_TYPE == "exp":
-        res = tl.math.exp2(x.to(tl.float32) * 1.4426950408889634).to(x.dtype)
-    elif OP_TYPE == "bitwise_not":
-        res = ~x
+        if OP_TYPE == "isinf":
+            res = (x == float("inf")) | (x == float("-inf"))
+        elif OP_TYPE == "isnan":
+            res = ~(x == x)
+        elif OP_TYPE == "square":
+            res = x * x
+        elif OP_TYPE == "rsqrt":
+            res = tl.math.rsqrt(x.to(tl.float32)).to(x.dtype)
+        elif OP_TYPE == "positive":
+            res = x
+        elif OP_TYPE == "log":
+            res = (tl.math.log2(x.to(tl.float32)) * 0.6931471805599453).to(x.dtype)
+        elif OP_TYPE == "exp":
+            res = tl.math.exp2(x.to(tl.float32) * 1.4426950408889634).to(x.dtype)
+        elif OP_TYPE == "bitwise_not":
+            res = ~x
 
-    tl.store(out_ptr + offsets, res.to(out_ptr.dtype.element_ty), mask=mask)
+        tl.store(out_ptr + offsets, res.to(out_ptr.dtype.element_ty), mask=mask)
 
 
 _FLOAT_OPS = {"rsqrt", "log", "exp", "square"}
