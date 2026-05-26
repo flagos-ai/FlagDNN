@@ -156,6 +156,24 @@ def binary_tensor_kernel(
             res = tl.math.floor(res)
     elif OP_TYPE == "max":
         res = tl.where(x >= y, x, y)
+    elif OP_TYPE == "minimum":
+        res = tl.minimum(x, y)
+    elif OP_TYPE == "maximum":
+        res = tl.maximum(x, y)
+    elif OP_TYPE == "fmin":
+        x_nan = x != x
+        y_nan = y != y
+        res = tl.where(x_nan, y, tl.where(y_nan, x, tl.minimum(x, y)))
+    elif OP_TYPE == "fmax":
+        x_nan = x != x
+        y_nan = y != y
+        res = tl.where(x_nan, y, tl.where(y_nan, x, tl.maximum(x, y)))
+    elif OP_TYPE == "bitwise_and":
+        res = x & y
+    elif OP_TYPE == "bitwise_or":
+        res = x | y
+    elif OP_TYPE == "bitwise_xor":
+        res = x ^ y
     elif OP_TYPE == "eq":
         res = x == y
     elif OP_TYPE == "ne":
@@ -212,6 +230,20 @@ def binary_scalar_kernel(
             res = tl.math.floor(res)
     elif OP_TYPE == "max":
         res = tl.where(x >= other_val, x, other_val)
+    elif OP_TYPE == "minimum":
+        res = tl.minimum(x, other_val)
+    elif OP_TYPE == "maximum":
+        res = tl.maximum(x, other_val)
+    elif OP_TYPE == "fmin":
+        res = tl.minimum(x, other_val)
+    elif OP_TYPE == "fmax":
+        res = tl.maximum(x, other_val)
+    elif OP_TYPE == "bitwise_and":
+        res = x & other_val
+    elif OP_TYPE == "bitwise_or":
+        res = x | other_val
+    elif OP_TYPE == "bitwise_xor":
+        res = x ^ other_val
     elif OP_TYPE == "eq":
         res = x == other_val
     elif OP_TYPE == "ne":
@@ -326,6 +358,24 @@ def binary_broadcast_tensor_kernel(
             res = tl.math.floor(res)
     elif OP_TYPE == "max":
         res = tl.where(x >= y, x, y)
+    elif OP_TYPE == "minimum":
+        res = tl.minimum(x, y)
+    elif OP_TYPE == "maximum":
+        res = tl.maximum(x, y)
+    elif OP_TYPE == "fmin":
+        x_nan = x != x
+        y_nan = y != y
+        res = tl.where(x_nan, y, tl.where(y_nan, x, tl.minimum(x, y)))
+    elif OP_TYPE == "fmax":
+        x_nan = x != x
+        y_nan = y != y
+        res = tl.where(x_nan, y, tl.where(y_nan, x, tl.maximum(x, y)))
+    elif OP_TYPE == "bitwise_and":
+        res = x & y
+    elif OP_TYPE == "bitwise_or":
+        res = x | y
+    elif OP_TYPE == "bitwise_xor":
+        res = x ^ y
     elif OP_TYPE == "eq":
         res = x == y
     elif OP_TYPE == "ne":
@@ -375,6 +425,22 @@ def _validate_binary_args(
             "supported. If you are trying to invert a mask, use the `~` or "
             "`logical_not()` operator instead."
         )
+
+    bitwise_ops = ("bitwise_and", "bitwise_or", "bitwise_xor")
+    if op_type in bitwise_ops:
+        if input.dtype.is_floating_point or input.dtype.is_complex:
+            raise RuntimeError(f"\"{op_type}\" not implemented for '{input.dtype}'")
+        if isinstance(other, torch.Tensor) and (
+            other.dtype.is_floating_point or other.dtype.is_complex
+        ):
+            raise RuntimeError(f"\"{op_type}\" not implemented for '{other.dtype}'")
+
+    minmax_ops = ("minimum", "maximum", "fmin", "fmax")
+    if op_type in minmax_ops:
+        if input.dtype.is_complex:
+            raise RuntimeError(f"\"{op_type}\" not implemented for '{input.dtype}'")
+        if isinstance(other, torch.Tensor) and other.dtype.is_complex:
+            raise RuntimeError(f"\"{op_type}\" not implemented for '{other.dtype}'")
 
     if op_type in ("add", "sub") and is_integral_dtype(input.dtype):
         if is_python_float(alpha):
@@ -458,6 +524,13 @@ def binary(
         "mul",
         "div",
         "max",
+        "minimum",
+        "maximum",
+        "fmin",
+        "fmax",
+        "bitwise_and",
+        "bitwise_or",
+        "bitwise_xor",
         "eq",
         "ne",
         "lt",

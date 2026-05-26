@@ -6,7 +6,6 @@ import json
 import re
 from datetime import datetime
 
-
 # ================= 配置区 =================
 
 # 目标算子列表 (白名单)
@@ -14,11 +13,14 @@ from datetime import datetime
 TARGET_OPERATORS = [
     "relu",
     "gelu",
+    "gelu_approx_tanh",
     "silu",
+    "swish",
     "leaky_relu",
     "prelu",
     "softmax",
     "batch_norm",
+    "batchnorm_inference",
     "layer_norm",
     "rms_norm",
     "group_norm",
@@ -29,6 +31,7 @@ TARGET_OPERATORS = [
     "add",
     "sub",
     "mul",
+    "scale",
     "div",
     "pow",
     "sqrt",
@@ -38,6 +41,7 @@ TARGET_OPERATORS = [
     "sum",
     "mean",
     "prod",
+    "reduction",
     "cumsum",
     "cumprod",
     "eq",
@@ -73,10 +77,13 @@ TARGET_OPERATORS = [
     "softshrink",
     "mv",
     "mm",
+    "matmul",
     "dot",
     "embedding",
     "conv1d",
     "conv2d",
+    "conv3d",
+    "conv_fprop",
 ]
 
 TEST_DIRS = tuple(

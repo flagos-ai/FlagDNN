@@ -330,3 +330,151 @@ ReshapeAndCacheFlashBenchmark:
     - [21, 4, 80, 16, 10000]
     - [42, 8, 64, 8, 1024]
     - [42, 8, 80, 16, 10000]
+
+# Copied op benchmark core shapes.
+all:
+  shapes:
+    - [[1024], null, false]
+    - [[64, 64], 1, false]
+    - [[32, 128], 0, true]
+  shape_desc: "shape, dim, keepdim"
+
+any:
+  shapes:
+    - [[1024], null, false]
+    - [[64, 64], 1, false]
+    - [[32, 128], 0, true]
+  shape_desc: "shape, dim, keepdim"
+
+bitwise_and:
+  shapes:
+    - [[1024], [1024]]
+    - [[64, 64], [64, 64]]
+  shape_desc: "shape_x, shape_y"
+
+bitwise_or:
+  shapes:
+    - [[1024], [1024]]
+    - [[64, 64], [64, 64]]
+  shape_desc: "shape_x, shape_y"
+
+bitwise_xor:
+  shapes:
+    - [[1024], [1024]]
+    - [[64, 64], [64, 64]]
+  shape_desc: "shape_x, shape_y"
+
+fmax:
+  shapes:
+    - [[1024], [1024]]
+    - [[64, 64], [64, 64]]
+  shape_desc: "shape_x, shape_y"
+
+fmin:
+  shapes:
+    - [[1024], [1024]]
+    - [[64, 64], [64, 64]]
+  shape_desc: "shape_x, shape_y"
+
+maximum:
+  shapes:
+    - [[1024], [1024]]
+    - [[64, 64], [64, 64]]
+  shape_desc: "shape_x, shape_y"
+
+minimum:
+  shapes:
+    - [[1024], [1024]]
+    - [[64, 64], [64, 64]]
+  shape_desc: "shape_x, shape_y"
+
+bitwise_not:
+  shapes:
+    - [[1024]]
+    - [[64, 64]]
+  shape_desc: "shape"
+
+exp:
+  shapes:
+    - [[1024]]
+    - [[64, 64]]
+  shape_desc: "shape"
+
+isinf:
+  shapes:
+    - [[1024]]
+    - [[64, 64]]
+  shape_desc: "shape"
+
+isnan:
+  shapes:
+    - [[1024]]
+    - [[64, 64]]
+  shape_desc: "shape"
+
+log:
+  shapes:
+    - [[1024]]
+    - [[64, 64]]
+  shape_desc: "shape"
+
+positive:
+  shapes:
+    - [[1024]]
+    - [[64, 64]]
+  shape_desc: "shape"
+
+rsqrt:
+  shapes:
+    - [[1024]]
+    - [[64, 64]]
+  shape_desc: "shape"
+
+square:
+  shapes:
+    - [[1024]]
+    - [[64, 64]]
+  shape_desc: "shape"
+
+kl_div:
+  shapes:
+    - [[1024]]
+    - [[8, 256]]
+  shape_desc: "shape"
+
+l1_loss:
+  shapes:
+    - [[1024]]
+    - [[8, 256]]
+  shape_desc: "shape"
+
+mse_loss:
+  shapes:
+    - [[1024]]
+    - [[8, 256]]
+  shape_desc: "shape"
+
+log_softmax:
+  shapes:
+    - [1024]
+    - [32, 256]
+  shape_desc: "shape"
+
+one_hot:
+  shapes:
+    - [[1024], 10]
+    - [[64, 64], 100]
+  shape_desc: "shape, num_classes"
+
+interpolate_nearest:
+  shapes:
+    - [[1, 3, 8, 8], [16, 16]]
+    - [[2, 4, 16, 16], [8, 8]]
+  shape_desc: "input_shape, output_size"
+
+interpolate_bilinear:
+  shapes:
+    - [[1, 3, 8, 8], [16, 16]]
+    - [[2, 4, 16, 16], [8, 8]]
+  shape_desc: "input_shape, output_size"
+

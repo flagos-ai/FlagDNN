@@ -90,6 +90,29 @@ from flag_dnn.ops.tanh import tanh
 from flag_dnn.ops.sigmoid import sigmoid
 from flag_dnn.ops.sigmoid_backward import sigmoid_backward
 from flag_dnn.ops.logsigmoid import logsigmoid
+from flag_dnn.ops.isinf import isinf
+from flag_dnn.ops.isnan import isnan
+from flag_dnn.ops.square import square
+from flag_dnn.ops.rsqrt import rsqrt
+from flag_dnn.ops.positive import positive
+from flag_dnn.ops.log import log
+from flag_dnn.ops.exp import exp
+from flag_dnn.ops.bitwise_not import bitwise_not
+from flag_dnn.ops.minimum import minimum
+from flag_dnn.ops.maximum import maximum
+from flag_dnn.ops.bitwise_and import bitwise_and
+from flag_dnn.ops.bitwise_or import bitwise_or
+from flag_dnn.ops.bitwise_xor import bitwise_xor
+from flag_dnn.ops.one_hot import one_hot
+from flag_dnn.ops.kl_div import kl_div
+from flag_dnn.ops.mse_loss import mse_loss
+from flag_dnn.ops.l1_loss import l1_loss
+from flag_dnn.ops.log_softmax import log_softmax
+from flag_dnn.ops.interpolate import interpolate
+from flag_dnn.ops.any import any
+from flag_dnn.ops.all import all
+from flag_dnn.ops.fmin import fmin
+from flag_dnn.ops.fmax import fmax
 from flag_dnn.ops.embedding import embedding
 from flag_dnn.ops.embedding import embedding_renorm_
 from flag_dnn.ops.cummin import cummin
@@ -260,6 +283,29 @@ __all__ = [
     "sigmoid",
     "sigmoid_backward",
     "logsigmoid",
+    "isinf",
+    "isnan",
+    "square",
+    "rsqrt",
+    "positive",
+    "log",
+    "exp",
+    "bitwise_not",
+    "minimum",
+    "maximum",
+    "bitwise_and",
+    "bitwise_or",
+    "bitwise_xor",
+    "one_hot",
+    "kl_div",
+    "mse_loss",
+    "l1_loss",
+    "log_softmax",
+    "interpolate",
+    "any",
+    "all",
+    "fmin",
+    "fmax",
     "embedding",
     "embedding_renorm_",
     "cummin",

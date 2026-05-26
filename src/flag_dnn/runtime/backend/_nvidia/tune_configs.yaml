@@ -274,6 +274,32 @@ binary:
     stages:
       - 2
       - 3
+unary:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+        TILES_PER_PROGRAM: tiles_per_program
+        num_warps: warps
+        num_stages: stages
+    block_size:
+      - 512
+      - 1024
+      - 2048
+      - 4096
+      - 8192
+    tiles_per_program:
+      - 1
+      - 2
+      - 4
+      - 8
+    warps:
+      - 4
+      - 8
+      - 16
+    stages:
+      - 2
+      - 3
 layer_norm:
   - gen: true
     param_map:
