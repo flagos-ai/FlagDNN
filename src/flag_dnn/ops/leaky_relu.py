@@ -5,10 +5,13 @@ import triton
 import triton.language as tl
 
 from flag_dnn import runtime
+from flag_dnn.ops.binary import (
+    empty_like_preserve_dense_layout,
+    is_dense_flat_tensor,
+)
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
-
 
 logger = logging.getLogger(__name__)
 
@@ -71,13 +74,17 @@ def leaky_relu(
         f"(negative_slope={negative_slope}, inplace={inplace})"
     )
 
-    assert x.is_contiguous(), "x must be contiguous"
+    if not is_dense_flat_tensor(x):
+        raise NotImplementedError(
+            "flag_dnn leaky_relu currently supports contiguous or NHWC "
+            "channels-last input only"
+        )
 
     n_elements = x.numel()
     if n_elements == 0:
-        return x if inplace else torch.empty_like(x)
+        return x if inplace else empty_like_preserve_dense_layout(x, x.dtype)
 
-    y = x if inplace else torch.empty_like(x)
+    y = x if inplace else empty_like_preserve_dense_layout(x, x.dtype)
 
     compute_fp64 = x.dtype == torch.float64
     compute_dtype = torch.float64 if compute_fp64 else torch.float32

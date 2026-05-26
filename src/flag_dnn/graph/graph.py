@@ -68,7 +68,7 @@ class Graph:
         inputs: list[int],
         attrs: Optional[dict[str, Any]] = None,
         name: Optional[str] = None,
-    ) -> GraphTensor:
+    ) -> GraphTensor | tuple[GraphTensor, ...]:
         attrs = {} if attrs is None else dict(attrs)
         schema = get_op_schema(op_type)
         input_specs = [self.values[value_id].spec for value_id in inputs]
@@ -97,9 +97,12 @@ class Graph:
         self.nodes.append(node)
         for value_id in inputs:
             self.values[value_id].users.append(node_id)
-        if len(outputs) != 1:
-            raise NotImplementedError("multi-output graph ops are not enabled")
-        return GraphTensor(outputs[0], self)
+        graph_outputs = tuple(
+            GraphTensor(value_id, self) for value_id in outputs
+        )
+        if len(graph_outputs) == 1:
+            return graph_outputs[0]
+        return graph_outputs
 
     def get_node(self, node_id: int) -> OpNode:
         for node in self.nodes:

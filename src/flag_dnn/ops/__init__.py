@@ -12,13 +12,18 @@ from flag_dnn.ops.gen_index import gen_index
 from flag_dnn.ops.relu import relu
 from flag_dnn.ops.gelu import gelu
 from flag_dnn.ops.silu import silu
+from flag_dnn.ops.swish import swish
 from flag_dnn.ops.leaky_relu import leaky_relu
 from flag_dnn.ops.prelu import prelu
 from flag_dnn.ops.softmax import softmax
 from flag_dnn.ops.batch_norm import batch_norm
 from flag_dnn.ops.batch_norm import batch_norm_aten
+from flag_dnn.ops.batchnorm import batchnorm
+from flag_dnn.ops.batchnorm_inference import batchnorm_inference
 from flag_dnn.ops.layer_norm import layer_norm
+from flag_dnn.ops.layernorm import layernorm
 from flag_dnn.ops.rms_norm import rms_norm
+from flag_dnn.ops.rmsnorm import rmsnorm
 from flag_dnn.ops.group_norm import group_norm
 from flag_dnn.ops.max_pool2d import max_pool2d
 from flag_dnn.ops.avg_pool2d import avg_pool2d
@@ -27,6 +32,7 @@ from flag_dnn.ops.adaptive_max_pool2d import adaptive_max_pool2d
 from flag_dnn.ops.add import add
 from flag_dnn.ops.sub import sub
 from flag_dnn.ops.mul import mul
+from flag_dnn.ops.scale import scale
 from flag_dnn.ops.div import div
 from flag_dnn.ops.pow import pow
 from flag_dnn.ops.max import max
@@ -37,6 +43,7 @@ from flag_dnn.ops.clamp import clamp
 from flag_dnn.ops.sum import sum
 from flag_dnn.ops.mean import mean
 from flag_dnn.ops.prod import prod
+from flag_dnn.ops.reduction import reduction
 from flag_dnn.ops.cumsum import cumsum
 from flag_dnn.ops.cumprod import cumprod
 from flag_dnn.ops.eq import eq
@@ -65,11 +72,13 @@ from flag_dnn.ops.softshrink import softshrink
 from flag_dnn.ops.softmin import softmin
 from flag_dnn.ops.mv import mv
 from flag_dnn.ops.mm import mm
+from flag_dnn.ops.matmul import matmul
 from flag_dnn.ops.dot import dot
 from flag_dnn.ops.conv1d import conv1d
 from flag_dnn.ops.conv2d import conv2d
 from flag_dnn.ops.conv3d import conv3d
 from flag_dnn.ops.conv_fprop import conv_fprop
+from flag_dnn.ops.causal_conv1d import causal_conv1d
 from flag_dnn.ops.hardswish import hardswish
 from flag_dnn.ops.relu6 import relu6
 from flag_dnn.ops.selu import selu
@@ -89,6 +98,7 @@ from flag_dnn.ops.lt import lt
 from flag_dnn.ops.le import le
 from flag_dnn.ops.gt import gt
 from flag_dnn.ops.ge import ge
+
 
 def cmp_eq(input, comparison, *, out=None, compute_data_type=None, name=""):
     return eq(
@@ -150,6 +160,11 @@ def cmp_ge(input, comparison, *, out=None, compute_data_type=None, name=""):
     )
 
 
+def gelu_approx_tanh(input, *, compute_data_type=None, name=""):
+    del compute_data_type, name
+    return gelu(input, approximate="tanh")
+
+
 __all__ = [
     "identity",
     "reshape",
@@ -159,14 +174,20 @@ __all__ = [
     "gen_index",
     "relu",
     "gelu",
+    "gelu_approx_tanh",
     "silu",
+    "swish",
     "leaky_relu",
     "prelu",
     "softmax",
     "batch_norm",
     "batch_norm_aten",
+    "batchnorm",
+    "batchnorm_inference",
+    "layernorm",
     "layer_norm",
     "rms_norm",
+    "rmsnorm",
     "group_norm",
     "max_pool2d",
     "avg_pool2d",
@@ -175,6 +196,7 @@ __all__ = [
     "add",
     "sub",
     "mul",
+    "scale",
     "div",
     "pow",
     "max",
@@ -185,6 +207,7 @@ __all__ = [
     "sum",
     "mean",
     "prod",
+    "reduction",
     "cumsum",
     "cumprod",
     "eq",
@@ -219,11 +242,13 @@ __all__ = [
     "softmin",
     "mv",
     "mm",
+    "matmul",
     "dot",
     "conv1d",
     "conv2d",
     "conv3d",
     "conv_fprop",
+    "causal_conv1d",
     "hardswish",
     "relu6",
     "selu",

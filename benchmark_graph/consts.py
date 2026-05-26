@@ -36,6 +36,12 @@ POINTWISE_UNARY_SHAPES = (
 
 ABS_SHAPES = POINTWISE_UNARY_SHAPES
 SIGMOID_SHAPES = POINTWISE_UNARY_SHAPES
+RELU_SHAPES = POINTWISE_UNARY_SHAPES
+SWISH_SHAPES = POINTWISE_UNARY_SHAPES
+LEAKY_RELU_SHAPES = POINTWISE_UNARY_SHAPES
+ELU_SHAPES = POINTWISE_UNARY_SHAPES
+SOFTPLUS_SHAPES = POINTWISE_UNARY_SHAPES
+GELU_APPROX_TANH_SHAPES = POINTWISE_UNARY_SHAPES
 POINTWISE_BINARY_SHAPES = (
     # Power-of-two aligned shapes.
     ((1, 1, 1024), (1, 1, 1024)),
@@ -57,6 +63,12 @@ POW_SHAPES = POINTWISE_BINARY_SHAPES
 MAX_SHAPES = POINTWISE_BINARY_SHAPES
 CMP_SHAPES = POINTWISE_BINARY_SHAPES
 SIGMOID_BACKWARD_SHAPES = POINTWISE_BINARY_SHAPES
+SCALE_SHAPES = POINTWISE_BINARY_SHAPES
+MATMUL_SHAPES = (
+    ((4, 16, 32), (4, 32, 24)),
+    ((8, 32, 64), (8, 64, 32)),
+    ((16, 32, 128), (16, 128, 64)),
+)
 
 
 def pointwise_layout(tensor):
@@ -72,6 +84,7 @@ def pointwise_randn(shape, dtype, device):
 
 def pointwise_rand(shape, dtype, device):
     return pointwise_layout(torch.rand(shape, device=device, dtype=dtype))
+
 
 RESHAPE_SHAPES = (
     ((8, 16, 32), (128, 32)),
@@ -144,3 +157,16 @@ def bench_repeat():
 
 def compile_options():
     return {"cache": None, "validate_inputs": False}
+
+
+BATCHNORM_INFERENCE_SHAPES = (
+    (8, 32, 32, 32),
+    (16, 64, 16, 16),
+    (4, 128, 16, 16),
+)
+
+REDUCTION_SHAPES = (
+    ((8, 8, 32, 32), 1, "ADD"),
+    ((8, 8, 32, 32), 1, "AVG"),
+    ((8, 4, 16, 16), 1, "MUL"),
+)

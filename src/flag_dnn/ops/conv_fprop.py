@@ -20,7 +20,9 @@ def _spatial_rank(image: torch.Tensor, weight: torch.Tensor) -> int:
     )
 
 
-def _tuple_n(value: Union[int, Sequence[int]], rank: int, name: str) -> Tuple[int, ...]:
+def _tuple_n(
+    value: Union[int, Sequence[int]], rank: int, name: str
+) -> Tuple[int, ...]:
     if isinstance(value, int):
         return (int(value),) * rank
     result = tuple(int(v) for v in value)
@@ -29,16 +31,12 @@ def _tuple_n(value: Union[int, Sequence[int]], rank: int, name: str) -> Tuple[in
     return result
 
 
-def _normalize_convolution_mode(convolution_mode: Any) -> None:
+def _normalize_convolution_mode(convolution_mode: Any) -> str:
     if convolution_mode is None:
-        return
+        return "CROSS_CORRELATION"
     mode = str(convolution_mode).rsplit(".", 1)[-1].upper()
-    if mode == "CROSS_CORRELATION":
-        return
-    if mode == "CONVOLUTION":
-        raise NotImplementedError(
-            "flag_dnn conv_fprop currently supports CROSS_CORRELATION only"
-        )
+    if mode in ("CROSS_CORRELATION", "CONVOLUTION"):
+        return mode
     raise RuntimeError(
         "convolution_mode must be CROSS_CORRELATION or CONVOLUTION"
     )
@@ -74,7 +72,9 @@ def _normalize_padding(
         return (pre[0], post[0], pre[1], post[1])
     if rank == 3:
         return (pre[0], post[0], pre[1], post[1], pre[2], post[2])
-    raise NotImplementedError("flag_dnn conv_fprop only supports ranks 1, 2, and 3")
+    raise NotImplementedError(
+        "flag_dnn conv_fprop only supports ranks 1, 2, and 3"
+    )
 
 
 def conv_fprop(
@@ -92,15 +92,21 @@ def conv_fprop(
     groups: int = 1,
 ) -> torch.Tensor:
     del compute_data_type, name
-    _normalize_convolution_mode(convolution_mode)
+    mode = _normalize_convolution_mode(convolution_mode)
     rank = _spatial_rank(image, weight)
+    if mode == "CONVOLUTION":
+        weight = torch.flip(
+            weight, dims=tuple(range(2, weight.dim()))
+        ).contiguous()
 
     if rank == 1:
         return conv1d(
             image,
             weight,
             stride=_tuple_n(stride, 1, "stride"),
-            padding=_normalize_padding(rank, padding, pre_padding, post_padding),
+            padding=_normalize_padding(
+                rank, padding, pre_padding, post_padding
+            ),
             dilation=_tuple_n(dilation, 1, "dilation"),
             groups=groups,
         )
@@ -109,7 +115,9 @@ def conv_fprop(
             image,
             weight,
             stride=_tuple_n(stride, 2, "stride"),
-            padding=_normalize_padding(rank, padding, pre_padding, post_padding),
+            padding=_normalize_padding(
+                rank, padding, pre_padding, post_padding
+            ),
             dilation=_tuple_n(dilation, 2, "dilation"),
             groups=groups,
         )
@@ -118,7 +126,9 @@ def conv_fprop(
             image,
             weight,
             stride=_tuple_n(stride, 3, "stride"),
-            padding=_normalize_padding(rank, padding, pre_padding, post_padding),
+            padding=_normalize_padding(
+                rank, padding, pre_padding, post_padding
+            ),
             dilation=_tuple_n(dilation, 3, "dilation"),
             groups=groups,
         )

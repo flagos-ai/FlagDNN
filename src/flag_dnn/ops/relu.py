@@ -5,6 +5,10 @@ import triton
 import triton.language as tl
 
 from flag_dnn import runtime
+from flag_dnn.ops.binary import (
+    empty_like_preserve_dense_layout,
+    is_dense_flat_tensor,
+)
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
@@ -25,50 +29,75 @@ def relu_1d_kernel(
     in_ptr,
     out_ptr,
     n_elements,
+    negative_slope,
+    lower_clip,
+    upper_clip,
+    HAS_UPPER_CLIP: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    # 纯 1D 极简并行
     pid = tle.program_id(0)
     block_start = pid * BLOCK_SIZE
     offsets = block_start + tl.arange(0, BLOCK_SIZE)
     mask = offsets < n_elements
 
-    # 加载数据
-    x = tl.load(in_ptr + offsets, mask=mask, other=0)
+    x = tl.load(in_ptr + offsets, mask=mask, other=0).to(tl.float32)
+    lower = x * 0.0 + lower_clip
+    slope = x * 0.0 + negative_slope
+    out = tl.where(x < lower, lower + slope * (x - lower), x)
+    if HAS_UPPER_CLIP:
+        out = tl.minimum(out, upper_clip)
 
-    # ReLU 核心逻辑：x > 0 则保留 x，否则填 0
-    # 使用 tl.where 非常安全，Triton 会自动处理 0 的隐式类型转换，不会报错
-    out = tl.where(x > 0, x, 0)
-
-    tl.store(out_ptr + offsets, out, mask=mask)
+    tl.store(out_ptr + offsets, out.to(out_ptr.dtype.element_ty), mask=mask)
 
 
-def relu(input: torch.Tensor, inplace: bool = False) -> torch.Tensor:
+def relu(
+    input: torch.Tensor,
+    inplace: bool = False,
+    negative_slope: float | None = None,
+    lower_clip: float | None = None,
+    upper_clip: float | None = None,
+    *,
+    compute_data_type=None,
+    name: str = "",
+) -> torch.Tensor:
     logger.debug("FLAG_DNN RELU")
-    # 空张量处理
-    if input.numel() == 0:
-        if inplace:
-            return input
-        return torch.empty_like(input)
+    del compute_data_type, name
 
-    # 内存连续性处理
-    if not input.is_contiguous():
-        input = input.contiguous()
-
-    # Inplace 逻辑控制
-    if inplace:
-        out = input
-    else:
-        out = torch.empty_like(input)
+    if not is_dense_flat_tensor(input):
+        raise NotImplementedError(
+            "flag_dnn relu currently supports contiguous or NHWC "
+            "channels-last input only"
+        )
 
     n_elements = input.numel()
+    if n_elements == 0:
+        if inplace:
+            return input
+        return empty_like_preserve_dense_layout(input, input.dtype)
 
-    # Grid 只需要一维，计算出需要多少个 Block 能覆盖所有的元素
+    out = (
+        input
+        if inplace
+        else empty_like_preserve_dense_layout(input, input.dtype)
+    )
+
+    slope = 0.0 if negative_slope is None else float(negative_slope)
+    lower = 0.0 if lower_clip is None else float(lower_clip)
+    upper = 0.0 if upper_clip is None else float(upper_clip)
+    has_upper = upper_clip is not None
+
     def grid(meta):
         return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
-    # 启动 Kernel
     with torch_device_fn.device(input.device):
-        relu_1d_kernel[grid](input, out, n_elements)
+        relu_1d_kernel[grid](
+            input,
+            out,
+            n_elements,
+            slope,
+            lower,
+            upper,
+            HAS_UPPER_CLIP=has_upper,
+        )
 
     return out

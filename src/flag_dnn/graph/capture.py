@@ -68,7 +68,7 @@ class GraphCapture:
         op_type: str,
         args: tuple[Any, ...],
         kwargs: dict[str, Any],
-    ) -> GraphTensor:
+    ) -> Any:
         schema = get_op_schema(op_type)
         input_ids, attrs = schema.normalize(self, args, dict(kwargs))
         return self.graph.add_op(op_type, input_ids, attrs)

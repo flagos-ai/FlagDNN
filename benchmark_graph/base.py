@@ -40,6 +40,7 @@ def skip_unsupported_cudnn_graph(exc, op_name):
     if (
         isinstance(exc, cudnn.cudnnGraphNotSupportedError)
         or "CUDNN_STATUS_BAD_PARAM" in message
+        or "CUDNN_STATUS_NOT_SUPPORTED" in message
         or "No valid engine configs" in message
     ):
         pytest.skip(f"cuDNN frontend does not support {op_name}: {exc}")

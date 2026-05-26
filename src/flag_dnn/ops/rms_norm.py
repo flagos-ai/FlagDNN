@@ -27,16 +27,18 @@ def rms_norm_kernel(
     x_ptr,
     y_ptr,
     weight_ptr,
+    bias_ptr,
+    rstd_ptr,
     M,
     N,
     eps,
     BLOCK_SIZE: tl.constexpr,
     HAS_WEIGHT: tl.constexpr,
+    HAS_BIAS: tl.constexpr,
+    RETURN_STATS: tl.constexpr,
 ):
-    # 获取当前处理的行索引
     row_idx = tle.program_id(0)
 
-    # 计算当前行的起始内存指针
     x_row_ptr = x_ptr + row_idx * N
     y_row_ptr = y_ptr + row_idx * N
 
@@ -45,46 +47,58 @@ def rms_norm_kernel(
         cols = offset + tl.arange(0, BLOCK_SIZE)
         mask = cols < N
 
-        # 加载数据并上采样到 fp32
         x = tl.load(x_row_ptr + cols, mask=mask, other=0.0).to(tl.float32)
-
-        # 累加平方和
         sum_squares += tl.sum(x * x, axis=0)
 
-    # 计算 RMS 倒数 (使用 Triton 原生底层 rsqrt 指令提速)
     rrms = tl.math.rsqrt((sum_squares / N) + eps)
+    if RETURN_STATS:
+        tl.store(rstd_ptr + row_idx, rrms)
 
     for offset in range(0, N, BLOCK_SIZE):
         cols = offset + tl.arange(0, BLOCK_SIZE)
         mask = cols < N
 
         x = tl.load(x_row_ptr + cols, mask=mask, other=0.0).to(tl.float32)
-
-        # 核心 RMSNorm 计算
         x_hat = x * rrms
 
-        # 权重缩放 (如果传入了 weight)
         if HAS_WEIGHT:
             weight = tl.load(weight_ptr + cols, mask=mask, other=0.0).to(
                 tl.float32
             )
             x_hat = x_hat * weight
 
+        if HAS_BIAS:
+            bias = tl.load(bias_ptr + cols, mask=mask, other=0.0).to(
+                tl.float32
+            )
+            x_hat = x_hat + bias
+
         y = x_hat.to(x_ptr.dtype.element_ty)
         tl.store(y_row_ptr + cols, y, mask=mask)
 
 
-def rms_norm(
+def _rms_norm_impl(
     input: torch.Tensor,
     normalized_shape: Tuple[int, ...],
     weight: Optional[torch.Tensor] = None,
+    *,
+    bias: Optional[torch.Tensor] = None,
     eps: float = 1e-05,
-) -> torch.Tensor:
+    return_stats: bool = False,
+):
     logger.debug(f"FLAG_DNN RMS_NORM (eps={eps})")
 
-    # 拦截空张量
+    stat_shape = input.shape[: input.ndim - len(normalized_shape)] + (
+        1,
+    ) * len(normalized_shape)
     if input.numel() == 0:
-        return torch.empty_like(input)
+        y = torch.empty_like(input)
+        if return_stats:
+            stats = torch.empty(
+                stat_shape, dtype=torch.float32, device=input.device
+            )
+            return y, stats
+        return y
 
     assert input.ndim >= len(
         normalized_shape
@@ -109,18 +123,57 @@ def rms_norm(
 
     M = input.numel() // N
 
-    if weight is None:
-        weight_ptr = input
-        has_weight = False
-    else:
-        weight_ptr = weight
-        has_weight = True
+    weight_ptr = weight if weight is not None else input
+    bias_ptr = bias if bias is not None else input
+    rstd = (
+        torch.empty((M,), dtype=torch.float32, device=input.device)
+        if return_stats
+        else y
+    )
 
     grid = (M,)
 
     with torch_device_fn.device(input.device):
         rms_norm_kernel[grid](
-            input, y, weight_ptr, M, N, eps, HAS_WEIGHT=has_weight
+            input,
+            y,
+            weight_ptr,
+            bias_ptr,
+            rstd,
+            M,
+            N,
+            eps,
+            HAS_WEIGHT=(weight is not None),
+            HAS_BIAS=(bias is not None),
+            RETURN_STATS=return_stats,
         )
 
+    if return_stats:
+        return y, rstd.reshape(stat_shape)
     return y
+
+
+def rms_norm(
+    input: torch.Tensor,
+    normalized_shape: Tuple[int, ...],
+    weight: Optional[torch.Tensor] = None,
+    eps: float = 1e-05,
+) -> torch.Tensor:
+    return _rms_norm_impl(input, normalized_shape, weight=weight, eps=eps)
+
+
+def rms_norm_forward(
+    input: torch.Tensor,
+    normalized_shape: Tuple[int, ...],
+    weight: Optional[torch.Tensor] = None,
+    bias: Optional[torch.Tensor] = None,
+    eps: float = 1e-05,
+):
+    return _rms_norm_impl(
+        input,
+        normalized_shape,
+        weight=weight,
+        bias=bias,
+        eps=eps,
+        return_stats=True,
+    )

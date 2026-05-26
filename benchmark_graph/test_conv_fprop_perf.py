@@ -26,10 +26,14 @@ def _to_cudnn_spatial(value, rank):
     return list(_to_spatial_tuple(value, rank))
 
 
-def _normalize_conv_padding(rank, padding=0, pre_padding=None, post_padding=None):
+def _normalize_conv_padding(
+    rank, padding=0, pre_padding=None, post_padding=None
+):
     if pre_padding is not None or post_padding is not None:
         if pre_padding is None or post_padding is None:
-            raise RuntimeError("both pre_padding and post_padding are required")
+            raise RuntimeError(
+                "both pre_padding and post_padding are required"
+            )
         return (
             _to_spatial_tuple(pre_padding, rank),
             _to_spatial_tuple(post_padding, rank),
@@ -81,7 +85,10 @@ def _empty_conv_output(shape, dtype, device):
     if len(shape) == 3:
         # cuDNN frontend infers NCW output with NWC-style dense strides.
         return torch.empty_strided(
-            shape, (shape[1] * shape[2], 1, shape[1]), device=device, dtype=dtype
+            shape,
+            (shape[1] * shape[2], 1, shape[1]),
+            device=device,
+            dtype=dtype,
         )
     return torch.empty(shape, device=device, dtype=dtype)
 
@@ -197,7 +204,9 @@ class ConvFpropBenchmark(CudnnCompareBenchmark):
             ],
             options={"cache": None, "validate_inputs": False},
         )
-        assert [node.op_type for node in compiled.graph.nodes] == ["conv_fprop"]
+        assert [node.op_type for node in compiled.graph.nodes] == [
+            "conv_fprop"
+        ]
 
         def run():
             return compiled.run(x, weight)

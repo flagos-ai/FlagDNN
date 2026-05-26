@@ -5,10 +5,13 @@ import triton
 import triton.language as tl
 
 from flag_dnn import runtime
+from flag_dnn.ops.binary import (
+    empty_like_preserve_dense_layout,
+    is_dense_flat_tensor,
+)
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
-
 
 logger = logging.getLogger(__name__)
 
@@ -110,14 +113,17 @@ def softplus(
     if beta <= 0.0:
         raise ValueError(f"beta must be positive, but got beta={beta}")
 
-    if not input.is_contiguous():
-        input = input.contiguous()
+    if not is_dense_flat_tensor(input):
+        raise NotImplementedError(
+            "flag_dnn softplus currently supports contiguous or NHWC "
+            "channels-last input only"
+        )
 
     n_elements = input.numel()
     if n_elements == 0:
-        return torch.empty_like(input)
+        return empty_like_preserve_dense_layout(input, input.dtype)
 
-    y = torch.empty_like(input)
+    y = empty_like_preserve_dense_layout(input, input.dtype)
 
     def grid(meta):
         return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)

@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 def layer_norm_kernel(
     x_ptr,
     y_ptr,
+    mean_ptr,
+    rstd_ptr,
     weight_ptr,
     bias_ptr,
     M,
@@ -34,6 +36,7 @@ def layer_norm_kernel(
     BLOCK_SIZE: tl.constexpr,
     HAS_WEIGHT: tl.constexpr,
     HAS_BIAS: tl.constexpr,
+    RETURN_STATS: tl.constexpr,
 ):
     row_idx = tle.program_id(0)
 
@@ -57,6 +60,9 @@ def layer_norm_kernel(
     # 防浮点精度越界产生负数
     var = tl.maximum(var, 0.0)
     rstd = 1.0 / tl.sqrt(var + eps)
+    if RETURN_STATS:
+        tl.store(mean_ptr + row_idx, mean)
+        tl.store(rstd_ptr + row_idx, rstd)
 
     for offset in range(0, N, BLOCK_SIZE):
         cols = offset + tl.arange(0, BLOCK_SIZE)
@@ -82,17 +88,28 @@ def layer_norm_kernel(
         tl.store(y_row_ptr + cols, y, mask=mask)
 
 
-def layer_norm(
+def _layer_norm_impl(
     input: torch.Tensor,
     normalized_shape: Tuple[int, ...],
     weight: Optional[torch.Tensor] = None,
     bias: Optional[torch.Tensor] = None,
     eps: float = 1e-05,
-) -> torch.Tensor:
+    *,
+    return_stats: bool = False,
+):
     logger.debug(f"FLAG_DNN LAYER_NORM (eps={eps})")
 
+    stat_shape = input.shape[: input.ndim - len(normalized_shape)] + (
+        1,
+    ) * len(normalized_shape)
     if input.numel() == 0:
-        return torch.empty_like(input)
+        y = torch.empty_like(input)
+        if return_stats:
+            stats = torch.empty(
+                stat_shape, dtype=torch.float32, device=input.device
+            )
+            return y, stats, torch.empty_like(stats)
+        return y
 
     assert input.ndim >= len(
         normalized_shape
@@ -117,6 +134,16 @@ def layer_norm(
         N *= dim
 
     M = input.numel() // N
+    mean = (
+        torch.empty((M,), dtype=torch.float32, device=input.device)
+        if return_stats
+        else y
+    )
+    rstd = (
+        torch.empty((M,), dtype=torch.float32, device=input.device)
+        if return_stats
+        else y
+    )
 
     grid = (M,)
 
@@ -124,6 +151,8 @@ def layer_norm(
         layer_norm_kernel[grid](
             input,
             y,
+            mean,
+            rstd,
             weight,
             bias,
             M,
@@ -131,6 +160,38 @@ def layer_norm(
             eps,
             HAS_WEIGHT=(weight is not None),
             HAS_BIAS=(bias is not None),
+            RETURN_STATS=return_stats,
         )
 
+    if return_stats:
+        return y, mean.reshape(stat_shape), rstd.reshape(stat_shape)
     return y
+
+
+def layer_norm(
+    input: torch.Tensor,
+    normalized_shape: Tuple[int, ...],
+    weight: Optional[torch.Tensor] = None,
+    bias: Optional[torch.Tensor] = None,
+    eps: float = 1e-05,
+) -> torch.Tensor:
+    return _layer_norm_impl(
+        input, normalized_shape, weight=weight, bias=bias, eps=eps
+    )
+
+
+def layer_norm_forward(
+    input: torch.Tensor,
+    normalized_shape: Tuple[int, ...],
+    weight: Optional[torch.Tensor] = None,
+    bias: Optional[torch.Tensor] = None,
+    eps: float = 1e-05,
+):
+    return _layer_norm_impl(
+        input,
+        normalized_shape,
+        weight=weight,
+        bias=bias,
+        eps=eps,
+        return_stats=True,
+    )

@@ -48,6 +48,7 @@ def skip_unsupported_cudnn_graph(exc, op_name):
     if (
         isinstance(exc, cudnn.cudnnGraphNotSupportedError)
         or "CUDNN_STATUS_BAD_PARAM" in message
+        or "CUDNN_STATUS_NOT_SUPPORTED" in message
         or "No valid engine configs" in message
     ):
         pytest.skip(f"cuDNN frontend does not support {op_name}: {exc}")
@@ -102,10 +103,14 @@ def to_spatial_tuple(value, rank):
     return result
 
 
-def normalize_conv_padding(rank, padding=0, pre_padding=None, post_padding=None):
+def normalize_conv_padding(
+    rank, padding=0, pre_padding=None, post_padding=None
+):
     if pre_padding is not None or post_padding is not None:
         if pre_padding is None or post_padding is None:
-            raise RuntimeError("both pre_padding and post_padding are required")
+            raise RuntimeError(
+                "both pre_padding and post_padding are required"
+            )
         return (
             to_spatial_tuple(pre_padding, rank),
             to_spatial_tuple(post_padding, rank),

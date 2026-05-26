@@ -6,6 +6,8 @@ import triton
 import triton.language as tl
 
 from flag_dnn import runtime
+from flag_dnn.ops.add import add
+from flag_dnn.ops.sub import sub
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
@@ -188,16 +190,12 @@ def _should_use_addmm_fallback(
     n: int,
     k: int,
 ) -> bool:
+    del m, n, k
     if result_dtype != a.dtype:
         return False
-    if a.dtype == torch.float64:
-        return True
-    # The generic Triton GEMM is only consistently ahead for tiny fp16/bf16.
-    if a.dtype in (torch.float16, torch.bfloat16) and max(m, n, k) >= 96:
-        return True
-    if max(m, n, k) >= 1024:
-        return True
-    return False
+    # TODO: remove this torch fallback after the Triton mm kernel supports
+    # fp64 accumulation with PyTorch-compatible accuracy.
+    return a.dtype == torch.float64
 
 
 def _launch_addmm_fallback(
@@ -213,7 +211,9 @@ def _launch_addmm_fallback(
             )
         else:
             bias = torch.empty((), dtype=a.dtype, device=a.device)
+        # TODO: torch fallback for fp64 until Triton mm has fp64 accumulation.
         return torch.addmm(bias, a, b, beta=0)
+    # TODO: torch fallback for fp64 until Triton mm has fp64 accumulation.
     torch.addmm(y, a, b, beta=0, out=y)
     return y
 
@@ -319,8 +319,9 @@ def _mm_complex(
     br = mat2.real.contiguous()
     bi = mat2.imag.contiguous()
 
-    real = mm(ar, br) - mm(ai, bi)
-    imag = mm(ar, bi) + mm(ai, br)
+    real = sub(mm(ar, br), mm(ai, bi))
+    imag = add(mm(ar, bi), mm(ai, br))
+    # TODO: replace torch.complex after FlagDNN has a complex assembly op.
     result = torch.complex(real, imag)
 
     if y.is_contiguous():

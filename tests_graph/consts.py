@@ -31,6 +31,12 @@ POINTWISE_UNARY_SHAPES = (
 
 ABS_SHAPES = POINTWISE_UNARY_SHAPES
 SIGMOID_SHAPES = POINTWISE_UNARY_SHAPES
+RELU_SHAPES = POINTWISE_UNARY_SHAPES
+SWISH_SHAPES = POINTWISE_UNARY_SHAPES
+LEAKY_RELU_SHAPES = POINTWISE_UNARY_SHAPES
+ELU_SHAPES = POINTWISE_UNARY_SHAPES
+SOFTPLUS_SHAPES = POINTWISE_UNARY_SHAPES
+GELU_APPROX_TANH_SHAPES = POINTWISE_UNARY_SHAPES
 POINTWISE_BINARY_CASES = (
     # Power-of-two aligned shapes.
     ((1, 1, 16), (1, 1, 16)),
@@ -52,6 +58,12 @@ POW_CASES = POINTWISE_BINARY_CASES
 MAX_CASES = POINTWISE_BINARY_CASES
 CMP_CASES = POINTWISE_BINARY_CASES
 SIGMOID_BACKWARD_CASES = POINTWISE_BINARY_CASES
+SCALE_CASES = POINTWISE_BINARY_CASES
+MATMUL_CASES = (
+    ((4, 16, 32), (4, 32, 24)),
+    ((8, 32, 64), (8, 64, 32)),
+    ((16, 32, 128), (16, 128, 64)),
+)
 
 
 def pointwise_layout(tensor):
@@ -67,6 +79,7 @@ def pointwise_randn(shape, dtype, device):
 
 def pointwise_rand(shape, dtype, device):
     return pointwise_layout(torch.rand(shape, device=device, dtype=dtype))
+
 
 RESHAPE_CASES = (
     ((2, 3, 4), (6, 4)),
@@ -121,4 +134,16 @@ CONV_BIAS_RELU_CASES = (
     ((2, 8, 9, 11), (4, 8, 1, 1), 1, 0, 1),
     ((1, 4, 18, 18), (4, 4, 3, 3), 1, 0, 1),
     ((2, 12, 13, 15), (10, 12, 3, 3), 1, 1, 1),
+)
+
+BATCHNORM_INFERENCE_CASES = (
+    (2, 8, 16, 16),
+    (4, 16, 8, 8),
+    (2, 32, 7, 9),
+)
+
+REDUCTION_CASES = (
+    ((2, 4, 8, 8), 1, "ADD"),
+    ((2, 4, 8, 8), 1, "AVG"),
+    ((2, 4, 8, 8), 1, "MUL"),
 )

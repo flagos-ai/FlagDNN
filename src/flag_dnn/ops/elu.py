@@ -5,10 +5,13 @@ import triton
 import triton.language as tl
 
 from flag_dnn import runtime
+from flag_dnn.ops.binary import (
+    empty_like_preserve_dense_layout,
+    is_dense_flat_tensor,
+)
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
-
 
 logger = logging.getLogger(__name__)
 
@@ -72,20 +75,24 @@ def _elu_impl(
     scale = float(scale)
     input_scale = float(input_scale)
 
-    orig_input = input
-    need_copy_back = inplace and (not input.is_contiguous())
-
-    if not input.is_contiguous():
-        input = input.contiguous()
+    if not is_dense_flat_tensor(input):
+        raise NotImplementedError(
+            "flag_dnn elu currently supports contiguous or NHWC "
+            "channels-last input only"
+        )
 
     n_elements = input.numel()
 
     if n_elements == 0:
         if inplace:
-            return orig_input
-        return torch.empty_like(input)
+            return input
+        return empty_like_preserve_dense_layout(input, input.dtype)
 
-    y = input if inplace else torch.empty_like(input)
+    y = (
+        input
+        if inplace
+        else empty_like_preserve_dense_layout(input, input.dtype)
+    )
 
     def grid(meta):
         return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
@@ -102,10 +109,6 @@ def _elu_impl(
             input_scale,
             USE_FP32_MATH=use_fp32_math,
         )
-
-    if need_copy_back:
-        orig_input.copy_(y)
-        return orig_input
 
     return y
 

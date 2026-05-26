@@ -5,10 +5,13 @@ import triton
 import triton.language as tl
 
 from flag_dnn import runtime
+from flag_dnn.ops.binary import (
+    empty_like_preserve_dense_layout,
+    is_dense_flat_tensor,
+)
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
-
 
 logger = logging.getLogger(__name__)
 
@@ -65,22 +68,27 @@ def gelu_kernel(
 def gelu(x: torch.Tensor, approximate: str = "none") -> torch.Tensor:
     logger.debug("FLAG_DNN GELU")
 
-    assert x.is_contiguous(), "x must be contiguous"
+    if not is_dense_flat_tensor(x):
+        raise NotImplementedError(
+            "flag_dnn gelu currently supports contiguous or NHWC "
+            "channels-last input only"
+        )
     assert approximate in [
         "none",
         "tanh",
     ], "approximate must be 'none' or 'tanh'"
 
-    # 预分配输出显存
-    y = torch.empty_like(x)
     n_elements = x.numel()
+    if n_elements == 0:
+        return empty_like_preserve_dense_layout(x, x.dtype)
+
+    y = empty_like_preserve_dense_layout(x, x.dtype)
 
     def grid(meta):
         return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
     is_approximate = approximate == "tanh"
 
-    # 启动 Triton Kernel
     with torch_device_fn.device(x.device):
         gelu_kernel[grid](
             x,

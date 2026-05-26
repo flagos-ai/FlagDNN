@@ -417,16 +417,12 @@ def _tuple_n(value: Any, rank: int, name: str) -> tuple[int, ...]:
     return result
 
 
-def _normalize_convolution_mode(convolution_mode: Any) -> None:
+def _normalize_convolution_mode(convolution_mode: Any) -> str:
     if convolution_mode is None:
-        return
+        return "CROSS_CORRELATION"
     mode = str(convolution_mode).rsplit(".", 1)[-1].upper()
-    if mode == "CROSS_CORRELATION":
-        return
-    if mode == "CONVOLUTION":
-        raise NotImplementedError(
-            "graph conv_fprop currently supports CROSS_CORRELATION only"
-        )
+    if mode in ("CROSS_CORRELATION", "CONVOLUTION"):
+        return mode
     raise RuntimeError(
         "convolution_mode must be CROSS_CORRELATION or CONVOLUTION"
     )
@@ -511,7 +507,6 @@ def _normalize_conv_padding_from_attrs(
     raise RuntimeError(
         f"padding must have length {rank} or {2 * rank}, got {padding}"
     )
-
 
 
 def _normalize_padding_from_spec(
@@ -610,7 +605,9 @@ def _conv_fprop_shape(
             "graph conv_fprop dynamic shapes are not enabled"
         )
     if int(c_in) % groups != 0:
-        raise RuntimeError("graph conv_fprop input channels must divide groups")
+        raise RuntimeError(
+            "graph conv_fprop input channels must divide groups"
+        )
     if int(c_per_group) != int(c_in) // groups:
         raise RuntimeError("graph conv_fprop weight channel mismatch")
 
@@ -637,6 +634,35 @@ def _conv_fprop_shape(
             dtype=x.dtype,
             layout=x.layout,
             device=x.device,
+        )
+    ]
+
+
+def _matmul_shape(
+    input_specs: list[TensorSpec], attrs: dict[str, Any]
+) -> list[TensorSpec]:
+    a, b = input_specs[0], input_specs[1]
+    if len(a.shape) < 2 or len(b.shape) < 2:
+        raise RuntimeError("graph matmul expects rank >= 2 inputs")
+    if a.shape[-1] != b.shape[-2]:
+        raise RuntimeError(
+            f"graph matmul shape mismatch: {a.shape} cannot multiply {b.shape}"
+        )
+    batch_shape = torch.broadcast_shapes(
+        tuple(a.shape[:-2]), tuple(b.shape[:-2])
+    )
+    out_dtype = attrs.get("out_dtype") or canonical_dtype(
+        torch.result_type(
+            torch.empty((), dtype=torch_dtype(a.dtype)),
+            torch.empty((), dtype=torch_dtype(b.dtype)),
+        )
+    )
+    return [
+        TensorSpec(
+            name="",
+            shape=tuple(batch_shape) + (a.shape[-2], b.shape[-1]),
+            dtype=out_dtype,
+            device=a.device or b.device,
         )
     ]
 
@@ -778,6 +804,332 @@ def _normalize_unary(
     return normalize
 
 
+def _normalize_reduction(
+    ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[list[int], dict]:
+    if len(args) > 2:
+        raise TypeError("reduction expects at most two positional args")
+    params = dict(kwargs)
+    x = args[0] if args else params.pop("input", None)
+    if x is None:
+        raise TypeError("reduction missing input tensor")
+    mode = args[1] if len(args) >= 2 else params.pop("mode", None)
+    if mode is None:
+        raise TypeError("reduction missing mode")
+    attrs = {
+        "mode": mode,
+        "dim": params.pop("dim", None),
+        "keepdim": bool(params.pop("keepdim", True)),
+        "dtype": params.pop("dtype", None),
+        "compute_data_type": params.pop("compute_data_type", None),
+        "name": params.pop("name", ""),
+    }
+    if params:
+        raise TypeError(
+            f"reduction got unsupported graph attrs: {sorted(params)}"
+        )
+    return [ctx.as_value(x, "input")], attrs
+
+
+def _reduction_shape(
+    input_specs: list[TensorSpec], attrs: dict[str, Any]
+) -> list[TensorSpec]:
+    inp = input_specs[0]
+    rank = len(inp.shape)
+    dim = attrs.get("dim")
+    if dim is None:
+        dims = list(range(rank))
+    elif isinstance(dim, int):
+        dims = [_normalize_axis(dim, rank, "reduction")]
+    else:
+        dims = [_normalize_axis(item, rank, "reduction") for item in dim]
+    dims = sorted(set(dims))
+    keepdim = bool(attrs.get("keepdim", True))
+    out_shape = []
+    for index, size in enumerate(inp.shape):
+        if index in dims:
+            if keepdim:
+                out_shape.append(1)
+        else:
+            out_shape.append(size)
+    dtype = attrs.get("dtype")
+    if dtype is not None:
+        out_dtype = canonical_dtype(dtype)
+    else:
+        out_dtype = inp.dtype
+    return [
+        TensorSpec(
+            name="",
+            shape=tuple(out_shape),
+            dtype=out_dtype,
+            device=inp.device,
+        )
+    ]
+
+
+def _float32_spec(shape: tuple[Any, ...], device: Optional[str]) -> TensorSpec:
+    return TensorSpec(
+        name="",
+        shape=shape,
+        dtype=canonical_dtype(torch.float32),
+        device=device,
+    )
+
+
+def _norm_axes_from_scale(
+    input_spec: TensorSpec, scale_spec: TensorSpec
+) -> tuple[int, ...]:
+    rank = len(input_spec.shape)
+    scale_shape = tuple(scale_spec.shape)
+    if len(scale_shape) > rank:
+        raise RuntimeError("norm scale rank cannot exceed input rank")
+    aligned = (1,) * (rank - len(scale_shape)) + scale_shape
+    axes = tuple(index for index, size in enumerate(aligned) if size != 1)
+    if not axes:
+        axes = (rank - 1,)
+    return axes
+
+
+def _norm_stats_shape(
+    input_spec: TensorSpec, scale_spec: TensorSpec
+) -> tuple[Any, ...]:
+    axes = set(_norm_axes_from_scale(input_spec, scale_spec))
+    return tuple(
+        1 if index in axes else size
+        for index, size in enumerate(input_spec.shape)
+    )
+
+
+def _layernorm_shape(
+    input_specs: list[TensorSpec], attrs: dict[str, Any]
+) -> list[TensorSpec]:
+    del attrs
+    inp = input_specs[0]
+    stat_shape = _norm_stats_shape(inp, input_specs[1])
+    return [
+        TensorSpec(
+            name="",
+            shape=inp.shape,
+            dtype=inp.dtype,
+            layout=inp.layout,
+            device=inp.device,
+            contiguous=inp.contiguous,
+        ),
+        _float32_spec(stat_shape, inp.device),
+        _float32_spec(stat_shape, inp.device),
+    ]
+
+
+def _rmsnorm_shape(
+    input_specs: list[TensorSpec], attrs: dict[str, Any]
+) -> list[TensorSpec]:
+    del attrs
+    inp = input_specs[0]
+    stat_shape = _norm_stats_shape(inp, input_specs[1])
+    return [
+        TensorSpec(
+            name="",
+            shape=inp.shape,
+            dtype=inp.dtype,
+            layout=inp.layout,
+            device=inp.device,
+            contiguous=inp.contiguous,
+        ),
+        _float32_spec(stat_shape, inp.device),
+    ]
+
+
+def _batchnorm_shape(
+    input_specs: list[TensorSpec], attrs: dict[str, Any]
+) -> list[TensorSpec]:
+    del attrs
+    inp = input_specs[0]
+    running_mean = input_specs[3]
+    running_var = input_specs[4]
+    return [
+        TensorSpec(
+            name="",
+            shape=inp.shape,
+            dtype=inp.dtype,
+            layout=inp.layout,
+            device=inp.device,
+            contiguous=inp.contiguous,
+        ),
+        _float32_spec(running_mean.shape, inp.device),
+        _float32_spec(running_var.shape, inp.device),
+        _float32_spec(running_mean.shape, inp.device),
+        _float32_spec(running_var.shape, inp.device),
+    ]
+
+
+def _normalize_batchnorm_inference(
+    ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[list[int], dict]:
+    names = ("input", "mean", "inv_variance", "scale", "bias")
+    if len(args) > len(names):
+        raise TypeError("batchnorm_inference got too many positional args")
+    params = dict(kwargs)
+    values = {}
+    for name, value in zip(names, args):
+        values[name] = value
+    for name in names[len(args) :]:
+        if name in params:
+            values[name] = params.pop(name)
+    missing = [name for name in names if name not in values]
+    if missing:
+        raise TypeError(f"batchnorm_inference missing {missing[0]} tensor")
+    attrs = {
+        "compute_data_type": params.pop("compute_data_type", None),
+        "name": params.pop("name", ""),
+    }
+    if params:
+        raise TypeError(
+            f"batchnorm_inference got unsupported graph attrs: {sorted(params)}"
+        )
+    return [ctx.as_value(values[name], name) for name in names], attrs
+
+
+def _normalize_layernorm(
+    ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[list[int], dict]:
+    names = ("norm_forward_phase", "input", "scale", "bias", "epsilon")
+    if len(args) > len(names):
+        raise TypeError("layernorm got too many positional args")
+    params = dict(kwargs)
+    values = {}
+    for name, value in zip(names, args):
+        values[name] = value
+    for name in names[len(args) :]:
+        if name in params:
+            values[name] = params.pop(name)
+    missing = [name for name in names if name not in values]
+    if missing:
+        raise TypeError(f"layernorm missing {missing[0]}")
+    attrs = {
+        "norm_forward_phase": values.pop("norm_forward_phase"),
+        "compute_data_type": params.pop("compute_data_type", None),
+        "name": params.pop("name", ""),
+    }
+    if params:
+        raise TypeError(
+            f"layernorm got unsupported graph attrs: {sorted(params)}"
+        )
+    return [
+        ctx.as_value(values[name], name)
+        for name in ("input", "scale", "bias", "epsilon")
+    ], attrs
+
+
+def _normalize_rmsnorm(
+    ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[list[int], dict]:
+    names = ("norm_forward_phase", "input", "scale", "bias", "epsilon")
+    if len(args) > len(names):
+        raise TypeError("rmsnorm got too many positional args")
+    params = dict(kwargs)
+    values = {"bias": None, "epsilon": 1e-5}
+    for name, value in zip(names, args):
+        values[name] = value
+    for name in names[len(args) :]:
+        if name in params:
+            values[name] = params.pop(name)
+    for name in ("norm_forward_phase", "input", "scale"):
+        if name not in values:
+            raise TypeError(f"rmsnorm missing {name}")
+    attrs = {
+        "norm_forward_phase": values.pop("norm_forward_phase"),
+        "has_bias": values.get("bias") is not None,
+        "compute_data_type": params.pop("compute_data_type", None),
+        "name": params.pop("name", ""),
+    }
+    if params:
+        raise TypeError(
+            f"rmsnorm got unsupported graph attrs: {sorted(params)}"
+        )
+    input_ids = [
+        ctx.as_value(values["input"], "input"),
+        ctx.as_value(values["scale"], "scale"),
+    ]
+    if values.get("bias") is not None:
+        input_ids.append(ctx.as_value(values["bias"], "bias"))
+    input_ids.append(ctx.as_value(values["epsilon"], "epsilon"))
+    return input_ids, attrs
+
+
+def _normalize_batchnorm(
+    ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[list[int], dict]:
+    names = (
+        "input",
+        "scale",
+        "bias",
+        "in_running_mean",
+        "in_running_var",
+        "epsilon",
+        "momentum",
+    )
+    if len(args) > len(names):
+        raise TypeError("batchnorm got too many positional args")
+    params = dict(kwargs)
+    values = {}
+    for name, value in zip(names, args):
+        values[name] = value
+    for name in names[len(args) :]:
+        if name in params:
+            values[name] = params.pop(name)
+    missing = [name for name in names if name not in values]
+    if missing:
+        raise TypeError(f"batchnorm missing {missing[0]}")
+    peer_stats = params.pop("peer_stats", [])
+    if peer_stats:
+        raise NotImplementedError(
+            "FlagDNN graph batchnorm does not support peer_stats"
+        )
+    attrs = {
+        "compute_data_type": params.pop("compute_data_type", None),
+        "name": params.pop("name", ""),
+    }
+    if params:
+        raise TypeError(
+            f"batchnorm got unsupported graph attrs: {sorted(params)}"
+        )
+    return [ctx.as_value(values[name], name) for name in names], attrs
+
+
+def _normalize_causal_conv1d(
+    ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[list[int], dict]:
+    names = ("x", "weight", "bias", "activation")
+    if len(args) > len(names):
+        raise TypeError("causal_conv1d got too many positional args")
+    params = dict(kwargs)
+    values = {"bias": None, "activation": "identity"}
+    for name, value in zip(names, args):
+        values[name] = value
+    if "input" in params and "x" not in params:
+        params["x"] = params.pop("input")
+    for name in names[len(args) :]:
+        if name in params:
+            values[name] = params.pop(name)
+    if values.get("x") is None or values.get("weight") is None:
+        raise TypeError("causal_conv1d missing x/input or weight")
+    if params:
+        raise TypeError(
+            f"causal_conv1d got unsupported graph attrs: {sorted(params)}"
+        )
+    attrs = {
+        "activation": str(values["activation"]).lower(),
+        "has_bias": values.get("bias") is not None,
+    }
+    input_ids = [
+        ctx.as_value(values["x"], "x"),
+        ctx.as_value(values["weight"], "weight"),
+    ]
+    if values.get("bias") is not None:
+        input_ids.append(ctx.as_value(values["bias"], "bias"))
+    return input_ids, attrs
+
+
 def _normalize_activation_backward(op_type: str) -> NormalizeFn:
     def normalize(ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]):
         if len(args) > 2:
@@ -866,9 +1218,7 @@ def _normalize_binary(op_type: str) -> NormalizeFn:
             )
         params.pop("out", None)
         left = (
-            args[0]
-            if args
-            else _pop_operand(params, ("input", "a", "input0"))
+            args[0] if args else _pop_operand(params, ("input", "a", "input0"))
         )
         if left is None:
             raise TypeError(f"{op_type} missing input tensor")
@@ -894,6 +1244,36 @@ def _normalize_binary(op_type: str) -> NormalizeFn:
     return normalize
 
 
+def _normalize_scale(
+    ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[list[int], dict]:
+    if len(args) > 2:
+        raise TypeError("scale expects at most two positional args")
+    params = dict(kwargs)
+    x = args[0] if args else params.pop("input", None)
+    if x is None:
+        raise TypeError("scale missing input tensor")
+    if len(args) >= 2:
+        scale_value = args[1]
+    else:
+        scale_value = params.pop("scale", None)
+    if scale_value is None:
+        raise TypeError("scale missing scale tensor")
+    attrs = {
+        "op_type": "mul",
+        "alpha": 1,
+        "rounding_mode": None,
+        "compute_data_type": params.pop("compute_data_type", None),
+        "name": params.pop("name", ""),
+    }
+    if params:
+        raise TypeError(f"scale got unsupported graph attrs: {sorted(params)}")
+    return [
+        ctx.as_value(x, name_hint="input"),
+        ctx.as_value(scale_value, name_hint="scale"),
+    ], attrs
+
+
 def _normalize_pow(
     ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> tuple[list[int], dict]:
@@ -903,11 +1283,7 @@ def _normalize_pow(
     if "out" in params and params["out"] is not None:
         raise NotImplementedError("FlagDNN graph does not support out tensors")
     params.pop("out", None)
-    left = (
-        args[0]
-        if args
-        else _pop_operand(params, ("input", "input0", "a"))
-    )
+    left = args[0] if args else _pop_operand(params, ("input", "input0", "a"))
     if left is None:
         raise TypeError("pow missing input tensor")
     if len(args) >= 2:
@@ -946,9 +1322,7 @@ def _normalize_cmp_alias(alias_name: str, op_type: str) -> NormalizeFn:
             )
         params.pop("out", None)
         left = (
-            args[0]
-            if args
-            else _pop_operand(params, ("input", "a", "input0"))
+            args[0] if args else _pop_operand(params, ("input", "a", "input0"))
         )
         if left is None:
             raise TypeError(f"{alias_name} missing input tensor")
@@ -1113,6 +1487,34 @@ def _normalize_mm(
         ctx.as_value(params["input"], "input"),
         ctx.as_value(params["mat2"], "mat2"),
     ], attrs
+
+
+def _normalize_matmul(
+    ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[list[int], dict]:
+    if len(args) > 2:
+        raise TypeError("matmul expects at most two positional args")
+    params = dict(kwargs)
+    a = args[0] if args else _pop_operand(params, ("A", "a", "input"))
+    if a is None:
+        raise TypeError("matmul missing A tensor")
+    if len(args) >= 2:
+        b = args[1]
+    else:
+        b = _pop_operand(params, ("B", "b", "other", "mat2"))
+    if b is None:
+        raise TypeError("matmul missing B tensor")
+    attrs = {
+        "out_dtype": None,
+        "compute_data_type": params.pop("compute_data_type", None),
+        "padding": params.pop("padding", 0.0),
+        "name": params.pop("name", ""),
+    }
+    if params:
+        raise TypeError(
+            f"matmul got unsupported graph attrs: {sorted(params)}"
+        )
+    return [ctx.as_value(a, "A"), ctx.as_value(b, "B")], attrs
 
 
 def _normalize_reshape(
@@ -1285,7 +1687,9 @@ def _format_bias(
 
 
 def _runtime_backend_available(inputs: list[Any]) -> bool:
-    tensor_inputs = [value for value in inputs if isinstance(value, torch.Tensor)]
+    tensor_inputs = [
+        value for value in inputs if isinstance(value, torch.Tensor)
+    ]
     return bool(tensor_inputs) and all(
         is_runtime_device_tensor(value) for value in tensor_inputs
     )
@@ -1527,7 +1931,28 @@ def _run_binary_cmp(flag_ops: Any, op_type: str) -> RunFn:
 def _run_relu(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
         _require_runtime_backend(inputs, "relu")
-        return flag_ops.relu(inputs[0], inplace=attrs.get("inplace", False))
+        return flag_ops.relu(
+            inputs[0],
+            inplace=attrs.get("inplace", False),
+            negative_slope=attrs.get("negative_slope"),
+            lower_clip=attrs.get("lower_clip"),
+            upper_clip=attrs.get("upper_clip"),
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_swish(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "swish")
+        return flag_ops.swish(
+            inputs[0],
+            swish_beta=attrs.get("swish_beta"),
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
 
     return run
 
@@ -1537,6 +1962,58 @@ def _run_gelu(flag_ops: Any) -> RunFn:
         _require_runtime_backend(inputs, "gelu")
         return flag_ops.gelu(
             inputs[0], approximate=attrs.get("approximate", "none")
+        )
+
+    return run
+
+
+def _run_gelu_approx_tanh(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "gelu_approx_tanh")
+        return flag_ops.gelu(inputs[0], approximate="tanh")
+
+    return run
+
+
+def _run_leaky_relu(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "leaky_relu")
+        negative_slope = attrs.get("negative_slope", 0.01)
+        if negative_slope is None:
+            negative_slope = 0.01
+        return flag_ops.leaky_relu(
+            inputs[0],
+            negative_slope=float(negative_slope),
+            inplace=False,
+        )
+
+    return run
+
+
+def _run_elu(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "elu")
+        alpha = attrs.get("alpha", 1.0)
+        if alpha is None:
+            alpha = 1.0
+        return flag_ops.elu(inputs[0], alpha=float(alpha), inplace=False)
+
+    return run
+
+
+def _run_softplus(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "softplus")
+        beta = attrs.get("beta", 1.0)
+        threshold = attrs.get("threshold", 20.0)
+        if beta is None:
+            beta = 1.0
+        if threshold is None:
+            threshold = 20.0
+        return flag_ops.softplus(
+            inputs[0],
+            beta=float(beta),
+            threshold=float(threshold),
         )
 
     return run
@@ -1716,6 +2193,121 @@ def _run_mm(flag_ops: Any) -> RunFn:
     return run
 
 
+def _run_reduction(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "reduction")
+        return flag_ops.reduction(
+            inputs[0],
+            attrs.get("mode"),
+            dim=attrs.get("dim"),
+            keepdim=bool(attrs.get("keepdim", True)),
+            dtype=attrs.get("dtype"),
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_batchnorm_inference(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "batchnorm_inference")
+        return flag_ops.batchnorm_inference(
+            inputs[0],
+            inputs[1],
+            inputs[2],
+            inputs[3],
+            inputs[4],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_batchnorm(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs[:5], "batchnorm")
+        return flag_ops.batchnorm(
+            inputs[0],
+            inputs[1],
+            inputs[2],
+            inputs[3],
+            inputs[4],
+            inputs[5],
+            inputs[6],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_layernorm(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs[:3], "layernorm")
+        return flag_ops.layernorm(
+            attrs.get("norm_forward_phase"),
+            inputs[0],
+            inputs[1],
+            inputs[2],
+            inputs[3],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_rmsnorm(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        has_bias = bool(attrs.get("has_bias"))
+        _require_runtime_backend(
+            inputs[:3] if has_bias else inputs[:2], "rmsnorm"
+        )
+        bias = inputs[2] if has_bias else None
+        epsilon = inputs[3] if has_bias else inputs[2]
+        return flag_ops.rmsnorm(
+            attrs.get("norm_forward_phase"),
+            inputs[0],
+            inputs[1],
+            bias,
+            epsilon,
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_causal_conv1d(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "causal_conv1d")
+        bias = inputs[2] if attrs.get("has_bias") else None
+        return flag_ops.causal_conv1d(
+            inputs[0],
+            inputs[1],
+            bias=bias,
+            activation=attrs.get("activation", "identity"),
+        )
+
+    return run
+
+
+def _run_matmul(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "matmul")
+        return flag_ops.matmul(
+            inputs[0],
+            inputs[1],
+            compute_data_type=attrs.get("compute_data_type"),
+            padding=float(attrs.get("padding", 0.0)),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
 def _run_fused_bias_relu(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
         _require_runtime_backend(inputs, "fused_bias_relu")
@@ -1731,9 +2323,7 @@ def _run_fused_bias_gelu(flag_ops: Any) -> RunFn:
         _require_runtime_backend(inputs, "fused_bias_gelu")
         x, bias = inputs
         y = flag_ops.add(x, _format_bias(x, bias))
-        return flag_ops.gelu(
-            y, approximate=attrs.get("approximate", "none")
-        )
+        return flag_ops.gelu(y, approximate=attrs.get("approximate", "none"))
 
     return run
 
@@ -1851,6 +2441,16 @@ def register_default_ops() -> None:
 
     register_op(
         OpSchema(
+            name="scale",
+            normalize_fn=_normalize_scale,
+            shape_fn=_binary_shape,
+            run_fn=_run_binary(flag_ops, "mul"),
+            fusible=True,
+        )
+    )
+
+    register_op(
+        OpSchema(
             name="pow",
             normalize_fn=_normalize_pow,
             shape_fn=_binary_shape,
@@ -1880,7 +2480,17 @@ def register_default_ops() -> None:
     register_op(
         OpSchema(
             name="relu",
-            normalize_fn=_normalize_unary("relu", ("inplace",)),
+            normalize_fn=_normalize_unary(
+                "relu",
+                (
+                    "inplace",
+                    "negative_slope",
+                    "lower_clip",
+                    "upper_clip",
+                    "compute_data_type",
+                    "name",
+                ),
+            ),
             shape_fn=_shape_like_first,
             run_fn=_run_relu(flag_ops),
             fusible=True,
@@ -1888,10 +2498,68 @@ def register_default_ops() -> None:
     )
     register_op(
         OpSchema(
+            name="swish",
+            normalize_fn=_normalize_unary(
+                "swish", ("swish_beta", "compute_data_type", "name")
+            ),
+            shape_fn=_shape_like_first,
+            run_fn=_run_swish(flag_ops),
+            fusible=True,
+        )
+    )
+
+    register_op(
+        OpSchema(
             name="gelu",
             normalize_fn=_normalize_unary("gelu", ("approximate",)),
             shape_fn=_shape_like_first,
             run_fn=_run_gelu(flag_ops),
+            fusible=True,
+        )
+    )
+    register_op(
+        OpSchema(
+            name="gelu_approx_tanh",
+            normalize_fn=_normalize_unary(
+                "gelu_approx_tanh", ("compute_data_type", "name")
+            ),
+            shape_fn=_shape_like_first,
+            run_fn=_run_gelu_approx_tanh(flag_ops),
+            fusible=True,
+        )
+    )
+    register_op(
+        OpSchema(
+            name="leaky_relu",
+            normalize_fn=_normalize_unary(
+                "leaky_relu",
+                ("negative_slope", "compute_data_type", "name", "inplace"),
+            ),
+            shape_fn=_shape_like_first,
+            run_fn=_run_leaky_relu(flag_ops),
+            fusible=True,
+        )
+    )
+    register_op(
+        OpSchema(
+            name="elu",
+            normalize_fn=_normalize_unary(
+                "elu", ("alpha", "compute_data_type", "name", "inplace")
+            ),
+            shape_fn=_shape_like_first,
+            run_fn=_run_elu(flag_ops),
+            fusible=True,
+        )
+    )
+    register_op(
+        OpSchema(
+            name="softplus",
+            normalize_fn=_normalize_unary(
+                "softplus",
+                ("beta", "threshold", "compute_data_type", "name"),
+            ),
+            shape_fn=_shape_like_first,
+            run_fn=_run_softplus(flag_ops),
             fusible=True,
         )
     )
@@ -1915,6 +2583,15 @@ def register_default_ops() -> None:
     )
     register_op(
         OpSchema(
+            name="causal_conv1d",
+            normalize_fn=_normalize_causal_conv1d,
+            shape_fn=_shape_like_first,
+            run_fn=_run_causal_conv1d(flag_ops),
+            fusible=True,
+        )
+    )
+    register_op(
+        OpSchema(
             name="fused_conv2d_bias_relu",
             normalize_fn=_normalize_conv2d,
             shape_fn=_conv2d_shape,
@@ -1928,6 +2605,69 @@ def register_default_ops() -> None:
             normalize_fn=_normalize_mm,
             shape_fn=_mm_shape,
             run_fn=_run_mm(flag_ops),
+            fusible=True,
+        )
+    )
+
+    register_op(
+        OpSchema(
+            name="reduction",
+            normalize_fn=_normalize_reduction,
+            shape_fn=_reduction_shape,
+            run_fn=_run_reduction(flag_ops),
+            fusible=True,
+        )
+    )
+
+    register_op(
+        OpSchema(
+            name="batchnorm_inference",
+            normalize_fn=_normalize_batchnorm_inference,
+            shape_fn=_shape_like_first,
+            run_fn=_run_batchnorm_inference(flag_ops),
+            fusible=True,
+        )
+    )
+
+    register_op(
+        OpSchema(
+            name="batchnorm",
+            normalize_fn=_normalize_batchnorm,
+            shape_fn=_batchnorm_shape,
+            run_fn=_run_batchnorm(flag_ops),
+            num_outputs=5,
+            fusible=True,
+        )
+    )
+
+    register_op(
+        OpSchema(
+            name="layernorm",
+            normalize_fn=_normalize_layernorm,
+            shape_fn=_layernorm_shape,
+            run_fn=_run_layernorm(flag_ops),
+            num_outputs=3,
+            fusible=True,
+        )
+    )
+
+    register_op(
+        OpSchema(
+            name="rmsnorm",
+            normalize_fn=_normalize_rmsnorm,
+            shape_fn=_rmsnorm_shape,
+            run_fn=_run_rmsnorm(flag_ops),
+            num_outputs=2,
+            fusible=True,
+        )
+    )
+
+    register_op(
+        OpSchema(
+            name="matmul",
+            normalize_fn=_normalize_matmul,
+            shape_fn=_matmul_shape,
+            run_fn=_run_matmul(flag_ops),
             fusible=True,
         )
     )
