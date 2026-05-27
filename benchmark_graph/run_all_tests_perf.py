@@ -12,20 +12,18 @@ from datetime import datetime
 # 例如: ["relu", "add"]。如果留空 []，则自动测试目录下所有的 test_*_perf.py
 TARGET_OPERATORS = []
 
-TEST_DIRS = tuple(
-    item.strip()
-    for item in os.getenv(
-        "FLAGDNN_PERF_TEST_DIRS", "benchmark,benchmark_graph"
-    ).split(",")
-    if item.strip()
-)  # 性能测试文件所在目录
-LOG_DIR = "perf_logs"  # 单个测试日志的存放目录
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+TEST_DIRS = (SCRIPT_DIR,)  # 性能测试文件所在目录
+LOG_DIR = os.path.join(
+    REPO_ROOT, "perf_graph_logs"
+)  # 单个测试日志的存放目录
 
 # 运行状态汇总，例如 total / passed / failed / details
-REPORT_FILE = "perf_summary.json"
+REPORT_FILE = os.path.join(REPO_ROOT, "perf_graph_summary.json")
 
 # 核心性能数据，例如 operator / dtype / shape / speedup
-DATA_FILE = "perf_data.json"
+DATA_FILE = os.path.join(REPO_ROOT, "perf_graph_data.json")
 
 # ==========================================
 
@@ -130,6 +128,31 @@ def parse_legacy_operator_dtype(operator_name):
             return operator_name[: -len(marker)], dtype
 
     return operator_name, None
+
+
+def parse_pytest_collected_count(stdout_text):
+    """Return pytest collected item count parsed from stdout."""
+    for line in stdout_text.splitlines():
+        match = re.search(r"collected\s+(\d+)\s+items?", line)
+        if match:
+            return int(match.group(1))
+    return 0
+
+
+def parse_pytest_skipped_count(stdout_text):
+    """Return pytest skipped item count parsed from the summary line."""
+    skipped_count = 0
+    for line in stdout_text.splitlines():
+        match = re.search(r"(\d+)\s+skipped", line)
+        if match:
+            skipped_count = int(match.group(1))
+    return skipped_count
+
+
+def all_pytest_items_skipped(stdout_text):
+    collected_count = parse_pytest_collected_count(stdout_text)
+    skipped_count = parse_pytest_skipped_count(stdout_text)
+    return collected_count > 0 and skipped_count >= collected_count
 
 
 def parse_perf_output(stdout_text):
@@ -287,6 +310,7 @@ def main():
         "total": len(test_files),
         "passed": 0,
         "failed": 0,
+        "skipped_or_unsupported": 0,
         "errored_or_interrupted": 0,
         "details": [],
         "start_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -299,7 +323,7 @@ def main():
 
     for idx, file_path in enumerate(test_files, 1):
         file_name = os.path.basename(file_path)
-        log_name = file_path.replace(os.sep, "_")
+        log_name = os.path.relpath(file_path, REPO_ROOT).replace(os.sep, "_")
         log_file = os.path.join(LOG_DIR, f"{log_name}.log")
 
         print(
@@ -319,6 +343,7 @@ def main():
             "pytest",
             "-v",
             "-s",
+            "-rs",
             file_path,
         ]
 
@@ -332,25 +357,33 @@ def main():
 
         duration = time.time() - start_time
 
-        # 分析退出状态码
-        if result.returncode == 0:
-            status = "✅ PASS"
-            summary["passed"] += 1
-        elif result.returncode == 1:
-            status = "❌ FAIL"
-            summary["failed"] += 1
-        elif result.returncode == 5:
-            status = "⚠️ NO TESTS"
-            summary["errored_or_interrupted"] += 1
-        else:
-            status = f"💥 ERROR (Code: {result.returncode})"
-            summary["errored_or_interrupted"] += 1
-
-        print(f" -> {status} ({duration:.2f}s)")
-
         # ==== 核心解析步骤 ====
         extracted_data = parse_perf_output(result.stdout)
         all_perf_data.extend(extracted_data)
+
+        # 分析退出状态码
+        if result.returncode == 0 and all_pytest_items_skipped(result.stdout):
+            status = "⏭️ SKIPPED/UNSUPPORTED"
+            status_label = "SKIPPED/UNSUPPORTED"
+            summary["skipped_or_unsupported"] += 1
+        elif result.returncode == 0:
+            status = "✅ PASS"
+            status_label = "PASS"
+            summary["passed"] += 1
+        elif result.returncode == 1:
+            status = "❌ FAIL"
+            status_label = "FAIL"
+            summary["failed"] += 1
+        elif result.returncode == 5:
+            status = "⚠️ NO TESTS"
+            status_label = "NO TESTS"
+            summary["errored_or_interrupted"] += 1
+        else:
+            status = f"💥 ERROR (Code: {result.returncode})"
+            status_label = f"ERROR (Code: {result.returncode})"
+            summary["errored_or_interrupted"] += 1
+
+        print(f" -> {status} ({duration:.2f}s)")
 
         # 将标准输出和错误写入独立日志文件
         with open(log_file, "w", encoding="utf-8") as f:
@@ -380,7 +413,7 @@ def main():
             {
                 "file": file_name,
                 "operator": get_operator_name(file_name),
-                "status": status.strip("✅❌⚠️💥 "),
+                "status": status_label,
                 "return_code": result.returncode,
                 "duration_seconds": round(duration, 2),
                 "log_path": log_file,
@@ -408,6 +441,7 @@ def main():
     print(
         f"总计脚本: {summary['total']} | "
         f"通过: {summary['passed']} | "
+        f"跳过/不支持: {summary['skipped_or_unsupported']} | "
         f"异常: {summary['failed'] + summary['errored_or_interrupted']}"
     )
     print(
