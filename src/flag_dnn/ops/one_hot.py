@@ -20,7 +20,9 @@ def one_hot_zero_kernel(
     pid = tle.program_id(0)
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     mask = offsets < total
-    tl.store(out_ptr + offsets, tl.zeros([BLOCK_SIZE], dtype=tl.int64), mask=mask)
+    tl.store(
+        out_ptr + offsets, tl.zeros([BLOCK_SIZE], dtype=tl.int64), mask=mask
+    )
 
 
 @triton.jit
@@ -41,7 +43,9 @@ def one_hot_scatter_kernel(
     cls_idx = tl.load(input_ptr + n_offsets, mask=n_mask, other=0).to(tl.int64)
     # out[n, cls_idx[n]] = 1 for each n in this block
     out_offsets = n_offsets * C + cls_idx
-    tl.store(out_ptr + out_offsets, tl.full([BLOCK_N], 1, tl.int64), mask=n_mask)
+    tl.store(
+        out_ptr + out_offsets, tl.full([BLOCK_N], 1, tl.int64), mask=n_mask
+    )
 
 
 def one_hot(
@@ -81,7 +85,8 @@ def one_hot(
 
     flat_input = tensor.contiguous().view(-1)
 
-    # Scatter: write 1 at each hot index; output initialization is Triton-backed.
+    # Scatter: write 1 at each hot index; output initialization
+    # is Triton-backed.
     BLOCK_N = 1024
     grid = (triton.cdiv(N, BLOCK_N),)
     with torch_device_fn.device(tensor.device):

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence, cast
 
 import torch
 
@@ -130,9 +130,7 @@ def _get_prepared_plan(plan: ExecutionPlan) -> _PreparedPlan:
     return prepared
 
 
-def _prepare_plan(
-    plan: ExecutionPlan, output_structure: Any
-) -> _PreparedPlan:
+def _prepare_plan(plan: ExecutionPlan, output_structure: Any) -> _PreparedPlan:
     input_checks = tuple(
         _make_input_check(value_id, spec)
         for value_id, spec in zip(plan.graph.inputs, plan.input_specs)
@@ -145,7 +143,7 @@ def _prepare_plan(
     steps = []
     for step in plan.steps:
         attrs = dict(step.attrs)
-        default_run_fn = get_op_schema(step.op_type).run_fn
+        default_run_fn = cast(RunFn, get_op_schema(step.op_type).run_fn)
         input_specs = tuple(
             plan.graph.values[value_id].spec for value_id in step.inputs
         )
@@ -227,9 +225,8 @@ def _make_single_step_fast_path(
         else:
             return None
     indices = tuple(input_indices) if direct_inputs_only else None
-    passthrough_inputs = (
-        indices is not None
-        and indices == tuple(range(len(plan.graph.inputs)))
+    passthrough_inputs = indices is not None and indices == tuple(
+        range(len(plan.graph.inputs))
     )
     return _SingleStepFastPath(
         step=step,

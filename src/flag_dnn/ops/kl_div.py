@@ -38,7 +38,9 @@ def kl_div_elementwise_kernel(
     """
     Compute element-wise KL divergence in the native dtype of the pointers.
     Caller is responsible for promoting fp16/bf16 to float32 before calling.
-    If LOG_TARGET=False: loss_i = target_i * (log(target_i) - input_i), 0 if target_i <= 0
+    If LOG_TARGET=False:
+        loss_i = target_i * (log(target_i) - input_i),
+        or 0 if target_i <= 0.
     If LOG_TARGET=True:  loss_i = exp(target_i) * (target_i - input_i)
     """
     pid = tle.program_id(0)
@@ -66,10 +68,17 @@ def kl_div(
     log_target: bool = False,
 ) -> torch.Tensor:
     """ATen-compatible kl_div. reduction: 0=none, 1=mean, 2=sum."""
-    logger.debug(f"FLAG_DNN KL_DIV (reduction={reduction}, log_target={log_target})")
+    logger.debug(
+        f"FLAG_DNN KL_DIV (reduction={reduction}, log_target={log_target})"
+    )
 
-    # Keep original tensors; the Triton kernel promotes loads to fp32 internally.
-    work_dtype = torch.float32 if input.dtype in (torch.float16, torch.bfloat16) else input.dtype
+    # Keep original tensors; the Triton kernel promotes loads
+    # to fp32 internally.
+    work_dtype = (
+        torch.float32
+        if input.dtype in (torch.float16, torch.bfloat16)
+        else input.dtype
+    )
     inp_fp = input.contiguous()
     tgt_fp = target.contiguous()
 
@@ -80,6 +89,7 @@ def kl_div(
         if reduction == _REDUCTION_NONE:
             return out_fp.to(input.dtype)
         from flag_dnn.ops.sum import sum as flag_sum
+
         return flag_sum(out_fp)
 
     def grid(meta):
@@ -98,10 +108,13 @@ def kl_div(
         return out_fp.to(input.dtype)
     elif reduction == _REDUCTION_MEAN:
         from flag_dnn.ops.mean import mean as flag_mean
+
         return flag_mean(out_fp)
     elif reduction == _REDUCTION_SUM:
         from flag_dnn.ops.sum import sum as flag_sum
+
         return flag_sum(out_fp)
     else:
         from flag_dnn.ops.mean import mean as flag_mean
+
         return flag_mean(out_fp)

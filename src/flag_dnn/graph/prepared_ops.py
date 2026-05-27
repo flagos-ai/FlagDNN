@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence, cast
 
 import torch
 
@@ -12,7 +12,9 @@ RunFn = Callable[[Sequence[Any], dict[str, Any]], Any]
 
 
 def _require_runtime_backend(inputs: Sequence[Any], op_type: str) -> None:
-    tensor_inputs = [value for value in inputs if isinstance(value, torch.Tensor)]
+    tensor_inputs = [
+        value for value in inputs if isinstance(value, torch.Tensor)
+    ]
     if not tensor_inputs or not all(
         is_runtime_device_tensor(value) for value in tensor_inputs
     ):
@@ -93,9 +95,7 @@ def _prepare_pointwise(
         op_type, attrs.get("op_type", op_type)
     )
     if actual_op_type in _POINTWISE_BINARY_OPS:
-        return _prepare_binary_pointwise(
-            actual_op_type, attrs, default_run_fn
-        )
+        return _prepare_binary_pointwise(actual_op_type, attrs, default_run_fn)
     if actual_op_type == "pow":
         return _prepare_pow_pointwise(attrs, default_run_fn)
     if op_type == "abs":
@@ -267,32 +267,37 @@ def _prepare_conv_fprop(
         return run
 
     if rank == 2:
+        stride_2d = cast(tuple[int, int], stride)
+        dilation_2d = cast(tuple[int, int], dilation)
 
-        def run(inputs: Sequence[Any], _attrs: dict[str, Any]) -> Any:
+        def run_conv2d(inputs: Sequence[Any], _attrs: dict[str, Any]) -> Any:
             _require_runtime_backend(inputs, "conv_fprop")
             return conv2d(
                 inputs[0],
                 inputs[1],
-                stride=stride,
+                stride=stride_2d,
                 padding=padding,
-                dilation=dilation,
+                dilation=dilation_2d,
                 groups=groups,
             )
 
-        return run
+        return run_conv2d
 
-    def run(inputs: Sequence[Any], _attrs: dict[str, Any]) -> Any:
+    stride_3d = cast(tuple[int, int, int], stride)
+    dilation_3d = cast(tuple[int, int, int], dilation)
+
+    def run_conv3d(inputs: Sequence[Any], _attrs: dict[str, Any]) -> Any:
         _require_runtime_backend(inputs, "conv_fprop")
         return conv3d(
             inputs[0],
             inputs[1],
-            stride=stride,
+            stride=stride_3d,
             padding=padding,
-            dilation=dilation,
+            dilation=dilation_3d,
             groups=groups,
         )
 
-    return run
+    return run_conv3d
 
 
 def _conv_rank(image: TensorSpec, weight: TensorSpec) -> int:

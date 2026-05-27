@@ -89,9 +89,7 @@ def reduction(
         return torch.amax(work, dim=fallback_dims, keepdim=keepdim)
     if mode_name == "AMAX":
         # TODO: replace the final amax with a FlagDNN/Triton reduction.
-        return torch.amax(
-            flag_abs(work), dim=fallback_dims, keepdim=keepdim
-        )
+        return torch.amax(flag_abs(work), dim=fallback_dims, keepdim=keepdim)
     if mode_name == "MUL_NO_ZEROS":
         # TODO: replace torch.where after FlagDNN has a tensor where/select op.
         nonzero = torch.where(

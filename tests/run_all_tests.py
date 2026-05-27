@@ -11,7 +11,7 @@ from datetime import datetime
 # 目标算子列表 (白名单)
 # 如果列表为空 []，则默认执行目录下所有的 test_*.py
 # 如果填入算子名（如 "batch_norm", "relu"），则只执行这些算子对应的测试
-TARGET_OPERATORS = []
+TARGET_OPERATORS: list[str] = []
 
 TEST_DIR = "tests"  # 测试文件所在目录
 LOG_DIR = "test_logs"  # 单个测试日志的存放目录

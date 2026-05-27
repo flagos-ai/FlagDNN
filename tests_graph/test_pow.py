@@ -14,8 +14,12 @@ from tests import accuracy_utils as utils
 
 def _make_inputs(case, dtype):
     x_shape, y_shape = case
-    x = consts.pointwise_layout(consts.pointwise_rand(x_shape, dtype, flag_dnn.device) + 0.5)
-    y = consts.pointwise_layout(consts.pointwise_rand(y_shape, dtype, flag_dnn.device) * 2.0)
+    x = consts.pointwise_layout(
+        consts.pointwise_rand(x_shape, dtype, flag_dnn.device) + 0.5
+    )
+    y = consts.pointwise_layout(
+        consts.pointwise_rand(y_shape, dtype, flag_dnn.device) * 2.0
+    )
     return x, y
 
 

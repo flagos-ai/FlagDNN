@@ -47,7 +47,15 @@ def _filtered_cases():
 
 def _normalize_case(case):
     if len(case) == 7 and _is_sequence(case[0]) and _is_sequence(case[1]):
-        input_shape, weight_shape, has_bias, stride, padding, dilation, groups = case
+        (
+            input_shape,
+            weight_shape,
+            has_bias,
+            stride,
+            padding,
+            dilation,
+            groups,
+        ) = case
         return (
             tuple(input_shape),
             tuple(weight_shape),
@@ -113,8 +121,12 @@ def conv3d_input_fn(case, dtype, device, max_peak_bytes):
     input_shape, weight_shape, has_bias, stride, padding, dilation, groups = (
         _normalize_case(case)
     )
-    x = torch.empty(input_shape, dtype=dtype, device=device).uniform_(-1.0, 1.0)
-    w = torch.empty(weight_shape, dtype=dtype, device=device).uniform_(-1.0, 1.0)
+    x = torch.empty(input_shape, dtype=dtype, device=device).uniform_(
+        -1.0, 1.0
+    )
+    w = torch.empty(weight_shape, dtype=dtype, device=device).uniform_(
+        -1.0, 1.0
+    )
     b = (
         torch.empty((weight_shape[0],), dtype=dtype, device=device).uniform_(
             -1.0, 1.0

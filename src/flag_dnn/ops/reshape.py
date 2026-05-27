@@ -37,7 +37,8 @@ def reshape(
     """Reshape ``input`` as a graph utility view.
 
     The no-``out`` path is intentionally view-only.  It does not use torch's
-    materializing ``reshape`` fallback.  ``out`` requests materialization and is
+    materializing ``reshape`` fallback.  ``out`` requests
+    materialization and is
     limited to dense contiguous views copied by a Triton kernel.
     """
     del name, reshape_mode

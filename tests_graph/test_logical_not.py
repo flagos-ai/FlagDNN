@@ -59,6 +59,7 @@ def test_graph_logical_not_matches_cudnn_frontend(cudnn_handle, shape):
 
     utils.gems_assert_equal(flag_dnn_out, cudnn_out)
 
+
 @pytest.mark.logical_not
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
@@ -68,4 +69,3 @@ def test_graph_logical_not_matches_torch_reference():
 
     flag_dnn_out = _run_flag_dnn_logical_not_graph(x)
     utils.gems_assert_equal(flag_dnn_out, torch.logical_not(x))
-

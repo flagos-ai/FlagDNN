@@ -23,7 +23,8 @@ def _channel_param(
 ) -> torch.Tensor:
     if param.numel() != channels:
         raise RuntimeError(
-            f"{name} must contain {channels} channel values, got {param.numel()}"
+            f"{name} must contain {channels} channel values, "
+            f"got {param.numel()}"
         )
     if not param.is_contiguous():
         raise NotImplementedError(
@@ -195,7 +196,8 @@ def batchnorm_inference_forward(
         raise RuntimeError("batchnorm_inference expects input rank >= 2")
     if not input.is_contiguous():
         raise NotImplementedError(
-            "flag_dnn batchnorm_inference currently requires contiguous NCHW input"
+            "flag_dnn batchnorm_inference currently requires "
+            "contiguous NCHW input"
         )
 
     channels = int(input.shape[1])
@@ -255,9 +257,7 @@ def batchnorm_forward(
     channels = int(input.shape[1])
     scale = _channel_param(scale, channels, "scale")
     bias = _channel_param(bias, channels, "bias")
-    running_mean = _channel_param(
-        in_running_mean, channels, "in_running_mean"
-    )
+    running_mean = _channel_param(in_running_mean, channels, "in_running_mean")
     running_var = _channel_param(in_running_var, channels, "in_running_var")
 
     y = torch.empty_like(input)
@@ -266,7 +266,13 @@ def batchnorm_forward(
     next_running_mean = _empty_stat_like(in_running_mean)
     next_running_var = _empty_stat_like(in_running_var)
     if input.numel() == 0:
-        return y, saved_mean, saved_inv_var, next_running_mean, next_running_var
+        return (
+            y,
+            saved_mean,
+            saved_inv_var,
+            next_running_mean,
+            next_running_var,
+        )
 
     batch = int(input.shape[0])
     spatial = input.numel() // (batch * channels)
@@ -342,10 +348,9 @@ def batch_norm_aten(
 
     with torch_device_fn.device(input.device):
         if not training:
+
             def grid(meta):
-                return (
-                    triton.cdiv(total_elements, meta["BLOCK_SIZE"]),
-                )
+                return (triton.cdiv(total_elements, meta["BLOCK_SIZE"]),)
 
             batch_norm_inference_kernel[grid](
                 input,
@@ -364,8 +369,8 @@ def batch_norm_aten(
                 STAT_IS_INV_VARIANCE=False,
             )
         else:
-            grid = (C,)
-            batch_norm_fused_kernel_optimized_[grid](
+            grid_blocks = (C,)
+            batch_norm_fused_kernel_optimized_[grid_blocks](
                 input,
                 y,
                 mean_ptr,

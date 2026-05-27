@@ -144,6 +144,7 @@ def fmax(
         return out
 
     if input.shape == other.shape and input.shape == out_shape:
+
         def grid(meta):
             return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
@@ -159,7 +160,9 @@ def fmax(
     in_exp = input.expand(out_shape)
     oth_exp = other.expand(out_shape)
 
-    c_shape, c_sx, c_sy = collapse_dims(out_shape, in_exp.stride(), oth_exp.stride())
+    c_shape, c_sx, c_sy = collapse_dims(
+        out_shape, in_exp.stride(), oth_exp.stride()
+    )
     n_collapsed_dims = len(c_shape)
 
     if n_collapsed_dims <= 2:
@@ -176,15 +179,31 @@ def fmax(
         with torch_device_fn.device(input.device):
             if input.dtype.is_floating_point:
                 fmax_broadcast2d_kernel[grid_fn](
-                    input, other, out, n_elements, N,
-                    sx0_v, sx1_v, sy0_v, sy1_v,
-                    BLOCK_SIZE=1024, num_warps=8,
+                    input,
+                    other,
+                    out,
+                    n_elements,
+                    N,
+                    sx0_v,
+                    sx1_v,
+                    sy0_v,
+                    sy1_v,
+                    BLOCK_SIZE=1024,
+                    num_warps=8,
                 )
             else:
                 fmax_int_broadcast2d_kernel[grid_fn](
-                    input, other, out, n_elements, N,
-                    sx0_v, sx1_v, sy0_v, sy1_v,
-                    BLOCK_SIZE=1024, num_warps=8,
+                    input,
+                    other,
+                    out,
+                    n_elements,
+                    N,
+                    sx0_v,
+                    sx1_v,
+                    sy0_v,
+                    sy1_v,
+                    BLOCK_SIZE=1024,
+                    num_warps=8,
                 )
         return out
     else:

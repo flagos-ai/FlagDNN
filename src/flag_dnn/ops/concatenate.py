@@ -114,12 +114,36 @@ def _concat2_kernel(
     axis_out = _axis_coord(i0, i1, i2, i3, i4, i5, AXIS)
     use0 = axis_out < x0_axis
     off0 = _input_offset(
-        i0, i1, i2, i3, i4, i5, axis_out, AXIS,
-        sx00, sx01, sx02, sx03, sx04, sx05,
+        i0,
+        i1,
+        i2,
+        i3,
+        i4,
+        i5,
+        axis_out,
+        AXIS,
+        sx00,
+        sx01,
+        sx02,
+        sx03,
+        sx04,
+        sx05,
     )
     off1 = _input_offset(
-        i0, i1, i2, i3, i4, i5, axis_out - x0_axis, AXIS,
-        sx10, sx11, sx12, sx13, sx14, sx15,
+        i0,
+        i1,
+        i2,
+        i3,
+        i4,
+        i5,
+        axis_out - x0_axis,
+        AXIS,
+        sx10,
+        sx11,
+        sx12,
+        sx13,
+        sx14,
+        sx15,
     )
     v0 = tl.load(x0 + off0, mask=mask & use0, other=0.0)
     v1 = tl.load(x1 + off1, mask=mask & (~use0), other=0.0)
@@ -183,16 +207,52 @@ def _concat3_kernel(
     use1 = (axis_out >= x0_axis) & (axis_out < x1_axis_end)
     use2 = axis_out >= x1_axis_end
     off0 = _input_offset(
-        i0, i1, i2, i3, i4, i5, axis_out, AXIS,
-        sx00, sx01, sx02, sx03, sx04, sx05,
+        i0,
+        i1,
+        i2,
+        i3,
+        i4,
+        i5,
+        axis_out,
+        AXIS,
+        sx00,
+        sx01,
+        sx02,
+        sx03,
+        sx04,
+        sx05,
     )
     off1 = _input_offset(
-        i0, i1, i2, i3, i4, i5, axis_out - x0_axis, AXIS,
-        sx10, sx11, sx12, sx13, sx14, sx15,
+        i0,
+        i1,
+        i2,
+        i3,
+        i4,
+        i5,
+        axis_out - x0_axis,
+        AXIS,
+        sx10,
+        sx11,
+        sx12,
+        sx13,
+        sx14,
+        sx15,
     )
     off2 = _input_offset(
-        i0, i1, i2, i3, i4, i5, axis_out - x1_axis_end, AXIS,
-        sx20, sx21, sx22, sx23, sx24, sx25,
+        i0,
+        i1,
+        i2,
+        i3,
+        i4,
+        i5,
+        axis_out - x1_axis_end,
+        AXIS,
+        sx20,
+        sx21,
+        sx22,
+        sx23,
+        sx24,
+        sx25,
     )
     v0 = tl.load(x0 + off0, mask=mask & use0, other=0.0)
     v1 = tl.load(x1 + off1, mask=mask & use1, other=0.0)
@@ -229,7 +289,9 @@ def _pad_shape(values: Sequence[int]) -> tuple[int, ...]:
     return (1,) * (_MAX_DIMS - len(values)) + tuple(int(v) for v in values)
 
 
-def _validate_inputs(inputs: Sequence[torch.Tensor], axis: int) -> tuple[int, tuple[int, ...]]:
+def _validate_inputs(
+    inputs: Sequence[torch.Tensor], axis: int
+) -> tuple[int, tuple[int, ...]]:
     if not inputs:
         raise RuntimeError("concatenate expects a non-empty input sequence")
     if len(inputs) > 3:

@@ -87,11 +87,14 @@ def l1_loss(
         if reduction == _REDUCTION_NONE:
             return out
         from flag_dnn.ops.sum import sum as flag_sum
+
         return flag_sum(out)
 
     if reduction == _REDUCTION_NONE:
+
         def grid(meta):
             return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+
         with torch_device_fn.device(input.device):
             l1_loss_elementwise_kernel[grid](input, target, out, n_elements)
         return out
@@ -107,6 +110,7 @@ def l1_loss(
         )
 
     from flag_dnn.ops.sum import sum as flag_sum
+
     total = flag_sum(partial)
     if reduction == _REDUCTION_MEAN:
         result = total / n_elements

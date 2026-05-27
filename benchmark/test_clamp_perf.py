@@ -41,12 +41,16 @@ def clamp_input_fn(case, dtype, device, max_peak_bytes):
     min_val = (
         -2.0
         if shape_min is None
-        else torch.empty(shape_min, dtype=dtype, device=device).uniform_(-4.0, -1.0)
+        else torch.empty(shape_min, dtype=dtype, device=device).uniform_(
+            -4.0, -1.0
+        )
     )
     max_val = (
         2.0
         if shape_max is None
-        else torch.empty(shape_max, dtype=dtype, device=device).uniform_(1.0, 4.0)
+        else torch.empty(shape_max, dtype=dtype, device=device).uniform_(
+            1.0, 4.0
+        )
     )
     yield x, min_val, max_val
 

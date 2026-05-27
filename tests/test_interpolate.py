@@ -63,7 +63,9 @@ def test_accuracy_interpolate_bilinear_4d(shape, dtype, align_corners):
     x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
     out_size = (shape[2] * 2, shape[3] * 2)
     ref_x = utils.to_reference(x.float())
-    ref_out = F.interpolate(ref_x, size=out_size, mode="bilinear", align_corners=align_corners)
+    ref_out = F.interpolate(
+        ref_x, size=out_size, mode="bilinear", align_corners=align_corners
+    )
 
     if dtype == torch.float32:
         rtol, atol = 1e-4, 1e-4
@@ -71,8 +73,12 @@ def test_accuracy_interpolate_bilinear_4d(shape, dtype, align_corners):
         rtol, atol = 1e-2, 1e-2
 
     with flag_dnn.use_dnn():
-        out = F.interpolate(x, size=out_size, mode="bilinear", align_corners=align_corners)
-    torch.testing.assert_close(out.float(), ref_out.float(), rtol=rtol, atol=atol)
+        out = F.interpolate(
+            x, size=out_size, mode="bilinear", align_corners=align_corners
+        )
+    torch.testing.assert_close(
+        out.float(), ref_out.float(), rtol=rtol, atol=atol
+    )
 
 
 @pytest.mark.interpolate

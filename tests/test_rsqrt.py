@@ -3,7 +3,13 @@ import torch
 import flag_dnn
 from tests import accuracy_utils as utils
 
-SHAPES = list(utils.POINTWISE_SHAPES) + [(32,), (1024,), (5333,), (65536,), (1024 * 1024,)]
+SHAPES = list(utils.POINTWISE_SHAPES) + [
+    (32,),
+    (1024,),
+    (5333,),
+    (65536,),
+    (1024 * 1024,),
+]
 
 FLOAT_DTYPES = [torch.float32, torch.float16, torch.bfloat16]
 
@@ -19,7 +25,10 @@ def _skip_fp64(dtype):
 def test_accuracy_rsqrt(shape, dtype):
     """正数输入（标准情况）"""
     _skip_fp64(dtype)
-    x = torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device)) + 0.1
+    x = (
+        torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device))
+        + 0.1
+    )
     ref_inp = utils.to_reference(x)
     ref_out = torch.rsqrt(ref_inp)
     with flag_dnn.use_dnn():
@@ -33,7 +42,11 @@ def test_accuracy_rsqrt(shape, dtype):
 def test_accuracy_rsqrt_small_values(shape, dtype):
     """小正数（rsqrt 结果较大）"""
     _skip_fp64(dtype)
-    x = torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device)) * 0.01 + 1e-4
+    x = (
+        torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device))
+        * 0.01
+        + 1e-4
+    )
     ref_inp = utils.to_reference(x)
     ref_out = torch.rsqrt(ref_inp)
     with flag_dnn.use_dnn():
@@ -47,7 +60,11 @@ def test_accuracy_rsqrt_small_values(shape, dtype):
 def test_accuracy_rsqrt_large_values(shape, dtype):
     """大正数（rsqrt 结果较小）"""
     _skip_fp64(dtype)
-    x = torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device)) * 100.0 + 1.0
+    x = (
+        torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device))
+        * 100.0
+        + 1.0
+    )
     ref_inp = utils.to_reference(x)
     ref_out = torch.rsqrt(ref_inp)
     with flag_dnn.use_dnn():

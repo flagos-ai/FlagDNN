@@ -63,7 +63,8 @@ def identity(
     """Return ``input`` as a graph utility identity.
 
     Without ``out`` this is a view/no-op utility and does not launch a kernel.
-    Supplying ``out`` requests materialization and uses a Triton copy kernel for
+    Supplying ``out`` requests materialization and uses a Triton
+    copy kernel for
     the dense contiguous path.
     """
     del compute_data_type, name

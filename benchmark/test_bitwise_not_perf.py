@@ -61,7 +61,9 @@ class Bitwise_notBenchmark(Benchmark):
             if total_bytes > MAX_TENSOR_BYTES:
                 continue
 
-            x = torch.randint(-100, 100, shape_x, dtype=cur_dtype, device=self.device)
+            x = torch.randint(
+                -100, 100, shape_x, dtype=cur_dtype, device=self.device
+            )
             if x.numel() == 0:
                 continue
             yield (x,)
@@ -73,9 +75,7 @@ class Bitwise_notBenchmark(Benchmark):
 
 
 @pytest.mark.bitwise_not
-@pytest.mark.parametrize(
-    "dtype", [torch.int32, torch.int64]
-)
+@pytest.mark.parametrize("dtype", [torch.int32, torch.int64])
 def test_perf_bitwise_not(dtype):
     bench = Bitwise_notBenchmark(
         op_name="bitwise_not",

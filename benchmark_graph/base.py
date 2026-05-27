@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 cudnn = pytest.importorskip("cudnn", exc_type=ImportError)
@@ -7,12 +9,12 @@ cudnn = pytest.importorskip("cudnn", exc_type=ImportError)
 import torch  # noqa: E402
 import triton  # noqa: E402
 
-from benchmark.attri_util import (
+from benchmark.attri_util import (  # noqa: E402
     BenchLevel,
     BenchMode,
     BenchmarkMetrics,
 )
-from benchmark_graph import consts
+from benchmark_graph import consts  # noqa: E402
 
 
 def get_cudnn():
@@ -88,10 +90,10 @@ def format_perf_result(op_name, dtype, metrics):
 
 
 class CudnnCompareBenchmark:
-    op_name = ""
-    dtypes = consts.COMPARE_FLOAT_DTYPES
-    shapes = ()
-    shape_ids_env = ""
+    op_name: str = ""
+    dtypes: tuple[Any, ...] = consts.COMPARE_FLOAT_DTYPES
+    shapes: Any = ()
+    shape_ids_env: str = ""
 
     def __init__(self, cudnn_handle):
         self.cudnn_handle = cudnn_handle

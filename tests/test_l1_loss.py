@@ -34,7 +34,9 @@ def test_accuracy_l1_loss(shape, reduction, dtype):
     ref_out = F.l1_loss(ref_inp, ref_tgt, reduction=reduction)
     with flag_dnn.use_dnn():
         out = F.l1_loss(inp, tgt, reduction=reduction)
-    torch.testing.assert_close(out, ref_out.to(out.dtype), rtol=rtol, atol=atol)
+    torch.testing.assert_close(
+        out, ref_out.to(out.dtype), rtol=rtol, atol=atol
+    )
 
 
 @pytest.mark.l1_loss
@@ -44,7 +46,7 @@ def test_accuracy_l1_loss_empty_tensor(dtype):
         pytest.skip("Device does not support float64")
     inp = torch.randn(0, dtype=dtype, device=flag_dnn.device)
     tgt = torch.randn(0, dtype=dtype, device=flag_dnn.device)
-    ref_out = F.l1_loss(inp, tgt, reduction="none")
+    _ = F.l1_loss(inp, tgt, reduction="none")
     with flag_dnn.use_dnn():
         out = F.l1_loss(inp, tgt, reduction="none")
     assert out.shape == (0,)

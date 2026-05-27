@@ -53,7 +53,7 @@ class OpNode:
 
 
 def _jsonable_attrs(attrs: dict[str, Any]) -> dict[str, Any]:
-    result = {}
+    result: dict[str, Any] = {}
     for key, value in attrs.items():
         if isinstance(value, tuple):
             result[key] = list(value)

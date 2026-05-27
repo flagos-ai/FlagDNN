@@ -50,7 +50,7 @@ class KlDivBenchmark(Benchmark):
             x = F.log_softmax(x.float(), dim=-1).to(cur_dtype)
             # probabilities for target
             y = torch.rand(shape, dtype=cur_dtype, device=self.device)
-            y = (y / y.sum(dim=-1, keepdim=True))
+            y = y / y.sum(dim=-1, keepdim=True)
             if x.numel() == 0:
                 continue
             yield x, y
@@ -62,9 +62,7 @@ class KlDivBenchmark(Benchmark):
 
 
 @pytest.mark.kl_div
-@pytest.mark.parametrize(
-    "dtype", [torch.float32, torch.float64]
-)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
 def test_perf_kl_div(dtype):
     if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
         pytest.skip("Device does not support float64")

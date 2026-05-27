@@ -43,7 +43,9 @@ class FminBenchmark(Benchmark):
         for shape_x, shape_y in self.shapes:
             out_shape = torch.broadcast_shapes(shape_x, shape_y)
             element_size = torch.tensor([], dtype=cur_dtype).element_size()
-            total_bytes = (np.prod(shape_x) + np.prod(shape_y) + np.prod(out_shape)) * element_size
+            total_bytes = (
+                np.prod(shape_x) + np.prod(shape_y) + np.prod(out_shape)
+            ) * element_size
             if total_bytes > MAX_TENSOR_BYTES:
                 continue
             x = torch.randn(shape_x, dtype=cur_dtype, device=self.device)
@@ -56,7 +58,11 @@ class FminBenchmark(Benchmark):
         x, y = args[0], args[1]
         out_shape = torch.broadcast_shapes(x.shape, y.shape)
         out_bytes = np.prod(out_shape) * x.element_size()
-        io_amount = shape_utils.size_in_bytes(x) + shape_utils.size_in_bytes(y) + out_bytes
+        io_amount = (
+            shape_utils.size_in_bytes(x)
+            + shape_utils.size_in_bytes(y)
+            + out_bytes
+        )
         return io_amount * 1e-9 / (latency * 1e-3)
 
 

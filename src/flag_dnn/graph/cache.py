@@ -5,7 +5,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from flag_dnn.graph.graph import Graph
 from flag_dnn.graph.plan import ExecutionPlan

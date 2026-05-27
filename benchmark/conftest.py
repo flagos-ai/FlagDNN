@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from typing import Any
 
 import pytest
 import torch
@@ -24,8 +25,8 @@ device = flag_dnn.device
 vendor_name = flag_dnn.vendor_name
 recordLogger = logging.getLogger("flag_dnn_benchmark")
 recordLogger.propagate = False
-REGISTERED_MARKS = set()
-TEST_RESULTS = {}
+REGISTERED_MARKS: set[str] = set()
+TEST_RESULTS: dict[str, Any] = {}
 REPORT_FILE = "benchmark_result.json"
 
 
@@ -184,7 +185,10 @@ def pytest_addoption(parser):
         parser.addoption(
             "--collect-marks",
             action="store_true",
-            help="Collect benchmark marker information without executing tests.",
+            help=(
+                "Collect benchmark marker information without "
+                "executing tests."
+            ),
         )
     except ValueError:
         pass
@@ -410,7 +414,8 @@ def pytest_collection_modifyitems(session, config, items):
         op_marks = [
             mark.name
             for mark in all_marks
-            if mark.name not in BUILTIN_MARKS and mark.name not in REGISTERED_MARKS
+            if mark.name not in BUILTIN_MARKS
+            and mark.name not in REGISTERED_MARKS
         ]
         data["marks"] = op_marks
         report.append(data)

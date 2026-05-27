@@ -10,7 +10,7 @@ from datetime import datetime
 
 # 目标算子列表 (白名单)
 # 例如: ["relu", "add"]。如果留空 []，则自动测试目录下所有的 test_*_perf.py
-TARGET_OPERATORS = []
+TARGET_OPERATORS: list[str] = []
 
 TEST_DIRS = tuple(
     item.strip()

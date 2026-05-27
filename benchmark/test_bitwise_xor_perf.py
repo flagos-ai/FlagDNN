@@ -56,13 +56,19 @@ class Bitwise_xorBenchmark(Benchmark):
 
         for shape_x, shape_y in self.shapes:
             element_size = torch.tensor([], dtype=cur_dtype).element_size()
-            total_bytes = (np.prod(shape_x) + np.prod(shape_y) + np.prod(shape_x)) * element_size
+            total_bytes = (
+                np.prod(shape_x) + np.prod(shape_y) + np.prod(shape_x)
+            ) * element_size
 
             if total_bytes > MAX_TENSOR_BYTES:
                 continue
 
-            x = torch.randint(-100, 100, shape_x, dtype=cur_dtype, device=self.device)
-            y = torch.randint(-100, 100, shape_y, dtype=cur_dtype, device=self.device)
+            x = torch.randint(
+                -100, 100, shape_x, dtype=cur_dtype, device=self.device
+            )
+            y = torch.randint(
+                -100, 100, shape_y, dtype=cur_dtype, device=self.device
+            )
             if x.numel() == 0:
                 continue
             yield x, y
@@ -70,14 +76,16 @@ class Bitwise_xorBenchmark(Benchmark):
     def get_gbps(self, args, latency):
         x = args[0]
         y = args[1]
-        io_amount = shape_utils.size_in_bytes(x) + shape_utils.size_in_bytes(y) + shape_utils.size_in_bytes(x)
+        io_amount = (
+            shape_utils.size_in_bytes(x)
+            + shape_utils.size_in_bytes(y)
+            + shape_utils.size_in_bytes(x)
+        )
         return io_amount * 1e-9 / (latency * 1e-3)
 
 
 @pytest.mark.bitwise_xor
-@pytest.mark.parametrize(
-    "dtype", [torch.int32, torch.int64]
-)
+@pytest.mark.parametrize("dtype", [torch.int32, torch.int64])
 def test_perf_bitwise_xor(dtype):
     bench = Bitwise_xorBenchmark(
         op_name="bitwise_xor",

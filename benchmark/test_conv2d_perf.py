@@ -67,7 +67,15 @@ def _filtered_cases():
 
 def _normalize_case(case):
     if len(case) == 7 and _is_sequence(case[0]) and _is_sequence(case[1]):
-        input_shape, weight_shape, has_bias, stride, padding, dilation, groups = case
+        (
+            input_shape,
+            weight_shape,
+            has_bias,
+            stride,
+            padding,
+            dilation,
+            groups,
+        ) = case
         return (
             tuple(input_shape),
             tuple(weight_shape),
@@ -78,7 +86,18 @@ def _normalize_case(case):
             groups,
         )
 
-    batch, input_c, input_h, input_w, out_c, kernel_h, kernel_w, stride, padding, groups = case
+    (
+        batch,
+        input_c,
+        input_h,
+        input_w,
+        out_c,
+        kernel_h,
+        kernel_w,
+        stride,
+        padding,
+        groups,
+    ) = case
     input_shape = (batch, input_c, input_h, input_w)
     weight_shape = (out_c, input_c // groups, kernel_h, kernel_w)
     return input_shape, weight_shape, False, stride, padding, 1, groups
@@ -119,8 +138,12 @@ def conv2d_input_fn(case, dtype, device, max_peak_bytes):
     input_shape, weight_shape, has_bias, stride, padding, dilation, groups = (
         _normalize_case(case)
     )
-    x = torch.empty(input_shape, dtype=dtype, device=device).uniform_(-1.0, 1.0)
-    w = torch.empty(weight_shape, dtype=dtype, device=device).uniform_(-1.0, 1.0)
+    x = torch.empty(input_shape, dtype=dtype, device=device).uniform_(
+        -1.0, 1.0
+    )
+    w = torch.empty(weight_shape, dtype=dtype, device=device).uniform_(
+        -1.0, 1.0
+    )
     b = (
         torch.empty((weight_shape[0],), dtype=dtype, device=device).uniform_(
             -1.0, 1.0
@@ -133,7 +156,9 @@ def conv2d_input_fn(case, dtype, device, max_peak_bytes):
 
 def conv2d_output_shape(args):
     x, w, _, stride, padding, dilation, _ = args
-    return _output_shape(tuple(x.shape), tuple(w.shape), stride, padding, dilation)
+    return _output_shape(
+        tuple(x.shape), tuple(w.shape), stride, padding, dilation
+    )
 
 
 def conv2d_flops(args):

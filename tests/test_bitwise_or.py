@@ -3,7 +3,13 @@ import torch
 import flag_dnn
 from tests import accuracy_utils as utils
 
-SHAPES = list(utils.POINTWISE_SHAPES) + [(32,), (1024,), (5333,), (65536,), (1024 * 1024,)]
+SHAPES = list(utils.POINTWISE_SHAPES) + [
+    (32,),
+    (1024,),
+    (5333,),
+    (65536,),
+    (1024 * 1024,),
+]
 
 BROADCAST_SHAPES = [
     ((4, 4), (4,)),
@@ -65,8 +71,12 @@ def test_accuracy_bitwise_or_broadcast(input_shape, other_shape, dtype):
     info = torch.iinfo(dtype)
     low = max(-100, info.min)
     high = min(100, info.max)
-    x = torch.randint(low, high, input_shape, dtype=dtype, device=flag_dnn.device)
-    y = torch.randint(low, high, other_shape, dtype=dtype, device=flag_dnn.device)
+    x = torch.randint(
+        low, high, input_shape, dtype=dtype, device=flag_dnn.device
+    )
+    y = torch.randint(
+        low, high, other_shape, dtype=dtype, device=flag_dnn.device
+    )
     ref_x = utils.to_reference(x)
     ref_y = utils.to_reference(y)
     ref_out = torch.bitwise_or(ref_x, ref_y)

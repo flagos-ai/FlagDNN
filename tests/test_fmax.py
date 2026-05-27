@@ -3,7 +3,13 @@ import torch
 import flag_dnn
 from tests import accuracy_utils as utils
 
-SHAPES = list(utils.POINTWISE_SHAPES) + [(32,), (1024,), (5333,), (65536,), (1024 * 1024,)]
+SHAPES = list(utils.POINTWISE_SHAPES) + [
+    (32,),
+    (1024,),
+    (5333,),
+    (65536,),
+    (1024 * 1024,),
+]
 
 BROADCAST_SHAPES = [
     ((4, 4), (4,)),
@@ -90,7 +96,7 @@ def test_accuracy_fmax_empty_tensor(dtype):
         pytest.skip("Device does not support float64")
     x = torch.randn(0, dtype=dtype, device=flag_dnn.device)
     y = torch.randn(0, dtype=dtype, device=flag_dnn.device)
-    ref_out = torch.fmax(x, y)
+    _ = torch.fmax(x, y)
     with flag_dnn.use_dnn():
         res_out = torch.fmax(x, y)
     assert res_out.shape == (0,)

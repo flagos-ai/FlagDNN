@@ -39,11 +39,11 @@ class MulBenchmark(CudnnCompareBenchmark):
         x_tensor = graph.tensor_like(x)
         y_tensor = graph.tensor_like(y)
         out_tensor = graph.mul(
-        a=x_tensor,
-        b=y_tensor,
-        compute_data_type=cudnn.data_type.FLOAT,
-        name="mul",
-    )
+            a=x_tensor,
+            b=y_tensor,
+            compute_data_type=cudnn.data_type.FLOAT,
+            name="mul",
+        )
         out_tensor.set_output(True).set_data_type(io_dtype)
 
         try:
@@ -73,11 +73,11 @@ class MulBenchmark(CudnnCompareBenchmark):
         @flag_dnn.graph
         def flag_dnn_mul_graph(x, y):
             return flag_dnn.mul(
-            x,
-            y,
-            compute_data_type="float32",
-            name="mul",
-        )
+                x,
+                y,
+                compute_data_type="float32",
+                name="mul",
+            )
 
         compiled = flag_dnn.compile(
             flag_dnn_mul_graph,

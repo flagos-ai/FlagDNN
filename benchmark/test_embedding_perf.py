@@ -38,7 +38,9 @@ def _estimate_peak_bytes(shape, vocab_size, embedding_dim, dtype):
 def _make_indices(shape, vocab_size, distribution, device):
     if distribution == "repeat":
         local_vocab = min(vocab_size, 256)
-        return torch.randint(0, local_vocab, shape, dtype=torch.long, device=device)
+        return torch.randint(
+            0, local_vocab, shape, dtype=torch.long, device=device
+        )
     if distribution == "hotspot":
         indices = torch.zeros(shape, dtype=torch.long, device=device)
         flat = indices.reshape(-1)

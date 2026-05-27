@@ -61,7 +61,12 @@ class RsqrtBenchmark(Benchmark):
             if total_bytes > MAX_TENSOR_BYTES:
                 continue
 
-            x = torch.abs(torch.randn(shape_x, dtype=cur_dtype, device=self.device)) + 0.1
+            x = (
+                torch.abs(
+                    torch.randn(shape_x, dtype=cur_dtype, device=self.device)
+                )
+                + 0.1
+            )
             if x.numel() == 0:
                 continue
             yield (x,)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Sequence, Tuple, Union
+from typing import Any, Optional, Sequence, Tuple, Union, cast
 
 import torch
 
@@ -100,36 +100,44 @@ def conv_fprop(
         ).contiguous()
 
     if rank == 1:
+        stride_1d = cast(Tuple[int], _tuple_n(stride, 1, "stride"))
+        dilation_1d = cast(Tuple[int], _tuple_n(dilation, 1, "dilation"))
         return conv1d(
             image,
             weight,
-            stride=_tuple_n(stride, 1, "stride"),
+            stride=stride_1d,
             padding=_normalize_padding(
                 rank, padding, pre_padding, post_padding
             ),
-            dilation=_tuple_n(dilation, 1, "dilation"),
+            dilation=dilation_1d,
             groups=groups,
         )
     if rank == 2:
+        stride_2d = cast(Tuple[int, int], _tuple_n(stride, 2, "stride"))
+        dilation_2d = cast(Tuple[int, int], _tuple_n(dilation, 2, "dilation"))
         return conv2d(
             image,
             weight,
-            stride=_tuple_n(stride, 2, "stride"),
+            stride=stride_2d,
             padding=_normalize_padding(
                 rank, padding, pre_padding, post_padding
             ),
-            dilation=_tuple_n(dilation, 2, "dilation"),
+            dilation=dilation_2d,
             groups=groups,
         )
     if rank == 3:
+        stride_3d = cast(Tuple[int, int, int], _tuple_n(stride, 3, "stride"))
+        dilation_3d = cast(
+            Tuple[int, int, int], _tuple_n(dilation, 3, "dilation")
+        )
         return conv3d(
             image,
             weight,
-            stride=_tuple_n(stride, 3, "stride"),
+            stride=stride_3d,
             padding=_normalize_padding(
                 rank, padding, pre_padding, post_padding
             ),
-            dilation=_tuple_n(dilation, 3, "dilation"),
+            dilation=dilation_3d,
             groups=groups,
         )
     raise RuntimeError(f"unsupported conv_fprop spatial rank: {rank}")

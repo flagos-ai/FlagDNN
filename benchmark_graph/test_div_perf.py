@@ -40,11 +40,11 @@ class DivBenchmark(CudnnCompareBenchmark):
         x_tensor = graph.tensor_like(x)
         y_tensor = graph.tensor_like(y)
         out_tensor = graph.div(
-        a=x_tensor,
-        b=y_tensor,
-        compute_data_type=cudnn.data_type.FLOAT,
-        name="div",
-    )
+            a=x_tensor,
+            b=y_tensor,
+            compute_data_type=cudnn.data_type.FLOAT,
+            name="div",
+        )
         out_tensor.set_output(True).set_data_type(io_dtype)
 
         try:
@@ -74,11 +74,11 @@ class DivBenchmark(CudnnCompareBenchmark):
         @flag_dnn.graph
         def flag_dnn_div_graph(x, y):
             return flag_dnn.div(
-            x,
-            y,
-            compute_data_type="float32",
-            name="div",
-        )
+                x,
+                y,
+                compute_data_type="float32",
+                name="div",
+            )
 
         compiled = flag_dnn.compile(
             flag_dnn_div_graph,

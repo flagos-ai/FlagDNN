@@ -11,7 +11,7 @@ from datetime import datetime
 # Target operator whitelist.
 # If empty, all test_*.py files under TEST_DIR will be executed.
 # If populated, only files named test_<operator>.py will be executed.
-TARGET_OPERATORS = []
+TARGET_OPERATORS: list[str] = []
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)

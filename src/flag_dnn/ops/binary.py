@@ -39,9 +39,7 @@ def has_same_dense_flat_layout(
     )
 
 
-def can_use_flat_output(
-    output: torch.Tensor, source: torch.Tensor
-) -> bool:
+def can_use_flat_output(output: torch.Tensor, source: torch.Tensor) -> bool:
     return (
         tuple(output.shape) == tuple(source.shape)
         and is_dense_flat_tensor(output)
@@ -429,18 +427,26 @@ def _validate_binary_args(
     bitwise_ops = ("bitwise_and", "bitwise_or", "bitwise_xor")
     if op_type in bitwise_ops:
         if input.dtype.is_floating_point or input.dtype.is_complex:
-            raise RuntimeError(f"\"{op_type}\" not implemented for '{input.dtype}'")
+            raise RuntimeError(
+                f"\"{op_type}\" not implemented for '{input.dtype}'"
+            )
         if isinstance(other, torch.Tensor) and (
             other.dtype.is_floating_point or other.dtype.is_complex
         ):
-            raise RuntimeError(f"\"{op_type}\" not implemented for '{other.dtype}'")
+            raise RuntimeError(
+                f"\"{op_type}\" not implemented for '{other.dtype}'"
+            )
 
     minmax_ops = ("minimum", "maximum", "fmin", "fmax")
     if op_type in minmax_ops:
         if input.dtype.is_complex:
-            raise RuntimeError(f"\"{op_type}\" not implemented for '{input.dtype}'")
+            raise RuntimeError(
+                f"\"{op_type}\" not implemented for '{input.dtype}'"
+            )
         if isinstance(other, torch.Tensor) and other.dtype.is_complex:
-            raise RuntimeError(f"\"{op_type}\" not implemented for '{other.dtype}'")
+            raise RuntimeError(
+                f"\"{op_type}\" not implemented for '{other.dtype}'"
+            )
 
     if op_type in ("add", "sub") and is_integral_dtype(input.dtype):
         if is_python_float(alpha):
@@ -517,7 +523,6 @@ def binary(
                 f"\"div_{rounding_mode}_cuda\" not implemented for 'Bool'"
             )
 
-    
     if op_type not in [
         "add",
         "sub",
@@ -558,9 +563,7 @@ def binary(
                 flat_layout_source, out_dtype
             )
         else:
-            out = torch.empty(
-                out_shape, dtype=out_dtype, device=input.device
-            )
+            out = torch.empty(out_shape, dtype=out_dtype, device=input.device)
     else:
         assert (
             out.shape == out_shape
@@ -576,12 +579,9 @@ def binary(
     with torch_device_fn.device(input.device):
         if is_other_tensor:
             # 形状一致且连续，走一维 Kernel
-            if (
-                has_same_dense_flat_layout(
-                    input, other  # type: ignore[arg-type]
-                )
-                and can_use_flat_output(out, input)
-            ):
+            if has_same_dense_flat_layout(
+                input, other  # type: ignore[arg-type]
+            ) and can_use_flat_output(out, input):
                 binary_tensor_kernel[grid](
                     input,
                     other,
@@ -634,8 +634,7 @@ def binary(
             else:
                 other_val = float(other)
             if not (
-                is_dense_flat_tensor(input)
-                and can_use_flat_output(out, input)
+                is_dense_flat_tensor(input) and can_use_flat_output(out, input)
             ):
                 raise NotImplementedError(
                     "flag_dnn binary scalar currently requires input and "

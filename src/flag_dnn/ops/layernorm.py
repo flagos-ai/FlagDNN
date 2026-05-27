@@ -22,7 +22,9 @@ def _trailing_normalized_shape(
 
     aligned_scale_shape = (1,) * (rank - scale.dim()) + tuple(scale.shape)
     axes = tuple(
-        index for index, size in enumerate(aligned_scale_shape) if int(size) != 1
+        index
+        for index, size in enumerate(aligned_scale_shape)
+        if int(size) != 1
     )
     if not axes:
         axes = (rank - 1,)

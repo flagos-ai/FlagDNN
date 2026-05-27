@@ -1,12 +1,10 @@
 import pytest
-
 import torch
-
-COMPARE_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
 import torch.nn.functional as F
-
 import flag_dnn
 from tests import accuracy_utils as utils
+
+COMPARE_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
 
 
 def _run_conv_fprop_convolution_graph(x, weight):

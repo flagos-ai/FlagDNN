@@ -142,7 +142,8 @@ GEN_INDEX_SHAPES = (
 )
 
 CONV_FPROP_SHAPES = (
-    # (input_shape, weight_shape, stride, padding, pre_padding, post_padding, dilation)
+    # (input_shape, weight_shape, stride, padding,
+    # pre_padding, post_padding, dilation)
     ((16, 32, 256), (64, 32, 3), 1, 1, None, None, 1),
     ((8, 64, 255), (96, 64, 5), 2, None, (2,), (1,), 1),
     ((8, 32, 32, 32), (64, 32, 3, 3), 1, 1, None, None, 1),

@@ -13,7 +13,6 @@ import torch
 from flag_dnn.utils import shape_utils
 
 from . import consts
-from .conftest import Config
 from .performance_utils import (  # noqa: F401
     Benchmark,
     GenericBenchmark,
@@ -118,9 +117,9 @@ class UnaryPointwiseWithArgsBenchmark(UnaryPointwiseBenchmark):
         if self.input_range is None:
             return generate_tensor_input(shape, cur_dtype, self.device)
         low, high = self.input_range
-        return torch.empty(shape, dtype=cur_dtype, device=self.device).uniform_(
-            low, high
-        )
+        return torch.empty(
+            shape, dtype=cur_dtype, device=self.device
+        ).uniform_(low, high)
 
     def get_input_iter(self, cur_dtype) -> Generator:
         for shape in self.shapes:
@@ -184,9 +183,9 @@ class BinaryPointwiseBenchmark(Benchmark):
         if input_range is None:
             return generate_tensor_input(shape, cur_dtype, self.device)
         low, high = input_range
-        return torch.empty(shape, dtype=cur_dtype, device=self.device).uniform_(
-            low, high
-        )
+        return torch.empty(
+            shape, dtype=cur_dtype, device=self.device
+        ).uniform_(low, high)
 
     def _output_element_size(self, cur_dtype):
         dtype = self.output_dtype or cur_dtype
@@ -213,7 +212,9 @@ class BinaryPointwiseBenchmark(Benchmark):
     def get_gbps(self, args, latency):
         inp1, inp2 = args[:2]
         out_shape = torch.broadcast_shapes(inp1.shape, inp2.shape)
-        out_bytes = math.prod(out_shape) * self._output_element_size(inp1.dtype)
+        out_bytes = math.prod(out_shape) * self._output_element_size(
+            inp1.dtype
+        )
         io_amount = (
             shape_utils.size_in_bytes(inp1)
             + shape_utils.size_in_bytes(inp2)
@@ -271,9 +272,9 @@ class UnaryReductionBenchmark(Benchmark):
         if self.input_range is None:
             return generate_tensor_input(shape, cur_dtype, self.device)
         low, high = self.input_range
-        return torch.empty(shape, dtype=cur_dtype, device=self.device).uniform_(
-            low, high
-        )
+        return torch.empty(
+            shape, dtype=cur_dtype, device=self.device
+        ).uniform_(low, high)
 
     def get_input_iter(self, cur_dtype) -> Generator:
         for case in self.shapes:
@@ -351,9 +352,9 @@ class UnaryDimwiseBenchmark(Benchmark):
         if self.input_range is None:
             return generate_tensor_input(shape, cur_dtype, self.device)
         low, high = self.input_range
-        return torch.empty(shape, dtype=cur_dtype, device=self.device).uniform_(
-            low, high
-        )
+        return torch.empty(
+            shape, dtype=cur_dtype, device=self.device
+        ).uniform_(low, high)
 
     def get_input_iter(self, cur_dtype) -> Generator:
         for case in self.shapes:
@@ -428,7 +429,9 @@ class BlasBenchmark(Benchmark):
     def get_gbps(self, args, latency):
         if self.op_name == "dot":
             x, y = args
-            io_amount = shape_utils.size_in_bytes(x) + shape_utils.size_in_bytes(y)
+            io_amount = shape_utils.size_in_bytes(
+                x
+            ) + shape_utils.size_in_bytes(y)
         elif self.op_name == "mv":
             mat, vec = args
             io_amount = (
@@ -604,7 +607,9 @@ class PoolingBenchmark(Benchmark):
     def get_gbps(self, args, latency):
         inp = args[0]
         out_numel = self.output_numel_fn(args)
-        io_amount = shape_utils.size_in_bytes(inp) + out_numel * inp.element_size()
+        io_amount = (
+            shape_utils.size_in_bytes(inp) + out_numel * inp.element_size()
+        )
         return io_amount * 1e-9 / (latency * 1e-3)
 
 
@@ -707,7 +712,9 @@ class EmbeddingBenchmark(Benchmark):
 
     def get_gbps(self, args, latency):
         indices, weight = args
-        output_bytes = indices.numel() * weight.shape[1] * weight.element_size()
+        output_bytes = (
+            indices.numel() * weight.shape[1] * weight.element_size()
+        )
         io_amount = shape_utils.size_in_bytes(indices) + output_bytes * 2
         return io_amount * 1e-9 / (latency * 1e-3)
 

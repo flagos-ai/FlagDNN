@@ -1,12 +1,10 @@
 import pytest
-
 import torch
-
-COMPARE_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
 import torch.nn.functional as F
-
 import flag_dnn
 from tests import accuracy_utils as utils
+
+COMPARE_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
 
 
 def _reference_causal_conv1d(x, weight, bias, activation):
@@ -57,9 +55,7 @@ def test_graph_causal_conv1d_matches_torch(dtype, shape_kernel, activation):
         (shape[1], kernel), device=flag_dnn.device, dtype=dtype
     )
     bias = torch.randn((shape[1],), device=flag_dnn.device, dtype=dtype)
-
     expected = _reference_causal_conv1d(x, weight, bias, activation)
     actual = _run_flag_dnn_causal_conv1d_graph(x, weight, bias, activation)
-
     atol = 2e-2 if dtype in (torch.float16, torch.bfloat16) else 2e-4
     utils.gems_assert_close(actual, expected, dtype, atol=atol)

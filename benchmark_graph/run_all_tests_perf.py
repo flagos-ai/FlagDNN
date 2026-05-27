@@ -10,14 +10,12 @@ from datetime import datetime
 
 # 目标算子列表 (白名单)
 # 例如: ["relu", "add"]。如果留空 []，则自动测试目录下所有的 test_*_perf.py
-TARGET_OPERATORS = []
+TARGET_OPERATORS: list[str] = []
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 TEST_DIRS = (SCRIPT_DIR,)  # 性能测试文件所在目录
-LOG_DIR = os.path.join(
-    REPO_ROOT, "perf_graph_logs"
-)  # 单个测试日志的存放目录
+LOG_DIR = os.path.join(REPO_ROOT, "perf_graph_logs")  # 单个测试日志的存放目录
 
 # 运行状态汇总，例如 total / passed / failed / details
 REPORT_FILE = os.path.join(REPO_ROOT, "perf_graph_summary.json")

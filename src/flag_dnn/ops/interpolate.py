@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, Union, List
+from typing import Optional
 
 import torch
 import triton
@@ -19,9 +19,12 @@ logger = logging.getLogger(__name__)
 def nearest2d_kernel(
     x_ptr,
     y_ptr,
-    IH, IW,
-    OH, OW,
-    scale_h, scale_w,
+    IH,
+    IW,
+    OH,
+    OW,
+    scale_h,
+    scale_w,
     NC,
     BLOCK: tl.constexpr,
 ):
@@ -53,9 +56,12 @@ def nearest2d_kernel(
 def bilinear2d_kernel(
     x_ptr,
     y_ptr,
-    IH, IW,
-    OH, OW,
-    scale_h, scale_w,
+    IH,
+    IW,
+    OH,
+    OW,
+    scale_h,
+    scale_w,
     NC,
     align_corners: tl.constexpr,
     BLOCK: tl.constexpr,
@@ -103,9 +109,18 @@ def bilinear2d_kernel(
     v10 = tl.load(x_ptr + base + y1 * IW + x0, mask=mask).to(tl.float32)
     v11 = tl.load(x_ptr + base + y1 * IW + x1, mask=mask).to(tl.float32)
 
-    out = (1.0 - fy) * (1.0 - fx) * v00         + (1.0 - fy) * fx * v01         + fy * (1.0 - fx) * v10         + fy * fx * v11
+    out = (
+        (1.0 - fy) * (1.0 - fx) * v00
+        + (1.0 - fy) * fx * v01
+        + fy * (1.0 - fx) * v10
+        + fy * fx * v11
+    )
 
-    tl.store(y_ptr + pid_nc * OH * OW + ow_indices, out.to(x_ptr.dtype.element_ty), mask=mask)
+    tl.store(
+        y_ptr + pid_nc * OH * OW + ow_indices,
+        out.to(x_ptr.dtype.element_ty),
+        mask=mask,
+    )
 
 
 # ------------------------------------------------------------------ #
@@ -145,7 +160,9 @@ def _compute_output_size(input_size, size, scale_factor):
             scales = (scale_factor,) * spatial_dims
         else:
             scales = tuple(scale_factor)
-        return tuple(int(input_size[i + 2] * scales[i]) for i in range(spatial_dims))
+        return tuple(
+            int(input_size[i + 2] * scales[i]) for i in range(spatial_dims)
+        )
 
 
 def interpolate(
@@ -166,6 +183,7 @@ def interpolate(
     # have native kernels.
     if mode not in ("nearest", "bilinear") or ndim not in (3, 4) or antialias:
         import torch.nn.functional as F
+
         return F.interpolate(
             input,
             size=size,
@@ -179,6 +197,7 @@ def interpolate(
     if mode == "bilinear" and ndim != 4:
         # TODO: no native bilinear kernel for non-4D input yet.
         import torch.nn.functional as F
+
         return F.interpolate(
             input,
             size=size,
@@ -209,7 +228,9 @@ def interpolate(
         out = torch.empty((N, C, OW), dtype=input.dtype, device=input.device)
         grid = (NC, triton.cdiv(OW, BLOCK))
         with torch_device_fn.device(input.device):
-            nearest1d_kernel[grid](input, out, IW, OW, scale_w, NC, BLOCK=BLOCK)
+            nearest1d_kernel[grid](
+                input, out, IW, OW, scale_w, NC, BLOCK=BLOCK
+            )
 
     elif ndim == 4:
         IH = input.shape[2]
@@ -219,19 +240,39 @@ def interpolate(
         scale_h = IH / OH
         scale_w = IW / OW
 
-        out = torch.empty((N, C, OH, OW), dtype=input.dtype, device=input.device)
+        out = torch.empty(
+            (N, C, OH, OW), dtype=input.dtype, device=input.device
+        )
         grid = (NC, triton.cdiv(OH * OW, BLOCK))
 
         with torch_device_fn.device(input.device):
             if mode == "nearest":
                 nearest2d_kernel[grid](
-                    input, out, IH, IW, OH, OW, scale_h, scale_w, NC, BLOCK=BLOCK
+                    input,
+                    out,
+                    IH,
+                    IW,
+                    OH,
+                    OW,
+                    scale_h,
+                    scale_w,
+                    NC,
+                    BLOCK=BLOCK,
                 )
             elif mode == "bilinear":
                 ac = align_corners if align_corners is not None else False
                 bilinear2d_kernel[grid](
-                    input, out, IH, IW, OH, OW, scale_h, scale_w, NC,
-                    align_corners=ac, BLOCK=BLOCK
+                    input,
+                    out,
+                    IH,
+                    IW,
+                    OH,
+                    OW,
+                    scale_h,
+                    scale_w,
+                    NC,
+                    align_corners=ac,
+                    BLOCK=BLOCK,
                 )
 
     return out

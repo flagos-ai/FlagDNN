@@ -76,6 +76,7 @@ class AbsBenchmark(CudnnCompareBenchmark):
             options=consts.compile_options(),
         )
         assert [node.op_type for node in compiled.graph.nodes] == ["abs"]
+
         def run():
             return compiled.run(x)
 

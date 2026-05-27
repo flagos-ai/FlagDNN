@@ -56,7 +56,7 @@ def mse_loss_single_block_kernel(
     inv_n,
     BLOCK_SIZE: tl.constexpr,
 ):
-    """Single-block non-atomic reduction; stores result directly in native dtype."""
+    """Single-block reduction; stores result in native dtype."""
     offsets = tl.arange(0, BLOCK_SIZE)
     mask = offsets < n_elements
     inp = tl.load(input_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
@@ -76,7 +76,7 @@ def mse_loss_fused_kernel(
     inv_n,
     BLOCK_SIZE: tl.constexpr,
 ):
-    """Multi-block kernel: fp32 atomic_add accumulation (result_ptr always fp32)."""
+    """Multi-block fp32 atomic_add accumulation kernel."""
     pid = tle.program_id(0)
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     mask = offsets < n_elements
@@ -114,39 +114,53 @@ def mse_loss(
         if reduction == _REDUCTION_NONE:
             return out
         from flag_dnn.ops.sum import sum as flag_sum
+
         return flag_sum(out)
 
     if reduction == _REDUCTION_NONE:
+
         def grid(meta):
             return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
+
         with torch_device_fn.device(input.device):
             mse_loss_elementwise_kernel[grid](input, target, out, n_elements)
         return out
 
     inv_n = 1.0 / n_elements if reduction == _REDUCTION_MEAN else 1.0
 
-    # For 16-bit dtypes (fp16/bf16), extend single-block threshold to 32768 elements
+    # For 16-bit dtypes, extend single-block threshold
+    # to 32768 elements.
     # (64KB of data per block).  This ensures small tensors like [32, 1000] and
     # [8, 4096] avoid post-kernel type conversion overhead:
-    #   - bf16: tl.atomic_add not supported, so must use fp32 + .to(bf16) otherwise
-    #   - fp16: native atomic supported but still benefits from eliminating conversion
-    # For fp32/fp64, larger BLOCK_SIZE degrades performance so keep the 8192 cap.
+    #   - bf16: tl.atomic_add is not supported, so use
+    #     fp32 + .to(bf16).
+    #   - fp16: native atomic is supported but still benefits
+    #     from eliminating conversion.
+    # For fp32/fp64, larger BLOCK_SIZE degrades performance;
+    # keep the 8192 cap.
     if input.dtype in (torch.float16, torch.bfloat16):
         single_block_threshold = 32768
     else:
         single_block_threshold = 8192
 
-    single_block_size = min(triton.next_power_of_2(n_elements), single_block_threshold)
+    single_block_size = min(
+        triton.next_power_of_2(n_elements), single_block_threshold
+    )
     if n_elements <= single_block_threshold:
         result = torch.empty(1, dtype=input.dtype, device=input.device)
         with torch_device_fn.device(input.device):
             mse_loss_single_block_kernel[(1,)](
-                input, target, result, n_elements, inv_n,
+                input,
+                target,
+                result,
+                n_elements,
+                inv_n,
                 BLOCK_SIZE=single_block_size,
             )
         return result.squeeze()
 
-    # Multi-block: fp32 accumulation is safe for all dtypes and large block counts.
+    # Multi-block fp32 accumulation is safe for all dtypes
+    # and large block counts.
     BLOCK_SIZE = 8192
     num_blocks = triton.cdiv(n_elements, BLOCK_SIZE)
     result = torch.empty(1, dtype=torch.float32, device=input.device)

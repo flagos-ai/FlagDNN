@@ -3,7 +3,13 @@ import torch
 import flag_dnn
 from tests import accuracy_utils as utils
 
-SHAPES = list(utils.POINTWISE_SHAPES) + [(32,), (1024,), (5333,), (65536,), (1024 * 1024,)]
+SHAPES = list(utils.POINTWISE_SHAPES) + [
+    (32,),
+    (1024,),
+    (5333,),
+    (65536,),
+    (1024 * 1024,),
+]
 
 FLOAT_DTYPES = [torch.float32, torch.float16, torch.bfloat16]
 
@@ -33,7 +39,10 @@ def test_accuracy_positive(shape, dtype):
 def test_accuracy_positive_negative_values(shape, dtype):
     """纯负数（identity 不改变值）"""
     _skip_fp64(dtype)
-    x = -torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device)) - 0.1
+    x = (
+        -torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device))
+        - 0.1
+    )
     ref_inp = utils.to_reference(x)
     ref_out = torch.positive(ref_inp)
     with flag_dnn.use_dnn():

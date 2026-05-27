@@ -169,7 +169,8 @@ class CudnnBatchNormInference:
         self.scale = _as_channel_tensor(scale, channels, "scale")
         self.bias = _as_channel_tensor(bias, channels, "bias")
         # Legacy cuDNN accepts variance plus epsilon. Use epsilon=0 and convert
-        # the cuDNN Frontend-style inv_variance input once at runner setup time.
+        # the cuDNN Frontend-style inv_variance input once at
+        # runner setup time.
         self.variance = self.inv_variance.reciprocal().square().contiguous()
 
         self.handle = ctypes.c_void_p()

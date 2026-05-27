@@ -117,9 +117,7 @@ class GraphAutotuner:
                     plan.run(*runtime_inputs)
                 ender.record()
                 synchronize_current_runtime_device()
-                return float(starter.elapsed_time(ender)) / max(
-                    self.repeat, 1
-                )
+                return float(starter.elapsed_time(ender)) / max(self.repeat, 1)
 
         for _ in range(max(self.repeat, 1)):
             plan.run(*runtime_inputs)

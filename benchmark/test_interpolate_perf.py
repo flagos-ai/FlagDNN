@@ -20,11 +20,15 @@ def gems_interpolate_nearest_wrapper(x, out_size):
 
 
 def torch_interpolate_bilinear(x, out_size):
-    return F.interpolate(x, size=out_size, mode="bilinear", align_corners=False)
+    return F.interpolate(
+        x, size=out_size, mode="bilinear", align_corners=False
+    )
 
 
 def gems_interpolate_bilinear_wrapper(x, out_size):
-    return flag_dnn.ops.interpolate(x, size=out_size, mode="bilinear", align_corners=False)
+    return flag_dnn.ops.interpolate(
+        x, size=out_size, mode="bilinear", align_corners=False
+    )
 
 
 class InterpolateNearestBenchmark(Benchmark):
@@ -71,9 +75,7 @@ class InterpolateBilinearBenchmark(InterpolateNearestBenchmark):
 
 
 @pytest.mark.interpolate
-@pytest.mark.parametrize(
-    "dtype", [torch.float16, torch.float32]
-)
+@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
 def test_perf_interpolate_nearest(dtype):
     bench = InterpolateNearestBenchmark(
         op_name="interpolate_nearest",
@@ -85,9 +87,7 @@ def test_perf_interpolate_nearest(dtype):
 
 
 @pytest.mark.interpolate
-@pytest.mark.parametrize(
-    "dtype", [torch.float16, torch.float32]
-)
+@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
 def test_perf_interpolate_bilinear(dtype):
     bench = InterpolateBilinearBenchmark(
         op_name="interpolate_bilinear",

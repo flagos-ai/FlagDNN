@@ -3,7 +3,13 @@ import torch
 import flag_dnn
 from tests import accuracy_utils as utils
 
-SHAPES = list(utils.POINTWISE_SHAPES) + [(32,), (1024,), (5333,), (65536,), (1024 * 1024,)]
+SHAPES = list(utils.POINTWISE_SHAPES) + [
+    (32,),
+    (1024,),
+    (5333,),
+    (65536,),
+    (1024 * 1024,),
+]
 
 BROADCAST_SHAPES = [
     ((4, 4), (4,)),

@@ -29,7 +29,8 @@ def causal_conv1d(
     del batch
     if weight.shape[0] != dim:
         raise ValueError(
-            f"weight.shape[0] must match x.shape[1], got {weight.shape[0]} and {dim}"
+            f"weight.shape[0] must match x.shape[1], "
+            f"got {weight.shape[0]} and {dim}"
         )
     if bias is not None and bias.shape != (dim,):
         raise ValueError(

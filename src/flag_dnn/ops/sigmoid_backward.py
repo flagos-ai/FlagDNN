@@ -20,9 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 _SIGMOID_BACKWARD_CONFIGS = runtime.get_tuned_config("sigmoid_backward")
-_SIGMOID_BACKWARD_FP64_CONFIGS = runtime.get_tuned_config(
-    "sigmoid_backward"
-)
+_SIGMOID_BACKWARD_FP64_CONFIGS = runtime.get_tuned_config("sigmoid_backward")
 
 if tuple(map(int, triton.__version__.split(".")[:2])) >= (3, 0):
     try:
@@ -107,7 +105,8 @@ def sigmoid_backward(
         torch.float64,
     ):
         raise NotImplementedError(
-            f"flag_dnn sigmoid_backward does not support loss dtype={loss.dtype}"
+            "flag_dnn sigmoid_backward does not support "
+            f"loss dtype={loss.dtype}"
         )
     if input.dtype not in (
         torch.float16,
@@ -135,7 +134,9 @@ def sigmoid_backward(
             "share a contiguous or NHWC channels-last dense flat layout"
         )
 
-    out_dtype = out.dtype if out is not None else torch.result_type(loss, input)
+    out_dtype = (
+        out.dtype if out is not None else torch.result_type(loss, input)
+    )
     if out is None:
         out = empty_like_preserve_dense_layout(input, out_dtype)
     else:
@@ -154,9 +155,7 @@ def sigmoid_backward(
 
     with torch_device_fn.device(input.device):
         if loss.dtype == torch.float64 or input.dtype == torch.float64:
-            sigmoid_backward_fp64_kernel[grid](
-                loss, input, out, n_elements
-            )
+            sigmoid_backward_fp64_kernel[grid](loss, input, out, n_elements)
         else:
             sigmoid_backward_kernel[grid](loss, input, out, n_elements)
 

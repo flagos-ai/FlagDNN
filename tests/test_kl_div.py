@@ -36,7 +36,9 @@ def test_accuracy_kl_div(shape, reduction, dtype):
     ref_out = F.kl_div(ref_inp, ref_tgt, reduction=reduction)
     with flag_dnn.use_dnn():
         out = F.kl_div(inp, tgt, reduction=reduction)
-    torch.testing.assert_close(out, ref_out.to(out.dtype), rtol=rtol, atol=atol)
+    torch.testing.assert_close(
+        out, ref_out.to(out.dtype), rtol=rtol, atol=atol
+    )
 
 
 @pytest.mark.kl_div
@@ -58,4 +60,6 @@ def test_accuracy_kl_div_log_target(shape, reduction, dtype):
     ref_out = F.kl_div(ref_inp, ref_tgt, reduction=reduction, log_target=True)
     with flag_dnn.use_dnn():
         out = F.kl_div(inp, tgt, reduction=reduction, log_target=True)
-    torch.testing.assert_close(out, ref_out.to(out.dtype), rtol=rtol, atol=atol)
+    torch.testing.assert_close(
+        out, ref_out.to(out.dtype), rtol=rtol, atol=atol
+    )

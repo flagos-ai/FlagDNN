@@ -69,7 +69,9 @@ def unary_fill_false_kernel(
     pid = tle.program_id(0)
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     mask = offsets < n_elements
-    tl.store(out_ptr + offsets, tl.zeros([BLOCK_SIZE], dtype=tl.int1), mask=mask)
+    tl.store(
+        out_ptr + offsets, tl.zeros([BLOCK_SIZE], dtype=tl.int1), mask=mask
+    )
 
 
 @libentry()
@@ -107,13 +109,19 @@ def unary_contiguous_kernel(
         elif OP_TYPE == "positive":
             res = x
         elif OP_TYPE == "log":
-            res = (tl.math.log2(x.to(tl.float32)) * 0.6931471805599453).to(x.dtype)
+            res = (tl.math.log2(x.to(tl.float32)) * 0.6931471805599453).to(
+                x.dtype
+            )
         elif OP_TYPE == "exp":
-            res = tl.math.exp2(x.to(tl.float32) * 1.4426950408889634).to(x.dtype)
+            res = tl.math.exp2(x.to(tl.float32) * 1.4426950408889634).to(
+                x.dtype
+            )
         elif OP_TYPE == "bitwise_not":
             res = ~x
 
-        tl.store(out_ptr + offsets, res.to(out_ptr.dtype.element_ty), mask=mask)
+        tl.store(
+            out_ptr + offsets, res.to(out_ptr.dtype.element_ty), mask=mask
+        )
 
 
 @libentry()
@@ -187,13 +195,19 @@ def unary_strided_kernel(
         elif OP_TYPE == "positive":
             res = x
         elif OP_TYPE == "log":
-            res = (tl.math.log2(x.to(tl.float32)) * 0.6931471805599453).to(x.dtype)
+            res = (tl.math.log2(x.to(tl.float32)) * 0.6931471805599453).to(
+                x.dtype
+            )
         elif OP_TYPE == "exp":
-            res = tl.math.exp2(x.to(tl.float32) * 1.4426950408889634).to(x.dtype)
+            res = tl.math.exp2(x.to(tl.float32) * 1.4426950408889634).to(
+                x.dtype
+            )
         elif OP_TYPE == "bitwise_not":
             res = ~x
 
-        tl.store(out_ptr + offsets, res.to(out_ptr.dtype.element_ty), mask=mask)
+        tl.store(
+            out_ptr + offsets, res.to(out_ptr.dtype.element_ty), mask=mask
+        )
 
 
 _FLOAT_OPS = {"rsqrt", "log", "exp", "square"}
@@ -211,9 +225,7 @@ def unary(
     # 输入合法性校验
     if op_type == "positive":
         if input.dtype == torch.bool:
-            raise RuntimeError(
-                "torch.positive does not support bool tensors."
-            )
+            raise RuntimeError("torch.positive does not support bool tensors.")
         if out is None:
             return input
         else:
@@ -254,7 +266,11 @@ def unary(
         return out
 
     def grid(meta):
-        return (triton.cdiv(n_elements, meta["BLOCK_SIZE"] * meta["TILES_PER_PROGRAM"]),)
+        return (
+            triton.cdiv(
+                n_elements, meta["BLOCK_SIZE"] * meta["TILES_PER_PROGRAM"]
+            ),
+        )
 
     with torch_device_fn.device(input.device):
         if input.is_contiguous():
@@ -272,8 +288,8 @@ def unary(
                 input,
                 out,
                 n_elements,
-                *f_shape[1:],   # s1 到 s5
-                *f_sx,          # sx0 到 sx5
+                *f_shape[1:],  # s1 到 s5
+                *f_sx,  # sx0 到 sx5
                 OP_TYPE=op_type,
             )
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import functools
 import json
 import os
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, cast
 
 import torch
 
@@ -71,7 +71,7 @@ class GraphCapture:
     ) -> Any:
         schema = get_op_schema(op_type)
         input_ids, attrs = schema.normalize(self, args, dict(kwargs))
-        return self.graph.add_op(op_type, input_ids, attrs)
+        return cast(GraphTensor, self.graph.add_op(op_type, input_ids, attrs))
 
     def add_binary_op(
         self,
@@ -93,7 +93,7 @@ class GraphCapture:
             else:
                 attrs["other"] = right
                 attrs["reverse"] = reverse
-        return self.graph.add_op(op_type, input_ids, attrs)
+        return cast(GraphTensor, self.graph.add_op(op_type, input_ids, attrs))
 
 
 class GraphFunction:

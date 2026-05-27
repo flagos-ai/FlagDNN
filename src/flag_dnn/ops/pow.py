@@ -274,7 +274,7 @@ def pow(
     ):
         out_dtype = torch.bool
 
-    flat_layout_source = None
+    flat_layout_source: Optional[torch.Tensor] = None
     if input_is_tensor and exp_is_tensor:
         if has_same_dense_flat_layout(input, exponent):
             flat_layout_source = input

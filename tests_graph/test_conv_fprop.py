@@ -185,8 +185,12 @@ def _run_flag_dnn_conv_fprop_graph(
     assert attrs["stride"] == tuple(to_spatial_tuple(stride, rank))
     assert attrs["dilation"] == tuple(to_spatial_tuple(dilation, rank))
     if pre_padding is not None:
-        assert attrs["pre_padding"] == tuple(to_spatial_tuple(pre_padding, rank))
-        assert attrs["post_padding"] == tuple(to_spatial_tuple(post_padding, rank))
+        assert attrs["pre_padding"] == tuple(
+            to_spatial_tuple(pre_padding, rank)
+        )
+        assert attrs["post_padding"] == tuple(
+            to_spatial_tuple(post_padding, rank)
+        )
     return compiled.run(x.clone(), weight.clone())
 
 

@@ -21,8 +21,12 @@ class PowBenchmark(CudnnCompareBenchmark):
     def make_inputs(self, case, dtype):
         self.case = case
         x_shape, y_shape = case
-        x = consts.pointwise_layout(consts.pointwise_rand(x_shape, dtype, flag_dnn.device) + 0.5)
-        y = consts.pointwise_layout(consts.pointwise_rand(y_shape, dtype, flag_dnn.device) * 2.0)
+        x = consts.pointwise_layout(
+            consts.pointwise_rand(x_shape, dtype, flag_dnn.device) + 0.5
+        )
+        y = consts.pointwise_layout(
+            consts.pointwise_rand(y_shape, dtype, flag_dnn.device) * 2.0
+        )
         return x, y
 
     def build_cudnn_runner(self, inputs):
@@ -39,11 +43,11 @@ class PowBenchmark(CudnnCompareBenchmark):
         x_tensor = graph.tensor_like(x)
         y_tensor = graph.tensor_like(y)
         out_tensor = graph.pow(
-        input0=x_tensor,
-        input1=y_tensor,
-        compute_data_type=cudnn.data_type.FLOAT,
-        name="pow",
-    )
+            input0=x_tensor,
+            input1=y_tensor,
+            compute_data_type=cudnn.data_type.FLOAT,
+            name="pow",
+        )
         out_tensor.set_output(True).set_data_type(io_dtype)
 
         try:
@@ -73,11 +77,11 @@ class PowBenchmark(CudnnCompareBenchmark):
         @flag_dnn.graph
         def flag_dnn_pow_graph(x, y):
             return flag_dnn.pow(
-            input=x,
-            exponent=y,
-            compute_data_type="float32",
-            name="pow",
-        )
+                input=x,
+                exponent=y,
+                compute_data_type="float32",
+                name="pow",
+            )
 
         compiled = flag_dnn.compile(
             flag_dnn_pow_graph,

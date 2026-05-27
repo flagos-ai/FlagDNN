@@ -8,7 +8,6 @@ import torch.nn.functional as F
 import flag_dnn
 
 from benchmark.performance_utils import Benchmark
-from flag_dnn.utils import shape_utils
 
 
 def torch_one_hot(x, num_classes):
@@ -46,7 +45,9 @@ class OneHotBenchmark(Benchmark):
             out_numel = np.prod(shape) * num_classes
             if out_numel * 8 > MAX_TENSOR_BYTES:
                 continue
-            x = torch.randint(0, num_classes, shape, dtype=torch.long, device=self.device)
+            x = torch.randint(
+                0, num_classes, shape, dtype=torch.long, device=self.device
+            )
             if x.numel() == 0:
                 continue
             yield x, num_classes

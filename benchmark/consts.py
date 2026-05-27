@@ -24,4 +24,3 @@ from benchmark.attri_util import (  # noqa: F401
     get_recommended_shapes,
     model_shapes,
 )
-

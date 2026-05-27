@@ -4,7 +4,7 @@ import copy
 import hashlib
 from typing import Any, Optional
 
-from flag_dnn.graph.backend import resolve_backend
+from flag_dnn.graph.backend import KernelCandidate, resolve_backend
 from flag_dnn.graph.graph import Graph
 from flag_dnn.graph.memory import allocate_memory
 from flag_dnn.graph.plan import ExecutionPlan, ExecutionStep
@@ -107,9 +107,9 @@ def _limited_product(
 ) -> list[tuple[Any, ...]]:
     if not items:
         return [tuple()]
-    results = [tuple()]
+    results: list[tuple[Any, ...]] = [tuple()]
     for choices in items:
-        next_results = []
+        next_results: list[tuple[Any, ...]] = []
         for prefix in results:
             for choice in choices:
                 next_results.append(prefix + (choice,))

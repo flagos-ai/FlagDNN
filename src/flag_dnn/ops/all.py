@@ -11,8 +11,11 @@ from flag_dnn.utils import triton_lang_extension as tle
 
 logger = logging.getLogger(__name__)
 
+
 @triton.jit
-def _fill_bool_kernel(out_ptr, n_elements, VALUE: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+def _fill_bool_kernel(
+    out_ptr, n_elements, VALUE: tl.constexpr, BLOCK_SIZE: tl.constexpr
+):
     pid = tle.program_id(0)
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     mask = offsets < n_elements
@@ -21,7 +24,9 @@ def _fill_bool_kernel(out_ptr, n_elements, VALUE: tl.constexpr, BLOCK_SIZE: tl.c
 
 
 @triton.jit
-def _fill_i32_kernel(out_ptr, n_elements, VALUE: tl.constexpr, BLOCK_SIZE: tl.constexpr):
+def _fill_i32_kernel(
+    out_ptr, n_elements, VALUE: tl.constexpr, BLOCK_SIZE: tl.constexpr
+):
     pid = tle.program_id(0)
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     mask = offsets < n_elements
@@ -97,34 +102,41 @@ def _all_direct_kernel(
     row_ptr = x_ptr + pid_m * stride_xm
     n_offsets = tl.arange(0, BLOCK_N)
     n_mask = n_offsets < N
-    x = (tl.load(row_ptr + n_offsets * stride_xn, mask=n_mask, other=1) != 0).to(tl.int32)
+    x = (
+        tl.load(row_ptr + n_offsets * stride_xn, mask=n_mask, other=1) != 0
+    ).to(tl.int32)
     result = tl.min(x, axis=0)
     tl.store(out_ptr + pid_m, result.to(tl.int8))
 
 
-
 @triton.jit
 def _all_direct_multi_kernel(
-    x_ptr, out_ptr,
-    M, N,
-    stride_xm, stride_xn,
+    x_ptr,
+    out_ptr,
+    M,
+    N,
+    stride_xm,
+    stride_xn,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
 ):
-    """Process BLOCK_M rows per CTA → reduces CTA count 8× → less scheduling overhead."""
+    """Process BLOCK_M rows per CTA to reduce scheduling overhead."""
     pid = tle.program_id(0)
     row_start = pid * BLOCK_M
 
     m_offsets = row_start + tl.arange(0, BLOCK_M)  # [BLOCK_M]
     m_mask = m_offsets < M
-    n_offsets = tl.arange(0, BLOCK_N)              # [BLOCK_N]
+    n_offsets = tl.arange(0, BLOCK_N)  # [BLOCK_N]
     n_mask = n_offsets < N
 
-    ptrs = x_ptr + m_offsets[:, None] * stride_xm + n_offsets[None, :] * stride_xn
+    ptrs = (
+        x_ptr + m_offsets[:, None] * stride_xm + n_offsets[None, :] * stride_xn
+    )
     x = tl.load(ptrs, mask=m_mask[:, None] & n_mask[None, :], other=1)
-    nonzero = (x != 0).to(tl.int32)               # [BLOCK_M, BLOCK_N]
-    result = tl.min(nonzero, axis=1)               # [BLOCK_M] per-row min
+    nonzero = (x != 0).to(tl.int32)  # [BLOCK_M, BLOCK_N]
+    result = tl.min(nonzero, axis=1)  # [BLOCK_M] per-row min
     tl.store(out_ptr + m_offsets, result.to(tl.int8), mask=m_mask)
+
 
 @triton.jit
 def _all_stage1_kernel(
@@ -143,7 +155,9 @@ def _all_stage1_kernel(
     n_offsets = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
     n_mask = n_offsets < N
 
-    x = (tl.load(row_ptr + n_offsets * stride_xn, mask=n_mask, other=1) != 0).to(tl.int32)
+    x = (
+        tl.load(row_ptr + n_offsets * stride_xn, mask=n_mask, other=1) != 0
+    ).to(tl.int32)
     local_all = tl.min(x, axis=0)
 
     num_blocks_n = tl.num_programs(1)
@@ -162,15 +176,19 @@ def _all_finalize_kernel(
 
     k_offsets = tl.arange(0, BLOCK_K)
     k_mask = k_offsets < K
-    part = (tl.load(partial_ptr + pid_m * K + k_offsets, mask=k_mask, other=1) != 0).to(tl.int32)
+    part = (
+        tl.load(partial_ptr + pid_m * K + k_offsets, mask=k_mask, other=1) != 0
+    ).to(tl.int32)
     result = tl.min(part, axis=0)
     tl.store(out_ptr + pid_m, result)
 
 
 @triton.jit
 def _all_col2d_s1_kernel(
-    x_ptr, partial_ptr,
-    M_red, M_out,
+    x_ptr,
+    partial_ptr,
+    M_red,
+    M_out,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
 ):
@@ -194,8 +212,10 @@ def _all_col2d_s1_kernel(
 
 @triton.jit
 def _all_col2d_s2_kernel(
-    partial_ptr, out_ptr,
-    n_groups, M_out,
+    partial_ptr,
+    out_ptr,
+    n_groups,
+    M_out,
     BLOCK_K: tl.constexpr,
     BLOCK_N: tl.constexpr,
 ):
@@ -233,12 +253,6 @@ def _all_reduce_2d(x: torch.Tensor, M: int, N: int) -> torch.Tensor:
         stride_n = x.stride(0)
 
     out = torch.empty(M, dtype=torch.int8, device=x.device)
-    num_warps_ideal = 8 if BLOCK_N >= 512 else 4
-    nw = num_warps_ideal
-    while nw > 1 and M * nw > 6912:
-        nw //= 2
-    num_warps = nw
-
     if num_blocks_n == 1:
         if M <= 4096:
             BLOCK_M_MR = 8
@@ -246,8 +260,14 @@ def _all_reduce_2d(x: torch.Tensor, M: int, N: int) -> torch.Tensor:
             grid_mr = (triton.cdiv(M, BLOCK_M_MR),)
             with torch_device_fn.device(x.device):
                 _all_direct_multi_kernel[grid_mr](
-                    x, out, M, N, stride_m, stride_n,
-                    BLOCK_M=BLOCK_M_MR, BLOCK_N=BLOCK_N,
+                    x,
+                    out,
+                    M,
+                    N,
+                    stride_m,
+                    stride_n,
+                    BLOCK_M=BLOCK_M_MR,
+                    BLOCK_N=BLOCK_N,
                     num_warps=num_warps_mr,
                 )
         else:
@@ -261,25 +281,37 @@ def _all_reduce_2d(x: torch.Tensor, M: int, N: int) -> torch.Tensor:
         stride_m = x.stride(0)
         stride_n = x.stride(-1)
 
-        partial = torch.empty(M * num_blocks_n, dtype=torch.int32, device=x.device)
+        partial = torch.empty(
+            M * num_blocks_n, dtype=torch.int32, device=x.device
+        )
         grid1 = (M, num_blocks_n)
         with torch_device_fn.device(x.device):
             _all_stage1_kernel[grid1](
-                x, partial, M, N, stride_m, stride_n, BLOCK_N=BLOCK_N,
+                x,
+                partial,
+                M,
+                N,
+                stride_m,
+                stride_n,
+                BLOCK_N=BLOCK_N,
             )
 
         BLOCK_K = min(triton.next_power_of_2(num_blocks_n), 1024)
         grid2 = (M,)
         with torch_device_fn.device(x.device):
-            _all_finalize_kernel[grid2](partial, out, M, num_blocks_n, BLOCK_K=BLOCK_K)
+            _all_finalize_kernel[grid2](
+                partial, out, M, num_blocks_n, BLOCK_K=BLOCK_K
+            )
 
     return out.view(torch.bool)
 
 
 @triton.jit
 def _all_col_atomic_kernel(
-    x_ptr, out_ptr,
-    M_red, M_out,
+    x_ptr,
+    out_ptr,
+    M_red,
+    M_out,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
 ):
@@ -295,13 +327,17 @@ def _all_col_atomic_kernel(
     row_mask = row_offsets < M_red
 
     ptrs = x_ptr + row_offsets[:, None] * M_out + col_offsets[None, :]
-    x = (tl.load(ptrs, mask=row_mask[:, None] & col_mask[None, :], other=1) != 0).to(tl.int32)
+    x = (
+        tl.load(ptrs, mask=row_mask[:, None] & col_mask[None, :], other=1) != 0
+    ).to(tl.int32)
     tile_all = tl.min(x, axis=0)  # [BLOCK_N]
 
     tl.atomic_min(out_ptr + col_offsets, tile_all, mask=col_mask)
 
 
-def _all_col2d_reduce(x_flat: torch.Tensor, M_red: int, M_out: int) -> torch.Tensor:
+def _all_col2d_reduce(
+    x_flat: torch.Tensor, M_red: int, M_out: int
+) -> torch.Tensor:
     """Single-kernel atomic column ALL-reduction. High-occupancy."""
     if M_out == 0 or M_red == 0:
         return _filled_bool((M_out,), True, x_flat.device)
@@ -314,8 +350,12 @@ def _all_col2d_reduce(x_flat: torch.Tensor, M_red: int, M_out: int) -> torch.Ten
     out = _filled_i32((M_out,), 1, x_flat.device)
     with torch_device_fn.device(x_flat.device):
         _all_col_atomic_kernel[grid](
-            x_flat, out, M_red, M_out,
-            BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N,
+            x_flat,
+            out,
+            M_red,
+            M_out,
+            BLOCK_M=BLOCK_M,
+            BLOCK_N=BLOCK_N,
             num_warps=4,
         )
     return _i32_to_bool(out)
@@ -373,13 +413,15 @@ def all(
         BLOCK_N = min(triton.next_power_of_2(N_red), 8192) if N_red > 0 else 1
         num_blocks_n = triton.cdiv(N_red, BLOCK_N) if N_red > 0 else 1
 
-        dims_are_leading = (dims == list(range(len(dims))))
+        dims_are_leading = dims == list(range(len(dims)))
 
         if perm_view.is_contiguous():
             input_view = perm_view.view(M_out, N_red)
             result_flat = _all_reduce_2d(input_view, M_out, N_red)
         elif input.is_contiguous() and dims_are_leading:
-            result_flat = _all_col2d_reduce(input.view(N_red, M_out), N_red, M_out)
+            result_flat = _all_col2d_reduce(
+                input.view(N_red, M_out), N_red, M_out
+            )
         elif (
             num_blocks_n == 1
             and perm_view.ndim == 2

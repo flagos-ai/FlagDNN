@@ -229,6 +229,7 @@ def _normalize_slice_specs(
 ) -> tuple[tuple[Any, Any, Any], ...]:
     import builtins
 
+    raw: tuple[Any, ...]
     if slices is None:
         raw = ()
     elif isinstance(slices, builtins.slice):
@@ -322,13 +323,12 @@ def _concatenate_shape(
                     "graph concatenate non-axis dimensions must match: "
                     f"{first.shape} vs {spec.shape}"
                 )
-        if not isinstance(axis_size, int) or not isinstance(
-            spec.shape[axis], int
-        ):
+        axis_value = spec.shape[axis]
+        if not isinstance(axis_size, int) or not isinstance(axis_value, int):
             raise NotImplementedError(
                 "graph concatenate symbolic axis dimensions are not enabled"
             )
-        axis_size += spec.shape[axis]
+        axis_size = int(axis_size) + int(axis_value)
 
     out_shape[axis] = axis_size
     return [
@@ -481,16 +481,16 @@ def _normalize_conv_padding_from_attrs(
                 raise RuntimeError(
                     "padding='same' is not supported for strided convolutions"
                 )
-            pre = []
-            post = []
+            pre_values: list[int] = []
+            post_values: list[int] = []
             for axis in range(rank):
                 kernel = int(weight.shape[2 + axis])
                 effective_kernel = dilation[axis] * (kernel - 1) + 1
                 total_pad = max(effective_kernel - 1, 0)
                 before = total_pad // 2
-                pre.append(before)
-                post.append(total_pad - before)
-            return tuple(pre), tuple(post)
+                pre_values.append(before)
+                post_values.append(total_pad - before)
+            return tuple(pre_values), tuple(post_values)
         raise RuntimeError("padding must be 'valid', 'same', int, or tuple")
 
     if isinstance(padding, int):
@@ -501,9 +501,9 @@ def _normalize_conv_padding_from_attrs(
     if len(values) == rank:
         return values, values
     if len(values) == 2 * rank:
-        pre = tuple(values[2 * axis] for axis in range(rank))
-        post = tuple(values[2 * axis + 1] for axis in range(rank))
-        return pre, post
+        pre_tuple = tuple(values[2 * axis] for axis in range(rank))
+        post_tuple = tuple(values[2 * axis + 1] for axis in range(rank))
+        return pre_tuple, post_tuple
     raise RuntimeError(
         f"padding must have length {rank} or {2 * rank}, got {padding}"
     )
@@ -586,6 +586,7 @@ def _conv_fprop_shape(
         weight, stride, dilation, attrs, "conv_fprop"
     )
     groups = int(attrs.get("groups", 1))
+    spatial_shape: tuple[Any, ...]
 
     if rank == 1 and len(x.shape) == 2:
         leading_shape: tuple[Any, ...] = ()
@@ -855,7 +856,7 @@ def _reduction_shape(
         dims = [_normalize_axis(item, rank, "reduction") for item in dim]
     dims = sorted(set(dims))
     keepdim = bool(attrs.get("keepdim", True))
-    out_shape = []
+    out_shape: list[Any] = []
     for index, size in enumerate(inp.shape):
         if index in dims:
             if keepdim:
@@ -994,7 +995,8 @@ def _normalize_batchnorm_inference(
     }
     if params:
         raise TypeError(
-            f"batchnorm_inference got unsupported graph attrs: {sorted(params)}"
+            "batchnorm_inference got unsupported graph attrs: "
+            f"{sorted(params)}"
         )
     return [ctx.as_value(values[name], name) for name in names], attrs
 
@@ -2804,7 +2806,16 @@ def register_default_ops() -> None:
         )
     )
 
-    for name in ("sqrt", "square", "rsqrt", "exp", "log", "neg", "tanh", "silu"):
+    for name in (
+        "sqrt",
+        "square",
+        "rsqrt",
+        "exp",
+        "log",
+        "neg",
+        "tanh",
+        "silu",
+    ):
         register_op(
             OpSchema(
                 name=name,

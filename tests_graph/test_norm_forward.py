@@ -1,11 +1,9 @@
 import pytest
-
 import torch
-
-COMPARE_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
-
 import flag_dnn
 from tests import accuracy_utils as utils
+
+COMPARE_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
 
 
 def _reference_layernorm(x, scale, bias, eps):

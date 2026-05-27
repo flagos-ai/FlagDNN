@@ -73,7 +73,6 @@ class GraphBackend:
         ]
 
 
-
 class TritonCudaBackend(GraphBackend):
     name = "triton_cuda"
 

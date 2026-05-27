@@ -86,7 +86,9 @@ class AddSquareBenchmark(CudnnCompareBenchmark):
             ],
             options=consts.compile_options(),
         )
-        assert [node.op_type for node in compiled.graph.nodes] == ["add_square"]
+        assert [node.op_type for node in compiled.graph.nodes] == [
+            "add_square"
+        ]
 
         def run():
             return compiled.run(x, y)

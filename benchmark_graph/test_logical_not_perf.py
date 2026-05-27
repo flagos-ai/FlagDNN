@@ -77,7 +77,9 @@ class LogicalNotBenchmark(CudnnCompareBenchmark):
             inputs=[flag_dnn.TensorSpec.from_tensor(x, "x")],
             options=consts.compile_options(),
         )
-        assert [node.op_type for node in compiled.graph.nodes] == ["logical_not"]
+        assert [node.op_type for node in compiled.graph.nodes] == [
+            "logical_not"
+        ]
 
         def run():
             return compiled.run(x)

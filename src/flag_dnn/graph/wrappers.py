@@ -101,8 +101,8 @@ def make_graph_wrapper(op_type: str, eager_fn: Callable[..., Any]):
             return ctx.add_op_call(op_type, args, kwargs)
         return eager_fn(*args, **kwargs)
 
-    wrapper.__flagdnn_graph_wrapped__ = True
-    wrapper.__flagdnn_eager_fn__ = eager_fn
+    setattr(wrapper, "__flagdnn_graph_wrapped__", True)
+    setattr(wrapper, "__flagdnn_eager_fn__", eager_fn)
     return wrapper
 
 

@@ -88,7 +88,9 @@ class LogicalAndBenchmark(CudnnCompareBenchmark):
             ],
             options=consts.compile_options(),
         )
-        assert [node.op_type for node in compiled.graph.nodes] == ["logical_and"]
+        assert [node.op_type for node in compiled.graph.nodes] == [
+            "logical_and"
+        ]
 
         def run():
             return compiled.run(x, y)
