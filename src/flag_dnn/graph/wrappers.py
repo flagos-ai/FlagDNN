@@ -55,6 +55,7 @@ GRAPH_AWARE_OPS = (
     "batchnorm_inference",
     "layernorm",
     "rmsnorm",
+    "rmsnorm_rht_amax_wrapper_sm100",
     "reduction",
     "sqrt",
     "square",
@@ -71,6 +72,11 @@ GRAPH_AWARE_OPS = (
     "logical_or",
     "logical_not",
 )
+
+
+_DICT_OUTPUT_OPS = {
+    "rmsnorm_rht_amax_wrapper_sm100": ("o_tensor", "amax_tensor"),
+}
 
 
 def install_graph_wrappers(namespace: dict[str, Any]) -> None:
@@ -98,7 +104,18 @@ def make_graph_wrapper(op_type: str, eager_fn: Callable[..., Any]):
                 raise RuntimeError(
                     f"FlagDNN graph op {op_type} used outside graph capture"
                 )
-            return ctx.add_op_call(op_type, args, kwargs)
+            outputs = ctx.add_op_call(op_type, args, kwargs)
+            output_keys = _DICT_OUTPUT_OPS.get(op_type)
+            if output_keys is not None:
+                if not isinstance(outputs, tuple):
+                    outputs = (outputs,)
+                if len(outputs) != len(output_keys):
+                    raise RuntimeError(
+                        f"FlagDNN graph op {op_type} returned "
+                        f"{len(outputs)} outputs, expected {len(output_keys)}"
+                    )
+                return dict(zip(output_keys, outputs))
+            return outputs
         return eager_fn(*args, **kwargs)
 
     setattr(wrapper, "__flagdnn_graph_wrapped__", True)

@@ -931,6 +931,27 @@ def _layernorm_shape(
     ]
 
 
+_RMSNORM_RHT_AMAX_RPC_CANDIDATES = (2, 4, 8)
+_RMSNORM_RHT_AMAX_TARGET_MIN_CTAS = 148
+
+
+def _rmsnorm_rht_amax_pick_rows_per_cta(m: int) -> int:
+    for rows_per_cta in reversed(_RMSNORM_RHT_AMAX_RPC_CANDIDATES):
+        if m % rows_per_cta != 0:
+            continue
+        if m // rows_per_cta >= _RMSNORM_RHT_AMAX_TARGET_MIN_CTAS:
+            return rows_per_cta
+    return _RMSNORM_RHT_AMAX_RPC_CANDIDATES[0]
+
+
+def _squeeze_trailing_unit_spec_shape(
+    shape: tuple[Any, ...], expected_rank: int
+) -> tuple[Any, ...]:
+    if len(shape) == expected_rank + 1 and shape[-1] == 1:
+        return shape[:-1]
+    return shape
+
+
 def _rmsnorm_shape(
     input_specs: list[TensorSpec], attrs: dict[str, Any]
 ) -> list[TensorSpec]:
@@ -947,6 +968,68 @@ def _rmsnorm_shape(
             contiguous=inp.contiguous,
         ),
         _float32_spec(stat_shape, inp.device),
+    ]
+
+
+def _rmsnorm_rht_amax_shape(
+    input_specs: list[TensorSpec], attrs: dict[str, Any]
+) -> list[TensorSpec]:
+    inp = input_specs[0]
+    weight = input_specs[1]
+    x_shape = _squeeze_trailing_unit_spec_shape(tuple(inp.shape), 2)
+    w_shape = _squeeze_trailing_unit_spec_shape(tuple(weight.shape), 1)
+    if len(x_shape) != 2:
+        raise RuntimeError(
+            "rmsnorm_rht_amax_wrapper_sm100 x_tensor must be 2D"
+        )
+    if len(w_shape) != 1:
+        raise RuntimeError(
+            "rmsnorm_rht_amax_wrapper_sm100 w_tensor must be 1D"
+        )
+    m, n = x_shape
+    if isinstance(n, int) and isinstance(w_shape[0], int) and w_shape[0] != n:
+        raise RuntimeError(
+            "rmsnorm_rht_amax_wrapper_sm100 w_tensor length must match "
+            "x hidden dimension"
+        )
+    if isinstance(n, int) and n % 16 != 0:
+        raise RuntimeError(
+            "rmsnorm_rht_amax_wrapper_sm100 N must be divisible by 16"
+        )
+
+    rows_per_cta = attrs.get("rows_per_cta")
+    if rows_per_cta is None:
+        if not isinstance(m, int):
+            raise RuntimeError(
+                "rmsnorm_rht_amax_wrapper_sm100 requires concrete M when "
+                "rows_per_cta is omitted"
+            )
+        rows_per_cta = _rmsnorm_rht_amax_pick_rows_per_cta(m)
+    rows_per_cta = int(rows_per_cta)
+    if rows_per_cta <= 0:
+        raise RuntimeError(
+            "rmsnorm_rht_amax_wrapper_sm100 rows_per_cta must be positive"
+        )
+    if isinstance(m, int):
+        if m % rows_per_cta != 0:
+            raise RuntimeError(
+                "rmsnorm_rht_amax_wrapper_sm100 M must be divisible by "
+                "rows_per_cta"
+            )
+        amax_shape = (m // rows_per_cta,)
+    else:
+        amax_shape = (m,)
+
+    return [
+        TensorSpec(
+            name="o_tensor",
+            shape=x_shape,
+            dtype=inp.dtype,
+            layout="contiguous",
+            device=inp.device,
+            contiguous=True,
+        ),
+        _float32_spec(amax_shape, inp.device).with_name("amax_tensor"),
     ]
 
 
@@ -1066,6 +1149,51 @@ def _normalize_rmsnorm(
         input_ids.append(ctx.as_value(values["bias"], "bias"))
     input_ids.append(ctx.as_value(values["epsilon"], "epsilon"))
     return input_ids, attrs
+
+
+def _normalize_rmsnorm_rht_amax(
+    ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[list[int], dict]:
+    names = ("x_tensor", "w_tensor")
+    if len(args) > len(names):
+        raise TypeError(
+            "rmsnorm_rht_amax_wrapper_sm100 got too many positional args"
+        )
+    params = dict(kwargs)
+    values = {}
+    for name, value in zip(names, args):
+        values[name] = value
+    for name in names[len(args) :]:
+        if name in params:
+            values[name] = params.pop(name)
+    missing = [name for name in names if name not in values]
+    if missing:
+        raise TypeError(f"rmsnorm_rht_amax_wrapper_sm100 missing {missing[0]}")
+    current_stream = params.pop("current_stream", None)
+    if current_stream is not None:
+        raise TypeError(
+            "rmsnorm_rht_amax_wrapper_sm100 current_stream is not supported "
+            "in graph capture"
+        )
+    attrs = {
+        "eps": float(params.pop("eps", 1e-5)),
+        "num_threads": params.pop("num_threads", None),
+        "rows_per_cta": params.pop("rows_per_cta", None),
+        "name": params.pop("name", ""),
+    }
+    if attrs["num_threads"] is not None:
+        attrs["num_threads"] = int(attrs["num_threads"])
+    if attrs["rows_per_cta"] is not None:
+        attrs["rows_per_cta"] = int(attrs["rows_per_cta"])
+    if params:
+        raise TypeError(
+            "rmsnorm_rht_amax_wrapper_sm100 got unsupported graph attrs: "
+            f"{sorted(params)}"
+        )
+    return [
+        ctx.as_value(values["x_tensor"], "x_tensor"),
+        ctx.as_value(values["w_tensor"], "w_tensor"),
+    ], attrs
 
 
 def _normalize_batchnorm(
@@ -2416,6 +2544,21 @@ def _run_rmsnorm(flag_ops: Any) -> RunFn:
     return run
 
 
+def _run_rmsnorm_rht_amax(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs[:2], "rmsnorm_rht_amax_wrapper_sm100")
+        result = flag_ops.rmsnorm_rht_amax_wrapper_sm100(
+            inputs[0],
+            inputs[1],
+            eps=attrs.get("eps", 1e-5),
+            num_threads=attrs.get("num_threads"),
+            rows_per_cta=attrs.get("rows_per_cta"),
+        )
+        return result["o_tensor"], result["amax_tensor"]
+
+    return run
+
+
 def _run_causal_conv1d(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
         _require_runtime_backend(inputs, "causal_conv1d")
@@ -2799,6 +2942,17 @@ def register_default_ops() -> None:
             normalize_fn=_normalize_rmsnorm,
             shape_fn=_rmsnorm_shape,
             run_fn=_run_rmsnorm(flag_ops),
+            num_outputs=2,
+            fusible=True,
+        )
+    )
+
+    register_op(
+        OpSchema(
+            name="rmsnorm_rht_amax_wrapper_sm100",
+            normalize_fn=_normalize_rmsnorm_rht_amax,
+            shape_fn=_rmsnorm_rht_amax_shape,
+            run_fn=_run_rmsnorm_rht_amax(flag_ops),
             num_outputs=2,
             fusible=True,
         )
