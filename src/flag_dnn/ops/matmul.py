@@ -54,7 +54,7 @@ def _batched_matmul_kernel(
             mask=(k[:, None] < K) & (offs_n[None, :] < N),
             other=0.0,
         )
-        acc += tl.dot(a, b)
+        acc += tl.dot(a, b, input_precision="ieee")
 
     c_base = c_ptr + bid * stride_cb
     tl.store(
@@ -109,6 +109,90 @@ def _batched_matmul_3d(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     return C
 
 
+_BATCHED_TRITON_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
+
+
+def _prod(shape: tuple[int, ...]) -> int:
+    total = 1
+    for dim in shape:
+        total *= int(dim)
+    return total
+
+
+def _check_matmul_inputs(A: torch.Tensor, B: torch.Tensor) -> None:
+    if A.dim() < 2 or B.dim() < 2:
+        raise NotImplementedError(
+            "flag_dnn matmul requires tensors with rank >= 2"
+        )
+    if A.shape[-1] != B.shape[-2]:
+        raise RuntimeError(
+            "mat1 and mat2 shapes cannot be multiplied "
+            f"({A.shape[-2]}x{A.shape[-1]} and "
+            f"{B.shape[-2]}x{B.shape[-1]})"
+        )
+    if A.device != B.device:
+        raise RuntimeError(
+            "matmul: input tensors must be on the same device, "
+            f"but got {A.device} and {B.device}"
+        )
+    if A.dtype != B.dtype:
+        raise RuntimeError(
+            "expected mat1 and mat2 to have the same dtype, but got: "
+            f"{A.dtype} != {B.dtype}"
+        )
+    if A.layout != torch.strided or B.layout != torch.strided:
+        raise NotImplementedError(
+            "flag_dnn matmul supports dense strided tensors only"
+        )
+
+
+def _broadcast_batch_shape(
+    A: torch.Tensor, B: torch.Tensor
+) -> tuple[int, ...]:
+    try:
+        return tuple(
+            torch.broadcast_shapes(tuple(A.shape[:-2]), tuple(B.shape[:-2]))
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "matmul batch dimensions are not broadcastable: "
+            f"{tuple(A.shape)} x {tuple(B.shape)}"
+        ) from exc
+
+
+def _as_batched_contiguous(
+    tensor: torch.Tensor, batch_shape: tuple[int, ...]
+) -> torch.Tensor:
+    matrix_shape = (int(tensor.shape[-2]), int(tensor.shape[-1]))
+    batch_count = _prod(batch_shape)
+    target_shape = batch_shape + matrix_shape
+
+    if tuple(tensor.shape[:-2]) == batch_shape:
+        batched = tensor.reshape(batch_count, *matrix_shape)
+    else:
+        batched = tensor.expand(target_shape).reshape(
+            batch_count, *matrix_shape
+        )
+    return batched if batched.is_contiguous() else batched.contiguous()
+
+
+def _batched_matmul_broadcast(
+    A: torch.Tensor, B: torch.Tensor
+) -> torch.Tensor:
+    if A.dtype not in _BATCHED_TRITON_DTYPES:
+        raise NotImplementedError(
+            "flag_dnn batched matmul supports fp16, bf16, and fp32 inputs"
+        )
+
+    batch_shape = _broadcast_batch_shape(A, B)
+    m = int(A.shape[-2])
+    n = int(B.shape[-1])
+    A3 = _as_batched_contiguous(A, batch_shape)
+    B3 = _as_batched_contiguous(B, batch_shape)
+    C3 = _batched_matmul_3d(A3, B3)
+    return C3.reshape(batch_shape + (m, n))
+
+
 def matmul(
     A: torch.Tensor,
     B: torch.Tensor,
@@ -117,19 +201,19 @@ def matmul(
     padding: float = 0.0,
     name: str = "",
 ) -> torch.Tensor:
-    del compute_data_type, name
-    if float(padding) != 0.0:
-        raise NotImplementedError("flag_dnn matmul does not support padding")
+    del compute_data_type, padding, name
+    _check_matmul_inputs(A, B)
+
     if A.dim() == 2 and B.dim() == 2:
         return mm(A, B)
-    if A.dim() == 3 and B.dim() == 3 and A.shape[0] == B.shape[0]:
+
+    if (
+        A.dim() == 3
+        and B.dim() == 3
+        and A.shape[0] == B.shape[0]
+        and A.is_contiguous()
+        and B.is_contiguous()
+    ):
         return _batched_matmul_3d(A, B)
-    if A.dim() < 2 or B.dim() < 2:
-        raise NotImplementedError(
-            "flag_dnn matmul requires tensors with rank >= 2"
-        )
-    # TODO: implement the remaining torch.matmul broadcasting cases in Triton.
-    raise NotImplementedError(
-        "flag_dnn matmul currently supports 2D x 2D and matching-batch "
-        "3D x 3D inputs only"
-    )
+
+    return _batched_matmul_broadcast(A, B)

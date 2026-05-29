@@ -48,6 +48,25 @@ def _run_matmul_broadcast_graph(a, b):
     return compiled.run(a.clone(), b.clone())
 
 
+def _run_matmul_padding_graph(a, b, padding):
+    @flag_dnn.graph
+    def fn(a, b):
+        return flag_dnn.matmul(
+            a, b, compute_data_type="float32", padding=padding
+        )
+
+    compiled = flag_dnn.compile(
+        fn,
+        inputs=[
+            flag_dnn.TensorSpec.from_tensor(a, "a"),
+            flag_dnn.TensorSpec.from_tensor(b, "b"),
+        ],
+        options={"cache": None},
+    )
+    assert [node.op_type for node in compiled.graph.nodes] == ["matmul"]
+    return compiled.run(a.clone(), b.clone())
+
+
 def _run_reduction_graph(x, mode):
     @flag_dnn.graph
     def fn(x):
@@ -107,12 +126,26 @@ def test_graph_conv_fprop_convolution_mode_matches_torch(dtype):
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", COMPARE_DTYPES)
-def test_graph_matmul_broadcast_fallback_matches_torch(dtype):
+def test_graph_matmul_broadcast_matches_torch(dtype):
     torch.manual_seed(4)
     a = torch.randn((2, 1, 4, 8), device=flag_dnn.device, dtype=dtype)
     b = torch.randn((3, 8, 5), device=flag_dnn.device, dtype=dtype)
     expected = torch.matmul(a, b)
     actual = _run_matmul_broadcast_graph(a, b)
+    atol = 5e-2 if dtype in (torch.float16, torch.bfloat16) else 2e-4
+    utils.gems_assert_close(actual, expected, dtype, atol=atol)
+
+
+@pytest.mark.matmul
+@pytest.mark.graph
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", COMPARE_DTYPES)
+def test_graph_matmul_nonzero_padding_matches_torch(dtype):
+    torch.manual_seed(6)
+    a = torch.randn((2, 4, 8), device=flag_dnn.device, dtype=dtype)
+    b = torch.randn((2, 8, 5), device=flag_dnn.device, dtype=dtype)
+    expected = torch.matmul(a, b)
+    actual = _run_matmul_padding_graph(a, b, padding=1.0)
     atol = 5e-2 if dtype in (torch.float16, torch.bfloat16) else 2e-4
     utils.gems_assert_close(actual, expected, dtype, atol=atol)
 

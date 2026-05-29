@@ -8,7 +8,6 @@ import triton.language as tl
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import triton_lang_extension as tle
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -243,10 +242,22 @@ def batchnorm_forward(
     momentum,
     peer_stats=None,
 ):
-    if peer_stats:
+    if peer_stats is None:
+        peer_stats = []
+    peer_stats = list(peer_stats)
+    if len(peer_stats) > 1:
         raise NotImplementedError(
-            "flag_dnn batchnorm does not support peer_stats"
+            "flag_dnn batchnorm supports only single-device peer_stats; "
+            "multi-device synchronized peer stats are not implemented"
         )
+    if peer_stats:
+        peer_stat = peer_stats[0]
+        if peer_stat.device != input.device:
+            raise RuntimeError(
+                "batchnorm peer_stats tensor must be on the input device"
+            )
+        if peer_stat.dtype != torch.float32:
+            raise RuntimeError("batchnorm peer_stats tensor must be float32")
     if input.dim() < 2:
         raise RuntimeError("batchnorm expects input rank >= 2")
     if not input.is_contiguous():

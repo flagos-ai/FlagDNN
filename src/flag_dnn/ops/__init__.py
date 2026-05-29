@@ -24,6 +24,7 @@ from flag_dnn.ops.layer_norm import layer_norm
 from flag_dnn.ops.layernorm import layernorm
 from flag_dnn.ops.rms_norm import rms_norm
 from flag_dnn.ops.rmsnorm import rmsnorm
+from flag_dnn.ops.rmsnorm_rht_amax import rmsnorm_rht_amax_wrapper_sm100
 from flag_dnn.ops.group_norm import group_norm
 from flag_dnn.ops.max_pool2d import max_pool2d
 from flag_dnn.ops.avg_pool2d import avg_pool2d
@@ -216,6 +217,7 @@ __all__ = [
     "layer_norm",
     "rms_norm",
     "rmsnorm",
+    "rmsnorm_rht_amax_wrapper_sm100",
     "group_norm",
     "max_pool2d",
     "avg_pool2d",

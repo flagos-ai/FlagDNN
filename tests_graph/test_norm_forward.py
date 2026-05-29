@@ -115,6 +115,45 @@ def _run_batchnorm_graph(
     )
 
 
+def _run_batchnorm_peer_stats_graph(
+    x, scale, bias, running_mean, running_var, peer_stats, eps, momentum
+):
+    @flag_dnn.graph
+    def fn(x, scale, bias, running_mean, running_var, peer_stats):
+        return flag_dnn.batchnorm(
+            x,
+            scale,
+            bias,
+            running_mean,
+            running_var,
+            eps,
+            momentum,
+            peer_stats=[peer_stats],
+        )
+
+    compiled = flag_dnn.compile(
+        fn,
+        inputs=[
+            flag_dnn.TensorSpec.from_tensor(x, "x"),
+            flag_dnn.TensorSpec.from_tensor(scale, "scale"),
+            flag_dnn.TensorSpec.from_tensor(bias, "bias"),
+            flag_dnn.TensorSpec.from_tensor(running_mean, "running_mean"),
+            flag_dnn.TensorSpec.from_tensor(running_var, "running_var"),
+            flag_dnn.TensorSpec.from_tensor(peer_stats, "peer_stats"),
+        ],
+        options={"cache": None},
+    )
+    assert [node.op_type for node in compiled.graph.nodes] == ["batchnorm"]
+    return compiled.run(
+        x.clone(),
+        scale.clone(),
+        bias.clone(),
+        running_mean.clone(),
+        running_var.clone(),
+        peer_stats.clone(),
+    )
+
+
 @pytest.mark.layernorm
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
@@ -173,6 +212,48 @@ def test_graph_batchnorm_multi_output_matches_torch(dtype):
     )
     actual = _run_batchnorm_graph(
         x, scale, bias, running_mean, running_var, eps, momentum
+    )
+    atol = 3e-2 if dtype in (torch.float16, torch.bfloat16) else 3e-4
+    utils.gems_assert_close(actual[0], expected[0], dtype, atol=atol)
+    for actual_value, expected_value in zip(actual[1:], expected[1:]):
+        torch.testing.assert_close(
+            actual_value, expected_value, atol=atol, rtol=atol
+        )
+
+
+@pytest.mark.batchnorm
+@pytest.mark.graph
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", COMPARE_DTYPES)
+def test_graph_batchnorm_single_peer_stats_matches_torch(dtype):
+    torch.manual_seed(7)
+    eps = 1e-3
+    momentum = 0.1
+    x = torch.randn((2, 4, 8, 8), device=flag_dnn.device, dtype=dtype)
+    scale = torch.randn((1, 4, 1, 1), device=flag_dnn.device, dtype=dtype)
+    bias = torch.randn((1, 4, 1, 1), device=flag_dnn.device, dtype=dtype)
+    running_mean = torch.randn(
+        (1, 4, 1, 1), device=flag_dnn.device, dtype=torch.float32
+    )
+    running_var = (
+        torch.rand((1, 4, 1, 1), device=flag_dnn.device, dtype=torch.float32)
+        + 0.5
+    )
+    peer_stats = torch.empty(
+        (16,), device=flag_dnn.device, dtype=torch.float32
+    )
+    expected = _reference_batchnorm(
+        x, scale, bias, running_mean, running_var, eps, momentum
+    )
+    actual = _run_batchnorm_peer_stats_graph(
+        x,
+        scale,
+        bias,
+        running_mean,
+        running_var,
+        peer_stats,
+        eps,
+        momentum,
     )
     atol = 3e-2 if dtype in (torch.float16, torch.bfloat16) else 3e-4
     utils.gems_assert_close(actual[0], expected[0], dtype, atol=atol)

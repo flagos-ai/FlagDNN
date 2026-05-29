@@ -1093,19 +1093,25 @@ def _normalize_batchnorm(
     if missing:
         raise TypeError(f"batchnorm missing {missing[0]}")
     peer_stats = params.pop("peer_stats", [])
-    if peer_stats:
-        raise NotImplementedError(
-            "FlagDNN graph batchnorm does not support peer_stats"
-        )
+    if peer_stats is None:
+        peer_stats = []
+    if not isinstance(peer_stats, (list, tuple)):
+        raise TypeError("batchnorm peer_stats must be a list or tuple")
     attrs = {
         "compute_data_type": params.pop("compute_data_type", None),
         "name": params.pop("name", ""),
+        "peer_stats_count": len(peer_stats),
     }
     if params:
         raise TypeError(
             f"batchnorm got unsupported graph attrs: {sorted(params)}"
         )
-    return [ctx.as_value(values[name], name) for name in names], attrs
+    input_ids = [ctx.as_value(values[name], name) for name in names]
+    input_ids.extend(
+        ctx.as_value(peer_stat, f"peer_stats_{index}")
+        for index, peer_stat in enumerate(peer_stats)
+    )
+    return input_ids, attrs
 
 
 def _normalize_causal_conv1d(
@@ -2356,6 +2362,7 @@ def _run_batchnorm_inference(flag_ops: Any) -> RunFn:
 def _run_batchnorm(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
         _require_runtime_backend(inputs[:5], "batchnorm")
+        peer_count = int(attrs.get("peer_stats_count", 0))
         return flag_ops.batchnorm(
             inputs[0],
             inputs[1],
@@ -2364,6 +2371,7 @@ def _run_batchnorm(flag_ops: Any) -> RunFn:
             inputs[4],
             inputs[5],
             inputs[6],
+            peer_stats=inputs[7 : 7 + peer_count],
             compute_data_type=attrs.get("compute_data_type"),
             name=attrs.get("name", ""),
         )
