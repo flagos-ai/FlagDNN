@@ -764,6 +764,31 @@ def _binary_shape(
     ]
 
 
+def _binary_select_shape(
+    input_specs: list[TensorSpec], attrs: dict[str, Any]
+) -> list[TensorSpec]:
+    del attrs
+    input0, input1, mask = input_specs
+    shape = _broadcast_shape(
+        _broadcast_shape(input0.shape, input1.shape), mask.shape
+    )
+    out_dtype = canonical_dtype(
+        torch.result_type(
+            torch.empty((), dtype=torch_dtype(input0.dtype)),
+            torch.empty((), dtype=torch_dtype(input1.dtype)),
+        )
+    )
+    return [
+        TensorSpec(
+            name="",
+            shape=shape,
+            dtype=out_dtype,
+            layout=input0.layout,
+            device=input0.device,
+        )
+    ]
+
+
 def _bias_add_shape(
     input_specs: list[TensorSpec], attrs: dict[str, Any]
 ) -> list[TensorSpec]:
@@ -1390,6 +1415,48 @@ def _normalize_binary(op_type: str) -> NormalizeFn:
     return normalize
 
 
+def _normalize_binary_select(
+    ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[list[int], dict]:
+    if len(args) > 3:
+        raise TypeError("binary_select expects at most three positional args")
+    params = dict(kwargs)
+    if "out" in params and params["out"] is not None:
+        raise NotImplementedError("FlagDNN graph does not support out tensors")
+    params.pop("out", None)
+
+    input0 = args[0] if args else _pop_operand(params, ("input0", "a"))
+    if input0 is None:
+        raise TypeError("binary_select missing input0 tensor")
+    if len(args) >= 2:
+        input1 = args[1]
+    else:
+        input1 = _pop_operand(params, ("input1", "b"))
+    if input1 is None:
+        raise TypeError("binary_select missing input1 tensor")
+    if len(args) >= 3:
+        mask = args[2]
+    else:
+        mask = _pop_operand(params, ("mask", "condition"))
+    if mask is None:
+        raise TypeError("binary_select missing mask tensor")
+
+    attrs = {
+        "op_type": "binary_select",
+        "compute_data_type": params.pop("compute_data_type", None),
+        "name": params.pop("name", ""),
+    }
+    if params:
+        raise TypeError(
+            f"binary_select got unsupported graph attrs: {sorted(params)}"
+        )
+    return [
+        ctx.as_value(input0, "input0"),
+        ctx.as_value(input1, "input1"),
+        ctx.as_value(mask, "mask"),
+    ], attrs
+
+
 def _normalize_scale(
     ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> tuple[list[int], dict]:
@@ -1887,6 +1954,8 @@ def _run_binary(flag_ops: Any, op_type: str) -> RunFn:
         return _run_binary_mul(flag_ops)
     if op_type == "div":
         return _run_binary_div(flag_ops)
+    if op_type == "mod":
+        return _run_binary_mod(flag_ops)
     if op_type == "pow":
         return _run_binary_pow(flag_ops)
     if op_type == "max":
@@ -1997,6 +2066,24 @@ def _run_binary_div(flag_ops: Any) -> RunFn:
                 name=name,
             )
         _unsupported_triton_path("div", "scalar left operand")
+
+    return run
+
+
+def _run_binary_mod(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "mod")
+        left, right = _binary_operands(inputs, attrs)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if isinstance(left, torch.Tensor):
+            return flag_ops.mod(
+                left,
+                right,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path("mod", "scalar left operand")
 
     return run
 
@@ -2174,6 +2261,20 @@ def _run_binary_cmp(flag_ops: Any, op_type: str) -> RunFn:
                 name=name,
             )
         _unsupported_triton_path(op_type, "two scalar operands")
+
+    return run
+
+
+def _run_binary_select(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "binary_select")
+        return flag_ops.binary_select(
+            inputs[0],
+            inputs[1],
+            inputs[2],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
 
     return run
 
@@ -2701,6 +2802,7 @@ def register_default_ops() -> None:
         "sub",
         "mul",
         "div",
+        "mod",
         "max",
         "min",
         "minimum",
@@ -2723,6 +2825,15 @@ def register_default_ops() -> None:
                 run_fn=_run_binary(flag_ops, op_type),
             )
         )
+
+    register_op(
+        OpSchema(
+            name="binary_select",
+            normalize_fn=_normalize_binary_select,
+            shape_fn=_binary_select_shape,
+            run_fn=_run_binary_select(flag_ops),
+        )
+    )
 
     register_op(
         OpSchema(
@@ -2974,6 +3085,13 @@ def register_default_ops() -> None:
         "rsqrt",
         "exp",
         "log",
+        "reciprocal",
+        "ceil",
+        "floor",
+        "erf",
+        "sin",
+        "cos",
+        "tan",
         "neg",
         "tanh",
         "silu",

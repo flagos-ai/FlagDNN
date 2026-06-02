@@ -20,6 +20,7 @@ GRAPH_AWARE_OPS = (
     "mul",
     "scale",
     "div",
+    "mod",
     "pow",
     "max",
     "min",
@@ -62,6 +63,13 @@ GRAPH_AWARE_OPS = (
     "rsqrt",
     "exp",
     "log",
+    "reciprocal",
+    "ceil",
+    "floor",
+    "erf",
+    "sin",
+    "cos",
+    "tan",
     "abs",
     "neg",
     "tanh",
@@ -71,6 +79,7 @@ GRAPH_AWARE_OPS = (
     "logical_and",
     "logical_or",
     "logical_not",
+    "binary_select",
 )
 
 

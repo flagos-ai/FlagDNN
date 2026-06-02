@@ -152,6 +152,12 @@ def binary_tensor_kernel(
             res = tl.where(res >= 0, tl.math.floor(res), tl.math.ceil(res))
         elif ROUND_MODE == 2:
             res = tl.math.floor(res)
+    elif OP_TYPE == "mod":
+        x_f = x.to(tl.float32)
+        y_f = y.to(tl.float32)
+        div = x_f / y_f
+        quotient = tl.where(div >= 0, tl.math.floor(div), tl.math.ceil(div))
+        res = x_f - y_f * quotient
     elif OP_TYPE == "max":
         res = tl.where(x >= y, x, y)
     elif OP_TYPE == "minimum":
@@ -226,6 +232,12 @@ def binary_scalar_kernel(
             res = tl.where(res >= 0, tl.math.floor(res), tl.math.ceil(res))
         elif ROUND_MODE == 2:
             res = tl.math.floor(res)
+    elif OP_TYPE == "mod":
+        x_f = x.to(tl.float32)
+        y_f = other_val
+        div = x_f / y_f
+        quotient = tl.where(div >= 0, tl.math.floor(div), tl.math.ceil(div))
+        res = x_f - y_f * quotient
     elif OP_TYPE == "max":
         res = tl.where(x >= other_val, x, other_val)
     elif OP_TYPE == "minimum":
@@ -354,6 +366,12 @@ def binary_broadcast_tensor_kernel(
         elif ROUND_MODE == 2:
             # floor (向下取整)
             res = tl.math.floor(res)
+    elif OP_TYPE == "mod":
+        x_f = x.to(tl.float32)
+        y_f = y.to(tl.float32)
+        div = x_f / y_f
+        quotient = tl.where(div >= 0, tl.math.floor(div), tl.math.ceil(div))
+        res = x_f - y_f * quotient
     elif OP_TYPE == "max":
         res = tl.where(x >= y, x, y)
     elif OP_TYPE == "minimum":
@@ -448,6 +466,14 @@ def _validate_binary_args(
                 f"\"{op_type}\" not implemented for '{other.dtype}'"
             )
 
+    if op_type == "mod":
+        if is_bool_dtype(input.dtype) or _other_is_bool(other):
+            raise RuntimeError("\"mod\" not implemented for 'Bool'")
+        if input.dtype.is_complex:
+            raise RuntimeError(f"\"mod\" not implemented for '{input.dtype}'")
+        if isinstance(other, torch.Tensor) and other.dtype.is_complex:
+            raise RuntimeError(f"\"mod\" not implemented for '{other.dtype}'")
+
     if op_type in ("add", "sub") and is_integral_dtype(input.dtype):
         if is_python_float(alpha):
             raise RuntimeError(
@@ -528,6 +554,7 @@ def binary(
         "sub",
         "mul",
         "div",
+        "mod",
         "max",
         "minimum",
         "maximum",

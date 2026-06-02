@@ -283,6 +283,12 @@ class GraphTensor:
     def __rtruediv__(self, other: Any):
         return self._binary("div", other, reverse=True)
 
+    def __mod__(self, other: Any):
+        return self._binary("mod", other)
+
+    def __rmod__(self, other: Any):
+        return self._binary("mod", other, reverse=True)
+
     def __matmul__(self, other: Any):
         from flag_dnn.graph.capture import current_capture
 

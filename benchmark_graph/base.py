@@ -94,6 +94,7 @@ class CudnnCompareBenchmark:
     dtypes: tuple[Any, ...] = consts.COMPARE_FLOAT_DTYPES
     shapes: Any = ()
     shape_ids_env: str = ""
+    enforce_min_speedup: bool = False
 
     def __init__(self, cudnn_handle):
         self.cudnn_handle = cudnn_handle
@@ -163,3 +164,15 @@ class CudnnCompareBenchmark:
             item.latency_base and item.latency_base > 0 for item in metrics
         )
         assert all(item.latency and item.latency > 0 for item in metrics)
+        if self.enforce_min_speedup:
+            min_speedup = consts.min_speedup()
+            if min_speedup > 0:
+                slow = [item for item in metrics if item.speedup < min_speedup]
+                assert not slow, (
+                    f"{self.op_name} FlagDNN graph speedup below "
+                    f"{min_speedup}: "
+                    + ", ".join(
+                        f"{item.shape_detail}={item.speedup:.3f}"
+                        for item in slow
+                    )
+                )

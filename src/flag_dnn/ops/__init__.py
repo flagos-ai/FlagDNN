@@ -35,6 +35,7 @@ from flag_dnn.ops.sub import sub
 from flag_dnn.ops.mul import mul
 from flag_dnn.ops.scale import scale
 from flag_dnn.ops.div import div
+from flag_dnn.ops.mod import mod
 from flag_dnn.ops.pow import pow
 from flag_dnn.ops.max import max
 from flag_dnn.ops.min import min
@@ -100,9 +101,17 @@ from flag_dnn.ops.rsqrt import rsqrt
 from flag_dnn.ops.positive import positive
 from flag_dnn.ops.log import log
 from flag_dnn.ops.exp import exp
+from flag_dnn.ops.reciprocal import reciprocal
+from flag_dnn.ops.ceil import ceil
+from flag_dnn.ops.floor import floor
+from flag_dnn.ops.erf import erf
+from flag_dnn.ops.sin import sin
+from flag_dnn.ops.cos import cos
+from flag_dnn.ops.tan import tan
 from flag_dnn.ops.bitwise_not import bitwise_not
 from flag_dnn.ops.minimum import minimum
 from flag_dnn.ops.maximum import maximum
+from flag_dnn.ops.binary_select import binary_select, where
 from flag_dnn.ops.bitwise_and import bitwise_and
 from flag_dnn.ops.bitwise_or import bitwise_or
 from flag_dnn.ops.bitwise_xor import bitwise_xor
@@ -228,6 +237,7 @@ __all__ = [
     "mul",
     "scale",
     "div",
+    "mod",
     "pow",
     "max",
     "min",
@@ -299,9 +309,18 @@ __all__ = [
     "positive",
     "log",
     "exp",
+    "reciprocal",
+    "ceil",
+    "floor",
+    "erf",
+    "sin",
+    "cos",
+    "tan",
     "bitwise_not",
     "minimum",
     "maximum",
+    "binary_select",
+    "where",
     "bitwise_and",
     "bitwise_or",
     "bitwise_xor",

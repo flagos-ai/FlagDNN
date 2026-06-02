@@ -4,14 +4,35 @@ from typing import Optional
 import torch
 import triton
 import triton.language as tl
+from triton.language.extra.cuda import libdevice
 
 from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
 
-
 logger = logging.getLogger(__name__)
+
+
+def is_dense_flat_tensor(tensor: torch.Tensor) -> bool:
+    return tensor.is_contiguous() or (
+        tensor.dim() == 4
+        and tensor.is_contiguous(memory_format=torch.channels_last)
+    )
+
+
+def can_use_flat_output(output: torch.Tensor, source: torch.Tensor) -> bool:
+    return (
+        tuple(output.shape) == tuple(source.shape)
+        and is_dense_flat_tensor(output)
+        and tuple(output.stride()) == tuple(source.stride())
+    )
+
+
+def empty_like_preserve_dense_layout(
+    source: torch.Tensor, dtype: torch.dtype
+) -> torch.Tensor:
+    return torch.empty_like(source, dtype=dtype)
 
 
 def collapse_dims_unary(shape, strides):
@@ -77,8 +98,8 @@ def unary_fill_false_kernel(
 @libentry()
 @libtuner(
     configs=runtime.get_tuned_config("unary"),
-    key=["n_elements"],
-    strategy=["align32"],
+    key=["n_elements", "OP_TYPE"],
+    strategy=["align32", "default"],
     warmup=5,
     rep=10,
 )
@@ -116,6 +137,20 @@ def unary_contiguous_kernel(
             res = tl.math.exp2(x.to(tl.float32) * 1.4426950408889634).to(
                 x.dtype
             )
+        elif OP_TYPE == "reciprocal":
+            res = (1.0 / x.to(tl.float32)).to(x.dtype)
+        elif OP_TYPE == "ceil":
+            res = tl.math.ceil(x.to(tl.float32)).to(x.dtype)
+        elif OP_TYPE == "floor":
+            res = tl.math.floor(x.to(tl.float32)).to(x.dtype)
+        elif OP_TYPE == "erf":
+            res = tl.math.erf(x.to(tl.float32)).to(x.dtype)
+        elif OP_TYPE == "sin":
+            res = tl.math.sin(x.to(tl.float32)).to(x.dtype)
+        elif OP_TYPE == "cos":
+            res = tl.math.cos(x.to(tl.float32)).to(x.dtype)
+        elif OP_TYPE == "tan":
+            res = libdevice.tan(x.to(tl.float32)).to(x.dtype)
         elif OP_TYPE == "bitwise_not":
             res = ~x
 
@@ -127,8 +162,8 @@ def unary_contiguous_kernel(
 @libentry()
 @libtuner(
     configs=runtime.get_tuned_config("unary"),
-    key=["n_elements"],
-    strategy=["align32"],
+    key=["n_elements", "OP_TYPE"],
+    strategy=["align32", "default"],
     warmup=5,
     rep=10,
 )
@@ -202,6 +237,20 @@ def unary_strided_kernel(
             res = tl.math.exp2(x.to(tl.float32) * 1.4426950408889634).to(
                 x.dtype
             )
+        elif OP_TYPE == "reciprocal":
+            res = (1.0 / x.to(tl.float32)).to(x.dtype)
+        elif OP_TYPE == "ceil":
+            res = tl.math.ceil(x.to(tl.float32)).to(x.dtype)
+        elif OP_TYPE == "floor":
+            res = tl.math.floor(x.to(tl.float32)).to(x.dtype)
+        elif OP_TYPE == "erf":
+            res = tl.math.erf(x.to(tl.float32)).to(x.dtype)
+        elif OP_TYPE == "sin":
+            res = tl.math.sin(x.to(tl.float32)).to(x.dtype)
+        elif OP_TYPE == "cos":
+            res = tl.math.cos(x.to(tl.float32)).to(x.dtype)
+        elif OP_TYPE == "tan":
+            res = libdevice.tan(x.to(tl.float32)).to(x.dtype)
         elif OP_TYPE == "bitwise_not":
             res = ~x
 
@@ -210,7 +259,19 @@ def unary_strided_kernel(
         )
 
 
-_FLOAT_OPS = {"rsqrt", "log", "exp", "square"}
+_FLOAT_OPS = {
+    "rsqrt",
+    "log",
+    "exp",
+    "reciprocal",
+    "ceil",
+    "floor",
+    "erf",
+    "sin",
+    "cos",
+    "tan",
+    "square",
+}
 _INT_OPS = {"bitwise_not"}
 
 
@@ -250,7 +311,12 @@ def unary(
         out_dtype = input.dtype
 
     if out is None:
-        out = torch.empty(input.shape, dtype=out_dtype, device=input.device)
+        if is_dense_flat_tensor(input):
+            out = empty_like_preserve_dense_layout(input, out_dtype)
+        else:
+            out = torch.empty(
+                input.shape, dtype=out_dtype, device=input.device
+            )
 
     n_elements = out.numel()
     if n_elements == 0:
@@ -273,7 +339,7 @@ def unary(
         )
 
     with torch_device_fn.device(input.device):
-        if input.is_contiguous():
+        if is_dense_flat_tensor(input) and can_use_flat_output(out, input):
             unary_contiguous_kernel[grid](
                 input,
                 out,
@@ -281,6 +347,11 @@ def unary(
                 OP_TYPE=op_type,
             )
         else:
+            if not out.is_contiguous():
+                raise NotImplementedError(
+                    "flag_dnn unary strided currently requires contiguous out "
+                    "unless input and out share a dense flat layout"
+                )
             c_shape, c_sx = collapse_dims_unary(input.shape, input.stride())
             f_shape, f_sx = pad_to_max_dims_unary(c_shape, c_sx, max_dims=6)
 
