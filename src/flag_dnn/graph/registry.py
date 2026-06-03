@@ -639,6 +639,107 @@ def _conv_fprop_shape(
     ]
 
 
+def _conv_dgrad_shape(
+    input_specs: list[TensorSpec], attrs: dict[str, Any]
+) -> list[TensorSpec]:
+    loss, weight = input_specs[0], input_specs[1]
+    input_size = tuple(attrs["input_size"])
+    rank = _conv_spatial_rank_from_values(loss, weight, "conv_dgrad")
+    is_unbatched_1d = rank == 1 and len(input_size) == 2
+    expected_input_rank = rank + 1 if is_unbatched_1d else rank + 2
+    if len(input_size) != expected_input_rank:
+        raise RuntimeError(
+            f"graph conv_dgrad input_size must have length "
+            f"{expected_input_rank}, got {input_size}"
+        )
+
+    stride = _tuple_n(attrs.get("stride", 1), rank, "stride")
+    dilation = _tuple_n(attrs.get("dilation", 1), rank, "dilation")
+    _normalize_convolution_mode(attrs.get("convolution_mode"))
+    pre_padding, post_padding = _normalize_conv_padding_from_attrs(
+        weight, stride, dilation, attrs, "conv_dgrad"
+    )
+    groups = int(attrs.get("groups", 1))
+
+    if is_unbatched_1d:
+        leading_shape: tuple[Any, ...] = ()
+        c_in = input_size[0]
+        dx_spatial = input_size[1:]
+        loss_leading: tuple[Any, ...] = ()
+        loss_channels = loss.shape[0]
+        loss_spatial = loss.shape[1:]
+    else:
+        leading_shape = (input_size[0],)
+        c_in = input_size[1]
+        dx_spatial = input_size[2:]
+        loss_leading = (loss.shape[0],)
+        loss_channels = loss.shape[1]
+        loss_spatial = loss.shape[2:]
+
+    c_out = weight.shape[0]
+    c_per_group = weight.shape[1]
+    kernel_shape = weight.shape[2:]
+    static_values = (
+        (c_in, c_out, c_per_group)
+        + tuple(dx_spatial)
+        + tuple(kernel_shape)
+        + tuple(loss_spatial)
+    )
+    if not all(isinstance(v, int) for v in static_values):
+        raise NotImplementedError(
+            "graph conv_dgrad dynamic shapes are not enabled"
+        )
+    if any(int(v) < 0 for v in input_size):
+        raise RuntimeError(
+            "graph conv_dgrad input_size dimensions must be non-negative"
+        )
+    if int(c_in) % groups != 0:
+        raise RuntimeError(
+            "graph conv_dgrad input channels must divide groups"
+        )
+    if int(c_out) % groups != 0:
+        raise RuntimeError(
+            "graph conv_dgrad output channels must divide groups"
+        )
+    if int(c_per_group) != int(c_in) // groups:
+        raise RuntimeError("graph conv_dgrad filter channel mismatch")
+    if tuple(loss_leading) != tuple(leading_shape):
+        raise RuntimeError("graph conv_dgrad loss batch size mismatch")
+    if int(loss_channels) != int(c_out):
+        raise RuntimeError("graph conv_dgrad loss channel mismatch")
+
+    expected_loss_spatial = []
+    for axis in range(rank):
+        out_dim = _conv_out_dim(
+            int(dx_spatial[axis]),
+            pre_padding[axis],
+            post_padding[axis],
+            dilation[axis],
+            int(kernel_shape[axis]),
+            stride[axis],
+        )
+        if out_dim < 0:
+            raise RuntimeError(
+                "computed graph conv_dgrad loss size is negative"
+            )
+        expected_loss_spatial.append(max(out_dim, 0))
+    if tuple(loss_spatial) != tuple(expected_loss_spatial):
+        raise RuntimeError(
+            "graph conv_dgrad loss spatial shape does not match input_size"
+        )
+
+    return [
+        TensorSpec(
+            name="",
+            shape=input_size,
+            dtype=loss.dtype,
+            layout="contiguous",
+            device=loss.device,
+            contiguous=True,
+        )
+    ]
+
+
 def _matmul_shape(
     input_specs: list[TensorSpec], attrs: dict[str, Any]
 ) -> list[TensorSpec]:
@@ -1679,6 +1780,80 @@ def _normalize_conv_fprop(
     ], params
 
 
+def _normalize_conv_dgrad(
+    ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[list[int], dict]:
+    if len(args) > 4:
+        raise TypeError("conv_dgrad got too many positional args")
+    names = ["loss", "filter", "input_size", "padding"]
+    defaults = {
+        "padding": None,
+        "pre_padding": None,
+        "post_padding": None,
+        "stride": 1,
+        "dilation": 1,
+        "convolution_mode": "CROSS_CORRELATION",
+        "compute_data_type": None,
+        "name": "",
+        "groups": 1,
+    }
+    params: dict[str, Any] = defaults.copy()
+    params.update(kwargs)
+    for idx, arg in enumerate(args):
+        name = names[idx]
+        if name in kwargs:
+            raise TypeError(f"conv_dgrad got multiple values for {name}")
+        params[name] = arg
+
+    loss = params.pop("loss", None)
+    filter_value = params.pop("filter", None)
+    input_size = params.get("input_size")
+    if loss is None or filter_value is None:
+        raise TypeError("conv_dgrad missing loss or filter")
+    if input_size is None:
+        raise TypeError("conv_dgrad missing input_size")
+    input_size = tuple(int(dim) for dim in input_size)
+    params["input_size"] = input_size
+
+    rank = _conv_spatial_rank_from_values(loss, filter_value, "conv_dgrad")
+    if rank == 1 and len(input_size) == 2:
+        expected_input_rank = 2
+    else:
+        expected_input_rank = rank + 2
+    if len(input_size) != expected_input_rank:
+        raise RuntimeError(
+            f"conv_dgrad input_size must have length {expected_input_rank}, "
+            f"got {input_size}"
+        )
+
+    params["stride"] = _tuple_n(params["stride"], rank, "stride")
+    params["dilation"] = _tuple_n(params["dilation"], rank, "dilation")
+    _normalize_convolution_mode(params.get("convolution_mode"))
+
+    padding = params.get("padding")
+    pre_padding = params.get("pre_padding")
+    post_padding = params.get("post_padding")
+    if pre_padding is not None or post_padding is not None:
+        if padding is not None:
+            raise TypeError(
+                "conv_dgrad accepts either padding or "
+                "pre_padding/post_padding"
+            )
+        if pre_padding is None or post_padding is None:
+            raise TypeError(
+                "conv_dgrad requires both pre_padding and post_padding"
+            )
+        params["pre_padding"] = _tuple_n(pre_padding, rank, "pre_padding")
+        params["post_padding"] = _tuple_n(post_padding, rank, "post_padding")
+    elif padding is not None and not isinstance(padding, str):
+        params["padding"] = _tuple_n(padding, rank, "padding")
+
+    return [
+        ctx.as_value(loss, "loss"),
+        ctx.as_value(filter_value, "filter"),
+    ], params
+
+
 def _normalize_mm(
     ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> tuple[list[int], dict]:
@@ -2543,6 +2718,30 @@ def _run_conv_fprop(flag_ops: Any) -> RunFn:
     return run
 
 
+def _run_conv_dgrad(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "conv_dgrad")
+        op_attrs = _public_attrs(attrs)
+        return flag_ops.conv_dgrad(
+            inputs[0],
+            inputs[1],
+            input_size=op_attrs["input_size"],
+            padding=op_attrs.get("padding"),
+            pre_padding=op_attrs.get("pre_padding"),
+            post_padding=op_attrs.get("post_padding"),
+            stride=op_attrs.get("stride", 1),
+            dilation=op_attrs.get("dilation", 1),
+            convolution_mode=op_attrs.get(
+                "convolution_mode", "CROSS_CORRELATION"
+            ),
+            compute_data_type=op_attrs.get("compute_data_type"),
+            name=op_attrs.get("name", ""),
+            groups=op_attrs.get("groups", 1),
+        )
+
+    return run
+
+
 def _run_mm(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
         _require_runtime_backend(inputs, "mm")
@@ -2974,6 +3173,15 @@ def register_default_ops() -> None:
             normalize_fn=_normalize_conv_fprop,
             shape_fn=_conv_fprop_shape,
             run_fn=_run_conv_fprop(flag_ops),
+            fusible=True,
+        )
+    )
+    register_op(
+        OpSchema(
+            name="conv_dgrad",
+            normalize_fn=_normalize_conv_dgrad,
+            shape_fn=_conv_dgrad_shape,
+            run_fn=_run_conv_dgrad(flag_ops),
             fusible=True,
         )
     )

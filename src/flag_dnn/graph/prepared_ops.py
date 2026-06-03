@@ -44,6 +44,10 @@ def prepare_run_fn(
         prepared = _prepare_conv_fprop(attrs, input_specs, default_run_fn)
         if prepared is not None:
             return prepared
+    if op_type == "conv_dgrad":
+        prepared = _prepare_conv_dgrad(attrs, input_specs, default_run_fn)
+        if prepared is not None:
+            return prepared
     return default_run_fn
 
 
@@ -218,6 +222,65 @@ def _prepare_pow_pointwise(
                 left, right, compute_data_type=compute_data_type, name=name
             )
         _unsupported_triton_path("pow", "two scalar operands")
+
+    return run
+
+
+def _prepare_conv_dgrad(
+    attrs: dict[str, Any],
+    input_specs: Sequence[TensorSpec],
+    default_run_fn: RunFn,
+) -> Optional[RunFn]:
+    del default_run_fn
+    if len(input_specs) < 2:
+        return None
+    if not all(_is_runtime_device_spec(spec) for spec in input_specs[:2]):
+        return None
+
+    from flag_dnn.ops.conv_dgrad import conv_dgrad
+
+    input_size = tuple(int(dim) for dim in attrs["input_size"])
+    padding = attrs.get("padding")
+    pre_padding = attrs.get("pre_padding")
+    post_padding = attrs.get("post_padding")
+    stride = attrs.get("stride", 1)
+    dilation = attrs.get("dilation", 1)
+    convolution_mode = attrs.get("convolution_mode", "CROSS_CORRELATION")
+    compute_data_type = attrs.get("compute_data_type")
+    name = attrs.get("name", "")
+    groups = int(attrs.get("groups", 1))
+    output_cache: dict[tuple[Any, ...], torch.Tensor] = {}
+
+    def run(inputs: Sequence[Any], _attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs, "conv_dgrad")
+        loss = inputs[0]
+        key = (
+            loss.device.type,
+            loss.device.index,
+            loss.dtype,
+            input_size,
+        )
+        output = output_cache.get(key)
+        if output is None:
+            output = torch.empty(
+                input_size, device=loss.device, dtype=loss.dtype
+            )
+            output_cache[key] = output
+        return conv_dgrad(
+            loss,
+            inputs[1],
+            input_size=input_size,
+            padding=padding,
+            pre_padding=pre_padding,
+            post_padding=post_padding,
+            stride=stride,
+            dilation=dilation,
+            convolution_mode=convolution_mode,
+            compute_data_type=compute_data_type,
+            name=name,
+            groups=groups,
+            _output=output,
+        )
 
     return run
 

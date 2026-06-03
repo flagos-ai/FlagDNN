@@ -1552,3 +1552,281 @@ conv2d_dw_c1:
     block_hw: [128, 256]
     warps: [1, 2]
     stages: [1]
+
+conv_dgrad_1d:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [32, 64]
+    block_ci: [16, 32]
+    block_co: [32, 64]
+    warps: [4]
+    stages: [3]
+
+
+conv_dgrad_1d_mci:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [32, 64]
+    block_ci: [16, 32]
+    block_co: [32, 64, 128]
+    warps: [4]
+    stages: [3]
+
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [64]
+    block_ci: [32]
+    block_co: [64, 128]
+    warps: [8]
+    stages: [3]
+
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [128]
+    block_ci: [16]
+    block_co: [64, 128]
+    warps: [4]
+    stages: [3]
+
+conv_dgrad_2d:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [32, 64]
+    block_ci: [16, 32]
+    block_co: [32, 64]
+    warps: [4]
+    stages: [3]
+
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [32, 64]
+    block_ci: [16]
+    block_co: [128]
+    warps: [4]
+    stages: [3]
+
+
+
+conv_dgrad_2d_stride1:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [32, 64]
+    block_ci: [16, 32]
+    block_co: [32, 64, 128]
+    warps: [4]
+    stages: [3]
+
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [64]
+    block_ci: [32]
+    block_co: [64, 128]
+    warps: [8]
+    stages: [3]
+
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [128]
+    block_ci: [16]
+    block_co: [64, 128]
+    warps: [4]
+    stages: [3]
+
+conv_dgrad_2d_1x1:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [64]
+    block_ci: [32]
+    block_co: [128]
+    warps: [8]
+    stages: [3]
+
+conv_dgrad_2d_1x1_strided:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [32]
+    block_ci: [32]
+    block_co: [128]
+    warps: [4]
+    stages: [3]
+
+
+conv_dgrad_2d_stride2_pad1_3x3_mci:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [32, 64]
+    block_ci: [16, 32]
+    block_co: [64, 128]
+    warps: [4]
+    stages: [3]
+
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [64]
+    block_ci: [32]
+    block_co: [64, 128]
+    warps: [8]
+    stages: [3]
+
+conv_dgrad_2d_stride2_pad1_3x3_packed:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [32]
+    block_ci: [64]
+    block_co: [128]
+    warps: [4]
+    stages: [3]
+
+conv_dgrad_2d_stride2_pad1_3x3_tile4:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [16, 32]
+    block_ci: [16]
+    block_co: [32, 64, 128]
+    warps: [4]
+    stages: [3]
+
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [16]
+    block_ci: [16]
+    block_co: [32, 64]
+    warps: [2]
+    stages: [3]
+
+conv_dgrad_3d:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [16, 32, 64]
+    block_ci: [16]
+    block_co: [16]
+    warps: [1, 2, 4]
+    stages: [1, 2, 3]
+
+conv_dgrad_3d_pad1_3x3_fp32_ci8_dot:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+      num_warps: warps
+      num_stages: stages
+    block_m: [16]
+    warps: [2]
+    stages: [1]
+
+conv_dgrad_3d_packed:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [8]
+    block_ci: [16]
+    block_co: [32]
+    warps: [1]
+    stages: [1, 3]

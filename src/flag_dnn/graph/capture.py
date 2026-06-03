@@ -110,8 +110,21 @@ class CompiledGraph:
     def __init__(self, plan: Any):
         self.plan = plan
         self.graph = plan.graph
+        self._run_fast_path: Optional[Callable[[tuple[Any, ...]], Any]] = None
 
     def run(self, *inputs: Any) -> Any:
+        fast_path = self._run_fast_path
+        if fast_path is None:
+            from flag_dnn.graph.executor import _get_prepared_plan
+
+            prepared = _get_prepared_plan(self.plan)
+            if not prepared.validate_inputs and prepared.fast_path is not None:
+                fast_path = prepared.fast_path.run
+            else:
+                fast_path = None
+            self._run_fast_path = fast_path
+        if fast_path is not None:
+            return fast_path(inputs)
         return self.plan.run(*inputs)
 
     def __call__(self, *inputs: Any) -> Any:

@@ -177,6 +177,12 @@ CONV_FPROP_SHAPES = (
     ((1, 8, 10, 12, 14), (12, 8, 2, 3, 3), 1, None, (1, 0, 1), (0, 1, 2), 1),
 )
 
+CONV_DGRAD_SHAPES = tuple(
+    shape
+    for index, shape in enumerate(CONV_FPROP_SHAPES)
+    if index not in (5, 6)
+)
+
 
 def selected_shapes(shapes, env_name):
     only = os.getenv(env_name)

@@ -78,6 +78,7 @@ from flag_dnn.ops import (  # noqa: F401
     conv2d,
     conv3d,
     conv_fprop,
+    conv_dgrad,
     causal_conv1d,
     hardswish,
     relu6,

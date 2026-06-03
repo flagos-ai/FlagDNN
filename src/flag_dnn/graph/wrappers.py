@@ -49,6 +49,7 @@ GRAPH_AWARE_OPS = (
     "softplus",
     "conv2d",
     "conv_fprop",
+    "conv_dgrad",
     "causal_conv1d",
     "mm",
     "matmul",
