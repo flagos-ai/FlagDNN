@@ -1212,7 +1212,7 @@ def _conv_wgrad2d_1x1_atomic_nodiv_kernel(
             loss,
             image,
             out_dtype=tl.float32,
-            input_precision="tf32",
+            input_precision="tf32x3",
         )
 
     tl.atomic_add(

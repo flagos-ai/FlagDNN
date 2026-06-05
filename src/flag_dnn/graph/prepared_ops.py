@@ -477,7 +477,7 @@ def _prepare_conv_wgrad(
                         num_stages=3,
                     )
                     if dtype == torch.bfloat16:
-                        _conv_wgrad2d_1x1_reduce_kernel[(32, 1)](
+                        _conv_wgrad2d_1x1_reduce_kernel[(64, 1)](
                             partial,
                             output,
                             128,
