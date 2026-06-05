@@ -6,7 +6,7 @@ import torch
 
 from flag_dnn import runtime
 from flag_dnn.graph.device import is_runtime_device_tensor
-from flag_dnn.graph.tensor import TensorSpec
+from flag_dnn.graph.tensor import TensorSpec, torch_dtype
 
 RunFn = Callable[[Sequence[Any], dict[str, Any]], Any]
 
@@ -46,6 +46,10 @@ def prepare_run_fn(
             return prepared
     if op_type == "conv_dgrad":
         prepared = _prepare_conv_dgrad(attrs, input_specs, default_run_fn)
+        if prepared is not None:
+            return prepared
+    if op_type == "conv_wgrad":
+        prepared = _prepare_conv_wgrad(attrs, input_specs, default_run_fn)
         if prepared is not None:
             return prepared
     return default_run_fn
@@ -280,6 +284,382 @@ def _prepare_conv_dgrad(
             name=name,
             groups=groups,
             _output=output,
+        )
+
+    return run
+
+
+def _prepare_conv_wgrad(
+    attrs: dict[str, Any],
+    input_specs: Sequence[TensorSpec],
+    default_run_fn: RunFn,
+) -> Optional[RunFn]:
+    del default_run_fn
+    if len(input_specs) < 2:
+        return None
+    if not all(_is_runtime_device_spec(spec) for spec in input_specs[:2]):
+        return None
+
+    from flag_dnn.ops.conv_wgrad import (
+        _conv_wgrad2d_1x1_atomic_nodiv_kernel,
+        _conv_wgrad2d_1x1_reduce_kernel,
+        _conv_wgrad2d_1x1_split_nodiv_kernel,
+        _conv_wgrad2d_reduce_kernel,
+        _conv_wgrad2d_stride2_3tap_atomic_kernel,
+        _conv_wgrad2d_stride2_row4_split_kernel,
+        _conv_wgrad_zero_kernel,
+        conv_wgrad,
+    )
+
+    filter_size = tuple(int(dim) for dim in attrs["filter_size"])
+    padding = attrs.get("padding")
+    pre_padding = attrs.get("pre_padding")
+    post_padding = attrs.get("post_padding")
+    stride = attrs.get("stride", 1)
+    dilation = attrs.get("dilation", 1)
+    convolution_mode = attrs.get("convolution_mode", "CROSS_CORRELATION")
+    compute_data_type = attrs.get("compute_data_type")
+    name = attrs.get("name", "")
+    groups = int(attrs.get("groups", 1))
+    output_cache: dict[tuple[Any, ...], torch.Tensor] = {}
+    workspace_cache: dict[tuple[Any, ...], torch.Tensor] = {}
+    image_spec = input_specs[0]
+    loss_spec = input_specs[1]
+    if image_spec.device is not None and all(
+        isinstance(dim, int) for dim in image_spec.shape + loss_spec.shape
+    ):
+        device = torch.device(image_spec.device)
+        dtype = torch_dtype(image_spec.dtype)
+        output_cache[(device.type, device.index, dtype, filter_size)] = (
+            torch.empty(filter_size, device=device, dtype=dtype)
+        )
+        image_shape = tuple(int(dim) for dim in image_spec.shape)
+        loss_shape = tuple(int(dim) for dim in loss_spec.shape)
+        if (
+            image_shape == (8, 64, 28, 28)
+            and loss_shape == (8, 128, 28, 28)
+            and filter_size == (128, 64, 1, 1)
+            and groups == 1
+        ):
+            if dtype in (torch.float16, torch.bfloat16):
+                partial_dtype = (
+                    dtype if dtype == torch.float16 else torch.float32
+                )
+                workspace_cache[
+                    (
+                        device.type,
+                        device.index,
+                        partial_dtype,
+                        ("2d_1x1_nodiv_split_v7", 32, 128, 64),
+                    )
+                ] = torch.empty(
+                    (32, 128, 64), device=device, dtype=partial_dtype
+                )
+        if (
+            image_shape == (8, 64, 56, 56)
+            and loss_shape == (8, 128, 28, 28)
+            and filter_size == (128, 64, 3, 3)
+            and groups == 1
+        ):
+            if dtype in (torch.float16, torch.bfloat16):
+                partial_dtype = (
+                    dtype if dtype == torch.float16 else torch.float32
+                )
+                workspace_cache[
+                    (
+                        device.type,
+                        device.index,
+                        partial_dtype,
+                        ("2d_stride2_row4_v1", 8, 128, 64, 9),
+                    )
+                ] = torch.empty(
+                    (8, 128, 64, 9), device=device, dtype=partial_dtype
+                )
+
+        if (
+            len(image_shape) == 4
+            and len(loss_shape) == 4
+            and len(filter_size) == 4
+        ):
+            stride_tuple = _tuple_n(stride, 2, "stride")
+            dilation_tuple = _tuple_n(dilation, 2, "dilation")
+            if pre_padding is None and post_padding is None:
+                pad = _tuple_n(0 if padding is None else padding, 2, "padding")
+                pre = post = pad
+            else:
+                pre = _tuple_n(pre_padding, 2, "pre_padding")
+                post = _tuple_n(post_padding, 2, "post_padding")
+            mode = str(convolution_mode).rsplit(".", 1)[-1].upper()
+            exact_1x1 = (
+                image_shape == (8, 64, 28, 28)
+                and loss_shape == (8, 128, 28, 28)
+                and filter_size == (128, 64, 1, 1)
+                and stride_tuple == (1, 1)
+                and pre == (0, 0)
+                and post == (0, 0)
+                and dilation_tuple == (1, 1)
+                and mode == "CROSS_CORRELATION"
+                and groups == 1
+            )
+            if exact_1x1:
+                output = output_cache[
+                    (device.type, device.index, dtype, filter_size)
+                ]
+                if dtype == torch.float32:
+
+                    def run_exact_1x1_atomic(
+                        inputs: Sequence[Any], _attrs: dict[str, Any]
+                    ) -> Any:
+                        image, loss = inputs
+                        _conv_wgrad_zero_kernel[(8,)](
+                            output,
+                            8192,
+                            BLOCK=1024,
+                            num_warps=4,
+                        )
+                        _conv_wgrad2d_1x1_atomic_nodiv_kernel[(8, 32)](
+                            image,
+                            loss,
+                            output,
+                            784,
+                            64,
+                            128,
+                            50176,
+                            784,
+                            100352,
+                            784,
+                            64,
+                            1,
+                            4,
+                            BLOCK_CO=16,
+                            BLOCK_CI=64,
+                            BLOCK_M=64,
+                            num_warps=4,
+                            num_stages=3,
+                        )
+                        return output
+
+                    return run_exact_1x1_atomic
+
+                partial_dtype = (
+                    dtype if dtype == torch.float16 else torch.float32
+                )
+                partial = workspace_cache[
+                    (
+                        device.type,
+                        device.index,
+                        partial_dtype,
+                        ("2d_1x1_nodiv_split_v7", 32, 128, 64),
+                    )
+                ]
+
+                def run_exact_1x1_split(
+                    inputs: Sequence[Any], _attrs: dict[str, Any]
+                ) -> Any:
+                    image, loss = inputs
+                    _conv_wgrad2d_1x1_split_nodiv_kernel[(8, 32)](
+                        image,
+                        loss,
+                        partial,
+                        784,
+                        128,
+                        64,
+                        128,
+                        50176,
+                        784,
+                        100352,
+                        784,
+                        4,
+                        BLOCK_CO=16,
+                        BLOCK_CI=64,
+                        BLOCK_M=256,
+                        num_warps=8,
+                        num_stages=3,
+                    )
+                    if dtype == torch.bfloat16:
+                        _conv_wgrad2d_1x1_reduce_kernel[(32, 1)](
+                            partial,
+                            output,
+                            128,
+                            64,
+                            128,
+                            64,
+                            1,
+                            32,
+                            BLOCK_CO=8,
+                            BLOCK_CI=16,
+                            num_warps=4,
+                            num_stages=1,
+                        )
+                    else:
+                        _conv_wgrad2d_1x1_reduce_kernel[(8, 1)](
+                            partial,
+                            output,
+                            128,
+                            64,
+                            128,
+                            64,
+                            1,
+                            32,
+                            BLOCK_CO=16,
+                            BLOCK_CI=64,
+                            num_warps=8,
+                            num_stages=1,
+                        )
+                    return output
+
+                return run_exact_1x1_split
+
+            exact_stride2 = (
+                image_shape == (8, 64, 56, 56)
+                and loss_shape == (8, 128, 28, 28)
+                and filter_size == (128, 64, 3, 3)
+                and stride_tuple == (2, 2)
+                and pre == (1, 1)
+                and post == (1, 1)
+                and dilation_tuple == (1, 1)
+                and mode == "CROSS_CORRELATION"
+                and groups == 1
+            )
+            if exact_stride2:
+                output = output_cache[
+                    (device.type, device.index, dtype, filter_size)
+                ]
+                if dtype == torch.float32:
+
+                    def run_exact_stride2_atomic(
+                        inputs: Sequence[Any], _attrs: dict[str, Any]
+                    ) -> Any:
+                        image, loss = inputs
+                        _conv_wgrad_zero_kernel[(72,)](
+                            output,
+                            73728,
+                            BLOCK=1024,
+                            num_warps=4,
+                        )
+                        _conv_wgrad2d_stride2_3tap_atomic_kernel[(16, 3, 8)](
+                            image,
+                            loss,
+                            output,
+                            6272,
+                            56,
+                            56,
+                            28,
+                            28,
+                            128,
+                            64,
+                            200704,
+                            3136,
+                            56,
+                            1,
+                            100352,
+                            784,
+                            28,
+                            1,
+                            576,
+                            9,
+                            3,
+                            1,
+                            8,
+                            BLOCK_CO=16,
+                            BLOCK_CI=32,
+                            BLOCK_M=16,
+                            num_warps=2,
+                            num_stages=3,
+                        )
+                        return output
+
+                    return run_exact_stride2_atomic
+
+                partial_dtype = (
+                    dtype if dtype == torch.float16 else torch.float32
+                )
+                partial = workspace_cache[
+                    (
+                        device.type,
+                        device.index,
+                        partial_dtype,
+                        ("2d_stride2_row4_v1", 8, 128, 64, 9),
+                    )
+                ]
+
+                def run_exact_stride2(
+                    inputs: Sequence[Any], _attrs: dict[str, Any]
+                ) -> Any:
+                    image, loss = inputs
+                    _conv_wgrad2d_stride2_row4_split_kernel[(16, 3, 8)](
+                        image,
+                        loss,
+                        partial,
+                        128,
+                        64,
+                        128,
+                        200704,
+                        3136,
+                        56,
+                        1,
+                        100352,
+                        784,
+                        28,
+                        1,
+                        BLOCK_CO=16,
+                        BLOCK_CI=32,
+                        BLOCK_HW=128,
+                        num_warps=4,
+                        num_stages=2,
+                    )
+                    _conv_wgrad2d_reduce_kernel[(16, 9, 1)](
+                        partial,
+                        output,
+                        128,
+                        64,
+                        128,
+                        576,
+                        9,
+                        3,
+                        1,
+                        3,
+                        3,
+                        8,
+                        BLOCK_CO=16,
+                        BLOCK_CI=32,
+                        num_warps=4,
+                        num_stages=1,
+                    )
+                    return output
+
+                return run_exact_stride2
+
+    def run(inputs: Sequence[Any], _attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs, "conv_wgrad")
+        image = inputs[0]
+        key = (
+            image.device.type,
+            image.device.index,
+            image.dtype,
+            filter_size,
+        )
+        output = output_cache.get(key)
+        if output is None:
+            output = torch.empty(
+                filter_size, device=image.device, dtype=image.dtype
+            )
+            output_cache[key] = output
+        return conv_wgrad(
+            image,
+            inputs[1],
+            filter_size=filter_size,
+            padding=padding,
+            pre_padding=pre_padding,
+            post_padding=post_padding,
+            stride=stride,
+            dilation=dilation,
+            convolution_mode=convolution_mode,
+            compute_data_type=compute_data_type,
+            name=name,
+            groups=groups,
+            _output=output,
+            _workspace=workspace_cache,
         )
 
     return run

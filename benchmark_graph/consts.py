@@ -183,6 +183,8 @@ CONV_DGRAD_SHAPES = tuple(
     if index not in (5, 6)
 )
 
+CONV_WGRAD_SHAPES = CONV_DGRAD_SHAPES
+
 
 def selected_shapes(shapes, env_name):
     only = os.getenv(env_name)

@@ -1274,6 +1274,22 @@ ops:
     stages:
       - alpha: 'eager'
       - stable: 'graph'
+  - id: conv_wgrad
+    description: |
+      Runs the convolution weight-gradient operator.
+    for:
+      - conv_wgrad
+    labels:
+      - flag_dnn
+      - eager
+      - graph
+      - graph_accuracy
+      - graph_benchmark
+    kind:
+      - NeuralNetwork
+    stages:
+      - alpha: 'eager'
+      - alpha: 'graph'
   - id: causal_conv1d
     description: |
       Runs causal one-dimensional convolution.

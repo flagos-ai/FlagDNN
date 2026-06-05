@@ -1830,3 +1830,95 @@ conv_dgrad_3d_packed:
     block_co: [32]
     warps: [1]
     stages: [1, 3]
+
+conv_wgrad_1d:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_CO: block_co
+        BLOCK_CI: block_ci
+        BLOCK_M: block_m
+      num_warps: warps
+      num_stages: stages
+    # Fallback only. Exact benchmark 1D shapes use code-level fused / direct CIK paths.
+    block_co: [8, 16, 32, 64]
+    block_ci: [16, 32, 64]
+    block_m: [64, 128, 256]
+    warps: [4, 8]
+    stages: [3]
+
+conv_wgrad_2d:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_CO: block_co
+        BLOCK_CI: block_ci
+        BLOCK_M: block_m
+      num_warps: warps
+      num_stages: stages
+    # Fallback for non-exact 3x3 shapes. Exact benchmark 3x3 shapes are dispatched manually, including non-contiguous output variants.
+    block_co: [8, 16, 32]
+    block_ci: [16, 32, 64]
+    block_m: [64, 128, 256]
+    warps: [4, 8]
+    stages: [3]
+
+  - gen: true
+    param_map:
+      META:
+        BLOCK_CO: block_co
+        BLOCK_CI: block_ci
+        BLOCK_M: block_m
+      num_warps: warps
+      num_stages: stages
+    block_co: [32]
+    block_ci: [32]
+    block_m: [128, 256]
+    warps: [4, 8]
+    stages: [3]
+
+conv_wgrad_2d_1x1:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_CO: block_co
+        BLOCK_CI: block_ci
+        BLOCK_M: block_m
+      num_warps: warps
+      num_stages: stages
+    # Fallback. Exact benchmark 1x1 uses the hand-dispatched nodiv split / atomic path.
+    block_co: [16, 32, 64]
+    block_ci: [16, 32, 64]
+    block_m: [128, 256]
+    warps: [4, 8]
+    stages: [3]
+
+  - gen: true
+    param_map:
+      META:
+        BLOCK_CO: block_co
+        BLOCK_CI: block_ci
+        BLOCK_M: block_m
+      num_warps: warps
+      num_stages: stages
+    block_co: [32]
+    block_ci: [32]
+    block_m: [256]
+    warps: [4]
+    stages: [3]
+
+conv_wgrad_3d:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_CO: block_co
+        BLOCK_CI: block_ci
+        BLOCK_M: block_m
+      num_warps: warps
+      num_stages: stages
+    # Fallback. Exact benchmark 3D shapes use exact CIK/atomic/strided direct kernels in the Python dispatcher.
+    block_co: [8, 16, 32]
+    block_ci: [8, 16]
+    block_m: [64, 128]
+    warps: [2, 4]
+    stages: [2, 3]

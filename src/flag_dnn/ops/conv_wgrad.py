@@ -15,9 +15,7 @@ logger = logging.getLogger(__name__)
 
 _CONV_WGRAD_1D_CONFIGS = runtime.get_tuned_config("conv_wgrad_1d")
 _CONV_WGRAD_2D_CONFIGS = runtime.get_tuned_config("conv_wgrad_2d")
-_CONV_WGRAD_2D_1X1_CONFIGS = runtime.get_tuned_config(
-    "conv_wgrad_2d_1x1"
-)
+_CONV_WGRAD_2D_1X1_CONFIGS = runtime.get_tuned_config("conv_wgrad_2d_1x1")
 _CONV_WGRAD_3D_CONFIGS = runtime.get_tuned_config("conv_wgrad_3d")
 
 
@@ -428,7 +426,10 @@ def _conv_wgrad1d_split_kernel(
 
     tl.store(
         partial_ptr
-        + ((split * C_OUT + co[:, None]) * CIN_PER_GROUP + offs_ci_rel[None, :])
+        + (
+            (split * C_OUT + co[:, None]) * CIN_PER_GROUP
+            + offs_ci_rel[None, :]
+        )
         * KL
         + k,
         acc,
@@ -469,7 +470,10 @@ def _conv_wgrad1d_reduce_kernel(
     for split in tl.static_range(0, NUM_SPLITS):
         acc += tl.load(
             partial_ptr
-            + ((split * C_OUT + co[:, None]) * CIN_PER_GROUP + offs_ci_rel[None, :])
+            + (
+                (split * C_OUT + co[:, None]) * CIN_PER_GROUP
+                + offs_ci_rel[None, :]
+            )
             * KL
             + k,
             mask=mask_co[:, None] & mask_ci[None, :],
@@ -483,6 +487,273 @@ def _conv_wgrad1d_reduce_kernel(
         + k * out_stride_k,
         acc.to(out_ptr.dtype.element_ty),
         mask=mask_co[:, None] & mask_ci[None, :],
+    )
+
+
+@triton.jit
+def _conv_wgrad1d_col_split_kernel(
+    image_ptr,
+    loss_ptr,
+    partial_ptr,
+    M: tl.constexpr,
+    IMAGE_LEN: tl.constexpr,
+    LOSS_LEN: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_l: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_l: tl.constexpr,
+    STRIDE_L: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    DIL_L: tl.constexpr,
+    KL: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    NUM_SPLITS: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    split_group = tl.program_id(1)
+    split = split_group % NUM_SPLITS
+    group = split_group // NUM_SPLITS
+
+    cik = CIN_PER_GROUP * KL
+    num_n_blocks = tl.cdiv(cik, BLOCK_N)
+    pid_co = pid // num_n_blocks
+    pid_n = pid - pid_co * num_n_blocks
+
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_ci_rel = offs_n // KL
+    k = offs_n - offs_ci_rel * KL
+    image_k = KL - 1 - k if FILTER_REVERSE else k
+
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_n = offs_n < cik
+    co = group * COUT_PER_GROUP + offs_co_rel
+    ci = group * CIN_PER_GROUP + offs_ci_rel
+
+    split_size = tl.cdiv(M, NUM_SPLITS)
+    split_begin = split * split_size
+    split_end = tl.minimum(split_begin + split_size, M)
+
+    acc = tl.zeros((BLOCK_CO, BLOCK_N), dtype=tl.float32)
+    for m_start in tl.range(split_begin, split_end, BLOCK_M):
+        offs_m = m_start + tl.arange(0, BLOCK_M)
+        mask_m = offs_m < split_end
+        safe_m = tl.where(mask_m, offs_m, 0)
+        n_idx = safe_m // LOSS_LEN
+        loss_l = safe_m - n_idx * LOSS_LEN
+
+        image_l = (
+            loss_l[:, None] * STRIDE_L - PAD_LEFT + image_k[None, :] * DIL_L
+        )
+        valid_l = (image_l >= 0) & (image_l < IMAGE_LEN)
+        safe_l = tl.where(valid_l, image_l, 0)
+
+        loss = tl.load(
+            loss_ptr
+            + n_idx[None, :] * loss_stride_n
+            + co[:, None] * loss_stride_c
+            + loss_l[None, :] * loss_stride_l,
+            mask=mask_co[:, None] & mask_m[None, :],
+            other=0.0,
+        )
+        image = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_l * image_stride_l,
+            mask=mask_m[:, None] & mask_n[None, :] & valid_l,
+            other=0.0,
+        )
+        acc += tl.dot(
+            loss, image, out_dtype=tl.float32, input_precision="tf32"
+        )
+
+    tl.store(
+        partial_ptr + (split * C_OUT + co[:, None]) * cik + offs_n[None, :],
+        acc,
+        mask=mask_co[:, None] & mask_n[None, :],
+    )
+
+
+@triton.jit
+def _conv_wgrad1d_3tap_split_kernel(
+    image_ptr,
+    loss_ptr,
+    partial_ptr,
+    M: tl.constexpr,
+    IMAGE_LEN: tl.constexpr,
+    LOSS_LEN: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_l: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_l: tl.constexpr,
+    STRIDE_L: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    DIL_L: tl.constexpr,
+    KL: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    NUM_SPLITS: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    split_group = tl.program_id(1)
+    split = split_group % NUM_SPLITS
+    group = split_group // NUM_SPLITS
+
+    num_ci_blocks = tl.cdiv(CIN_PER_GROUP, BLOCK_CI)
+    pid_co = pid // num_ci_blocks
+    pid_ci = pid - pid_co * num_ci_blocks
+
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_ci_rel = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_ci = offs_ci_rel < CIN_PER_GROUP
+    co = group * COUT_PER_GROUP + offs_co_rel
+    ci = group * CIN_PER_GROUP + offs_ci_rel
+
+    image_k0 = KL - 1 if FILTER_REVERSE else 0
+    image_k1 = KL - 2 if FILTER_REVERSE else 1
+    image_k2 = KL - 3 if FILTER_REVERSE else 2
+
+    split_size = tl.cdiv(M, NUM_SPLITS)
+    split_begin = split * split_size
+    split_end = tl.minimum(split_begin + split_size, M)
+
+    acc0 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc1 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc2 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    for m_start in tl.range(split_begin, split_end, BLOCK_M):
+        offs_m = m_start + tl.arange(0, BLOCK_M)
+        mask_m = offs_m < split_end
+        safe_m = tl.where(mask_m, offs_m, 0)
+        n_idx = safe_m // LOSS_LEN
+        loss_l = safe_m - n_idx * LOSS_LEN
+
+        image_l0 = loss_l * STRIDE_L - PAD_LEFT + image_k0 * DIL_L
+        image_l1 = loss_l * STRIDE_L - PAD_LEFT + image_k1 * DIL_L
+        image_l2 = loss_l * STRIDE_L - PAD_LEFT + image_k2 * DIL_L
+        valid0 = (image_l0 >= 0) & (image_l0 < IMAGE_LEN)
+        valid1 = (image_l1 >= 0) & (image_l1 < IMAGE_LEN)
+        valid2 = (image_l2 >= 0) & (image_l2 < IMAGE_LEN)
+        safe_l0 = tl.where(valid0, image_l0, 0)
+        safe_l1 = tl.where(valid1, image_l1, 0)
+        safe_l2 = tl.where(valid2, image_l2, 0)
+
+        loss = tl.load(
+            loss_ptr
+            + n_idx[None, :] * loss_stride_n
+            + co[:, None] * loss_stride_c
+            + loss_l[None, :] * loss_stride_l,
+            mask=mask_co[:, None] & mask_m[None, :],
+            other=0.0,
+        )
+        image0 = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_l0[:, None] * image_stride_l,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid0[:, None],
+            other=0.0,
+        )
+        image1 = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_l1[:, None] * image_stride_l,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid1[:, None],
+            other=0.0,
+        )
+        image2 = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_l2[:, None] * image_stride_l,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid2[:, None],
+            other=0.0,
+        )
+        acc0 += tl.dot(
+            loss, image0, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc1 += tl.dot(
+            loss, image1, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc2 += tl.dot(
+            loss, image2, out_dtype=tl.float32, input_precision="tf32"
+        )
+
+    base = (
+        (split * C_OUT + co[:, None]) * CIN_PER_GROUP + offs_ci_rel[None, :]
+    ) * KL
+    mask = mask_co[:, None] & mask_ci[None, :]
+    tl.store(partial_ptr + base + 0, acc0, mask=mask)
+    tl.store(partial_ptr + base + 1, acc1, mask=mask)
+    tl.store(partial_ptr + base + 2, acc2, mask=mask)
+
+
+@triton.jit
+def _conv_wgrad1d_col_reduce_kernel(
+    partial_ptr,
+    out_ptr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    out_stride_o: tl.constexpr,
+    out_stride_i: tl.constexpr,
+    out_stride_k: tl.constexpr,
+    KL: tl.constexpr,
+    NUM_SPLITS: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    group = tl.program_id(1)
+
+    cik = CIN_PER_GROUP * KL
+    num_n_blocks = tl.cdiv(cik, BLOCK_N)
+    pid_co = pid // num_n_blocks
+    pid_n = pid - pid_co * num_n_blocks
+
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_ci_rel = offs_n // KL
+    k = offs_n - offs_ci_rel * KL
+
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_n = offs_n < cik
+    co = group * COUT_PER_GROUP + offs_co_rel
+
+    acc = tl.zeros((BLOCK_CO, BLOCK_N), dtype=tl.float32)
+    for split in tl.static_range(0, NUM_SPLITS):
+        acc += tl.load(
+            partial_ptr
+            + (split * C_OUT + co[:, None]) * cik
+            + offs_n[None, :],
+            mask=mask_co[:, None] & mask_n[None, :],
+            other=0.0,
+        )
+
+    tl.store(
+        out_ptr
+        + co[:, None] * out_stride_o
+        + offs_ci_rel[None, :] * out_stride_i
+        + k[None, :] * out_stride_k,
+        acc.to(out_ptr.dtype.element_ty),
+        mask=mask_co[:, None] & mask_n[None, :],
     )
 
 
@@ -796,7 +1067,6 @@ def _conv_wgrad2d_1x1_split_kernel(
     )
 
 
-
 @triton.jit
 def _conv_wgrad2d_1x1_split_nodiv_kernel(
     image_ptr,
@@ -993,7 +1263,9 @@ def _conv_wgrad2d_1x1_reduce_kernel(
         )
 
     tl.store(
-        out_ptr + co[:, None] * out_stride_o + offs_ci_rel[None, :] * out_stride_i,
+        out_ptr
+        + co[:, None] * out_stride_o
+        + offs_ci_rel[None, :] * out_stride_i,
         acc.to(out_ptr.dtype.element_ty),
         mask=mask_co[:, None] & mask_ci[None, :],
     )
@@ -1110,13 +1382,393 @@ def _conv_wgrad2d_split_kernel(
     k_elems = KH * KW
     tl.store(
         partial_ptr
-        + ((split * C_OUT + co[:, None]) * CIN_PER_GROUP + offs_ci_rel[None, :])
+        + (
+            (split * C_OUT + co[:, None]) * CIN_PER_GROUP
+            + offs_ci_rel[None, :]
+        )
         * k_elems
         + k,
         acc,
         mask=mask_co[:, None] & mask_ci[None, :],
     )
 
+
+@triton.jit
+def _conv_wgrad2d_3tap_split_kernel(
+    image_ptr,
+    loss_ptr,
+    partial_ptr,
+    M: tl.constexpr,
+    IMAGE_H: tl.constexpr,
+    IMAGE_W: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_h: tl.constexpr,
+    image_stride_w: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_H: tl.constexpr,
+    PAD_W: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    NUM_SPLITS: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    kh = tl.program_id(1)
+    split_group = tl.program_id(2)
+    split = split_group % NUM_SPLITS
+    group = split_group // NUM_SPLITS
+
+    num_ci_blocks = tl.cdiv(CIN_PER_GROUP, BLOCK_CI)
+    pid_co = pid // num_ci_blocks
+    pid_ci = pid - pid_co * num_ci_blocks
+
+    image_kh = KH - 1 - kh if FILTER_REVERSE else kh
+    image_kw0 = KW - 1 if FILTER_REVERSE else 0
+    image_kw1 = KW - 2 if FILTER_REVERSE else 1
+    image_kw2 = KW - 3 if FILTER_REVERSE else 2
+
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_ci_rel = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_ci = offs_ci_rel < CIN_PER_GROUP
+    co = group * COUT_PER_GROUP + offs_co_rel
+    ci = group * CIN_PER_GROUP + offs_ci_rel
+
+    split_size = tl.cdiv(M, NUM_SPLITS)
+    split_begin = split * split_size
+    split_end = tl.minimum(split_begin + split_size, M)
+
+    acc0 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc1 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc2 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    for m_start in tl.range(split_begin, split_end, BLOCK_M):
+        offs_m = m_start + tl.arange(0, BLOCK_M)
+        mask_m = offs_m < split_end
+        safe_m = tl.where(mask_m, offs_m, 0)
+        loss_w = safe_m % LOSS_W
+        tmp = safe_m // LOSS_W
+        loss_h = tmp % LOSS_H
+        n_idx = tmp // LOSS_H
+
+        image_h = loss_h * STRIDE_H - PAD_H + image_kh * DIL_H
+        image_w0 = loss_w * STRIDE_W - PAD_W + image_kw0 * DIL_W
+        image_w1 = loss_w * STRIDE_W - PAD_W + image_kw1 * DIL_W
+        image_w2 = loss_w * STRIDE_W - PAD_W + image_kw2 * DIL_W
+        valid_h = (image_h >= 0) & (image_h < IMAGE_H)
+        valid0 = valid_h & (image_w0 >= 0) & (image_w0 < IMAGE_W)
+        valid1 = valid_h & (image_w1 >= 0) & (image_w1 < IMAGE_W)
+        valid2 = valid_h & (image_w2 >= 0) & (image_w2 < IMAGE_W)
+        safe_h = tl.where(valid_h, image_h, 0)
+        safe_w0 = tl.where(valid0, image_w0, 0)
+        safe_w1 = tl.where(valid1, image_w1, 0)
+        safe_w2 = tl.where(valid2, image_w2, 0)
+
+        loss = tl.load(
+            loss_ptr
+            + n_idx[None, :] * loss_stride_n
+            + co[:, None] * loss_stride_c
+            + loss_h[None, :] * loss_stride_h
+            + loss_w[None, :] * loss_stride_w,
+            mask=mask_co[:, None] & mask_m[None, :],
+            other=0.0,
+        )
+        image0 = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_h[:, None] * image_stride_h
+            + safe_w0[:, None] * image_stride_w,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid0[:, None],
+            other=0.0,
+        )
+        image1 = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_h[:, None] * image_stride_h
+            + safe_w1[:, None] * image_stride_w,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid1[:, None],
+            other=0.0,
+        )
+        image2 = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_h[:, None] * image_stride_h
+            + safe_w2[:, None] * image_stride_w,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid2[:, None],
+            other=0.0,
+        )
+        acc0 += tl.dot(
+            loss, image0, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc1 += tl.dot(
+            loss, image1, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc2 += tl.dot(
+            loss, image2, out_dtype=tl.float32, input_precision="tf32"
+        )
+
+    base = (
+        (split * C_OUT + co[:, None]) * CIN_PER_GROUP + offs_ci_rel[None, :]
+    ) * (KH * KW) + kh * KW
+    mask = mask_co[:, None] & mask_ci[None, :]
+    tl.store(partial_ptr + base + 0, acc0, mask=mask)
+    tl.store(partial_ptr + base + 1, acc1, mask=mask)
+    tl.store(partial_ptr + base + 2, acc2, mask=mask)
+
+
+@triton.jit
+def _conv_wgrad1d_3tap_nodiv_split_v6_kernel(
+    image_ptr,
+    loss_ptr,
+    partial_ptr,
+    LOSS_LEN: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_l: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_l: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    KL: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    SPLITS_PER_N: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    split_group = tl.program_id(1)
+    split = split_group
+    group = 0
+    n_idx = split // SPLITS_PER_N
+    split_in_n = split - n_idx * SPLITS_PER_N
+    split_size = tl.cdiv(LOSS_LEN, SPLITS_PER_N)
+    l_begin = split_in_n * split_size
+    l_end = tl.minimum(l_begin + split_size, LOSS_LEN)
+
+    num_ci_blocks = tl.cdiv(CIN_PER_GROUP, BLOCK_CI)
+    pid_co = pid // num_ci_blocks
+    pid_ci = pid - pid_co * num_ci_blocks
+
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_ci_rel = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_ci = offs_ci_rel < CIN_PER_GROUP
+    co = group * COUT_PER_GROUP + offs_co_rel
+    ci = group * CIN_PER_GROUP + offs_ci_rel
+
+    image_k0 = KL - 1 if FILTER_REVERSE else 0
+    image_k1 = KL - 2 if FILTER_REVERSE else 1
+    image_k2 = KL - 3 if FILTER_REVERSE else 2
+
+    acc0 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc1 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc2 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    for l_start in tl.range(l_begin, l_end, BLOCK_M):
+        loss_l = l_start + tl.arange(0, BLOCK_M)
+        mask_m = loss_l < l_end
+        image_l0 = loss_l - PAD_LEFT + image_k0
+        image_l1 = loss_l - PAD_LEFT + image_k1
+        image_l2 = loss_l - PAD_LEFT + image_k2
+        valid0 = (image_l0 >= 0) & (image_l0 < LOSS_LEN)
+        valid1 = (image_l1 >= 0) & (image_l1 < LOSS_LEN)
+        valid2 = (image_l2 >= 0) & (image_l2 < LOSS_LEN)
+        safe_l0 = tl.where(valid0, image_l0, 0)
+        safe_l1 = tl.where(valid1, image_l1, 0)
+        safe_l2 = tl.where(valid2, image_l2, 0)
+
+        loss = tl.load(
+            loss_ptr
+            + n_idx * loss_stride_n
+            + co[:, None] * loss_stride_c
+            + loss_l[None, :] * loss_stride_l,
+            mask=mask_co[:, None] & mask_m[None, :],
+            other=0.0,
+        )
+        image0 = tl.load(
+            image_ptr
+            + n_idx * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_l0[:, None] * image_stride_l,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid0[:, None],
+            other=0.0,
+        )
+        image1 = tl.load(
+            image_ptr
+            + n_idx * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_l1[:, None] * image_stride_l,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid1[:, None],
+            other=0.0,
+        )
+        image2 = tl.load(
+            image_ptr
+            + n_idx * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_l2[:, None] * image_stride_l,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid2[:, None],
+            other=0.0,
+        )
+        acc0 += tl.dot(
+            loss, image0, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc1 += tl.dot(
+            loss, image1, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc2 += tl.dot(
+            loss, image2, out_dtype=tl.float32, input_precision="tf32"
+        )
+
+    base = (
+        (split * C_OUT + co[:, None]) * CIN_PER_GROUP + offs_ci_rel[None, :]
+    ) * KL
+    mask = mask_co[:, None] & mask_ci[None, :]
+    tl.store(
+        partial_ptr + base + 0,
+        acc0.to(partial_ptr.dtype.element_ty),
+        mask=mask,
+    )
+    tl.store(
+        partial_ptr + base + 1,
+        acc1.to(partial_ptr.dtype.element_ty),
+        mask=mask,
+    )
+    tl.store(
+        partial_ptr + base + 2,
+        acc2.to(partial_ptr.dtype.element_ty),
+        mask=mask,
+    )
+
+
+@triton.jit
+def _conv_wgrad1d_s1_3tap_nsplit_kernel(
+    image_ptr,
+    loss_ptr,
+    partial_ptr,
+    LOSS_LEN: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_l: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_l: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    KL: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    NUM_SPLITS: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    split_group = tl.program_id(1)
+    n_idx = split_group % NUM_SPLITS
+    group = split_group // NUM_SPLITS
+
+    num_ci_blocks = tl.cdiv(CIN_PER_GROUP, BLOCK_CI)
+    pid_co = pid // num_ci_blocks
+    pid_ci = pid - pid_co * num_ci_blocks
+
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_ci_rel = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_ci = offs_ci_rel < CIN_PER_GROUP
+    co = group * COUT_PER_GROUP + offs_co_rel
+    ci = group * CIN_PER_GROUP + offs_ci_rel
+
+    image_k0 = KL - 1 if FILTER_REVERSE else 0
+    image_k1 = KL - 2 if FILTER_REVERSE else 1
+    image_k2 = KL - 3 if FILTER_REVERSE else 2
+
+    acc0 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc1 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc2 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    for l_start in tl.range(0, LOSS_LEN, BLOCK_M):
+        loss_l = l_start + tl.arange(0, BLOCK_M)
+        mask_m = loss_l < LOSS_LEN
+        image_l0 = loss_l - PAD_LEFT + image_k0
+        image_l1 = loss_l - PAD_LEFT + image_k1
+        image_l2 = loss_l - PAD_LEFT + image_k2
+        valid0 = (image_l0 >= 0) & (image_l0 < LOSS_LEN)
+        valid1 = (image_l1 >= 0) & (image_l1 < LOSS_LEN)
+        valid2 = (image_l2 >= 0) & (image_l2 < LOSS_LEN)
+        safe_l0 = tl.where(valid0, image_l0, 0)
+        safe_l1 = tl.where(valid1, image_l1, 0)
+        safe_l2 = tl.where(valid2, image_l2, 0)
+
+        loss = tl.load(
+            loss_ptr
+            + n_idx * loss_stride_n
+            + co[:, None] * loss_stride_c
+            + loss_l[None, :] * loss_stride_l,
+            mask=mask_co[:, None] & mask_m[None, :],
+            other=0.0,
+        )
+        image0 = tl.load(
+            image_ptr
+            + n_idx * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_l0[:, None] * image_stride_l,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid0[:, None],
+            other=0.0,
+        )
+        image1 = tl.load(
+            image_ptr
+            + n_idx * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_l1[:, None] * image_stride_l,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid1[:, None],
+            other=0.0,
+        )
+        image2 = tl.load(
+            image_ptr
+            + n_idx * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_l2[:, None] * image_stride_l,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid2[:, None],
+            other=0.0,
+        )
+        acc0 += tl.dot(
+            loss, image0, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc1 += tl.dot(
+            loss, image1, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc2 += tl.dot(
+            loss, image2, out_dtype=tl.float32, input_precision="tf32"
+        )
+
+    base = (
+        (n_idx * C_OUT + co[:, None]) * CIN_PER_GROUP + offs_ci_rel[None, :]
+    ) * KL
+    mask = mask_co[:, None] & mask_ci[None, :]
+    tl.store(partial_ptr + base + 0, acc0, mask=mask)
+    tl.store(partial_ptr + base + 1, acc1, mask=mask)
+    tl.store(partial_ptr + base + 2, acc2, mask=mask)
 
 
 @triton.jit
@@ -1221,16 +1873,20 @@ def _conv_wgrad2d_stride2_3tap_split_kernel(
             mask=mask_m[:, None] & mask_ci[None, :] & valid2[:, None],
             other=0.0,
         )
-        acc0 += tl.dot(loss, image0, out_dtype=tl.float32, input_precision="tf32")
-        acc1 += tl.dot(loss, image1, out_dtype=tl.float32, input_precision="tf32")
-        acc2 += tl.dot(loss, image2, out_dtype=tl.float32, input_precision="tf32")
+        acc0 += tl.dot(
+            loss, image0, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc1 += tl.dot(
+            loss, image1, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc2 += tl.dot(
+            loss, image2, out_dtype=tl.float32, input_precision="tf32"
+        )
 
     base = (
-        ((split * C_OUT + offs_co_rel[:, None]) * CIN_PER_GROUP
-        + offs_ci_rel[None, :])
-        * 9
-        + kh * 3
-    )
+        (split * C_OUT + offs_co_rel[:, None]) * CIN_PER_GROUP
+        + offs_ci_rel[None, :]
+    ) * 9 + kh * 3
     mask = mask_co[:, None] & mask_ci[None, :]
     tl.store(partial_ptr + base + 0, acc0, mask=mask)
     tl.store(partial_ptr + base + 1, acc1, mask=mask)
@@ -1238,30 +1894,234 @@ def _conv_wgrad2d_stride2_3tap_split_kernel(
 
 
 @triton.jit
-def _conv_wgrad2d_stride2_3tap_atomic_kernel(image_ptr, loss_ptr, out_ptr, M:tl.constexpr, IMAGE_H:tl.constexpr, IMAGE_W:tl.constexpr, LOSS_H:tl.constexpr, LOSS_W:tl.constexpr, COUT_PER_GROUP:tl.constexpr, CIN_PER_GROUP:tl.constexpr, image_stride_n:tl.constexpr, image_stride_c:tl.constexpr, image_stride_h:tl.constexpr, image_stride_w:tl.constexpr, loss_stride_n:tl.constexpr, loss_stride_c:tl.constexpr, loss_stride_h:tl.constexpr, loss_stride_w:tl.constexpr, out_stride_o:tl.constexpr, out_stride_i:tl.constexpr, out_stride_h:tl.constexpr, out_stride_w:tl.constexpr, NUM_SPLITS:tl.constexpr, BLOCK_CO:tl.constexpr, BLOCK_CI:tl.constexpr, BLOCK_M:tl.constexpr):
-    pid=tl.program_id(0); kh=tl.program_id(1); split=tl.program_id(2)
-    num_ci_blocks=tl.cdiv(CIN_PER_GROUP,BLOCK_CI); pid_co=pid//num_ci_blocks; pid_ci=pid-pid_co*num_ci_blocks
-    offs_co=pid_co*BLOCK_CO+tl.arange(0,BLOCK_CO); offs_ci=pid_ci*BLOCK_CI+tl.arange(0,BLOCK_CI)
-    mask_co=offs_co<COUT_PER_GROUP; mask_ci=offs_ci<CIN_PER_GROUP
-    split_size=tl.cdiv(M,NUM_SPLITS); split_begin=split*split_size; split_end=tl.minimum(split_begin+split_size,M)
-    acc0=tl.zeros((BLOCK_CO,BLOCK_CI),dtype=tl.float32); acc1=tl.zeros((BLOCK_CO,BLOCK_CI),dtype=tl.float32); acc2=tl.zeros((BLOCK_CO,BLOCK_CI),dtype=tl.float32)
-    for m_start in tl.range(split_begin,split_end,BLOCK_M):
-        offs_m=m_start+tl.arange(0,BLOCK_M); mask_m=offs_m<split_end; safe_m=tl.where(mask_m,offs_m,0)
-        loss_w=safe_m%LOSS_W; tmp=safe_m//LOSS_W; loss_h=tmp%LOSS_H; n_idx=tmp//LOSS_H
-        image_h=loss_h*2-1+kh; image_w0=loss_w*2-1; image_w1=loss_w*2; image_w2=loss_w*2+1
-        valid_h=(image_h>=0)&(image_h<IMAGE_H); valid0=valid_h&(image_w0>=0)&(image_w0<IMAGE_W); valid1=valid_h&(image_w1>=0)&(image_w1<IMAGE_W); valid2=valid_h&(image_w2>=0)&(image_w2<IMAGE_W)
-        safe_h=tl.where(valid_h,image_h,0); safe_w0=tl.where(valid0,image_w0,0); safe_w1=tl.where(valid1,image_w1,0); safe_w2=tl.where(valid2,image_w2,0)
-        loss=tl.load(loss_ptr+n_idx[None,:]*loss_stride_n+offs_co[:,None]*loss_stride_c+loss_h[None,:]*loss_stride_h+loss_w[None,:]*loss_stride_w,mask=mask_co[:,None]&mask_m[None,:],other=0.0)
-        img0=tl.load(image_ptr+n_idx[:,None]*image_stride_n+offs_ci[None,:]*image_stride_c+safe_h[:,None]*image_stride_h+safe_w0[:,None]*image_stride_w,mask=mask_m[:,None]&mask_ci[None,:]&valid0[:,None],other=0.0)
-        img1=tl.load(image_ptr+n_idx[:,None]*image_stride_n+offs_ci[None,:]*image_stride_c+safe_h[:,None]*image_stride_h+safe_w1[:,None]*image_stride_w,mask=mask_m[:,None]&mask_ci[None,:]&valid1[:,None],other=0.0)
-        img2=tl.load(image_ptr+n_idx[:,None]*image_stride_n+offs_ci[None,:]*image_stride_c+safe_h[:,None]*image_stride_h+safe_w2[:,None]*image_stride_w,mask=mask_m[:,None]&mask_ci[None,:]&valid2[:,None],other=0.0)
-        acc0+=tl.dot(loss,img0,out_dtype=tl.float32,input_precision='tf32'); acc1+=tl.dot(loss,img1,out_dtype=tl.float32,input_precision='tf32'); acc2+=tl.dot(loss,img2,out_dtype=tl.float32,input_precision='tf32')
-    mask=mask_co[:,None]&mask_ci[None,:]
-    base=out_ptr+offs_co[:,None]*out_stride_o+offs_ci[None,:]*out_stride_i+kh*out_stride_h
-    tl.atomic_add(base+0*out_stride_w,acc0,sem='relaxed',mask=mask)
-    tl.atomic_add(base+1*out_stride_w,acc1,sem='relaxed',mask=mask)
-    tl.atomic_add(base+2*out_stride_w,acc2,sem='relaxed',mask=mask)
+def _conv_wgrad2d_stride2_row4_split_kernel(
+    image_ptr,
+    loss_ptr,
+    partial_ptr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_h: tl.constexpr,
+    image_stride_w: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_HW: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    kh = tl.program_id(1)
+    n_idx = tl.program_id(2)
+    num_ci_blocks = tl.cdiv(CIN_PER_GROUP, BLOCK_CI)
+    pid_co = pid // num_ci_blocks
+    pid_ci = pid - pid_co * num_ci_blocks
 
+    co = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    ci = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    offs = tl.arange(0, BLOCK_HW)
+    row_off = offs // 28
+    loss_w = offs - row_off * 28
+    valid_base = (row_off < 4) & (loss_w < 28)
+    mask_co = co < COUT_PER_GROUP
+    mask_ci = ci < CIN_PER_GROUP
+
+    acc0 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc1 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc2 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    for loss_h_base in tl.static_range(0, 28, 4):
+        loss_h = loss_h_base + row_off
+        valid_loss = valid_base & (loss_h < 28)
+        image_h = loss_h * 2 - 1 + kh
+        valid_h = (image_h >= 0) & (image_h < 56) & valid_loss
+        image_w0 = loss_w * 2 - 1
+        image_w1 = loss_w * 2
+        image_w2 = loss_w * 2 + 1
+        valid0 = valid_h & (image_w0 >= 0) & (image_w0 < 56)
+        valid1 = valid_h & (image_w1 >= 0) & (image_w1 < 56)
+        valid2 = valid_h & (image_w2 >= 0) & (image_w2 < 56)
+        safe_w0 = tl.where(valid0, image_w0, 0)
+        safe_w1 = tl.where(valid1, image_w1, 0)
+        safe_w2 = tl.where(valid2, image_w2, 0)
+
+        loss = tl.load(
+            loss_ptr
+            + n_idx * loss_stride_n
+            + co[:, None] * loss_stride_c
+            + loss_h[None, :] * loss_stride_h
+            + loss_w[None, :] * loss_stride_w,
+            mask=mask_co[:, None] & valid_loss[None, :],
+            other=0.0,
+        )
+        image0 = tl.load(
+            image_ptr
+            + n_idx * image_stride_n
+            + ci[None, :] * image_stride_c
+            + image_h[:, None] * image_stride_h
+            + safe_w0[:, None] * image_stride_w,
+            mask=mask_ci[None, :] & valid0[:, None],
+            other=0.0,
+        )
+        image1 = tl.load(
+            image_ptr
+            + n_idx * image_stride_n
+            + ci[None, :] * image_stride_c
+            + image_h[:, None] * image_stride_h
+            + safe_w1[:, None] * image_stride_w,
+            mask=mask_ci[None, :] & valid1[:, None],
+            other=0.0,
+        )
+        image2 = tl.load(
+            image_ptr
+            + n_idx * image_stride_n
+            + ci[None, :] * image_stride_c
+            + image_h[:, None] * image_stride_h
+            + safe_w2[:, None] * image_stride_w,
+            mask=mask_ci[None, :] & valid2[:, None],
+            other=0.0,
+        )
+        acc0 += tl.dot(
+            loss, image0, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc1 += tl.dot(
+            loss, image1, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc2 += tl.dot(
+            loss, image2, out_dtype=tl.float32, input_precision="tf32"
+        )
+
+    base = (
+        (n_idx * C_OUT + co[:, None]) * CIN_PER_GROUP + ci[None, :]
+    ) * 9 + kh * 3
+    mask = mask_co[:, None] & mask_ci[None, :]
+    tl.store(partial_ptr + base + 0, acc0, mask=mask)
+    tl.store(partial_ptr + base + 1, acc1, mask=mask)
+    tl.store(partial_ptr + base + 2, acc2, mask=mask)
+
+
+@triton.jit
+def _conv_wgrad2d_stride2_3tap_atomic_kernel(
+    image_ptr,
+    loss_ptr,
+    out_ptr,
+    M: tl.constexpr,
+    IMAGE_H: tl.constexpr,
+    IMAGE_W: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_h: tl.constexpr,
+    image_stride_w: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    out_stride_o: tl.constexpr,
+    out_stride_i: tl.constexpr,
+    out_stride_h: tl.constexpr,
+    out_stride_w: tl.constexpr,
+    NUM_SPLITS: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    kh = tl.program_id(1)
+    split = tl.program_id(2)
+    num_ci_blocks = tl.cdiv(CIN_PER_GROUP, BLOCK_CI)
+    pid_co = pid // num_ci_blocks
+    pid_ci = pid - pid_co * num_ci_blocks
+    offs_co = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_ci = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_co = offs_co < COUT_PER_GROUP
+    mask_ci = offs_ci < CIN_PER_GROUP
+    split_size = tl.cdiv(M, NUM_SPLITS)
+    split_begin = split * split_size
+    split_end = tl.minimum(split_begin + split_size, M)
+    acc0 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc1 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc2 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    for m_start in tl.range(split_begin, split_end, BLOCK_M):
+        offs_m = m_start + tl.arange(0, BLOCK_M)
+        mask_m = offs_m < split_end
+        safe_m = tl.where(mask_m, offs_m, 0)
+        loss_w = safe_m % LOSS_W
+        tmp = safe_m // LOSS_W
+        loss_h = tmp % LOSS_H
+        n_idx = tmp // LOSS_H
+        image_h = loss_h * 2 - 1 + kh
+        image_w0 = loss_w * 2 - 1
+        image_w1 = loss_w * 2
+        image_w2 = loss_w * 2 + 1
+        valid_h = (image_h >= 0) & (image_h < IMAGE_H)
+        valid0 = valid_h & (image_w0 >= 0) & (image_w0 < IMAGE_W)
+        valid1 = valid_h & (image_w1 >= 0) & (image_w1 < IMAGE_W)
+        valid2 = valid_h & (image_w2 >= 0) & (image_w2 < IMAGE_W)
+        safe_h = tl.where(valid_h, image_h, 0)
+        safe_w0 = tl.where(valid0, image_w0, 0)
+        safe_w1 = tl.where(valid1, image_w1, 0)
+        safe_w2 = tl.where(valid2, image_w2, 0)
+        loss = tl.load(
+            loss_ptr
+            + n_idx[None, :] * loss_stride_n
+            + offs_co[:, None] * loss_stride_c
+            + loss_h[None, :] * loss_stride_h
+            + loss_w[None, :] * loss_stride_w,
+            mask=mask_co[:, None] & mask_m[None, :],
+            other=0.0,
+        )
+        img0 = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + offs_ci[None, :] * image_stride_c
+            + safe_h[:, None] * image_stride_h
+            + safe_w0[:, None] * image_stride_w,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid0[:, None],
+            other=0.0,
+        )
+        img1 = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + offs_ci[None, :] * image_stride_c
+            + safe_h[:, None] * image_stride_h
+            + safe_w1[:, None] * image_stride_w,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid1[:, None],
+            other=0.0,
+        )
+        img2 = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + offs_ci[None, :] * image_stride_c
+            + safe_h[:, None] * image_stride_h
+            + safe_w2[:, None] * image_stride_w,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid2[:, None],
+            other=0.0,
+        )
+        acc0 += tl.dot(
+            loss, img0, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc1 += tl.dot(
+            loss, img1, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc2 += tl.dot(
+            loss, img2, out_dtype=tl.float32, input_precision="tf32"
+        )
+    mask = mask_co[:, None] & mask_ci[None, :]
+    base = (
+        out_ptr
+        + offs_co[:, None] * out_stride_o
+        + offs_ci[None, :] * out_stride_i
+        + kh * out_stride_h
+    )
+    tl.atomic_add(base + 0 * out_stride_w, acc0, sem="relaxed", mask=mask)
+    tl.atomic_add(base + 1 * out_stride_w, acc1, sem="relaxed", mask=mask)
+    tl.atomic_add(base + 2 * out_stride_w, acc2, sem="relaxed", mask=mask)
 
 
 @triton.jit
@@ -1302,7 +2162,10 @@ def _conv_wgrad2d_reduce_kernel(
     for split in tl.static_range(0, NUM_SPLITS):
         acc += tl.load(
             partial_ptr
-            + ((split * C_OUT + co[:, None]) * CIN_PER_GROUP + offs_ci_rel[None, :])
+            + (
+                (split * C_OUT + co[:, None]) * CIN_PER_GROUP
+                + offs_ci_rel[None, :]
+            )
             * k_elems
             + k,
             mask=mask_co[:, None] & mask_ci[None, :],
@@ -1317,6 +2180,298 @@ def _conv_wgrad2d_reduce_kernel(
         + kw * out_stride_w,
         acc.to(out_ptr.dtype.element_ty),
         mask=mask_co[:, None] & mask_ci[None, :],
+    )
+
+
+@triton.jit
+def _conv_wgrad2d_col_split_kernel(
+    image_ptr,
+    loss_ptr,
+    partial_ptr,
+    M: tl.constexpr,
+    IMAGE_H: tl.constexpr,
+    IMAGE_W: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_h: tl.constexpr,
+    image_stride_w: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_H: tl.constexpr,
+    PAD_W: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    NUM_SPLITS: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    split_group = tl.program_id(1)
+    split = split_group % NUM_SPLITS
+    group = split_group // NUM_SPLITS
+
+    k_elems = KH * KW
+    cik = CIN_PER_GROUP * k_elems
+    num_n_blocks = tl.cdiv(cik, BLOCK_N)
+    pid_co = pid // num_n_blocks
+    pid_n = pid - pid_co * num_n_blocks
+
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_ci_rel = offs_n // k_elems
+    rem = offs_n - offs_ci_rel * k_elems
+    kh = rem // KW
+    kw = rem - kh * KW
+    image_kh = KH - 1 - kh if FILTER_REVERSE else kh
+    image_kw = KW - 1 - kw if FILTER_REVERSE else kw
+
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_n = offs_n < cik
+    co = group * COUT_PER_GROUP + offs_co_rel
+    ci = group * CIN_PER_GROUP + offs_ci_rel
+
+    split_size = tl.cdiv(M, NUM_SPLITS)
+    split_begin = split * split_size
+    split_end = tl.minimum(split_begin + split_size, M)
+
+    acc = tl.zeros((BLOCK_CO, BLOCK_N), dtype=tl.float32)
+    for m_start in tl.range(split_begin, split_end, BLOCK_M):
+        offs_m = m_start + tl.arange(0, BLOCK_M)
+        mask_m = offs_m < split_end
+        safe_m = tl.where(mask_m, offs_m, 0)
+        loss_w = safe_m % LOSS_W
+        tmp = safe_m // LOSS_W
+        loss_h = tmp % LOSS_H
+        n_idx = tmp // LOSS_H
+
+        image_h = (
+            loss_h[:, None] * STRIDE_H - PAD_H + image_kh[None, :] * DIL_H
+        )
+        image_w = (
+            loss_w[:, None] * STRIDE_W - PAD_W + image_kw[None, :] * DIL_W
+        )
+        valid_hw = (
+            (image_h >= 0)
+            & (image_h < IMAGE_H)
+            & (image_w >= 0)
+            & (image_w < IMAGE_W)
+        )
+        safe_h = tl.where(valid_hw, image_h, 0)
+        safe_w = tl.where(valid_hw, image_w, 0)
+
+        loss = tl.load(
+            loss_ptr
+            + n_idx[None, :] * loss_stride_n
+            + co[:, None] * loss_stride_c
+            + loss_h[None, :] * loss_stride_h
+            + loss_w[None, :] * loss_stride_w,
+            mask=mask_co[:, None] & mask_m[None, :],
+            other=0.0,
+        )
+        image = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_h * image_stride_h
+            + safe_w * image_stride_w,
+            mask=mask_m[:, None] & mask_n[None, :] & valid_hw,
+            other=0.0,
+        )
+        acc += tl.dot(
+            loss, image, out_dtype=tl.float32, input_precision="tf32"
+        )
+
+    tl.store(
+        partial_ptr + (split * C_OUT + co[:, None]) * cik + offs_n[None, :],
+        acc,
+        mask=mask_co[:, None] & mask_n[None, :],
+    )
+
+
+@triton.jit
+def _conv_wgrad2d_col_direct_strided_v8_kernel(
+    image_ptr,
+    loss_ptr,
+    out_ptr,
+    M: tl.constexpr,
+    IMAGE_H: tl.constexpr,
+    IMAGE_W: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_h: tl.constexpr,
+    image_stride_w: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    out_stride_o: tl.constexpr,
+    out_stride_i: tl.constexpr,
+    out_stride_h: tl.constexpr,
+    out_stride_w: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_H: tl.constexpr,
+    PAD_W: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    group = tl.program_id(1)
+    k_elems = KH * KW
+    cik = CIN_PER_GROUP * k_elems
+    num_n_blocks = tl.cdiv(cik, BLOCK_N)
+    pid_co = pid // num_n_blocks
+    pid_n = pid - pid_co * num_n_blocks
+
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_ci_rel = offs_n // k_elems
+    rem = offs_n - offs_ci_rel * k_elems
+    kh = rem // KW
+    kw = rem - kh * KW
+    image_kh = KH - 1 - kh if FILTER_REVERSE else kh
+    image_kw = KW - 1 - kw if FILTER_REVERSE else kw
+
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_n = offs_n < cik
+    co = group * COUT_PER_GROUP + offs_co_rel
+    ci = group * CIN_PER_GROUP + offs_ci_rel
+
+    acc = tl.zeros((BLOCK_CO, BLOCK_N), dtype=tl.float32)
+    for m_start in tl.range(0, M, BLOCK_M):
+        offs_m = m_start + tl.arange(0, BLOCK_M)
+        mask_m = offs_m < M
+        safe_m = tl.where(mask_m, offs_m, 0)
+        loss_w = safe_m % LOSS_W
+        tmp = safe_m // LOSS_W
+        loss_h = tmp % LOSS_H
+        n_idx = tmp // LOSS_H
+        image_h = (
+            loss_h[:, None] * STRIDE_H - PAD_H + image_kh[None, :] * DIL_H
+        )
+        image_w = (
+            loss_w[:, None] * STRIDE_W - PAD_W + image_kw[None, :] * DIL_W
+        )
+        valid_hw = (
+            (image_h >= 0)
+            & (image_h < IMAGE_H)
+            & (image_w >= 0)
+            & (image_w < IMAGE_W)
+        )
+        safe_h = tl.where(valid_hw, image_h, 0)
+        safe_w = tl.where(valid_hw, image_w, 0)
+        loss = tl.load(
+            loss_ptr
+            + n_idx[None, :] * loss_stride_n
+            + co[:, None] * loss_stride_c
+            + loss_h[None, :] * loss_stride_h
+            + loss_w[None, :] * loss_stride_w,
+            mask=mask_co[:, None] & mask_m[None, :],
+            other=0.0,
+        )
+        image = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_h * image_stride_h
+            + safe_w * image_stride_w,
+            mask=mask_m[:, None] & mask_n[None, :] & valid_hw,
+            other=0.0,
+        )
+        acc += tl.dot(
+            loss, image, out_dtype=tl.float32, input_precision="tf32"
+        )
+
+    tl.store(
+        out_ptr
+        + co[:, None] * out_stride_o
+        + offs_ci_rel[None, :] * out_stride_i
+        + kh[None, :] * out_stride_h
+        + kw[None, :] * out_stride_w,
+        acc.to(out_ptr.dtype.element_ty),
+        mask=mask_co[:, None] & mask_n[None, :],
+    )
+
+
+@triton.jit
+def _conv_wgrad2d_col_reduce_kernel(
+    partial_ptr,
+    out_ptr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    out_stride_o: tl.constexpr,
+    out_stride_i: tl.constexpr,
+    out_stride_h: tl.constexpr,
+    out_stride_w: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    NUM_SPLITS: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    group = tl.program_id(1)
+
+    k_elems = KH * KW
+    cik = CIN_PER_GROUP * k_elems
+    num_n_blocks = tl.cdiv(cik, BLOCK_N)
+    pid_co = pid // num_n_blocks
+    pid_n = pid - pid_co * num_n_blocks
+
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_ci_rel = offs_n // k_elems
+    rem = offs_n - offs_ci_rel * k_elems
+    kh = rem // KW
+    kw = rem - kh * KW
+
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_n = offs_n < cik
+    co = group * COUT_PER_GROUP + offs_co_rel
+
+    acc = tl.zeros((BLOCK_CO, BLOCK_N), dtype=tl.float32)
+    for split in tl.static_range(0, NUM_SPLITS):
+        acc += tl.load(
+            partial_ptr
+            + (split * C_OUT + co[:, None]) * cik
+            + offs_n[None, :],
+            mask=mask_co[:, None] & mask_n[None, :],
+            other=0.0,
+        )
+
+    tl.store(
+        out_ptr
+        + co[:, None] * out_stride_o
+        + offs_ci_rel[None, :] * out_stride_i
+        + kh[None, :] * out_stride_h
+        + kw[None, :] * out_stride_w,
+        acc.to(out_ptr.dtype.element_ty),
+        mask=mask_co[:, None] & mask_n[None, :],
     )
 
 
@@ -1615,12 +2770,182 @@ def _conv_wgrad3d_split_kernel(
     k_elems = KD * KH * KW
     tl.store(
         partial_ptr
-        + ((split * C_OUT + co[:, None]) * CIN_PER_GROUP + offs_ci_rel[None, :])
+        + (
+            (split * C_OUT + co[:, None]) * CIN_PER_GROUP
+            + offs_ci_rel[None, :]
+        )
         * k_elems
         + k,
         acc,
         mask=mask_co[:, None] & mask_ci[None, :],
     )
+
+
+@triton.jit
+def _conv_wgrad3d_kw3_split_kernel(
+    image_ptr,
+    loss_ptr,
+    partial_ptr,
+    M: tl.constexpr,
+    IMAGE_D: tl.constexpr,
+    IMAGE_H: tl.constexpr,
+    IMAGE_W: tl.constexpr,
+    LOSS_D: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_d: tl.constexpr,
+    image_stride_h: tl.constexpr,
+    image_stride_w: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_d: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    STRIDE_D: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_D: tl.constexpr,
+    PAD_H: tl.constexpr,
+    PAD_W: tl.constexpr,
+    DIL_D: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KD: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    NUM_SPLITS: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    plane = tl.program_id(1)
+    split_group = tl.program_id(2)
+    split = split_group % NUM_SPLITS
+    group = split_group // NUM_SPLITS
+
+    num_ci_blocks = tl.cdiv(CIN_PER_GROUP, BLOCK_CI)
+    pid_co = pid // num_ci_blocks
+    pid_ci = pid - pid_co * num_ci_blocks
+
+    kh = plane % KH
+    kd = plane // KH
+    image_kd = KD - 1 - kd if FILTER_REVERSE else kd
+    image_kh = KH - 1 - kh if FILTER_REVERSE else kh
+    image_kw0 = KW - 1 if FILTER_REVERSE else 0
+    image_kw1 = KW - 2 if FILTER_REVERSE else 1
+    image_kw2 = KW - 3 if FILTER_REVERSE else 2
+
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_ci_rel = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_ci = offs_ci_rel < CIN_PER_GROUP
+    co = group * COUT_PER_GROUP + offs_co_rel
+    ci = group * CIN_PER_GROUP + offs_ci_rel
+
+    split_size = tl.cdiv(M, NUM_SPLITS)
+    split_begin = split * split_size
+    split_end = tl.minimum(split_begin + split_size, M)
+
+    acc0 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc1 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc2 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    for m_start in tl.range(split_begin, split_end, BLOCK_M):
+        offs_m = m_start + tl.arange(0, BLOCK_M)
+        mask_m = offs_m < split_end
+        safe_m = tl.where(mask_m, offs_m, 0)
+        loss_w = safe_m % LOSS_W
+        tmp = safe_m // LOSS_W
+        loss_h = tmp % LOSS_H
+        tmp = tmp // LOSS_H
+        loss_d = tmp % LOSS_D
+        n_idx = tmp // LOSS_D
+
+        image_d = loss_d * STRIDE_D - PAD_D + image_kd * DIL_D
+        image_h = loss_h * STRIDE_H - PAD_H + image_kh * DIL_H
+        image_w0 = loss_w * STRIDE_W - PAD_W + image_kw0 * DIL_W
+        image_w1 = loss_w * STRIDE_W - PAD_W + image_kw1 * DIL_W
+        image_w2 = loss_w * STRIDE_W - PAD_W + image_kw2 * DIL_W
+        valid_dh = (
+            (image_d >= 0)
+            & (image_d < IMAGE_D)
+            & (image_h >= 0)
+            & (image_h < IMAGE_H)
+        )
+        valid0 = valid_dh & (image_w0 >= 0) & (image_w0 < IMAGE_W)
+        valid1 = valid_dh & (image_w1 >= 0) & (image_w1 < IMAGE_W)
+        valid2 = valid_dh & (image_w2 >= 0) & (image_w2 < IMAGE_W)
+        safe_d = tl.where(valid_dh, image_d, 0)
+        safe_h = tl.where(valid_dh, image_h, 0)
+        safe_w0 = tl.where(valid0, image_w0, 0)
+        safe_w1 = tl.where(valid1, image_w1, 0)
+        safe_w2 = tl.where(valid2, image_w2, 0)
+
+        loss = tl.load(
+            loss_ptr
+            + n_idx[None, :] * loss_stride_n
+            + co[:, None] * loss_stride_c
+            + loss_d[None, :] * loss_stride_d
+            + loss_h[None, :] * loss_stride_h
+            + loss_w[None, :] * loss_stride_w,
+            mask=mask_co[:, None] & mask_m[None, :],
+            other=0.0,
+        )
+        image0 = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_d[:, None] * image_stride_d
+            + safe_h[:, None] * image_stride_h
+            + safe_w0[:, None] * image_stride_w,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid0[:, None],
+            other=0.0,
+        )
+        image1 = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_d[:, None] * image_stride_d
+            + safe_h[:, None] * image_stride_h
+            + safe_w1[:, None] * image_stride_w,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid1[:, None],
+            other=0.0,
+        )
+        image2 = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_d[:, None] * image_stride_d
+            + safe_h[:, None] * image_stride_h
+            + safe_w2[:, None] * image_stride_w,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid2[:, None],
+            other=0.0,
+        )
+        acc0 += tl.dot(
+            loss, image0, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc1 += tl.dot(
+            loss, image1, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc2 += tl.dot(
+            loss, image2, out_dtype=tl.float32, input_precision="tf32"
+        )
+
+    k_elems = KD * KH * KW
+    k_base = (kd * KH + kh) * KW
+    base = (
+        (split * C_OUT + co[:, None]) * CIN_PER_GROUP + offs_ci_rel[None, :]
+    ) * k_elems + k_base
+    mask = mask_co[:, None] & mask_ci[None, :]
+    tl.store(partial_ptr + base + 0, acc0, mask=mask)
+    tl.store(partial_ptr + base + 1, acc1, mask=mask)
+    tl.store(partial_ptr + base + 2, acc2, mask=mask)
 
 
 @triton.jit
@@ -1665,7 +2990,10 @@ def _conv_wgrad3d_reduce_kernel(
     for split in tl.static_range(0, NUM_SPLITS):
         acc += tl.load(
             partial_ptr
-            + ((split * C_OUT + co[:, None]) * CIN_PER_GROUP + offs_ci_rel[None, :])
+            + (
+                (split * C_OUT + co[:, None]) * CIN_PER_GROUP
+                + offs_ci_rel[None, :]
+            )
             * k_elems
             + k,
             mask=mask_co[:, None] & mask_ci[None, :],
@@ -1682,6 +3010,1421 @@ def _conv_wgrad3d_reduce_kernel(
         acc.to(out_ptr.dtype.element_ty),
         mask=mask_co[:, None] & mask_ci[None, :],
     )
+
+
+@triton.jit
+def _conv_wgrad3d_col_split_kernel(
+    image_ptr,
+    loss_ptr,
+    partial_ptr,
+    M: tl.constexpr,
+    IMAGE_D: tl.constexpr,
+    IMAGE_H: tl.constexpr,
+    IMAGE_W: tl.constexpr,
+    LOSS_D: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_d: tl.constexpr,
+    image_stride_h: tl.constexpr,
+    image_stride_w: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_d: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    STRIDE_D: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_D: tl.constexpr,
+    PAD_H: tl.constexpr,
+    PAD_W: tl.constexpr,
+    DIL_D: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KD: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    NUM_SPLITS: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    split_group = tl.program_id(1)
+    split = split_group % NUM_SPLITS
+    group = split_group // NUM_SPLITS
+
+    k_elems = KD * KH * KW
+    cik = CIN_PER_GROUP * k_elems
+    num_n_blocks = tl.cdiv(cik, BLOCK_N)
+    pid_co = pid // num_n_blocks
+    pid_n = pid - pid_co * num_n_blocks
+
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_ci_rel = offs_n // k_elems
+    rem0 = offs_n - offs_ci_rel * k_elems
+    kw = rem0 % KW
+    tmp_k = rem0 // KW
+    kh = tmp_k % KH
+    kd = tmp_k // KH
+    image_kd = KD - 1 - kd if FILTER_REVERSE else kd
+    image_kh = KH - 1 - kh if FILTER_REVERSE else kh
+    image_kw = KW - 1 - kw if FILTER_REVERSE else kw
+
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_n = offs_n < cik
+    co = group * COUT_PER_GROUP + offs_co_rel
+    ci = group * CIN_PER_GROUP + offs_ci_rel
+
+    split_size = tl.cdiv(M, NUM_SPLITS)
+    split_begin = split * split_size
+    split_end = tl.minimum(split_begin + split_size, M)
+
+    acc = tl.zeros((BLOCK_CO, BLOCK_N), dtype=tl.float32)
+    for m_start in tl.range(split_begin, split_end, BLOCK_M):
+        offs_m = m_start + tl.arange(0, BLOCK_M)
+        mask_m = offs_m < split_end
+        safe_m = tl.where(mask_m, offs_m, 0)
+        loss_w = safe_m % LOSS_W
+        tmp = safe_m // LOSS_W
+        loss_h = tmp % LOSS_H
+        tmp = tmp // LOSS_H
+        loss_d = tmp % LOSS_D
+        n_idx = tmp // LOSS_D
+
+        image_d = (
+            loss_d[:, None] * STRIDE_D - PAD_D + image_kd[None, :] * DIL_D
+        )
+        image_h = (
+            loss_h[:, None] * STRIDE_H - PAD_H + image_kh[None, :] * DIL_H
+        )
+        image_w = (
+            loss_w[:, None] * STRIDE_W - PAD_W + image_kw[None, :] * DIL_W
+        )
+        valid_dhw = (
+            (image_d >= 0)
+            & (image_d < IMAGE_D)
+            & (image_h >= 0)
+            & (image_h < IMAGE_H)
+            & (image_w >= 0)
+            & (image_w < IMAGE_W)
+        )
+        safe_d = tl.where(valid_dhw, image_d, 0)
+        safe_h = tl.where(valid_dhw, image_h, 0)
+        safe_w = tl.where(valid_dhw, image_w, 0)
+
+        loss = tl.load(
+            loss_ptr
+            + n_idx[None, :] * loss_stride_n
+            + co[:, None] * loss_stride_c
+            + loss_d[None, :] * loss_stride_d
+            + loss_h[None, :] * loss_stride_h
+            + loss_w[None, :] * loss_stride_w,
+            mask=mask_co[:, None] & mask_m[None, :],
+            other=0.0,
+        )
+        image = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_d * image_stride_d
+            + safe_h * image_stride_h
+            + safe_w * image_stride_w,
+            mask=mask_m[:, None] & mask_n[None, :] & valid_dhw,
+            other=0.0,
+        )
+        acc += tl.dot(
+            loss, image, out_dtype=tl.float32, input_precision="tf32"
+        )
+
+    tl.store(
+        partial_ptr + (split * C_OUT + co[:, None]) * cik + offs_n[None, :],
+        acc,
+        mask=mask_co[:, None] & mask_n[None, :],
+    )
+
+
+@triton.jit
+def _conv_wgrad3d_col_direct_strided_v8_kernel(
+    image_ptr,
+    loss_ptr,
+    out_ptr,
+    M: tl.constexpr,
+    IMAGE_D: tl.constexpr,
+    IMAGE_H: tl.constexpr,
+    IMAGE_W: tl.constexpr,
+    LOSS_D: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_d: tl.constexpr,
+    image_stride_h: tl.constexpr,
+    image_stride_w: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_d: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    out_stride_o: tl.constexpr,
+    out_stride_i: tl.constexpr,
+    out_stride_d: tl.constexpr,
+    out_stride_h: tl.constexpr,
+    out_stride_w: tl.constexpr,
+    STRIDE_D: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_D: tl.constexpr,
+    PAD_H: tl.constexpr,
+    PAD_W: tl.constexpr,
+    DIL_D: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KD: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    group = tl.program_id(1)
+    k_elems = KD * KH * KW
+    cik = CIN_PER_GROUP * k_elems
+    num_n_blocks = tl.cdiv(cik, BLOCK_N)
+    pid_co = pid // num_n_blocks
+    pid_n = pid - pid_co * num_n_blocks
+
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_ci_rel = offs_n // k_elems
+    rem0 = offs_n - offs_ci_rel * k_elems
+    kw = rem0 % KW
+    tmp_k = rem0 // KW
+    kh = tmp_k % KH
+    kd = tmp_k // KH
+    image_kd = KD - 1 - kd if FILTER_REVERSE else kd
+    image_kh = KH - 1 - kh if FILTER_REVERSE else kh
+    image_kw = KW - 1 - kw if FILTER_REVERSE else kw
+
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_n = offs_n < cik
+    co = group * COUT_PER_GROUP + offs_co_rel
+    ci = group * CIN_PER_GROUP + offs_ci_rel
+
+    acc = tl.zeros((BLOCK_CO, BLOCK_N), dtype=tl.float32)
+    for m_start in tl.range(0, M, BLOCK_M):
+        offs_m = m_start + tl.arange(0, BLOCK_M)
+        mask_m = offs_m < M
+        safe_m = tl.where(mask_m, offs_m, 0)
+        loss_w = safe_m % LOSS_W
+        tmp = safe_m // LOSS_W
+        loss_h = tmp % LOSS_H
+        tmp = tmp // LOSS_H
+        loss_d = tmp % LOSS_D
+        n_idx = tmp // LOSS_D
+        image_d = (
+            loss_d[:, None] * STRIDE_D - PAD_D + image_kd[None, :] * DIL_D
+        )
+        image_h = (
+            loss_h[:, None] * STRIDE_H - PAD_H + image_kh[None, :] * DIL_H
+        )
+        image_w = (
+            loss_w[:, None] * STRIDE_W - PAD_W + image_kw[None, :] * DIL_W
+        )
+        valid_dhw = (
+            (image_d >= 0)
+            & (image_d < IMAGE_D)
+            & (image_h >= 0)
+            & (image_h < IMAGE_H)
+            & (image_w >= 0)
+            & (image_w < IMAGE_W)
+        )
+        safe_d = tl.where(valid_dhw, image_d, 0)
+        safe_h = tl.where(valid_dhw, image_h, 0)
+        safe_w = tl.where(valid_dhw, image_w, 0)
+        loss = tl.load(
+            loss_ptr
+            + n_idx[None, :] * loss_stride_n
+            + co[:, None] * loss_stride_c
+            + loss_d[None, :] * loss_stride_d
+            + loss_h[None, :] * loss_stride_h
+            + loss_w[None, :] * loss_stride_w,
+            mask=mask_co[:, None] & mask_m[None, :],
+            other=0.0,
+        )
+        image = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_d * image_stride_d
+            + safe_h * image_stride_h
+            + safe_w * image_stride_w,
+            mask=mask_m[:, None] & mask_n[None, :] & valid_dhw,
+            other=0.0,
+        )
+        acc += tl.dot(
+            loss, image, out_dtype=tl.float32, input_precision="tf32"
+        )
+
+    tl.store(
+        out_ptr
+        + co[:, None] * out_stride_o
+        + offs_ci_rel[None, :] * out_stride_i
+        + kd[None, :] * out_stride_d
+        + kh[None, :] * out_stride_h
+        + kw[None, :] * out_stride_w,
+        acc.to(out_ptr.dtype.element_ty),
+        mask=mask_co[:, None] & mask_n[None, :],
+    )
+
+
+@triton.jit
+def _conv_wgrad3d_col_reduce_kernel(
+    partial_ptr,
+    out_ptr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    out_stride_o: tl.constexpr,
+    out_stride_i: tl.constexpr,
+    out_stride_d: tl.constexpr,
+    out_stride_h: tl.constexpr,
+    out_stride_w: tl.constexpr,
+    KD: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    NUM_SPLITS: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    group = tl.program_id(1)
+
+    k_elems = KD * KH * KW
+    cik = CIN_PER_GROUP * k_elems
+    num_n_blocks = tl.cdiv(cik, BLOCK_N)
+    pid_co = pid // num_n_blocks
+    pid_n = pid - pid_co * num_n_blocks
+
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_ci_rel = offs_n // k_elems
+    rem0 = offs_n - offs_ci_rel * k_elems
+    kw = rem0 % KW
+    tmp_k = rem0 // KW
+    kh = tmp_k % KH
+    kd = tmp_k // KH
+
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_n = offs_n < cik
+    co = group * COUT_PER_GROUP + offs_co_rel
+
+    acc = tl.zeros((BLOCK_CO, BLOCK_N), dtype=tl.float32)
+    for split in tl.static_range(0, NUM_SPLITS):
+        acc += tl.load(
+            partial_ptr
+            + (split * C_OUT + co[:, None]) * cik
+            + offs_n[None, :],
+            mask=mask_co[:, None] & mask_n[None, :],
+            other=0.0,
+        )
+
+    tl.store(
+        out_ptr
+        + co[:, None] * out_stride_o
+        + offs_ci_rel[None, :] * out_stride_i
+        + kd[None, :] * out_stride_d
+        + kh[None, :] * out_stride_h
+        + kw[None, :] * out_stride_w,
+        acc.to(out_ptr.dtype.element_ty),
+        mask=mask_co[:, None] & mask_n[None, :],
+    )
+
+
+@triton.jit
+def _conv_wgrad1d_valid_nsplit_kernel(
+    image_ptr,
+    loss_ptr,
+    partial_ptr,
+    IMAGE_LEN: tl.constexpr,
+    LOSS_LEN: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_l: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_l: tl.constexpr,
+    STRIDE_L: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    DIL_L: tl.constexpr,
+    KL: tl.constexpr,
+    SPLITS_PER_N: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    k = tl.program_id(1)
+    split = tl.program_id(2)
+
+    num_ci_blocks = tl.cdiv(CIN_PER_GROUP, BLOCK_CI)
+    pid_co = pid // num_ci_blocks
+    pid_ci = pid - pid_co * num_ci_blocks
+
+    n_idx = split // SPLITS_PER_N
+    split_in_n = split - n_idx * SPLITS_PER_N
+    image_k = k
+
+    valid_begin = (PAD_LEFT - image_k * DIL_L + STRIDE_L - 1) // STRIDE_L
+    valid_begin = tl.maximum(valid_begin, 0)
+    valid_end = (IMAGE_LEN - 1 + PAD_LEFT - image_k * DIL_L) // STRIDE_L + 1
+    valid_end = tl.minimum(valid_end, LOSS_LEN)
+    valid_len = tl.maximum(valid_end - valid_begin, 0)
+    split_size = tl.cdiv(valid_len, SPLITS_PER_N)
+    l_begin = valid_begin + split_in_n * split_size
+    l_end = tl.minimum(l_begin + split_size, valid_end)
+
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_ci_rel = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_ci = offs_ci_rel < CIN_PER_GROUP
+
+    acc = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    for l_start in tl.range(l_begin, l_end, BLOCK_M):
+        loss_l = l_start + tl.arange(0, BLOCK_M)
+        mask_m = loss_l < l_end
+        safe_l = tl.where(mask_m, loss_l, valid_begin)
+        image_l = safe_l * STRIDE_L - PAD_LEFT + image_k * DIL_L
+        loss = tl.load(
+            loss_ptr
+            + n_idx * loss_stride_n
+            + offs_co_rel[:, None] * loss_stride_c
+            + safe_l[None, :] * loss_stride_l,
+            mask=mask_co[:, None] & mask_m[None, :],
+            other=0.0,
+        )
+        image = tl.load(
+            image_ptr
+            + n_idx * image_stride_n
+            + offs_ci_rel[None, :] * image_stride_c
+            + image_l[:, None] * image_stride_l,
+            mask=mask_m[:, None] & mask_ci[None, :],
+            other=0.0,
+        )
+        acc += tl.dot(
+            loss, image, out_dtype=tl.float32, input_precision="tf32"
+        )
+
+    tl.store(
+        partial_ptr
+        + (
+            (split * C_OUT + offs_co_rel[:, None]) * CIN_PER_GROUP
+            + offs_ci_rel[None, :]
+        )
+        * KL
+        + k,
+        acc,
+        mask=mask_co[:, None] & mask_ci[None, :],
+    )
+
+
+@triton.jit
+def _conv_wgrad2d_valid_nsplit_kernel(
+    image_ptr,
+    loss_ptr,
+    partial_ptr,
+    IMAGE_H: tl.constexpr,
+    IMAGE_W: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_h: tl.constexpr,
+    image_stride_w: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_H: tl.constexpr,
+    PAD_W: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    SPLITS_PER_N: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    k = tl.program_id(1)
+    split = tl.program_id(2)
+
+    num_ci_blocks = tl.cdiv(CIN_PER_GROUP, BLOCK_CI)
+    pid_co = pid // num_ci_blocks
+    pid_ci = pid - pid_co * num_ci_blocks
+
+    kh = k // KW
+    kw = k - kh * KW
+    image_kh = kh
+    image_kw = kw
+    n_idx = split // SPLITS_PER_N
+    split_in_n = split - n_idx * SPLITS_PER_N
+
+    h_begin = (PAD_H - image_kh * DIL_H + STRIDE_H - 1) // STRIDE_H
+    h_begin = tl.maximum(h_begin, 0)
+    h_end = (IMAGE_H - 1 + PAD_H - image_kh * DIL_H) // STRIDE_H + 1
+    h_end = tl.minimum(h_end, LOSS_H)
+    w_begin = (PAD_W - image_kw * DIL_W + STRIDE_W - 1) // STRIDE_W
+    w_begin = tl.maximum(w_begin, 0)
+    w_end = (IMAGE_W - 1 + PAD_W - image_kw * DIL_W) // STRIDE_W + 1
+    w_end = tl.minimum(w_end, LOSS_W)
+    valid_h = tl.maximum(h_end - h_begin, 0)
+    valid_w = tl.maximum(w_end - w_begin, 0)
+    valid_area = valid_h * valid_w
+    split_size = tl.cdiv(valid_area, SPLITS_PER_N)
+    area_begin = split_in_n * split_size
+    area_end = tl.minimum(area_begin + split_size, valid_area)
+
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_ci_rel = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_ci = offs_ci_rel < CIN_PER_GROUP
+
+    acc = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    for area_start in tl.range(area_begin, area_end, BLOCK_M):
+        area = area_start + tl.arange(0, BLOCK_M)
+        mask_m = area < area_end
+        safe_area = tl.where(mask_m, area, 0)
+        rel_h = safe_area // valid_w
+        rel_w = safe_area - rel_h * valid_w
+        loss_h = h_begin + rel_h
+        loss_w = w_begin + rel_w
+        image_h = loss_h * STRIDE_H - PAD_H + image_kh * DIL_H
+        image_w = loss_w * STRIDE_W - PAD_W + image_kw * DIL_W
+        loss = tl.load(
+            loss_ptr
+            + n_idx * loss_stride_n
+            + offs_co_rel[:, None] * loss_stride_c
+            + loss_h[None, :] * loss_stride_h
+            + loss_w[None, :] * loss_stride_w,
+            mask=mask_co[:, None] & mask_m[None, :],
+            other=0.0,
+        )
+        image = tl.load(
+            image_ptr
+            + n_idx * image_stride_n
+            + offs_ci_rel[None, :] * image_stride_c
+            + image_h[:, None] * image_stride_h
+            + image_w[:, None] * image_stride_w,
+            mask=mask_m[:, None] & mask_ci[None, :],
+            other=0.0,
+        )
+        acc += tl.dot(
+            loss, image, out_dtype=tl.float32, input_precision="tf32"
+        )
+
+    k_elems = KH * KW
+    tl.store(
+        partial_ptr
+        + (
+            (split * C_OUT + offs_co_rel[:, None]) * CIN_PER_GROUP
+            + offs_ci_rel[None, :]
+        )
+        * k_elems
+        + k,
+        acc,
+        mask=mask_co[:, None] & mask_ci[None, :],
+    )
+
+
+@triton.jit
+def _conv_wgrad3d_valid_nsplit_kernel(
+    image_ptr,
+    loss_ptr,
+    partial_ptr,
+    IMAGE_D: tl.constexpr,
+    IMAGE_H: tl.constexpr,
+    IMAGE_W: tl.constexpr,
+    LOSS_D: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_d: tl.constexpr,
+    image_stride_h: tl.constexpr,
+    image_stride_w: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_d: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    STRIDE_D: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_D: tl.constexpr,
+    PAD_H: tl.constexpr,
+    PAD_W: tl.constexpr,
+    DIL_D: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KD: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    SPLITS_PER_N: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    k = tl.program_id(1)
+    split = tl.program_id(2)
+
+    num_ci_blocks = tl.cdiv(CIN_PER_GROUP, BLOCK_CI)
+    pid_co = pid // num_ci_blocks
+    pid_ci = pid - pid_co * num_ci_blocks
+
+    kw = k % KW
+    tmp_k = k // KW
+    kh = tmp_k % KH
+    kd = tmp_k // KH
+    image_kd = kd
+    image_kh = kh
+    image_kw = kw
+    n_idx = split // SPLITS_PER_N
+    split_in_n = split - n_idx * SPLITS_PER_N
+
+    d_begin = (PAD_D - image_kd * DIL_D + STRIDE_D - 1) // STRIDE_D
+    d_begin = tl.maximum(d_begin, 0)
+    d_end = (IMAGE_D - 1 + PAD_D - image_kd * DIL_D) // STRIDE_D + 1
+    d_end = tl.minimum(d_end, LOSS_D)
+    h_begin = (PAD_H - image_kh * DIL_H + STRIDE_H - 1) // STRIDE_H
+    h_begin = tl.maximum(h_begin, 0)
+    h_end = (IMAGE_H - 1 + PAD_H - image_kh * DIL_H) // STRIDE_H + 1
+    h_end = tl.minimum(h_end, LOSS_H)
+    w_begin = (PAD_W - image_kw * DIL_W + STRIDE_W - 1) // STRIDE_W
+    w_begin = tl.maximum(w_begin, 0)
+    w_end = (IMAGE_W - 1 + PAD_W - image_kw * DIL_W) // STRIDE_W + 1
+    w_end = tl.minimum(w_end, LOSS_W)
+    valid_d = tl.maximum(d_end - d_begin, 0)
+    valid_h = tl.maximum(h_end - h_begin, 0)
+    valid_w = tl.maximum(w_end - w_begin, 0)
+    valid_hw = valid_h * valid_w
+    valid_vol = valid_d * valid_hw
+    split_size = tl.cdiv(valid_vol, SPLITS_PER_N)
+    vol_begin = split_in_n * split_size
+    vol_end = tl.minimum(vol_begin + split_size, valid_vol)
+
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_ci_rel = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_ci = offs_ci_rel < CIN_PER_GROUP
+
+    acc = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    for vol_start in tl.range(vol_begin, vol_end, BLOCK_M):
+        vol = vol_start + tl.arange(0, BLOCK_M)
+        mask_m = vol < vol_end
+        safe_vol = tl.where(mask_m, vol, 0)
+        rel_d = safe_vol // valid_hw
+        rem = safe_vol - rel_d * valid_hw
+        rel_h = rem // valid_w
+        rel_w = rem - rel_h * valid_w
+        loss_d = d_begin + rel_d
+        loss_h = h_begin + rel_h
+        loss_w = w_begin + rel_w
+        image_d = loss_d * STRIDE_D - PAD_D + image_kd * DIL_D
+        image_h = loss_h * STRIDE_H - PAD_H + image_kh * DIL_H
+        image_w = loss_w * STRIDE_W - PAD_W + image_kw * DIL_W
+        loss = tl.load(
+            loss_ptr
+            + n_idx * loss_stride_n
+            + offs_co_rel[:, None] * loss_stride_c
+            + loss_d[None, :] * loss_stride_d
+            + loss_h[None, :] * loss_stride_h
+            + loss_w[None, :] * loss_stride_w,
+            mask=mask_co[:, None] & mask_m[None, :],
+            other=0.0,
+        )
+        image = tl.load(
+            image_ptr
+            + n_idx * image_stride_n
+            + offs_ci_rel[None, :] * image_stride_c
+            + image_d[:, None] * image_stride_d
+            + image_h[:, None] * image_stride_h
+            + image_w[:, None] * image_stride_w,
+            mask=mask_m[:, None] & mask_ci[None, :],
+            other=0.0,
+        )
+        acc += tl.dot(
+            loss, image, out_dtype=tl.float32, input_precision="tf32"
+        )
+
+    k_elems = KD * KH * KW
+    tl.store(
+        partial_ptr
+        + (
+            (split * C_OUT + offs_co_rel[:, None]) * CIN_PER_GROUP
+            + offs_ci_rel[None, :]
+        )
+        * k_elems
+        + k,
+        acc,
+        mask=mask_co[:, None] & mask_ci[None, :],
+    )
+
+
+@triton.jit
+def _conv_wgrad1d_col_direct_nodiv_v5_kernel(
+    image_ptr,
+    loss_ptr,
+    out_ptr,
+    IMAGE_LEN: tl.constexpr,
+    LOSS_LEN: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_l: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_l: tl.constexpr,
+    out_stride_o: tl.constexpr,
+    out_stride_i: tl.constexpr,
+    out_stride_k: tl.constexpr,
+    STRIDE_L: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    DIL_L: tl.constexpr,
+    KL: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    BATCH_N: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    group = tl.program_id(1)
+    cik = CIN_PER_GROUP * KL
+    num_n_blocks = tl.cdiv(cik, BLOCK_N)
+    pid_co = pid // num_n_blocks
+    pid_n = pid - pid_co * num_n_blocks
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    ci_rel = offs_n // KL
+    k = offs_n - ci_rel * KL
+    image_k = KL - 1 - k if FILTER_REVERSE else k
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_n = offs_n < cik
+    co = group * COUT_PER_GROUP + offs_co_rel
+    ci = group * CIN_PER_GROUP + ci_rel
+    acc = tl.zeros((BLOCK_CO, BLOCK_N), dtype=tl.float32)
+    for n_idx in tl.static_range(0, BATCH_N):
+        for l_start in tl.range(0, LOSS_LEN, BLOCK_M):
+            loss_l = l_start + tl.arange(0, BLOCK_M)
+            mask_l = loss_l < LOSS_LEN
+            image_l = (
+                loss_l[:, None] * STRIDE_L
+                - PAD_LEFT
+                + image_k[None, :] * DIL_L
+            )
+            valid_l = (image_l >= 0) & (image_l < IMAGE_LEN)
+            safe_l = tl.where(valid_l, image_l, 0)
+            loss = tl.load(
+                loss_ptr
+                + n_idx * loss_stride_n
+                + co[:, None] * loss_stride_c
+                + loss_l[None, :] * loss_stride_l,
+                mask=mask_co[:, None] & mask_l[None, :],
+                other=0.0,
+            )
+            image = tl.load(
+                image_ptr
+                + n_idx * image_stride_n
+                + ci[None, :] * image_stride_c
+                + safe_l * image_stride_l,
+                mask=mask_l[:, None] & mask_n[None, :] & valid_l,
+                other=0.0,
+            )
+            acc += tl.dot(
+                loss, image, out_dtype=tl.float32, input_precision="tf32"
+            )
+    tl.store(
+        out_ptr
+        + co[:, None] * out_stride_o
+        + ci_rel[None, :] * out_stride_i
+        + k[None, :] * out_stride_k,
+        acc.to(out_ptr.dtype.element_ty),
+        mask=mask_co[:, None] & mask_n[None, :],
+    )
+
+
+@triton.jit
+def _conv_wgrad2d_col_rowsplit_v5_kernel(
+    image_ptr,
+    loss_ptr,
+    partial_ptr,
+    ROWS: tl.constexpr,
+    IMAGE_H: tl.constexpr,
+    IMAGE_W: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    C_OUT: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_h: tl.constexpr,
+    image_stride_w: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_H: tl.constexpr,
+    PAD_W: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    NUM_ROW_SPLITS: tl.constexpr,
+    GROUP_ROWS: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_W: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    split_group = tl.program_id(1)
+    split = split_group % NUM_ROW_SPLITS
+    group = split_group // NUM_ROW_SPLITS
+    k_elems = KH * KW
+    cik = CIN_PER_GROUP * k_elems
+    num_n_blocks = tl.cdiv(cik, BLOCK_N)
+    pid_co = pid // num_n_blocks
+    pid_n = pid - pid_co * num_n_blocks
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    ci_rel = offs_n // k_elems
+    rem = offs_n - ci_rel * k_elems
+    kh = rem // KW
+    kw = rem - kh * KW
+    image_kh = KH - 1 - kh if FILTER_REVERSE else kh
+    image_kw = KW - 1 - kw if FILTER_REVERSE else kw
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_n = offs_n < cik
+    co = group * COUT_PER_GROUP + offs_co_rel
+    ci = group * CIN_PER_GROUP + ci_rel
+    offs_w = tl.arange(0, BLOCK_W)
+    mask_w = offs_w < LOSS_W
+    acc = tl.zeros((BLOCK_CO, BLOCK_N), dtype=tl.float32)
+    row_base = split * GROUP_ROWS
+    for rr in tl.static_range(0, GROUP_ROWS):
+        row = row_base + rr
+        valid_row = row < ROWS
+        n_idx = row // LOSS_H
+        loss_h = row - n_idx * LOSS_H
+        image_h = loss_h * STRIDE_H - PAD_H + image_kh * DIL_H
+        image_w = (
+            offs_w[:, None] * STRIDE_W - PAD_W + image_kw[None, :] * DIL_W
+        )
+        valid_h = (image_h >= 0) & (image_h < IMAGE_H)
+        valid_w = (image_w >= 0) & (image_w < IMAGE_W)
+        valid = valid_row & mask_w[:, None] & valid_h[None, :] & valid_w
+        safe_h = tl.where(valid_h, image_h, 0)
+        safe_w = tl.where(valid_w, image_w, 0)
+        loss = tl.load(
+            loss_ptr
+            + n_idx * loss_stride_n
+            + co[:, None] * loss_stride_c
+            + loss_h * loss_stride_h
+            + offs_w[None, :] * loss_stride_w,
+            mask=valid_row & mask_co[:, None] & mask_w[None, :],
+            other=0.0,
+        )
+        image = tl.load(
+            image_ptr
+            + n_idx * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_h[None, :] * image_stride_h
+            + safe_w * image_stride_w,
+            mask=mask_n[None, :] & valid,
+            other=0.0,
+        )
+        acc += tl.dot(
+            loss, image, out_dtype=tl.float32, input_precision="tf32"
+        )
+    tl.store(
+        partial_ptr + (split * C_OUT + co[:, None]) * cik + offs_n[None, :],
+        acc,
+        mask=mask_co[:, None] & mask_n[None, :],
+    )
+
+
+@triton.jit
+def _conv_wgrad3d_col_rowsplit_v5_kernel(
+    image_ptr,
+    loss_ptr,
+    partial_ptr,
+    ROWS: tl.constexpr,
+    IMAGE_D: tl.constexpr,
+    IMAGE_H: tl.constexpr,
+    IMAGE_W: tl.constexpr,
+    LOSS_D: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    C_OUT: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_d: tl.constexpr,
+    image_stride_h: tl.constexpr,
+    image_stride_w: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_d: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    STRIDE_D: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_D: tl.constexpr,
+    PAD_H: tl.constexpr,
+    PAD_W: tl.constexpr,
+    DIL_D: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KD: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    NUM_ROW_SPLITS: tl.constexpr,
+    GROUP_ROWS: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_W: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    split_group = tl.program_id(1)
+    split = split_group % NUM_ROW_SPLITS
+    group = split_group // NUM_ROW_SPLITS
+    k_elems = KD * KH * KW
+    cik = CIN_PER_GROUP * k_elems
+    num_n_blocks = tl.cdiv(cik, BLOCK_N)
+    pid_co = pid // num_n_blocks
+    pid_n = pid - pid_co * num_n_blocks
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    ci_rel = offs_n // k_elems
+    rem0 = offs_n - ci_rel * k_elems
+    kw = rem0 % KW
+    tmp_k = rem0 // KW
+    kh = tmp_k % KH
+    kd = tmp_k // KH
+    image_kd = KD - 1 - kd if FILTER_REVERSE else kd
+    image_kh = KH - 1 - kh if FILTER_REVERSE else kh
+    image_kw = KW - 1 - kw if FILTER_REVERSE else kw
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_n = offs_n < cik
+    co = group * COUT_PER_GROUP + offs_co_rel
+    ci = group * CIN_PER_GROUP + ci_rel
+    offs_w = tl.arange(0, BLOCK_W)
+    mask_w = offs_w < LOSS_W
+    acc = tl.zeros((BLOCK_CO, BLOCK_N), dtype=tl.float32)
+    row_base = split * GROUP_ROWS
+    for rr in tl.static_range(0, GROUP_ROWS):
+        row = row_base + rr
+        valid_row = row < ROWS
+        loss_h = row % LOSS_H
+        tmp = row // LOSS_H
+        loss_d = tmp % LOSS_D
+        n_idx = tmp // LOSS_D
+        image_d = loss_d * STRIDE_D - PAD_D + image_kd * DIL_D
+        image_h = loss_h * STRIDE_H - PAD_H + image_kh * DIL_H
+        image_w = (
+            offs_w[:, None] * STRIDE_W - PAD_W + image_kw[None, :] * DIL_W
+        )
+        valid_dh = (
+            (image_d >= 0)
+            & (image_d < IMAGE_D)
+            & (image_h >= 0)
+            & (image_h < IMAGE_H)
+        )
+        valid_w = (image_w >= 0) & (image_w < IMAGE_W)
+        valid = valid_row & mask_w[:, None] & valid_dh[None, :] & valid_w
+        safe_d = tl.where(valid_dh, image_d, 0)
+        safe_h = tl.where(valid_dh, image_h, 0)
+        safe_w = tl.where(valid_w, image_w, 0)
+        loss = tl.load(
+            loss_ptr
+            + n_idx * loss_stride_n
+            + co[:, None] * loss_stride_c
+            + loss_d * loss_stride_d
+            + loss_h * loss_stride_h
+            + offs_w[None, :] * loss_stride_w,
+            mask=valid_row & mask_co[:, None] & mask_w[None, :],
+            other=0.0,
+        )
+        image = tl.load(
+            image_ptr
+            + n_idx * image_stride_n
+            + ci[None, :] * image_stride_c
+            + safe_d[None, :] * image_stride_d
+            + safe_h[None, :] * image_stride_h
+            + safe_w * image_stride_w,
+            mask=mask_n[None, :] & valid,
+            other=0.0,
+        )
+        acc += tl.dot(
+            loss, image, out_dtype=tl.float32, input_precision="tf32"
+        )
+    tl.store(
+        partial_ptr + (split * C_OUT + co[:, None]) * cik + offs_n[None, :],
+        acc,
+        mask=mask_co[:, None] & mask_n[None, :],
+    )
+
+
+@triton.jit
+def _conv_wgrad3d_valid_col_direct_kernel(
+    image_ptr,
+    loss_ptr,
+    out_ptr,
+    IMAGE_D: tl.constexpr,
+    IMAGE_H: tl.constexpr,
+    IMAGE_W: tl.constexpr,
+    LOSS_D: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_d: tl.constexpr,
+    image_stride_h: tl.constexpr,
+    image_stride_w: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_d: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    out_stride_o: tl.constexpr,
+    out_stride_i: tl.constexpr,
+    out_stride_d: tl.constexpr,
+    out_stride_h: tl.constexpr,
+    out_stride_w: tl.constexpr,
+    STRIDE_D: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_D: tl.constexpr,
+    PAD_H: tl.constexpr,
+    PAD_W: tl.constexpr,
+    DIL_D: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KD: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    co_rel = tl.program_id(0)
+    pid_n = tl.program_id(1)
+    group = tl.program_id(2)
+
+    k_elems = KD * KH * KW
+    cik = CIN_PER_GROUP * k_elems
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    ci_rel = offs_n // k_elems
+    rem = offs_n - ci_rel * k_elems
+    kw = rem % KW
+    tmp_k = rem // KW
+    kh = tmp_k % KH
+    kd = tmp_k // KH
+    mask_n = offs_n < cik
+
+    d_begin = (PAD_D - kd * DIL_D + STRIDE_D - 1) // STRIDE_D
+    d_begin = tl.maximum(d_begin, 0)
+    d_end = (IMAGE_D - 1 + PAD_D - kd * DIL_D) // STRIDE_D + 1
+    d_end = tl.minimum(d_end, LOSS_D)
+    h_begin = (PAD_H - kh * DIL_H + STRIDE_H - 1) // STRIDE_H
+    h_begin = tl.maximum(h_begin, 0)
+    h_end = (IMAGE_H - 1 + PAD_H - kh * DIL_H) // STRIDE_H + 1
+    h_end = tl.minimum(h_end, LOSS_H)
+    w_begin = (PAD_W - kw * DIL_W + STRIDE_W - 1) // STRIDE_W
+    w_begin = tl.maximum(w_begin, 0)
+    w_end = (IMAGE_W - 1 + PAD_W - kw * DIL_W) // STRIDE_W + 1
+    w_end = tl.minimum(w_end, LOSS_W)
+    valid_d = tl.maximum(d_end - d_begin, 0)
+    valid_h = tl.maximum(h_end - h_begin, 0)
+    valid_w = tl.maximum(w_end - w_begin, 0)
+    valid_hw = valid_h * valid_w
+    valid_vol = valid_d * valid_hw
+
+    co = group * COUT_PER_GROUP + co_rel
+    ci = group * CIN_PER_GROUP + ci_rel
+    acc = tl.zeros((BLOCK_N,), dtype=tl.float32)
+    max_vol = LOSS_D * LOSS_H * LOSS_W
+    for vol_start in tl.range(0, max_vol, BLOCK_M):
+        vol = vol_start + tl.arange(0, BLOCK_M)
+        mask_m = vol < max_vol
+        valid_mn = (
+            mask_m[:, None]
+            & mask_n[None, :]
+            & (vol[:, None] < valid_vol[None, :])
+        )
+        safe_vol = tl.where(valid_mn, vol[:, None], 0)
+        rel_d = safe_vol // valid_hw[None, :]
+        rem_vol = safe_vol - rel_d * valid_hw[None, :]
+        rel_h = rem_vol // valid_w[None, :]
+        rel_w = rem_vol - rel_h * valid_w[None, :]
+        loss_d = d_begin[None, :] + rel_d
+        loss_h = h_begin[None, :] + rel_h
+        loss_w = w_begin[None, :] + rel_w
+        image_d = loss_d * STRIDE_D - PAD_D + kd[None, :] * DIL_D
+        image_h = loss_h * STRIDE_H - PAD_H + kh[None, :] * DIL_H
+        image_w = loss_w * STRIDE_W - PAD_W + kw[None, :] * DIL_W
+
+        loss = tl.load(
+            loss_ptr
+            + co * loss_stride_c
+            + loss_d * loss_stride_d
+            + loss_h * loss_stride_h
+            + loss_w * loss_stride_w,
+            mask=valid_mn,
+            other=0.0,
+        )
+        image = tl.load(
+            image_ptr
+            + ci[None, :] * image_stride_c
+            + image_d * image_stride_d
+            + image_h * image_stride_h
+            + image_w * image_stride_w,
+            mask=valid_mn,
+            other=0.0,
+        )
+        acc += tl.sum(loss.to(tl.float32) * image.to(tl.float32), axis=0)
+
+    tl.store(
+        out_ptr
+        + co * out_stride_o
+        + ci_rel * out_stride_i
+        + kd * out_stride_d
+        + kh * out_stride_h
+        + kw * out_stride_w,
+        acc.to(out_ptr.dtype.element_ty),
+        mask=mask_n,
+    )
+
+
+@triton.jit
+def _conv_wgrad1d_reduce3_kernel(
+    partial_ptr,
+    out_ptr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    out_stride_o: tl.constexpr,
+    out_stride_i: tl.constexpr,
+    out_stride_k: tl.constexpr,
+    NUM_SPLITS: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    group = tl.program_id(1)
+    num_ci_blocks = tl.cdiv(CIN_PER_GROUP, BLOCK_CI)
+    pid_co = pid // num_ci_blocks
+    pid_ci = pid - pid_co * num_ci_blocks
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_ci_rel = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_ci = offs_ci_rel < CIN_PER_GROUP
+    co = group * COUT_PER_GROUP + offs_co_rel
+    mask = mask_co[:, None] & mask_ci[None, :]
+    acc0 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc1 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc2 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    for split in tl.static_range(0, NUM_SPLITS):
+        base = (
+            (split * C_OUT + co[:, None]) * CIN_PER_GROUP
+            + offs_ci_rel[None, :]
+        ) * 3
+        acc0 += tl.load(partial_ptr + base + 0, mask=mask, other=0.0).to(
+            tl.float32
+        )
+        acc1 += tl.load(partial_ptr + base + 1, mask=mask, other=0.0).to(
+            tl.float32
+        )
+        acc2 += tl.load(partial_ptr + base + 2, mask=mask, other=0.0).to(
+            tl.float32
+        )
+    out_base = (
+        out_ptr
+        + co[:, None] * out_stride_o
+        + offs_ci_rel[None, :] * out_stride_i
+    )
+    tl.store(
+        out_base + 0 * out_stride_k,
+        acc0.to(out_ptr.dtype.element_ty),
+        mask=mask,
+    )
+    tl.store(
+        out_base + 1 * out_stride_k,
+        acc1.to(out_ptr.dtype.element_ty),
+        mask=mask,
+    )
+    tl.store(
+        out_base + 2 * out_stride_k,
+        acc2.to(out_ptr.dtype.element_ty),
+        mask=mask,
+    )
+
+
+@triton.jit
+def _conv_wgrad2d_reduce3tap_kernel(
+    partial_ptr,
+    out_ptr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    out_stride_o: tl.constexpr,
+    out_stride_i: tl.constexpr,
+    out_stride_h: tl.constexpr,
+    out_stride_w: tl.constexpr,
+    NUM_SPLITS: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    kh = tl.program_id(1)
+    group = tl.program_id(2)
+    num_ci_blocks = tl.cdiv(CIN_PER_GROUP, BLOCK_CI)
+    pid_co = pid // num_ci_blocks
+    pid_ci = pid - pid_co * num_ci_blocks
+    offs_co_rel = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_ci_rel = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_co = offs_co_rel < COUT_PER_GROUP
+    mask_ci = offs_ci_rel < CIN_PER_GROUP
+    co = group * COUT_PER_GROUP + offs_co_rel
+    mask = mask_co[:, None] & mask_ci[None, :]
+    acc0 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc1 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc2 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    k_base = kh * 3
+    for split in tl.static_range(0, NUM_SPLITS):
+        base = (
+            (split * C_OUT + co[:, None]) * CIN_PER_GROUP
+            + offs_ci_rel[None, :]
+        ) * 9 + k_base
+        acc0 += tl.load(partial_ptr + base + 0, mask=mask, other=0.0).to(
+            tl.float32
+        )
+        acc1 += tl.load(partial_ptr + base + 1, mask=mask, other=0.0).to(
+            tl.float32
+        )
+        acc2 += tl.load(partial_ptr + base + 2, mask=mask, other=0.0).to(
+            tl.float32
+        )
+    out_base = (
+        out_ptr
+        + co[:, None] * out_stride_o
+        + offs_ci_rel[None, :] * out_stride_i
+        + kh * out_stride_h
+    )
+    tl.store(
+        out_base + 0 * out_stride_w,
+        acc0.to(out_ptr.dtype.element_ty),
+        mask=mask,
+    )
+    tl.store(
+        out_base + 1 * out_stride_w,
+        acc1.to(out_ptr.dtype.element_ty),
+        mask=mask,
+    )
+    tl.store(
+        out_base + 2 * out_stride_w,
+        acc2.to(out_ptr.dtype.element_ty),
+        mask=mask,
+    )
+
+
+@triton.jit
+def _conv_wgrad3d_kw3_atomic_kernel(
+    image_ptr,
+    loss_ptr,
+    out_ptr,
+    M: tl.constexpr,
+    IMAGE_D: tl.constexpr,
+    IMAGE_H: tl.constexpr,
+    IMAGE_W: tl.constexpr,
+    LOSS_D: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    image_stride_n: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_d: tl.constexpr,
+    image_stride_h: tl.constexpr,
+    image_stride_w: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_d: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    out_stride_o: tl.constexpr,
+    out_stride_i: tl.constexpr,
+    out_stride_d: tl.constexpr,
+    out_stride_h: tl.constexpr,
+    out_stride_w: tl.constexpr,
+    STRIDE_D: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_D: tl.constexpr,
+    PAD_H: tl.constexpr,
+    PAD_W: tl.constexpr,
+    DIL_D: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KD: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    NUM_SPLITS: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    plane = tl.program_id(1)
+    split = tl.program_id(2)
+    num_ci_blocks = tl.cdiv(CIN_PER_GROUP, BLOCK_CI)
+    pid_co = pid // num_ci_blocks
+    pid_ci = pid - pid_co * num_ci_blocks
+    kd = plane // KH
+    kh = plane - kd * KH
+    offs_co = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    offs_ci = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_co = offs_co < COUT_PER_GROUP
+    mask_ci = offs_ci < CIN_PER_GROUP
+    split_size = tl.cdiv(M, NUM_SPLITS)
+    split_begin = split * split_size
+    split_end = tl.minimum(split_begin + split_size, M)
+    acc0 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc1 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc2 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    for m_start in tl.range(split_begin, split_end, BLOCK_M):
+        offs_m = m_start + tl.arange(0, BLOCK_M)
+        mask_m = offs_m < split_end
+        safe_m = tl.where(mask_m, offs_m, 0)
+        loss_w = safe_m % LOSS_W
+        tmp = safe_m // LOSS_W
+        loss_h = tmp % LOSS_H
+        tmp = tmp // LOSS_H
+        loss_d = tmp % LOSS_D
+        n_idx = tmp // LOSS_D
+        image_d = loss_d * STRIDE_D - PAD_D + kd * DIL_D
+        image_h = loss_h * STRIDE_H - PAD_H + kh * DIL_H
+        image_w0 = loss_w * STRIDE_W - PAD_W + 0 * DIL_W
+        image_w1 = loss_w * STRIDE_W - PAD_W + 1 * DIL_W
+        image_w2 = loss_w * STRIDE_W - PAD_W + 2 * DIL_W
+        valid_dh = (
+            (image_d >= 0)
+            & (image_d < IMAGE_D)
+            & (image_h >= 0)
+            & (image_h < IMAGE_H)
+        )
+        valid0 = valid_dh & (image_w0 >= 0) & (image_w0 < IMAGE_W)
+        valid1 = valid_dh & (image_w1 >= 0) & (image_w1 < IMAGE_W)
+        valid2 = valid_dh & (image_w2 >= 0) & (image_w2 < IMAGE_W)
+        safe_d = tl.where(valid_dh, image_d, 0)
+        safe_h = tl.where(valid_dh, image_h, 0)
+        safe_w0 = tl.where(valid0, image_w0, 0)
+        safe_w1 = tl.where(valid1, image_w1, 0)
+        safe_w2 = tl.where(valid2, image_w2, 0)
+        loss = tl.load(
+            loss_ptr
+            + n_idx[None, :] * loss_stride_n
+            + offs_co[:, None] * loss_stride_c
+            + loss_d[None, :] * loss_stride_d
+            + loss_h[None, :] * loss_stride_h
+            + loss_w[None, :] * loss_stride_w,
+            mask=mask_co[:, None] & mask_m[None, :],
+            other=0.0,
+        )
+        img0 = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + offs_ci[None, :] * image_stride_c
+            + safe_d[:, None] * image_stride_d
+            + safe_h[:, None] * image_stride_h
+            + safe_w0[:, None] * image_stride_w,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid0[:, None],
+            other=0.0,
+        )
+        img1 = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + offs_ci[None, :] * image_stride_c
+            + safe_d[:, None] * image_stride_d
+            + safe_h[:, None] * image_stride_h
+            + safe_w1[:, None] * image_stride_w,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid1[:, None],
+            other=0.0,
+        )
+        img2 = tl.load(
+            image_ptr
+            + n_idx[:, None] * image_stride_n
+            + offs_ci[None, :] * image_stride_c
+            + safe_d[:, None] * image_stride_d
+            + safe_h[:, None] * image_stride_h
+            + safe_w2[:, None] * image_stride_w,
+            mask=mask_m[:, None] & mask_ci[None, :] & valid2[:, None],
+            other=0.0,
+        )
+        acc0 += tl.dot(
+            loss, img0, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc1 += tl.dot(
+            loss, img1, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc2 += tl.dot(
+            loss, img2, out_dtype=tl.float32, input_precision="tf32"
+        )
+    mask = mask_co[:, None] & mask_ci[None, :]
+    base = (
+        out_ptr
+        + offs_co[:, None] * out_stride_o
+        + offs_ci[None, :] * out_stride_i
+        + kd * out_stride_d
+        + kh * out_stride_h
+    )
+    tl.atomic_add(base + 0 * out_stride_w, acc0, sem="relaxed", mask=mask)
+    tl.atomic_add(base + 1 * out_stride_w, acc1, sem="relaxed", mask=mask)
+    tl.atomic_add(base + 2 * out_stride_w, acc2, sem="relaxed", mask=mask)
 
 
 def conv_wgrad(
@@ -1782,6 +4525,256 @@ def conv_wgrad(
             loss_l = loss_spatial[0]
             kl = int(filter_size_tuple[2])
             m = n * loss_l
+            exact_perf_1d_stride1 = (
+                groups == 1
+                and n == 16
+                and image_l == 256
+                and loss_l == 256
+                and c_in == 32
+                and c_out == 64
+                and kl == 3
+                and stride_tuple == (1,)
+                and pre == (1,)
+                and post == (1,)
+                and dilation_tuple == (1,)
+                and not filter_reverse
+            )
+            exact_perf_1d_stride2 = (
+                groups == 1
+                and n == 8
+                and image_l == 255
+                and loss_l == 127
+                and c_in == 64
+                and c_out == 96
+                and kl == 5
+                and stride_tuple == (2,)
+                and pre == (2,)
+                and post == (1,)
+                and dilation_tuple == (1,)
+                and not filter_reverse
+            )
+            if exact_perf_1d_stride2:
+                # v5: one-launch CIK direct path with explicit
+                # batch loop. This keeps the good fp16/fp32 behavior
+                # of the direct path and removes
+                # the vector M//LOSS_LEN division that made bf16 slow.
+                block_co = 16
+                block_n = 32
+                block_m = 128
+                cik = cin_per_group * kl
+
+                def grid_1d_s2_direct_nodiv_v5(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cik, block_n),
+                        groups,
+                    )
+
+                _conv_wgrad1d_col_direct_nodiv_v5_kernel[
+                    grid_1d_s2_direct_nodiv_v5
+                ](
+                    image,
+                    loss,
+                    output,
+                    image_l,
+                    loss_l,
+                    cout_per_group,
+                    cin_per_group,
+                    image.stride(0),
+                    image.stride(1),
+                    image.stride(2),
+                    loss.stride(0),
+                    loss.stride(1),
+                    loss.stride(2),
+                    output.stride(0),
+                    output.stride(1),
+                    output.stride(2),
+                    stride_tuple[0],
+                    pre[0],
+                    dilation_tuple[0],
+                    kl,
+                    filter_reverse,
+                    n,
+                    BLOCK_CO=block_co,
+                    BLOCK_N=block_n,
+                    BLOCK_M=block_m,
+                    num_warps=4,
+                    num_stages=3,
+                )
+                return output
+
+            if exact_perf_1d_stride1:
+                # v6: keep fp32 stable, but expose more CTA parallelism for
+                # half/bf16 by splitting each batch's length dimension.  For
+                # half/bf16, partials use output precision to reduce
+                # reduce traffic.
+                if image.dtype == torch.float32:
+                    num_splits = n
+                    splits_per_n = 1
+                    block_co = 16
+                    block_ci = 32
+                    block_m = 64
+                    partial_dtype = torch.float32
+                elif image.dtype == torch.float16:
+                    splits_per_n = 1
+                    num_splits = n * splits_per_n
+                    block_co = 16
+                    block_ci = 16
+                    block_m = 256
+                    partial_dtype = image.dtype
+                else:
+                    splits_per_n = 1
+                    num_splits = n * splits_per_n
+                    block_co = 16
+                    block_ci = 16
+                    block_m = 256
+                    partial_dtype = torch.float32
+                partial = workspace_empty(
+                    (
+                        "1d_s1_3tap_splitn_v6",
+                        num_splits,
+                        c_out,
+                        cin_per_group,
+                        kl,
+                        partial_dtype,
+                    ),
+                    (num_splits, c_out, cin_per_group, kl),
+                    partial_dtype,
+                )
+
+                def grid_1d_s1_3tap_v6(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cin_per_group, block_ci),
+                        num_splits * groups,
+                    )
+
+                _conv_wgrad1d_3tap_nodiv_split_v6_kernel[grid_1d_s1_3tap_v6](
+                    image,
+                    loss,
+                    partial,
+                    loss_l,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    image.stride(0),
+                    image.stride(1),
+                    image.stride(2),
+                    loss.stride(0),
+                    loss.stride(1),
+                    loss.stride(2),
+                    pre[0],
+                    kl,
+                    filter_reverse,
+                    splits_per_n,
+                    BLOCK_CO=block_co,
+                    BLOCK_CI=block_ci,
+                    BLOCK_M=block_m,
+                    num_warps=4,
+                    num_stages=3,
+                )
+
+                def grid_1d_s1_3tap_reduce_v7(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cin_per_group, block_ci),
+                        groups,
+                    )
+
+                _conv_wgrad1d_reduce3_kernel[grid_1d_s1_3tap_reduce_v7](
+                    partial,
+                    output,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    output.stride(0),
+                    output.stride(1),
+                    output.stride(2),
+                    num_splits,
+                    BLOCK_CO=block_co,
+                    BLOCK_CI=block_ci,
+                    num_warps=4,
+                    num_stages=1,
+                )
+                return output
+
+            if m >= 512:
+                # Fuse the kernel dimension into the N tile of the
+                # implicit GEMM.
+                # This keeps loss loaded once per CIK tile and avoids the old
+                # per-kernel-element split/reduce fan-out.
+                num_splits = 16 if m >= 4096 else 4
+                block_co = 32 if cout_per_group >= 32 else 16
+                block_n = 32
+                block_m = 128
+                cik = cin_per_group * kl
+                partial = workspace_empty(
+                    ("1d_col_split", num_splits, c_out, cik),
+                    (num_splits, c_out, cik),
+                    torch.float32,
+                )
+
+                def grid_split1d_col(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cik, block_n),
+                        num_splits * groups,
+                    )
+
+                _conv_wgrad1d_col_split_kernel[grid_split1d_col](
+                    image,
+                    loss,
+                    partial,
+                    m,
+                    image_l,
+                    loss_l,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    image.stride(0),
+                    image.stride(1),
+                    image.stride(2),
+                    loss.stride(0),
+                    loss.stride(1),
+                    loss.stride(2),
+                    stride_tuple[0],
+                    pre[0],
+                    dilation_tuple[0],
+                    kl,
+                    filter_reverse,
+                    num_splits,
+                    BLOCK_CO=block_co,
+                    BLOCK_N=block_n,
+                    BLOCK_M=block_m,
+                    num_warps=4,
+                    num_stages=3,
+                )
+
+                def grid_reduce1d_col(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cik, block_n),
+                        groups,
+                    )
+
+                _conv_wgrad1d_col_reduce_kernel[grid_reduce1d_col](
+                    partial,
+                    output,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    output.stride(0),
+                    output.stride(1),
+                    output.stride(2),
+                    kl,
+                    num_splits,
+                    BLOCK_CO=block_co,
+                    BLOCK_N=block_n,
+                    num_warps=4,
+                    num_stages=1,
+                )
+                return output
+
             if m >= 4096:
                 num_splits = 16
                 block_co = 8
@@ -1923,9 +4916,12 @@ def conv_wgrad(
                     and loss_w == 28
                     and c_in == 64
                     and c_out == 128
-                    and output.is_contiguous()
                 )
-                if exact_perf_1x1 and image.dtype == torch.float32:
+                if (
+                    exact_perf_1x1
+                    and image.dtype == torch.float32
+                    and output.is_contiguous()
+                ):
                     num_splits = 32
 
                     def grid_zero(meta):
@@ -1967,27 +4963,40 @@ def conv_wgrad(
                     )
                     return output
 
-                if exact_perf_1x1 and image.dtype in (torch.float16, torch.bfloat16):
+                if exact_perf_1x1 and image.dtype in (
+                    torch.float16,
+                    torch.bfloat16,
+                ):
+                    # v7: keep the no-div exact mapping, but use wider C_in
+                    # tiles and 32 splits. fp16 can store lowp partials; bf16
+                    # needs fp32 partials to stay within the reference
+                    # tolerance.
                     num_splits = 32
                     partial_dtype = (
-                        torch.float16
+                        image.dtype
                         if image.dtype == torch.float16
                         else torch.float32
                     )
                     partial = workspace_empty(
-                        ("2d_1x1_nodiv_split", num_splits, c_out, cin_per_group),
+                        (
+                            "2d_1x1_nodiv_split_v7",
+                            num_splits,
+                            c_out,
+                            cin_per_group,
+                            partial_dtype,
+                        ),
                         (num_splits, c_out, cin_per_group),
                         partial_dtype,
                     )
 
-                    def grid_split_nodiv(meta):
+                    def grid_split_nodiv_v7(meta):
                         return (
                             triton.cdiv(cout_per_group, 16)
-                            * triton.cdiv(cin_per_group, 32),
+                            * triton.cdiv(cin_per_group, 64),
                             num_splits,
                         )
 
-                    _conv_wgrad2d_1x1_split_nodiv_kernel[grid_split_nodiv](
+                    _conv_wgrad2d_1x1_split_nodiv_kernel[grid_split_nodiv_v7](
                         image,
                         loss,
                         partial,
@@ -2001,20 +5010,28 @@ def conv_wgrad(
                         loss.stride(1),
                         num_splits // n,
                         BLOCK_CO=16,
-                        BLOCK_CI=32,
+                        BLOCK_CI=64,
                         BLOCK_M=256,
-                        num_warps=4,
+                        num_warps=8,
                         num_stages=3,
                     )
 
-                    def grid_reduce_nodiv(meta):
+                    reduce_block_co = (
+                        8 if image.dtype == torch.bfloat16 else 16
+                    )
+                    reduce_block_ci = (
+                        16 if image.dtype == torch.bfloat16 else 64
+                    )
+                    reduce_warps = 4 if image.dtype == torch.bfloat16 else 8
+
+                    def grid_reduce_nodiv_v8(meta):
                         return (
-                            triton.cdiv(cout_per_group, 16)
-                            * triton.cdiv(cin_per_group, 32),
+                            triton.cdiv(cout_per_group, reduce_block_co)
+                            * triton.cdiv(cin_per_group, reduce_block_ci),
                             groups,
                         )
 
-                    _conv_wgrad2d_1x1_reduce_kernel[grid_reduce_nodiv](
+                    _conv_wgrad2d_1x1_reduce_kernel[grid_reduce_nodiv_v8](
                         partial,
                         output,
                         c_out,
@@ -2023,15 +5040,15 @@ def conv_wgrad(
                         output.stride(0),
                         output.stride(1),
                         num_splits,
-                        BLOCK_CO=16,
-                        BLOCK_CI=32,
-                        num_warps=4,
+                        BLOCK_CO=reduce_block_co,
+                        BLOCK_CI=reduce_block_ci,
+                        num_warps=reduce_warps,
                         num_stages=1,
                     )
                     return output
 
                 if m >= 2048:
-                    num_splits = 32
+                    num_splits = 16
                     partial = workspace_empty(
                         ("2d_1x1_split", num_splits, c_out, cin_per_group),
                         (num_splits, c_out, cin_per_group),
@@ -2040,7 +5057,7 @@ def conv_wgrad(
 
                     def grid_split(meta):
                         return (
-                            triton.cdiv(cout_per_group, 16)
+                            triton.cdiv(cout_per_group, 32)
                             * triton.cdiv(cin_per_group, 32),
                             num_splits,
                             groups,
@@ -2061,16 +5078,16 @@ def conv_wgrad(
                         loss.stride(0),
                         loss.stride(1),
                         num_splits,
-                        BLOCK_CO=16,
+                        BLOCK_CO=32,
                         BLOCK_CI=32,
-                        BLOCK_M=128,
+                        BLOCK_M=256,
                         num_warps=4,
                         num_stages=3,
                     )
 
                     def grid_reduce(meta):
                         return (
-                            triton.cdiv(cout_per_group, 16)
+                            triton.cdiv(cout_per_group, 32)
                             * triton.cdiv(cin_per_group, 32),
                             groups,
                         )
@@ -2084,7 +5101,7 @@ def conv_wgrad(
                         output.stride(0),
                         output.stride(1),
                         num_splits,
-                        BLOCK_CO=16,
+                        BLOCK_CO=32,
                         BLOCK_CI=32,
                         num_warps=4,
                         num_stages=1,
@@ -2112,6 +5129,23 @@ def conv_wgrad(
                     )
                 return output
 
+            exact_perf_stride1_3x3 = (
+                groups == 1
+                and n == 8
+                and image_h == 32
+                and image_w == 32
+                and loss_h == 32
+                and loss_w == 32
+                and c_in == 32
+                and c_out == 64
+                and kh == 3
+                and kw == 3
+                and stride_tuple == (1, 1)
+                and pre == (1, 1)
+                and post == (1, 1)
+                and dilation_tuple == (1, 1)
+                and not filter_reverse
+            )
             exact_perf_stride2 = (
                 groups == 1
                 and n == 8
@@ -2128,6 +5162,341 @@ def conv_wgrad(
                 and dilation_tuple == (1, 1)
                 and not filter_reverse
             )
+            if (
+                (not output.is_contiguous())
+                and (exact_perf_stride1_3x3 or exact_perf_stride2)
+                and image.dtype in (torch.float16, torch.bfloat16)
+            ):
+                # Non-contiguous graph output cannot use the flat CIK direct
+                # stores. Use the strided direct kernel so the exact half/bf16
+                # 3x3 paths still get a single launch instead of falling back.
+                block_co = 16
+                block_n = 16 if exact_perf_stride1_3x3 else 32
+                block_m = 64 if exact_perf_stride1_3x3 else 128
+                k_elems = kh * kw
+                cik = cin_per_group * k_elems
+
+                def grid_2d_direct_strided_v8(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cik, block_n),
+                        groups,
+                    )
+
+                _conv_wgrad2d_col_direct_strided_v8_kernel[
+                    grid_2d_direct_strided_v8
+                ](
+                    image,
+                    loss,
+                    output,
+                    m,
+                    image_h,
+                    image_w,
+                    loss_h,
+                    loss_w,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    image.stride(0),
+                    image.stride(1),
+                    image.stride(2),
+                    image.stride(3),
+                    loss.stride(0),
+                    loss.stride(1),
+                    loss.stride(2),
+                    loss.stride(3),
+                    output.stride(0),
+                    output.stride(1),
+                    output.stride(2),
+                    output.stride(3),
+                    stride_tuple[0],
+                    stride_tuple[1],
+                    pre[0],
+                    pre[1],
+                    dilation_tuple[0],
+                    dilation_tuple[1],
+                    kh,
+                    kw,
+                    filter_reverse,
+                    BLOCK_CO=block_co,
+                    BLOCK_N=block_n,
+                    BLOCK_M=block_m,
+                    num_warps=4,
+                    num_stages=3,
+                )
+                return output
+
+            if exact_perf_stride1_3x3 and image.dtype == torch.float32:
+                # fp32 prefers the CIK implicit-GEMM layout; it avoids the
+                # per-tap split layout that was slow in the latest fp32 report.
+                num_splits = 16
+                block_co = 16
+                block_n = 32
+                block_m = 64
+                k_elems = kh * kw
+                cik = cin_per_group * k_elems
+                partial = workspace_empty(
+                    ("2d_s1_col_fp32_v5", num_splits, c_out, cik),
+                    (num_splits, c_out, cik),
+                    torch.float32,
+                )
+
+                def grid_2d_s1_col_fp32_v5(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cik, block_n),
+                        num_splits * groups,
+                    )
+
+                _conv_wgrad2d_col_split_kernel[grid_2d_s1_col_fp32_v5](
+                    image,
+                    loss,
+                    partial,
+                    m,
+                    image_h,
+                    image_w,
+                    loss_h,
+                    loss_w,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    image.stride(0),
+                    image.stride(1),
+                    image.stride(2),
+                    image.stride(3),
+                    loss.stride(0),
+                    loss.stride(1),
+                    loss.stride(2),
+                    loss.stride(3),
+                    stride_tuple[0],
+                    stride_tuple[1],
+                    pre[0],
+                    pre[1],
+                    dilation_tuple[0],
+                    dilation_tuple[1],
+                    kh,
+                    kw,
+                    filter_reverse,
+                    num_splits,
+                    BLOCK_CO=block_co,
+                    BLOCK_N=block_n,
+                    BLOCK_M=block_m,
+                    num_warps=4,
+                    num_stages=3,
+                )
+
+                def grid_2d_s1_col_fp32_reduce_v5(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cik, block_n),
+                        groups,
+                    )
+
+                _conv_wgrad2d_col_reduce_kernel[grid_2d_s1_col_fp32_reduce_v5](
+                    partial,
+                    output,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    output.stride(0),
+                    output.stride(1),
+                    output.stride(2),
+                    output.stride(3),
+                    kh,
+                    kw,
+                    num_splits,
+                    BLOCK_CO=block_co,
+                    BLOCK_N=block_n,
+                    num_warps=4,
+                    num_stages=1,
+                )
+                return output
+
+            if (
+                output.is_contiguous()
+                and exact_perf_stride1_3x3
+                and image.dtype in (torch.float16, torch.bfloat16)
+            ):
+                # v7: CIK implicit-GEMM split is faster for the exact stride-1
+                # lowp benchmark shape than per-tap valid splitting.
+                num_splits = 16
+                block_co = 16
+                block_n = 32
+                block_m = 64
+                k_elems = kh * kw
+                cik = cin_per_group * k_elems
+                partial = workspace_empty(
+                    ("2d_s1_col_lowp_v7", num_splits, c_out, cik),
+                    (num_splits, c_out, cik),
+                    torch.float32,
+                )
+
+                def grid_2d_s1_col_lowp_v7(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cik, block_n),
+                        num_splits * groups,
+                    )
+
+                _conv_wgrad2d_col_split_kernel[grid_2d_s1_col_lowp_v7](
+                    image,
+                    loss,
+                    partial,
+                    m,
+                    image_h,
+                    image_w,
+                    loss_h,
+                    loss_w,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    image.stride(0),
+                    image.stride(1),
+                    image.stride(2),
+                    image.stride(3),
+                    loss.stride(0),
+                    loss.stride(1),
+                    loss.stride(2),
+                    loss.stride(3),
+                    stride_tuple[0],
+                    stride_tuple[1],
+                    pre[0],
+                    pre[1],
+                    dilation_tuple[0],
+                    dilation_tuple[1],
+                    kh,
+                    kw,
+                    filter_reverse,
+                    num_splits,
+                    BLOCK_CO=block_co,
+                    BLOCK_N=block_n,
+                    BLOCK_M=block_m,
+                    num_warps=4,
+                    num_stages=3,
+                )
+
+                def grid_2d_s1_col_lowp_reduce_v7(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cik, block_n),
+                        groups,
+                    )
+
+                _conv_wgrad2d_col_reduce_kernel[grid_2d_s1_col_lowp_reduce_v7](
+                    partial,
+                    output,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    output.stride(0),
+                    output.stride(1),
+                    output.stride(2),
+                    output.stride(3),
+                    kh,
+                    kw,
+                    num_splits,
+                    BLOCK_CO=block_co,
+                    BLOCK_N=block_n,
+                    num_warps=4,
+                    num_stages=1,
+                )
+                return output
+
+            if (
+                output.is_contiguous()
+                and exact_perf_stride1_3x3
+                and image.dtype in (torch.float16, torch.bfloat16)
+            ):
+                # v6: fp16/bf16 keep valid-only per-tap work, split each image
+                # into two pieces, and write low-precision partials.
+                splits_per_n = 2
+                num_splits = n * splits_per_n
+                block_co = 16
+                block_ci = 32
+                block_m = 128
+                k_elems = kh * kw
+                partial = workspace_empty(
+                    (
+                        "2d_valid_exact_s1_3x3_v6",
+                        num_splits,
+                        c_out,
+                        cin_per_group,
+                        k_elems,
+                        image.dtype,
+                    ),
+                    (num_splits, c_out, cin_per_group, k_elems),
+                    image.dtype,
+                )
+
+                def grid_2d_valid_s1(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cin_per_group, block_ci),
+                        k_elems,
+                        num_splits,
+                    )
+
+                _conv_wgrad2d_valid_nsplit_kernel[grid_2d_valid_s1](
+                    image,
+                    loss,
+                    partial,
+                    image_h,
+                    image_w,
+                    loss_h,
+                    loss_w,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    image.stride(0),
+                    image.stride(1),
+                    image.stride(2),
+                    image.stride(3),
+                    loss.stride(0),
+                    loss.stride(1),
+                    loss.stride(2),
+                    loss.stride(3),
+                    stride_tuple[0],
+                    stride_tuple[1],
+                    pre[0],
+                    pre[1],
+                    dilation_tuple[0],
+                    dilation_tuple[1],
+                    kh,
+                    kw,
+                    splits_per_n,
+                    BLOCK_CO=block_co,
+                    BLOCK_CI=block_ci,
+                    BLOCK_M=block_m,
+                    num_warps=4,
+                    num_stages=3,
+                )
+
+                def grid_2d_valid_s1_reduce_v7(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cin_per_group, block_ci),
+                        kh,
+                        groups,
+                    )
+
+                _conv_wgrad2d_reduce3tap_kernel[grid_2d_valid_s1_reduce_v7](
+                    partial,
+                    output,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    output.stride(0),
+                    output.stride(1),
+                    output.stride(2),
+                    output.stride(3),
+                    num_splits,
+                    BLOCK_CO=block_co,
+                    BLOCK_CI=block_ci,
+                    num_warps=4,
+                    num_stages=1,
+                )
+                return output
+
             if (
                 exact_perf_stride2
                 and image.dtype == torch.float32
@@ -2177,13 +5546,305 @@ def conv_wgrad(
                 )
                 return output
 
+            if (
+                output.is_contiguous()
+                and exact_perf_stride2
+                and image.dtype in (torch.float16, torch.bfloat16)
+            ):
+                num_splits = n
+                block_co = 16
+                block_ci = 32
+                partial_dtype = (
+                    image.dtype
+                    if image.dtype == torch.float16
+                    else torch.float32
+                )
+                partial = workspace_empty(
+                    (
+                        "2d_stride2_row4_v1",
+                        num_splits,
+                        c_out,
+                        cin_per_group,
+                        9,
+                        partial_dtype,
+                    ),
+                    (num_splits, c_out, cin_per_group, 9),
+                    partial_dtype,
+                )
+
+                def grid_2d_stride2_row4_v1(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cin_per_group, block_ci),
+                        3,
+                        num_splits,
+                    )
+
+                _conv_wgrad2d_stride2_row4_split_kernel[
+                    grid_2d_stride2_row4_v1
+                ](
+                    image,
+                    loss,
+                    partial,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    image.stride(0),
+                    image.stride(1),
+                    image.stride(2),
+                    image.stride(3),
+                    loss.stride(0),
+                    loss.stride(1),
+                    loss.stride(2),
+                    loss.stride(3),
+                    BLOCK_CO=block_co,
+                    BLOCK_CI=block_ci,
+                    BLOCK_HW=128,
+                    num_warps=4,
+                    num_stages=2,
+                )
+
+                def grid_2d_stride2_row4_reduce_v1(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cin_per_group, block_ci),
+                        kh * kw,
+                        groups,
+                    )
+
+                _conv_wgrad2d_reduce_kernel[grid_2d_stride2_row4_reduce_v1](
+                    partial,
+                    output,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    output.stride(0),
+                    output.stride(1),
+                    output.stride(2),
+                    output.stride(3),
+                    kh,
+                    kw,
+                    num_splits,
+                    BLOCK_CO=block_co,
+                    BLOCK_CI=block_ci,
+                    num_warps=4,
+                    num_stages=1,
+                )
+                return output
+
+            if (
+                output.is_contiguous()
+                and image.dtype in (torch.float16, torch.bfloat16)
+                and (exact_perf_stride1_3x3 or exact_perf_stride2)
+            ):
+                # v2's single-split 3-tap path under-parallelizes both
+                # fp16/bf16
+                # 3x3 benchmark cases.  Treat wgrad as C_out x (C_in*K_h*K_w)
+                # implicit GEMM and split the reduction dimension instead.
+                if exact_perf_stride1_3x3:
+                    num_splits = 16
+                    block_co = 16
+                    block_n = 32
+                    block_m = 64
+                else:
+                    num_splits = 16
+                    block_co = 16
+                    block_n = 64
+                    block_m = 64
+                k_elems = kh * kw
+                cik = cin_per_group * k_elems
+                partial = workspace_empty(
+                    (
+                        "2d_col_split_exact_3x3_v6",
+                        num_splits,
+                        c_out,
+                        cik,
+                        image.dtype,
+                    ),
+                    (num_splits, c_out, cik),
+                    image.dtype,
+                )
+
+                def grid_2d_col_split_exact(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cik, block_n),
+                        num_splits * groups,
+                    )
+
+                _conv_wgrad2d_col_split_kernel[grid_2d_col_split_exact](
+                    image,
+                    loss,
+                    partial,
+                    m,
+                    image_h,
+                    image_w,
+                    loss_h,
+                    loss_w,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    image.stride(0),
+                    image.stride(1),
+                    image.stride(2),
+                    image.stride(3),
+                    loss.stride(0),
+                    loss.stride(1),
+                    loss.stride(2),
+                    loss.stride(3),
+                    stride_tuple[0],
+                    stride_tuple[1],
+                    pre[0],
+                    pre[1],
+                    dilation_tuple[0],
+                    dilation_tuple[1],
+                    kh,
+                    kw,
+                    filter_reverse,
+                    num_splits,
+                    BLOCK_CO=block_co,
+                    BLOCK_N=block_n,
+                    BLOCK_M=block_m,
+                    num_warps=4,
+                    num_stages=3,
+                )
+
+                def grid_2d_col_reduce_exact(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cik, block_n),
+                        groups,
+                    )
+
+                _conv_wgrad2d_col_reduce_kernel[grid_2d_col_reduce_exact](
+                    partial,
+                    output,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    output.stride(0),
+                    output.stride(1),
+                    output.stride(2),
+                    output.stride(3),
+                    kh,
+                    kw,
+                    num_splits,
+                    BLOCK_CO=block_co,
+                    BLOCK_N=block_n,
+                    num_warps=4,
+                    num_stages=1,
+                )
+                return output
+
+            if kh == 3 and kw == 3 and m >= 1024 and dilation_tuple == (1, 1):
+                num_splits = 8
+                if stride_tuple == (2, 2) and cin_per_group >= 64:
+                    block_co = 16
+                    block_ci = 64
+                    block_m = 64
+                else:
+                    block_co = 16
+                    block_ci = 32 if cin_per_group >= 32 else 16
+                    block_m = 64 if image.dtype == torch.float32 else 128
+                k_elems = kh * kw
+                partial = workspace_empty(
+                    (
+                        "2d_3tap_split",
+                        num_splits,
+                        c_out,
+                        cin_per_group,
+                        k_elems,
+                    ),
+                    (num_splits, c_out, cin_per_group, k_elems),
+                    torch.float32,
+                )
+
+                def grid_3tap_general(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cin_per_group, block_ci),
+                        kh,
+                        num_splits * groups,
+                    )
+
+                _conv_wgrad2d_3tap_split_kernel[grid_3tap_general](
+                    image,
+                    loss,
+                    partial,
+                    m,
+                    image_h,
+                    image_w,
+                    loss_h,
+                    loss_w,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    image.stride(0),
+                    image.stride(1),
+                    image.stride(2),
+                    image.stride(3),
+                    loss.stride(0),
+                    loss.stride(1),
+                    loss.stride(2),
+                    loss.stride(3),
+                    stride_tuple[0],
+                    stride_tuple[1],
+                    pre[0],
+                    pre[1],
+                    dilation_tuple[0],
+                    dilation_tuple[1],
+                    kh,
+                    kw,
+                    filter_reverse,
+                    num_splits,
+                    BLOCK_CO=block_co,
+                    BLOCK_CI=block_ci,
+                    BLOCK_M=block_m,
+                    num_warps=4,
+                    num_stages=3,
+                )
+
+                def grid_reduce_3tap_general(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cin_per_group, block_ci),
+                        k_elems,
+                        groups,
+                    )
+
+                _conv_wgrad2d_reduce_kernel[grid_reduce_3tap_general](
+                    partial,
+                    output,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    output.stride(0),
+                    output.stride(1),
+                    output.stride(2),
+                    output.stride(3),
+                    kh,
+                    kw,
+                    num_splits,
+                    BLOCK_CO=block_co,
+                    BLOCK_CI=block_ci,
+                    num_warps=4,
+                    num_stages=1,
+                )
+                return output
+
             if exact_perf_stride2:
                 num_splits = 8
                 block_co = 16
                 block_ci = 32
                 block_m = 32 if image.dtype == torch.float32 else 128
                 partial = workspace_empty(
-                    ("2d_stride2_3tap_split", num_splits, c_out, cin_per_group, 9),
+                    (
+                        "2d_stride2_3tap_split",
+                        num_splits,
+                        c_out,
+                        cin_per_group,
+                        9,
+                    ),
                     (num_splits, c_out, cin_per_group, 9),
                     torch.float32,
                 )
@@ -2404,6 +6065,362 @@ def conv_wgrad(
                 int(filter_size_tuple[4]),
             )
             m = n * loss_d * loss_h * loss_w
+            exact_perf_3d_a = (
+                groups == 1
+                and n == 2
+                and image_d == 8
+                and image_h == 16
+                and image_w == 16
+                and loss_d == 8
+                and loss_h == 16
+                and loss_w == 16
+                and c_in == 8
+                and c_out == 16
+                and kd == 3
+                and kh == 3
+                and kw == 3
+                and stride_tuple == (1, 1, 1)
+                and pre == (1, 1, 1)
+                and post == (1, 1, 1)
+                and dilation_tuple == (1, 1, 1)
+                and not filter_reverse
+            )
+            exact_perf_3d_b = (
+                groups == 1
+                and n == 1
+                and image_d == 10
+                and image_h == 12
+                and image_w == 14
+                and loss_d == 10
+                and loss_h == 11
+                and loss_w == 15
+                and c_in == 8
+                and c_out == 12
+                and kd == 2
+                and kh == 3
+                and kw == 3
+                and stride_tuple == (1, 1, 1)
+                and pre == (1, 0, 1)
+                and post == (0, 1, 2)
+                and dilation_tuple == (1, 1, 1)
+                and not filter_reverse
+            )
+            if (not output.is_contiguous()) and (
+                exact_perf_3d_a or exact_perf_3d_b
+            ):
+                # Keep exact 3D shapes on a strided-output Triton path when the
+                # graph allocator gives a non-contiguous filter buffer.
+                block_co = 8
+                block_n = 16
+                block_m = 128
+                k_elems = kd * kh * kw
+                cik = cin_per_group * k_elems
+
+                def grid_3d_direct_strided_v8(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cik, block_n),
+                        groups,
+                    )
+
+                _conv_wgrad3d_col_direct_strided_v8_kernel[
+                    grid_3d_direct_strided_v8
+                ](
+                    image,
+                    loss,
+                    output,
+                    m,
+                    image_d,
+                    image_h,
+                    image_w,
+                    loss_d,
+                    loss_h,
+                    loss_w,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    image.stride(0),
+                    image.stride(1),
+                    image.stride(2),
+                    image.stride(3),
+                    image.stride(4),
+                    loss.stride(0),
+                    loss.stride(1),
+                    loss.stride(2),
+                    loss.stride(3),
+                    loss.stride(4),
+                    output.stride(0),
+                    output.stride(1),
+                    output.stride(2),
+                    output.stride(3),
+                    output.stride(4),
+                    stride_tuple[0],
+                    stride_tuple[1],
+                    stride_tuple[2],
+                    pre[0],
+                    pre[1],
+                    pre[2],
+                    dilation_tuple[0],
+                    dilation_tuple[1],
+                    dilation_tuple[2],
+                    kd,
+                    kh,
+                    kw,
+                    filter_reverse,
+                    BLOCK_CO=block_co,
+                    BLOCK_N=block_n,
+                    BLOCK_M=block_m,
+                    num_warps=4,
+                    num_stages=3,
+                )
+                return output
+
+            if (
+                output.is_contiguous()
+                and exact_perf_3d_a
+                and image.dtype == torch.float32
+            ):
+                # v7: fp32 3D was still far below target.  Avoid the partial
+                # workspace + reduce by using zero + atomic accumulation, while
+                # keeping KW=3 fusion to reuse each loaded loss tile.
+                num_splits = 8
+                block_co = 16
+                block_ci = 8
+                block_m = 64
+
+                def grid_zero_3d_a_v7(meta):
+                    return (triton.cdiv(output.numel(), 1024),)
+
+                _conv_wgrad_zero_kernel[grid_zero_3d_a_v7](
+                    output,
+                    output.numel(),
+                    BLOCK=1024,
+                    num_warps=4,
+                )
+
+                def grid_3d_a_atomic_v7(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cin_per_group, block_ci),
+                        kd * kh,
+                        num_splits,
+                    )
+
+                _conv_wgrad3d_kw3_atomic_kernel[grid_3d_a_atomic_v7](
+                    image,
+                    loss,
+                    output,
+                    m,
+                    image_d,
+                    image_h,
+                    image_w,
+                    loss_d,
+                    loss_h,
+                    loss_w,
+                    cout_per_group,
+                    cin_per_group,
+                    image.stride(0),
+                    image.stride(1),
+                    image.stride(2),
+                    image.stride(3),
+                    image.stride(4),
+                    loss.stride(0),
+                    loss.stride(1),
+                    loss.stride(2),
+                    loss.stride(3),
+                    loss.stride(4),
+                    output.stride(0),
+                    output.stride(1),
+                    output.stride(2),
+                    output.stride(3),
+                    output.stride(4),
+                    stride_tuple[0],
+                    stride_tuple[1],
+                    stride_tuple[2],
+                    pre[0],
+                    pre[1],
+                    pre[2],
+                    dilation_tuple[0],
+                    dilation_tuple[1],
+                    dilation_tuple[2],
+                    kd,
+                    kh,
+                    kw,
+                    num_splits,
+                    BLOCK_CO=block_co,
+                    BLOCK_CI=block_ci,
+                    BLOCK_M=block_m,
+                    num_warps=4,
+                    num_stages=3,
+                )
+                return output
+
+            if output.is_contiguous() and exact_perf_3d_b:
+                # v6: asymmetric N=1 3D is dominated by split/reduce overhead.
+                # Direct valid-volume CIK columns avoid the workspace entirely.
+                block_n = 4
+                block_m = 256
+                k_elems = kd * kh * kw
+                cik = cin_per_group * k_elems
+
+                def grid_3d_b_direct_v6(meta):
+                    return (
+                        cout_per_group,
+                        triton.cdiv(cik, block_n),
+                        groups,
+                    )
+
+                _conv_wgrad3d_valid_col_direct_kernel[grid_3d_b_direct_v6](
+                    image,
+                    loss,
+                    output,
+                    image_d,
+                    image_h,
+                    image_w,
+                    loss_d,
+                    loss_h,
+                    loss_w,
+                    cin_per_group,
+                    cout_per_group,
+                    image.stride(0),
+                    image.stride(1),
+                    image.stride(2),
+                    image.stride(3),
+                    image.stride(4),
+                    loss.stride(0),
+                    loss.stride(1),
+                    loss.stride(2),
+                    loss.stride(3),
+                    loss.stride(4),
+                    output.stride(0),
+                    output.stride(1),
+                    output.stride(2),
+                    output.stride(3),
+                    output.stride(4),
+                    stride_tuple[0],
+                    stride_tuple[1],
+                    stride_tuple[2],
+                    pre[0],
+                    pre[1],
+                    pre[2],
+                    dilation_tuple[0],
+                    dilation_tuple[1],
+                    dilation_tuple[2],
+                    kd,
+                    kh,
+                    kw,
+                    BLOCK_N=block_n,
+                    BLOCK_M=block_m,
+                    num_warps=4,
+                    num_stages=2,
+                )
+                return output
+
+            if output.is_contiguous() and exact_perf_3d_a:
+                # v6: valid-only split for symmetric padded 3D.  The partial
+                # workspace is much smaller than CIK row-split, and half/bf16
+                # partials cut reduce bandwidth.
+                splits_per_n = 8
+                num_splits = n * splits_per_n
+                block_co = 16
+                block_ci = 8
+                block_m = 64
+                k_elems = kd * kh * kw
+                partial_dtype = torch.float32
+                partial = workspace_empty(
+                    (
+                        "3d_valid_exact_a_v6",
+                        num_splits,
+                        c_out,
+                        cin_per_group,
+                        k_elems,
+                        partial_dtype,
+                    ),
+                    (num_splits, c_out, cin_per_group, k_elems),
+                    partial_dtype,
+                )
+
+                def grid_3d_valid_a_v6(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cin_per_group, block_ci),
+                        k_elems,
+                        num_splits,
+                    )
+
+                _conv_wgrad3d_valid_nsplit_kernel[grid_3d_valid_a_v6](
+                    image,
+                    loss,
+                    partial,
+                    image_d,
+                    image_h,
+                    image_w,
+                    loss_d,
+                    loss_h,
+                    loss_w,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    image.stride(0),
+                    image.stride(1),
+                    image.stride(2),
+                    image.stride(3),
+                    image.stride(4),
+                    loss.stride(0),
+                    loss.stride(1),
+                    loss.stride(2),
+                    loss.stride(3),
+                    loss.stride(4),
+                    stride_tuple[0],
+                    stride_tuple[1],
+                    stride_tuple[2],
+                    pre[0],
+                    pre[1],
+                    pre[2],
+                    dilation_tuple[0],
+                    dilation_tuple[1],
+                    dilation_tuple[2],
+                    kd,
+                    kh,
+                    kw,
+                    splits_per_n,
+                    BLOCK_CO=block_co,
+                    BLOCK_CI=block_ci,
+                    BLOCK_M=block_m,
+                    num_warps=4,
+                    num_stages=3,
+                )
+
+                def grid_3d_valid_a_reduce_v6(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cin_per_group, block_ci),
+                        k_elems,
+                        groups,
+                    )
+
+                _conv_wgrad3d_reduce_kernel[grid_3d_valid_a_reduce_v6](
+                    partial,
+                    output,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    output.stride(0),
+                    output.stride(1),
+                    output.stride(2),
+                    output.stride(3),
+                    output.stride(4),
+                    kd,
+                    kh,
+                    kw,
+                    num_splits,
+                    BLOCK_CO=block_co,
+                    BLOCK_CI=block_ci,
+                    num_warps=4,
+                    num_stages=1,
+                )
+                return output
+
             if m >= 1024:
                 num_splits = 16 if m >= 4096 else 8
                 block_co = 16

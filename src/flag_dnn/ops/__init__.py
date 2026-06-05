@@ -82,6 +82,7 @@ from flag_dnn.ops.conv2d import conv2d
 from flag_dnn.ops.conv3d import conv3d
 from flag_dnn.ops.conv_fprop import conv_fprop
 from flag_dnn.ops.conv_dgrad import conv_dgrad
+from flag_dnn.ops.conv_wgrad import conv_wgrad
 from flag_dnn.ops.causal_conv1d import causal_conv1d
 from flag_dnn.ops.hardswish import hardswish
 from flag_dnn.ops.relu6 import relu6
@@ -291,6 +292,7 @@ __all__ = [
     "conv3d",
     "conv_fprop",
     "conv_dgrad",
+    "conv_wgrad",
     "causal_conv1d",
     "hardswish",
     "relu6",

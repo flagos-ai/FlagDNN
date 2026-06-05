@@ -740,6 +740,121 @@ def _conv_dgrad_shape(
     ]
 
 
+def _conv_wgrad_shape(
+    input_specs: list[TensorSpec], attrs: dict[str, Any]
+) -> list[TensorSpec]:
+    image, loss = input_specs[0], input_specs[1]
+    filter_size = tuple(int(dim) for dim in attrs["filter_size"])
+    if len(filter_size) not in (3, 4, 5):
+        raise RuntimeError(
+            "graph conv_wgrad filter_size must describe a 1D/2D/3D filter"
+        )
+    rank = len(filter_size) - 2
+    image_rank = _rank_of(image)
+    loss_rank = _rank_of(loss)
+    is_unbatched_1d = rank == 1 and image_rank == 2 and loss_rank == 2
+    expected_rank = rank + 1 if is_unbatched_1d else rank + 2
+    if image_rank != expected_rank or loss_rank != expected_rank:
+        raise RuntimeError(
+            f"graph conv_wgrad expected image/loss rank {expected_rank}, "
+            f"got {image_rank}/{loss_rank}"
+        )
+
+    stride = _tuple_n(attrs.get("stride", 1), rank, "stride")
+    dilation = _tuple_n(attrs.get("dilation", 1), rank, "dilation")
+    _normalize_convolution_mode(attrs.get("convolution_mode"))
+    filter_spec = TensorSpec(
+        name="",
+        shape=filter_size,
+        dtype=image.dtype,
+        layout="contiguous",
+        device=image.device,
+        contiguous=True,
+    )
+    pre_padding, post_padding = _normalize_conv_padding_from_attrs(
+        filter_spec, stride, dilation, attrs, "conv_wgrad"
+    )
+    groups = int(attrs.get("groups", 1))
+
+    if is_unbatched_1d:
+        image_leading: tuple[Any, ...] = ()
+        c_in = image.shape[0]
+        image_spatial = image.shape[1:]
+        loss_leading: tuple[Any, ...] = ()
+        loss_channels = loss.shape[0]
+        loss_spatial = loss.shape[1:]
+    else:
+        image_leading = (image.shape[0],)
+        c_in = image.shape[1]
+        image_spatial = image.shape[2:]
+        loss_leading = (loss.shape[0],)
+        loss_channels = loss.shape[1]
+        loss_spatial = loss.shape[2:]
+
+    c_out = filter_size[0]
+    c_per_group = filter_size[1]
+    kernel_shape = filter_size[2:]
+    static_values = (
+        (c_in, c_out, c_per_group)
+        + tuple(image_spatial)
+        + tuple(kernel_shape)
+        + tuple(loss_spatial)
+    )
+    if not all(isinstance(v, int) for v in static_values):
+        raise NotImplementedError(
+            "graph conv_wgrad dynamic shapes are not enabled"
+        )
+    if any(int(v) < 0 for v in filter_size):
+        raise RuntimeError(
+            "graph conv_wgrad filter_size dimensions must be non-negative"
+        )
+    if int(c_in) % groups != 0:
+        raise RuntimeError(
+            "graph conv_wgrad input channels must divide groups"
+        )
+    if int(c_out) % groups != 0:
+        raise RuntimeError(
+            "graph conv_wgrad output channels must divide groups"
+        )
+    if int(c_per_group) != int(c_in) // groups:
+        raise RuntimeError("graph conv_wgrad filter channel mismatch")
+    if tuple(loss_leading) != tuple(image_leading):
+        raise RuntimeError("graph conv_wgrad loss batch size mismatch")
+    if int(loss_channels) != int(c_out):
+        raise RuntimeError("graph conv_wgrad loss channel mismatch")
+
+    expected_loss_spatial = []
+    for axis in range(rank):
+        out_dim = _conv_out_dim(
+            int(image_spatial[axis]),
+            pre_padding[axis],
+            post_padding[axis],
+            dilation[axis],
+            int(kernel_shape[axis]),
+            stride[axis],
+        )
+        if out_dim < 0:
+            raise RuntimeError(
+                "computed graph conv_wgrad loss size is negative"
+            )
+        expected_loss_spatial.append(max(out_dim, 0))
+    if tuple(loss_spatial) != tuple(expected_loss_spatial):
+        raise RuntimeError(
+            "graph conv_wgrad loss spatial shape does not match filter_size"
+        )
+
+    return [
+        TensorSpec(
+            name="",
+            shape=filter_size,
+            dtype=image.dtype,
+            layout="contiguous",
+            device=image.device,
+            contiguous=True,
+        )
+    ]
+
+
 def _matmul_shape(
     input_specs: list[TensorSpec], attrs: dict[str, Any]
 ) -> list[TensorSpec]:
@@ -1854,6 +1969,84 @@ def _normalize_conv_dgrad(
     ], params
 
 
+def _normalize_conv_wgrad(
+    ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[list[int], dict]:
+    if len(args) > 4:
+        raise TypeError("conv_wgrad got too many positional args")
+    names = ["image", "loss", "filter_size", "padding"]
+    defaults = {
+        "padding": None,
+        "pre_padding": None,
+        "post_padding": None,
+        "stride": 1,
+        "dilation": 1,
+        "convolution_mode": "CROSS_CORRELATION",
+        "compute_data_type": None,
+        "name": "",
+        "groups": 1,
+    }
+    params: dict[str, Any] = defaults.copy()
+    params.update(kwargs)
+    for idx, arg in enumerate(args):
+        name = names[idx]
+        if name in kwargs:
+            raise TypeError(f"conv_wgrad got multiple values for {name}")
+        params[name] = arg
+
+    image = params.pop("image", None)
+    loss = params.pop("loss", None)
+    filter_size = params.get("filter_size")
+    if image is None or loss is None:
+        raise TypeError("conv_wgrad missing image or loss")
+    if filter_size is None:
+        raise TypeError("conv_wgrad missing filter_size")
+    filter_size = tuple(int(dim) for dim in filter_size)
+    if len(filter_size) not in (3, 4, 5):
+        raise RuntimeError(
+            "conv_wgrad filter_size must describe a 1D/2D/3D filter"
+        )
+    params["filter_size"] = filter_size
+
+    rank = len(filter_size) - 2
+    image_rank = _rank_of(image)
+    loss_rank = _rank_of(loss)
+    is_unbatched_1d = rank == 1 and image_rank == 2 and loss_rank == 2
+    expected_rank = rank + 1 if is_unbatched_1d else rank + 2
+    if image_rank != expected_rank or loss_rank != expected_rank:
+        raise RuntimeError(
+            f"conv_wgrad expected image/loss rank {expected_rank}, "
+            f"got {image_rank}/{loss_rank}"
+        )
+
+    params["stride"] = _tuple_n(params["stride"], rank, "stride")
+    params["dilation"] = _tuple_n(params["dilation"], rank, "dilation")
+    _normalize_convolution_mode(params.get("convolution_mode"))
+
+    padding = params.get("padding")
+    pre_padding = params.get("pre_padding")
+    post_padding = params.get("post_padding")
+    if pre_padding is not None or post_padding is not None:
+        if padding is not None:
+            raise TypeError(
+                "conv_wgrad accepts either padding or "
+                "pre_padding/post_padding"
+            )
+        if pre_padding is None or post_padding is None:
+            raise TypeError(
+                "conv_wgrad requires both pre_padding and post_padding"
+            )
+        params["pre_padding"] = _tuple_n(pre_padding, rank, "pre_padding")
+        params["post_padding"] = _tuple_n(post_padding, rank, "post_padding")
+    elif padding is not None and not isinstance(padding, str):
+        params["padding"] = _tuple_n(padding, rank, "padding")
+
+    return [
+        ctx.as_value(image, "image"),
+        ctx.as_value(loss, "loss"),
+    ], params
+
+
 def _normalize_mm(
     ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> tuple[list[int], dict]:
@@ -2742,6 +2935,30 @@ def _run_conv_dgrad(flag_ops: Any) -> RunFn:
     return run
 
 
+def _run_conv_wgrad(flag_ops: Any) -> RunFn:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "conv_wgrad")
+        op_attrs = _public_attrs(attrs)
+        return flag_ops.conv_wgrad(
+            inputs[0],
+            inputs[1],
+            filter_size=op_attrs["filter_size"],
+            padding=op_attrs.get("padding"),
+            pre_padding=op_attrs.get("pre_padding"),
+            post_padding=op_attrs.get("post_padding"),
+            stride=op_attrs.get("stride", 1),
+            dilation=op_attrs.get("dilation", 1),
+            convolution_mode=op_attrs.get(
+                "convolution_mode", "CROSS_CORRELATION"
+            ),
+            compute_data_type=op_attrs.get("compute_data_type"),
+            name=op_attrs.get("name", ""),
+            groups=op_attrs.get("groups", 1),
+        )
+
+    return run
+
+
 def _run_mm(flag_ops: Any) -> RunFn:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
         _require_runtime_backend(inputs, "mm")
@@ -3182,6 +3399,15 @@ def register_default_ops() -> None:
             normalize_fn=_normalize_conv_dgrad,
             shape_fn=_conv_dgrad_shape,
             run_fn=_run_conv_dgrad(flag_ops),
+            fusible=True,
+        )
+    )
+    register_op(
+        OpSchema(
+            name="conv_wgrad",
+            normalize_fn=_normalize_conv_wgrad,
+            shape_fn=_conv_wgrad_shape,
+            run_fn=_run_conv_wgrad(flag_ops),
             fusible=True,
         )
     )

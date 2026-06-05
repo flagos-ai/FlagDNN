@@ -50,6 +50,7 @@ GRAPH_AWARE_OPS = (
     "conv2d",
     "conv_fprop",
     "conv_dgrad",
+    "conv_wgrad",
     "causal_conv1d",
     "mm",
     "matmul",
