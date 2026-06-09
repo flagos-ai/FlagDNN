@@ -92,6 +92,6 @@ class BatchNormInferenceBenchmark(CudnnCompareBenchmark):
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", BatchNormInferenceBenchmark.dtypes)
-def test_perf_graph_batchnorm_inference_vs_cudnn(cudnn_handle, dtype):
+def test_batchnorm_inference(cudnn_handle, dtype):
     torch.manual_seed(0)
     BatchNormInferenceBenchmark(cudnn_handle).run(dtype)

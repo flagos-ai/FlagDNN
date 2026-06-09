@@ -62,13 +62,12 @@ def _run_flag_dnn_max_graph(x, y):
     return compiled.run(x.clone(), y.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.max
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("case", consts.MAX_CASES)
-def test_graph_max_matches_cudnn_frontend(cudnn_handle, dtype, case):
+def test_max(cudnn_handle, dtype, case):
     torch.manual_seed(0)
     x_shape, y_shape = case
     x = consts.pointwise_randn(x_shape, dtype, flag_dnn.device)

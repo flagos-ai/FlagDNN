@@ -108,12 +108,11 @@ class CmpLeBenchmark(CudnnCompareBenchmark):
         )
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.cmp_le
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CmpLeBenchmark.dtypes)
-def test_perf_graph_cmp_le_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_cmp_le(cudnn_handle, dtype):
     torch.manual_seed(0)
     CmpLeBenchmark(cudnn_handle).run(dtype)

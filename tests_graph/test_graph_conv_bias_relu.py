@@ -104,13 +104,12 @@ def _run_flag_dnn_conv_bias_relu_graph(
     return compiled.run(x.clone(), weight.clone(), bias.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.graph
 @pytest.mark.conv2d
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("case", consts.CONV_BIAS_RELU_CASES)
-def test_graph_conv_bias_relu_matches_cudnn_frontend(
+def test_conv_bias_relu(
     cudnn_handle,
     dtype,
     case,

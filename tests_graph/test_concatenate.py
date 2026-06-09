@@ -56,13 +56,12 @@ def _run_flag_dnn_concatenate_graph(inputs, axis):
     return compiled.run(*(item.clone() for item in inputs))
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.concatenate
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("case", consts.CONCATENATE_CASES)
-def test_graph_concatenate_matches_cudnn_frontend(cudnn_handle, dtype, case):
+def test_concatenate(cudnn_handle, dtype, case):
     torch.manual_seed(0)
     shapes, axis = case
     inputs = [

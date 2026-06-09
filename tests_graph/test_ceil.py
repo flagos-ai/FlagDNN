@@ -58,13 +58,12 @@ def _run_flag_dnn_ceil_graph(x):
     return compiled.run(x.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.ceil
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("shape", consts.CEIL_SHAPES)
-def test_graph_ceil_matches_cudnn_frontend(cudnn_handle, dtype, shape):
+def test_ceil(cudnn_handle, dtype, shape):
     torch.manual_seed(0)
     x = _make_input(shape, dtype)
 

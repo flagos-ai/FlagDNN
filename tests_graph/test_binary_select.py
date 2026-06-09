@@ -83,13 +83,12 @@ def _run_flag_dnn_binary_select_graph(x, y, mask):
     return compiled.run(x.clone(), y.clone(), mask.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.binary_select
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("case", consts.BINARY_SELECT_CASES)
-def test_graph_binary_select_matches_cudnn_frontend(cudnn_handle, dtype, case):
+def test_binary_select(cudnn_handle, dtype, case):
     torch.manual_seed(0)
     x, y, mask = _make_inputs(case, dtype)
 

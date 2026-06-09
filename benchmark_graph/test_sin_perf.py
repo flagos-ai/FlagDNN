@@ -86,12 +86,11 @@ class SinBenchmark(CudnnCompareBenchmark):
         return run
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.sin
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", SinBenchmark.dtypes)
-def test_perf_graph_sin_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_sin(cudnn_handle, dtype):
     torch.manual_seed(0)
     SinBenchmark(cudnn_handle).run(dtype)

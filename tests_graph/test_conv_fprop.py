@@ -194,13 +194,12 @@ def _run_flag_dnn_conv_fprop_graph(
     return compiled.run(x.clone(), weight.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.graph
 @pytest.mark.conv_fprop
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("case", CONV_FPROP_CASES)
-def test_graph_conv_fprop_flag_dnn_matches_cudnn_frontend(
+def test_conv_fprop_flag_dnn(
     cudnn_handle,
     dtype,
     case,

@@ -45,12 +45,11 @@ def _run_flag_dnn_logical_not_graph(x):
     return compiled.run(x.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.logical_not
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("shape", consts.EXP_SHAPES)
-def test_graph_logical_not_matches_cudnn_frontend(cudnn_handle, shape):
+def test_logical_not(cudnn_handle, shape):
     torch.manual_seed(0)
     x = consts.pointwise_bool(shape, flag_dnn.device)
 

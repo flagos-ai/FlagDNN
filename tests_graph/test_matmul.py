@@ -56,13 +56,12 @@ def _run_flag_dnn_matmul_graph(a, b):
     return compiled.run(a.clone(), b.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.matmul
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("shape_pair", consts.MATMUL_CASES)
-def test_graph_matmul_matches_cudnn_frontend(cudnn_handle, dtype, shape_pair):
+def test_matmul(cudnn_handle, dtype, shape_pair):
     torch.manual_seed(0)
     a_shape, b_shape = shape_pair
     a = torch.randn(a_shape, dtype=dtype, device=flag_dnn.device)

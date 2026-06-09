@@ -52,13 +52,12 @@ def _run_flag_dnn_scale_graph(x, scale):
     return compiled.run(x.clone(), scale.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.scale
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("shape_pair", consts.SCALE_CASES)
-def test_graph_scale_matches_cudnn_frontend(cudnn_handle, dtype, shape_pair):
+def test_scale(cudnn_handle, dtype, shape_pair):
     torch.manual_seed(0)
     shape, scale_shape = shape_pair
     x = consts.pointwise_randn(shape, dtype, flag_dnn.device)

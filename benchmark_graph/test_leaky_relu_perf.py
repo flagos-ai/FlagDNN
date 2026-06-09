@@ -96,12 +96,11 @@ class LeakyReluBenchmark(CudnnCompareBenchmark):
         return run
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.leaky_relu
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", LeakyReluBenchmark.dtypes)
-def test_perf_graph_leaky_relu_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_leaky_relu(cudnn_handle, dtype):
     torch.manual_seed(0)
     LeakyReluBenchmark(cudnn_handle).run(dtype)

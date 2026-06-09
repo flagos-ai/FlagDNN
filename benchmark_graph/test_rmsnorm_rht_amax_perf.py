@@ -86,12 +86,11 @@ class RmsNormRhtAmaxBenchmark(CudnnCompareBenchmark):
         return [x.size(), w.size(), self.rows_per_cta]
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.rmsnorm_rht_amax
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", RmsNormRhtAmaxBenchmark.dtypes)
-def test_perf_graph_rmsnorm_rht_amax_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_rmsnorm_rht_amax(cudnn_handle, dtype):
     torch.manual_seed(0)
     RmsNormRhtAmaxBenchmark(cudnn_handle).run(dtype)

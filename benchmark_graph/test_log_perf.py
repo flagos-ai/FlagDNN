@@ -83,12 +83,11 @@ class LogBenchmark(CudnnCompareBenchmark):
         return run
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.log
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", LogBenchmark.dtypes)
-def test_perf_graph_log_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_log(cudnn_handle, dtype):
     torch.manual_seed(0)
     LogBenchmark(cudnn_handle).run(dtype)

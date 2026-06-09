@@ -105,12 +105,11 @@ class AddSquareBenchmark(CudnnCompareBenchmark):
         )
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.add_square
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", AddSquareBenchmark.dtypes)
-def test_perf_graph_add_square_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_add_square(cudnn_handle, dtype):
     torch.manual_seed(0)
     AddSquareBenchmark(cudnn_handle).run(dtype)

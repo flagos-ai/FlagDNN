@@ -53,13 +53,12 @@ def _run_flag_dnn_reshape_graph(x, new_shape):
     return compiled.run(x.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.reshape
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("case", consts.RESHAPE_CASES)
-def test_graph_reshape_matches_cudnn_frontend(cudnn_handle, dtype, case):
+def test_reshape(cudnn_handle, dtype, case):
     torch.manual_seed(0)
     input_shape, new_shape = case
     x = torch.randn(input_shape, device=flag_dnn.device, dtype=dtype)

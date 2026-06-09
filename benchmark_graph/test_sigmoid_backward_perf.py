@@ -103,12 +103,11 @@ class SigmoidBackwardBenchmark(CudnnCompareBenchmark):
         )
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.sigmoid_backward
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", SigmoidBackwardBenchmark.dtypes)
-def test_perf_graph_sigmoid_backward_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_sigmoid_backward(cudnn_handle, dtype):
     torch.manual_seed(0)
     SigmoidBackwardBenchmark(cudnn_handle).run(dtype)

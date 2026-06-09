@@ -65,15 +65,12 @@ def _run_flag_dnn_sigmoid_backward_graph(loss, x):
     return compiled.run(loss.clone(), x.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.sigmoid_backward
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("case", consts.SIGMOID_BACKWARD_CASES)
-def test_graph_sigmoid_backward_matches_cudnn_frontend(
-    cudnn_handle, dtype, case
-):
+def test_sigmoid_backward(cudnn_handle, dtype, case):
     torch.manual_seed(0)
     loss, x = _make_inputs(case, dtype)
 

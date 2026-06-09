@@ -62,13 +62,12 @@ def _run_flag_dnn_relu_graph(x):
     return compiled.run(x.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.relu
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("shape", consts.RELU_SHAPES)
-def test_graph_relu_attrs_matches_cudnn_frontend(cudnn_handle, dtype, shape):
+def test_relu_attrs(cudnn_handle, dtype, shape):
     torch.manual_seed(0)
     x = consts.pointwise_randn(shape, dtype, flag_dnn.device)
 

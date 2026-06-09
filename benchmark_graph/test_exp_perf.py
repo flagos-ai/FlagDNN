@@ -83,12 +83,11 @@ class ExpBenchmark(CudnnCompareBenchmark):
         return run
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.exp
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", ExpBenchmark.dtypes)
-def test_perf_graph_exp_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_exp(cudnn_handle, dtype):
     torch.manual_seed(0)
     ExpBenchmark(cudnn_handle).run(dtype)

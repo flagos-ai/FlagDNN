@@ -58,13 +58,12 @@ def _run_flag_dnn_add_square_graph(x, y):
     return compiled.run(x.clone(), y.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.add_square
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("case", consts.ADD_SQUARE_CASES)
-def test_graph_add_square_matches_cudnn_frontend(cudnn_handle, dtype, case):
+def test_add_square(cudnn_handle, dtype, case):
     torch.manual_seed(0)
     x_shape, y_shape = case
     x = consts.pointwise_randn(x_shape, dtype, flag_dnn.device)

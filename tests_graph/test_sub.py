@@ -62,13 +62,12 @@ def _run_flag_dnn_sub_graph(x, y):
     return compiled.run(x.clone(), y.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.sub
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("case", consts.SUB_CASES)
-def test_graph_sub_matches_cudnn_frontend(cudnn_handle, dtype, case):
+def test_sub(cudnn_handle, dtype, case):
     torch.manual_seed(0)
     x_shape, y_shape = case
     x = consts.pointwise_randn(x_shape, dtype, flag_dnn.device)

@@ -104,12 +104,11 @@ class SubBenchmark(CudnnCompareBenchmark):
         )
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.sub
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", SubBenchmark.dtypes)
-def test_perf_graph_sub_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_sub(cudnn_handle, dtype):
     torch.manual_seed(0)
     SubBenchmark(cudnn_handle).run(dtype)

@@ -67,7 +67,7 @@ def _run_flag_dnn_batchnorm_inference_graph(x, mean, inv_var, scale, bias):
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("shape", consts.BATCHNORM_INFERENCE_CASES)
-def test_graph_batchnorm_inference_matches_cudnn(
+def test_batchnorm_inference(
     dtype,
     shape,
 ):

@@ -93,12 +93,11 @@ class TransposeBenchmark(CudnnCompareBenchmark):
         return run
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.transpose
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", TransposeBenchmark.dtypes)
-def test_perf_graph_transpose_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_transpose(cudnn_handle, dtype):
     torch.manual_seed(0)
     TransposeBenchmark(cudnn_handle).run(dtype)

@@ -53,12 +53,11 @@ def _run_flag_dnn_logical_and_graph(x, y):
     return compiled.run(x.clone(), y.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.logical_and
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("case", consts.LOGICAL_CASES)
-def test_graph_logical_and_matches_cudnn_frontend(cudnn_handle, case):
+def test_logical_and(cudnn_handle, case):
     torch.manual_seed(0)
     x_shape, y_shape = case
     x = consts.pointwise_bool(x_shape, flag_dnn.device)

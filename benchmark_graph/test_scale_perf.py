@@ -90,12 +90,11 @@ class ScaleBenchmark(CudnnCompareBenchmark):
         return run
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.scale
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", ScaleBenchmark.dtypes)
-def test_perf_graph_scale_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_scale(cudnn_handle, dtype):
     torch.manual_seed(0)
     ScaleBenchmark(cudnn_handle).run(dtype)

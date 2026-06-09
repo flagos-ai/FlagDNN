@@ -104,12 +104,11 @@ class MaxBenchmark(CudnnCompareBenchmark):
         )
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.max
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", MaxBenchmark.dtypes)
-def test_perf_graph_max_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_max(cudnn_handle, dtype):
     torch.manual_seed(0)
     MaxBenchmark(cudnn_handle).run(dtype)

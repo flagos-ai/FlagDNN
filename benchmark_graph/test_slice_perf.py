@@ -93,12 +93,11 @@ class SliceBenchmark(CudnnCompareBenchmark):
         return run
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.slice
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", SliceBenchmark.dtypes)
-def test_perf_graph_slice_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_slice(cudnn_handle, dtype):
     torch.manual_seed(0)
     SliceBenchmark(cudnn_handle).run(dtype)

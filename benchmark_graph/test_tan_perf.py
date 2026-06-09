@@ -88,12 +88,11 @@ class TanBenchmark(CudnnCompareBenchmark):
         return run
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.tan
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", TanBenchmark.dtypes)
-def test_perf_graph_tan_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_tan(cudnn_handle, dtype):
     torch.manual_seed(0)
     TanBenchmark(cudnn_handle).run(dtype)

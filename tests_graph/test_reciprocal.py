@@ -56,13 +56,12 @@ def _run_flag_dnn_reciprocal_graph(x):
     return compiled.run(x.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.reciprocal
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("shape", consts.RECIPROCAL_SHAPES)
-def test_graph_reciprocal_matches_cudnn_frontend(cudnn_handle, dtype, shape):
+def test_reciprocal(cudnn_handle, dtype, shape):
     torch.manual_seed(0)
     x = _make_input(shape, dtype)
 

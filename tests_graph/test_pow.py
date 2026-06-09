@@ -73,13 +73,12 @@ def _run_flag_dnn_pow_graph(x, y):
     return compiled.run(x.clone(), y.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.pow
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("case", consts.POW_CASES)
-def test_graph_pow_matches_cudnn_frontend(cudnn_handle, dtype, case):
+def test_pow(cudnn_handle, dtype, case):
     torch.manual_seed(0)
     x, y = _make_inputs(case, dtype)
 

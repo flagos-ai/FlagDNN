@@ -81,15 +81,12 @@ def _run_flag_dnn_reduction_graph(x, dim, mode):
     return compiled.run(x.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.reduction
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("shape, dim, mode", consts.REDUCTION_CASES)
-def test_graph_reduction_matches_cudnn_frontend(
-    cudnn_handle, dtype, shape, dim, mode
-):
+def test_reduction(cudnn_handle, dtype, shape, dim, mode):
     torch.manual_seed(0)
     x = _input(shape, mode, dtype).contiguous()
 

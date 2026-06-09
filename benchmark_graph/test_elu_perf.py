@@ -84,12 +84,11 @@ class EluBenchmark(CudnnCompareBenchmark):
         return run
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.elu
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", EluBenchmark.dtypes)
-def test_perf_graph_elu_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_elu(cudnn_handle, dtype):
     torch.manual_seed(0)
     EluBenchmark(cudnn_handle).run(dtype)

@@ -55,13 +55,12 @@ def _run_flag_dnn_slice_graph(x, slices):
     return compiled.run(x.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.slice
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("case", consts.SLICE_CASES)
-def test_graph_slice_matches_cudnn_frontend(cudnn_handle, dtype, case):
+def test_slice(cudnn_handle, dtype, case):
     torch.manual_seed(0)
     shape, slices = case
     x = consts.pointwise_randn(shape, dtype, flag_dnn.device)

@@ -83,12 +83,11 @@ class AbsBenchmark(CudnnCompareBenchmark):
         return run
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.abs
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", AbsBenchmark.dtypes)
-def test_perf_graph_abs_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_abs(cudnn_handle, dtype):
     torch.manual_seed(0)
     AbsBenchmark(cudnn_handle).run(dtype)

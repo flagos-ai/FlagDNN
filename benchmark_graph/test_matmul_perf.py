@@ -100,12 +100,11 @@ class MatmulBenchmark(CudnnCompareBenchmark):
         )
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.matmul
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", MatmulBenchmark.dtypes)
-def test_perf_graph_matmul_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_matmul(cudnn_handle, dtype):
     torch.manual_seed(0)
     MatmulBenchmark(cudnn_handle).run(dtype)

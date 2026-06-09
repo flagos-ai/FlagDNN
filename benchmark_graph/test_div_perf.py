@@ -105,12 +105,11 @@ class DivBenchmark(CudnnCompareBenchmark):
         )
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.div
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", DivBenchmark.dtypes)
-def test_perf_graph_div_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_div(cudnn_handle, dtype):
     torch.manual_seed(0)
     DivBenchmark(cudnn_handle).run(dtype)

@@ -198,13 +198,12 @@ def _run_flag_dnn_conv_wgrad_graph(
     return compiled.run(image.clone(), loss.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.graph
 @pytest.mark.conv_wgrad
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("case", CONV_WGRAD_CASES)
-def test_graph_conv_wgrad_flag_dnn_matches_cudnn_frontend(
+def test_conv_wgrad_flag_dnn(
     cudnn_handle,
     dtype,
     case,
@@ -259,14 +258,11 @@ def test_graph_conv_wgrad_flag_dnn_matches_cudnn_frontend(
     utils.gems_assert_close(flag_dnn_out, cudnn_out, dtype, atol=atol)
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.graph
 @pytest.mark.conv_wgrad
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
-def test_graph_conv_wgrad_convolution_mode_matches_cudnn_frontend(
-    cudnn_handle, dtype
-):
+def test_conv_wgrad_convolution_mode(cudnn_handle, dtype):
     torch.manual_seed(0)
     device = flag_dnn.device
     input_shape = (2, 4, 8, 9)

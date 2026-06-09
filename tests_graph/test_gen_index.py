@@ -51,13 +51,12 @@ def _run_flag_dnn_gen_index_graph(x, axis):
     return compiled.run(x.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.gen_index
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("case", consts.GEN_INDEX_CASES)
-def test_graph_gen_index_matches_cudnn_frontend(cudnn_handle, dtype, case):
+def test_gen_index(cudnn_handle, dtype, case):
     torch.manual_seed(0)
     shape, axis = case
     x = torch.empty(shape, device=flag_dnn.device, dtype=dtype)

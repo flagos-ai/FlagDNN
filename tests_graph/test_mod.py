@@ -90,13 +90,12 @@ def _run_flag_dnn_mod_graph(x, y):
     return compiled.run(x.clone(), y.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.mod
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("case", consts.MOD_CASES)
-def test_graph_mod_matches_cudnn_frontend(cudnn_handle, dtype, case):
+def test_mod(cudnn_handle, dtype, case):
     torch.manual_seed(0)
     x, y = _make_inputs(case, dtype)
 
@@ -118,12 +117,11 @@ def test_graph_mod_matches_reference():
     utils.gems_assert_close(flag_dnn_out, torch.fmod(x, y), torch.float32)
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.mod
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
-def test_graph_mod_signed_matches_cudnn_frontend(cudnn_handle, dtype):
+def test_mod_signed(cudnn_handle, dtype):
     x, y = _make_signed_inputs(dtype)
 
     cudnn_out = _cudnn_mod(x, y, cudnn_handle)

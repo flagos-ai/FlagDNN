@@ -134,12 +134,11 @@ class BinarySelectBenchmark(CudnnCompareBenchmark):
         )
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.binary_select
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", BinarySelectBenchmark.dtypes)
-def test_perf_graph_binary_select_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_binary_select(cudnn_handle, dtype):
     torch.manual_seed(0)
     BinarySelectBenchmark(cudnn_handle).run(dtype)

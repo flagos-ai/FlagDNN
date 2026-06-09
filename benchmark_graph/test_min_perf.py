@@ -103,12 +103,11 @@ class MinBenchmark(CudnnCompareBenchmark):
         )
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.min
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", MinBenchmark.dtypes)
-def test_perf_graph_min_vs_cudnn_frontend(cudnn_handle, dtype):
+def test_min(cudnn_handle, dtype):
     torch.manual_seed(0)
     MinBenchmark(cudnn_handle).run(dtype)

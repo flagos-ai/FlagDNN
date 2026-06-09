@@ -55,13 +55,12 @@ def _run_flag_dnn_transpose_graph(x, permutation):
     return compiled.run(x.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.transpose
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("case", consts.TRANSPOSE_CASES)
-def test_graph_transpose_matches_cudnn_frontend(cudnn_handle, dtype, case):
+def test_transpose(cudnn_handle, dtype, case):
     torch.manual_seed(0)
     shape, permutation = case
     x = consts.pointwise_randn(shape, dtype, flag_dnn.device)

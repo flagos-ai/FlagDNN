@@ -56,13 +56,12 @@ def _run_flag_dnn_erf_graph(x):
     return compiled.run(x.clone())
 
 
-@pytest.mark.cudnn_frontend
 @pytest.mark.erf
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("shape", consts.ERF_SHAPES)
-def test_graph_erf_matches_cudnn_frontend(cudnn_handle, dtype, shape):
+def test_erf(cudnn_handle, dtype, shape):
     torch.manual_seed(0)
     x = _make_input(shape, dtype)
 
