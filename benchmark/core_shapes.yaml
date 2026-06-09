@@ -460,6 +460,30 @@ log_softmax:
     - [32, 256]
   shape_desc: "shape"
 
+cummax:
+  shapes:
+    - [[1024], 0, null]
+    - [[32, 256, 1024], 2, null]
+    - [[32, 256, 1024], 0, null]
+    - [[32, 256, 1024], 1, null]
+    - [[1024, 1024], 1, null]
+    - [[1024, 1024], 0, null]
+    - [[32, 256, 56, 56], 3, null]
+    - [[32, 256, 56, 56], 1, null]
+  shape_desc: "shape, dim, out_dtype"
+
+cummin:
+  shapes:
+    - [[1024], 0, null]
+    - [[32, 256, 1024], 2, null]
+    - [[32, 256, 1024], 0, null]
+    - [[32, 256, 1024], 1, null]
+    - [[1024, 1024], 1, null]
+    - [[1024, 1024], 0, null]
+    - [[32, 256, 56, 56], 3, null]
+    - [[32, 256, 56, 56], 1, null]
+  shape_desc: "shape, dim, out_dtype"
+
 one_hot:
   shapes:
     - [[1024], 10]

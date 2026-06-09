@@ -12,20 +12,18 @@ from datetime import datetime
 # 例如: ["relu", "add"]。如果留空 []，则自动测试目录下所有的 test_*_perf.py
 TARGET_OPERATORS: list[str] = []
 
-TEST_DIRS = tuple(
-    item.strip()
-    for item in os.getenv(
-        "FLAGDNN_PERF_TEST_DIRS", "benchmark,benchmark_graph"
-    ).split(",")
-    if item.strip()
-)  # 性能测试文件所在目录
-LOG_DIR = "perf_logs"  # 单个测试日志的存放目录
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+
+# 性能测试文件所在目录。benchmark/run_all_tests_perf.py 只负责 benchmark。
+TEST_DIR = SCRIPT_DIR
+LOG_DIR = os.path.join(REPO_ROOT, "perf_logs")  # 单个测试日志的存放目录
 
 # 运行状态汇总，例如 total / passed / failed / details
-REPORT_FILE = "perf_summary.json"
+REPORT_FILE = os.path.join(REPO_ROOT, "perf_summary.json")
 
 # 核心性能数据，例如 operator / dtype / shape / speedup
-DATA_FILE = "perf_data.json"
+DATA_FILE = os.path.join(REPO_ROOT, "perf_data.json")
 
 # ==========================================
 
@@ -36,6 +34,10 @@ def get_operator_name(filename):
     if basename.startswith("test_") and basename.endswith("_perf.py"):
         return basename[5:-8]
     return basename
+
+
+def repo_relative_path(path):
+    return os.path.relpath(path, REPO_ROOT)
 
 
 def parse_float(value):
@@ -249,14 +251,12 @@ def main():
 
     # 收集并过滤测试文件
     all_test_files = sorted(
-        path
-        for test_dir in TEST_DIRS
-        for path in glob.glob(os.path.join(test_dir, "test_*_perf.py"))
+        glob.glob(os.path.join(TEST_DIR, "test_*_perf.py"))
     )
 
     if not all_test_files:
         print(
-            f"未在 {', '.join(TEST_DIRS)} 目录下找到任何 "
+            f"未在 {repo_relative_path(TEST_DIR)} 目录下找到任何 "
             "test_*_perf.py 文件。"
         )
         return
@@ -272,7 +272,7 @@ def main():
         print(f"🔍 已启用算子过滤，目标算子数量: {len(TARGET_OPERATORS)}")
     else:
         test_files = all_test_files
-        print("🔍 未设置过滤，将执行所有性能测试。")
+        print("🔍 未设置过滤，将执行 benchmark 目录下所有性能测试。")
 
     if not test_files:
         print(
@@ -299,7 +299,8 @@ def main():
 
     for idx, file_path in enumerate(test_files, 1):
         file_name = os.path.basename(file_path)
-        log_name = file_path.replace(os.sep, "_")
+        rel_file_path = repo_relative_path(file_path)
+        log_name = rel_file_path.replace(os.sep, "_")
         log_file = os.path.join(LOG_DIR, f"{log_name}.log")
 
         print(
@@ -319,7 +320,7 @@ def main():
             "pytest",
             "-v",
             "-s",
-            file_path,
+            rel_file_path,
         ]
 
         start_time = time.time()
@@ -328,6 +329,7 @@ def main():
             cmd,
             capture_output=True,
             text=True,
+            cwd=REPO_ROOT,
         )
 
         duration = time.time() - start_time

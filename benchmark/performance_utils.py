@@ -90,6 +90,14 @@ def SkipVersion(module_name, skip_pattern):
         return (major, minor) > (M, N)
 
 
+def _normalize_shape_entry(item):
+    if isinstance(item, list):
+        return tuple(_normalize_shape_entry(sub_item) for sub_item in item)
+    if isinstance(item, tuple):
+        return tuple(_normalize_shape_entry(sub_item) for sub_item in item)
+    return item
+
+
 class Benchmark:
     device: str = device
     DEFAULT_METRICS = DEFAULT_METRICS
@@ -244,7 +252,9 @@ class Benchmark:
                     else:
                         self.shapes = self.DEFAULT_SHAPES
 
-            self.shapes = [tuple(shape) for shape in self.shapes]
+            self.shapes = [
+                _normalize_shape_entry(shape) for shape in self.shapes
+            ]
             if vendor_name == "kunlunxin":
                 if self.op_name in ["isin", "nonzero"]:
                     # isin oom  # nonzero oot
