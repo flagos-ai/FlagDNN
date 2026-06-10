@@ -1,6 +1,7 @@
 import os
 import glob
 import subprocess
+import sys
 import time
 import json
 import re
@@ -156,7 +157,9 @@ def parse_pytest_skipped_count(stdout_text):
 def all_pytest_items_skipped(stdout_text):
     collected_count = parse_pytest_collected_count(stdout_text)
     skipped_count = parse_pytest_skipped_count(stdout_text)
-    return collected_count > 0 and skipped_count >= collected_count
+    return skipped_count > 0 and (
+        collected_count == 0 or skipped_count >= collected_count
+    )
 
 
 def parse_perf_output(stdout_text):
@@ -341,7 +344,7 @@ def main():
             # "yhrun",
             # "-p", "h100x",
             # "-G", "1",
-            "python3",
+            sys.executable,
             "-m",
             "pytest",
             "-v",
@@ -378,6 +381,12 @@ def main():
             status = "❌ FAIL"
             status_label = "FAIL"
             summary["failed"] += 1
+        elif result.returncode == 5 and all_pytest_items_skipped(
+            result.stdout
+        ):
+            status = "⏭️ SKIPPED/UNSUPPORTED"
+            status_label = "SKIPPED/UNSUPPORTED"
+            summary["skipped_or_unsupported"] += 1
         elif result.returncode == 5:
             status = "⚠️ NO TESTS"
             status_label = "NO TESTS"

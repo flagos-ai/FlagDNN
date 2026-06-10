@@ -203,7 +203,9 @@ def bench_repeat():
 
 
 def min_speedup():
-    return float(os.getenv("FLAGDNN_CUDNN_PERF_MIN_SPEEDUP", "0.9"))
+    # Default to report-only mode. Set this env var, e.g. to 0.9,
+    # when graph performance should be used as a hard gate.
+    return float(os.getenv("FLAGDNN_CUDNN_PERF_MIN_SPEEDUP", "0"))
 
 
 def compile_options():

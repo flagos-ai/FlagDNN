@@ -497,7 +497,13 @@ def main():
 
         function filterAndSortData() {
             const filterRange = document.getElementById('filterRange').value;
-   ilterRange === 'below08' && speedup >= 0.8) return false;
+            const sortOrder = document.getElementById('sortOrder').value;
+            const searchText = document.getElementById('searchBox').value.toLowerCase();
+
+            filteredData = allData.filter(item => {
+                const [name, speedup] = item;
+                if (searchText && !name.toLowerCase().includes(searchText)) return false;
+                if (filterRange === 'below08' && speedup >= 0.8) return false;
                 if (filterRange === 'between' && (speedup < 0.8 || speedup > 1.0)) return false;
                 if (filterRange === 'above1' && speedup <= 1.0) return false;
                 return true;
@@ -578,7 +584,8 @@ def main():
                             title: { display: true, text: '加速比' }
                         },
                         x: {
-                           
+                            ticks: {
+                                maxRotation: 45,
                                 minRotation: 45,
                                 font: { size: 10 }
                             }
