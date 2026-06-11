@@ -133,6 +133,226 @@ softmax:
       - 2
       - 3
       - 4         # 增加流水线深度，有助于掩盖大块访存延迟
+sdpa:
+  # Prefill-style tiles. Pareto set from the H100 sweep in
+  # .kernel-generate/optimization-log-sdpa.md (Rounds 02/04).
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+      - 128
+    block_n:
+      - 64
+      - 128
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+  # Decode-style tiles (seq_q rounds to a tiny BLOCK_M, wide BLOCK_N).
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 16
+    block_n:
+      - 64
+      - 128
+      - 256
+    warps:
+      - 4
+    stages:
+      - 2
+      - 3
+sdpa_decode:
+  # Split-KV flash-decoding partial kernel (seq_q == 1).
+  - gen: true
+    param_map:
+      META:
+        BLOCK_N: block_n
+      num_warps: warps
+      num_stages: stages
+    block_n:
+      - 64
+      - 128
+      - 256
+    warps:
+      - 4
+    stages:
+      - 2
+      - 3
+sdpa_backward_fused_atomic:
+  # Atomic fused tile fast path for small dense non-causal backward cases.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+        BLOCK_D: block_d
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 32
+    block_n:
+      - 32
+    block_d:
+      - 64
+    warps:
+      - 4
+    stages:
+      - 2
+sdpa_backward_fused_atomic_causal:
+  # Atomic fused tile fast path for small top-left causal backward cases.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+        BLOCK_D: block_d
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+    block_n:
+      - 64
+    block_d:
+      - 64
+    warps:
+      - 4
+    stages:
+      - 2
+sdpa_backward_fused_atomic_causal_d128:
+  # Atomic fused tile fast path for D128 top-left causal backward cases.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+        BLOCK_D: block_d
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+    block_n:
+      - 64
+    block_d:
+      - 128
+    warps:
+      - 4
+    stages:
+      - 2
+sdpa_backward_fused_atomic_gqa_causal_d128:
+  # Atomic fused tile fast path for D128 top-left causal GQA backward cases.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+        BLOCK_D: block_d
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+    block_n:
+      - 64
+    block_d:
+      - 128
+    warps:
+      - 4
+    stages:
+      - 2
+sdpa_backward_dq:
+  # Dense BHSD SDPA backward dQ/dBias kernel. Keep the search space
+  # narrow; larger grids are expanded only after benchmark evidence.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+        BLOCK_D_OUT: block_d_out
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+    block_n:
+      - 32
+    block_d_out:
+      - 128
+    warps:
+      - 4
+    stages:
+      - 2
+sdpa_backward_dkdv:
+  # Fused dK/dV path used when K and V head dimensions match. Narrowed
+  # from the H100 sweeps recorded in .kernel-generate/optimization-log-sdpa_backward.md.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+        BLOCK_D_OUT: block_d_out
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+    block_n:
+      - 32
+    block_d_out:
+      - 128
+    warps:
+      - 4
+    stages:
+      - 2
+sdpa_backward_dk:
+  # Fallback dK path for V_DIM != HEAD_DIM. Keep aligned with fused dK/dV.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+        BLOCK_D_OUT: block_d_out
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+    block_n:
+      - 32
+    block_d_out:
+      - 128
+    warps:
+      - 4
+    stages:
+      - 2
+sdpa_backward_dv:
+  # Fallback dV path for V_DIM != HEAD_DIM. Keep aligned with fused dK/dV.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+        BLOCK_DV_OUT: block_dv_out
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+    block_n:
+      - 32
+    block_dv_out:
+      - 128
+    warps:
+      - 4
+    stages:
+      - 2
 batch_norm:
   - gen: true
     param_map:

@@ -98,6 +98,37 @@ MATMUL_SHAPES = (
     ((16, 32, 128), (16, 128, 64)),
 )
 
+# (batch, heads_q, heads_kv, seq_q, seq_kv, head_dim, causal, generate_stats)
+# Each entry is a production-representative regime:
+#   1. encoder-style mid-size inference (BERT-large class, d=64)
+#   2. GPT-2 class causal training with stats (d=64)
+#   3. 7B-class 2k-context causal training with stats (d=128)
+#   4. high-batch short-sequence inference (d=128)
+#   5. MHA single-token decode against a 2k KV cache
+#   6. llama3-8B class GQA (32/8) 4k-context causal training
+#   7. GQA single-token decode against an 8k KV cache
+#   8. large-batch short-prefill serving burst (launch-overhead regime)
+SDPA_SHAPES = (
+    (4, 16, 16, 512, 512, 64, False, False),
+    (1, 32, 32, 1024, 1024, 64, True, True),
+    (2, 16, 16, 2048, 2048, 128, True, True),
+    (8, 32, 32, 256, 256, 128, False, False),
+    (4, 32, 32, 1, 2048, 128, False, False),
+    (1, 32, 8, 4096, 4096, 128, True, True),
+    (8, 32, 8, 1, 8192, 128, False, False),
+    (32, 16, 16, 128, 128, 64, False, False),
+)
+
+
+# (batch, heads_q, heads_kv, seq_q, seq_kv, head_dim, causal)
+SDPA_BACKWARD_SHAPES = (
+    (2, 8, 8, 256, 256, 64, False),
+    (1, 16, 16, 512, 512, 64, True),
+    (2, 8, 8, 1024, 1024, 128, True),
+    (4, 16, 16, 128, 128, 64, False),
+    (2, 16, 4, 512, 512, 128, True),
+)
+
 
 def pointwise_layout(tensor):
     # 4D logical NCHW shapes use channels-last strides to match cuDNN NHWC.

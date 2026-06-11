@@ -54,6 +54,8 @@ GRAPH_AWARE_OPS = (
     "causal_conv1d",
     "mm",
     "matmul",
+    "sdpa",
+    "sdpa_backward",
     "batchnorm",
     "batchnorm_inference",
     "layernorm",

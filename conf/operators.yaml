@@ -8,15 +8,12 @@ ops:
       - identity
     labels:
       - flag_dnn
-      - eager
       - graph
-      - accuracy
       - graph_accuracy
       - graph_benchmark
     kind:
       - Tensor
     stages:
-      - beta: 'eager'
       - stable: 'graph'
   - id: reshape
     description: |
@@ -25,15 +22,12 @@ ops:
       - reshape
     labels:
       - flag_dnn
-      - eager
       - graph
-      - accuracy
       - graph_accuracy
       - graph_benchmark
     kind:
       - Tensor
     stages:
-      - beta: 'eager'
       - stable: 'graph'
   - id: transpose
     description: |
@@ -42,15 +36,12 @@ ops:
       - transpose
     labels:
       - flag_dnn
-      - eager
       - graph
-      - accuracy
       - graph_accuracy
       - graph_benchmark
     kind:
       - Tensor
     stages:
-      - beta: 'eager'
       - stable: 'graph'
   - id: slice
     description: |
@@ -59,15 +50,12 @@ ops:
       - slice
     labels:
       - flag_dnn
-      - eager
       - graph
-      - accuracy
       - graph_accuracy
       - graph_benchmark
     kind:
       - Tensor
     stages:
-      - beta: 'eager'
       - stable: 'graph'
   - id: concatenate
     description: |
@@ -76,15 +64,12 @@ ops:
       - concatenate
     labels:
       - flag_dnn
-      - eager
       - graph
-      - accuracy
       - graph_accuracy
       - graph_benchmark
     kind:
       - Tensor
     stages:
-      - beta: 'eager'
       - stable: 'graph'
   - id: gen_index
     description: |
@@ -93,15 +78,12 @@ ops:
       - gen_index
     labels:
       - flag_dnn
-      - eager
       - graph
-      - accuracy
       - graph_accuracy
       - graph_benchmark
     kind:
       - Tensor
     stages:
-      - beta: 'eager'
       - stable: 'graph'
   - id: relu
     description: |
@@ -132,6 +114,8 @@ ops:
       - graph
       - accuracy
       - benchmark
+      - graph_accuracy
+      - graph_benchmark
     kind:
       - NeuralNetwork
     stages:
@@ -146,8 +130,6 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
     kind:
       - NeuralNetwork
     stages:
@@ -245,20 +227,6 @@ ops:
       - NeuralNetwork
     stages:
       - stable: 'eager'
-  - id: batch_norm_aten
-    description: |
-      Runs the ATen-compatible batch normalization entry point.
-    for:
-      - batch_norm_aten
-    labels:
-      - flag_dnn
-      - eager
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
   - id: batchnorm
     description: |
       Runs the graph-oriented batch normalization operator.
@@ -266,9 +234,7 @@ ops:
       - batchnorm
     labels:
       - flag_dnn
-      - eager
       - graph
-      - accuracy
       - graph_accuracy
     kind:
       - NeuralNetwork
@@ -298,10 +264,7 @@ ops:
       - layernorm
     labels:
       - flag_dnn
-      - eager
       - graph
-      - accuracy
-      - benchmark
       - graph_accuracy
     kind:
       - NeuralNetwork
@@ -343,10 +306,7 @@ ops:
       - rmsnorm
     labels:
       - flag_dnn
-      - eager
       - graph
-      - accuracy
-      - benchmark
       - graph_accuracy
     kind:
       - NeuralNetwork
@@ -528,6 +488,20 @@ ops:
       - Math
     stages:
       - stable: 'eager'
+      - stable: 'graph'
+  - id: mod
+    description: |
+      Computes the FlagDNN `mod` elementwise binary operator in graph mode.
+    for:
+      - mod
+    labels:
+      - flag_dnn
+      - graph
+      - graph_accuracy
+      - graph_benchmark
+    kind:
+      - Math
+    stages:
       - stable: 'graph'
   - id: max
     description: |
@@ -1200,6 +1174,36 @@ ops:
     stages:
       - alpha: 'eager'
       - stable: 'graph'
+  - id: sdpa
+    description: |
+      Runs scaled dot product attention through the graph executor.
+    for:
+      - sdpa
+    labels:
+      - flag_dnn
+      - graph
+      - graph_accuracy
+      - graph_benchmark
+    kind:
+      - NeuralNetwork
+      - Attention
+    stages:
+      - alpha: 'graph'
+  - id: sdpa_backward
+    description: |
+      Computes scaled dot product attention backward through the graph executor.
+    for:
+      - sdpa_backward
+    labels:
+      - flag_dnn
+      - graph
+      - graph_accuracy
+      - graph_benchmark
+    kind:
+      - NeuralNetwork
+      - Attention
+    stages:
+      - alpha: 'graph'
   - id: dot
     description: |
       Runs the FlagDNN `dot` linear algebra operator.
@@ -1274,6 +1278,20 @@ ops:
     stages:
       - alpha: 'eager'
       - stable: 'graph'
+  - id: conv_dgrad
+    description: |
+      Runs the convolution data-gradient operator.
+    for:
+      - conv_dgrad
+    labels:
+      - flag_dnn
+      - graph
+      - graph_accuracy
+      - graph_benchmark
+    kind:
+      - NeuralNetwork
+    stages:
+      - alpha: 'graph'
   - id: conv_wgrad
     description: |
       Runs the convolution weight-gradient operator.
@@ -1347,18 +1365,6 @@ ops:
       - NeuralNetwork
     stages:
       - stable: 'eager'
-  - id: selu_
-    description: |
-      Runs the FlagDNN `selu_` neural-network operator.
-    for:
-      - selu_
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - alpha: 'eager'
   - id: glu
     description: |
       Runs the FlagDNN `glu` neural-network operator.
@@ -1387,18 +1393,6 @@ ops:
       - NeuralNetwork
     stages:
       - stable: 'eager'
-  - id: celu_
-    description: |
-      Runs the FlagDNN `celu_` neural-network operator.
-    for:
-      - celu_
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - alpha: 'eager'
   - id: tanh
     description: |
       Runs the FlagDNN `tanh` neural-network operator.
@@ -1522,6 +1516,22 @@ ops:
     stages:
       - alpha: 'eager'
       - stable: 'graph'
+  - id: rmsnorm_rht_amax
+    description: |
+      Runs fused RMS normalization, randomized Hadamard transform, and row amax in graph mode.
+    for:
+      - rmsnorm_rht_amax
+    labels:
+      - flag_dnn
+      - graph
+      - graph_accuracy
+      - graph_benchmark
+      - fused
+    kind:
+      - NeuralNetwork
+      - Fused
+    stages:
+      - stable: 'graph'
   - id: rsqrt
     description: |
       Computes the FlagDNN `rsqrt` elementwise unary operator.
@@ -1589,6 +1599,104 @@ ops:
       - Math
     stages:
       - stable: 'eager'
+      - stable: 'graph'
+  - id: reciprocal
+    description: |
+      Computes the reciprocal of each input element in graph mode.
+    for:
+      - reciprocal
+    labels:
+      - flag_dnn
+      - graph
+      - graph_accuracy
+      - graph_benchmark
+    kind:
+      - Math
+    stages:
+      - stable: 'graph'
+  - id: ceil
+    description: |
+      Computes the ceiling of each input element in graph mode.
+    for:
+      - ceil
+    labels:
+      - flag_dnn
+      - graph
+      - graph_accuracy
+      - graph_benchmark
+    kind:
+      - Math
+    stages:
+      - stable: 'graph'
+  - id: floor
+    description: |
+      Computes the floor of each input element in graph mode.
+    for:
+      - floor
+    labels:
+      - flag_dnn
+      - graph
+      - graph_accuracy
+      - graph_benchmark
+    kind:
+      - Math
+    stages:
+      - stable: 'graph'
+  - id: erf
+    description: |
+      Computes the error function for each input element in graph mode.
+    for:
+      - erf
+    labels:
+      - flag_dnn
+      - graph
+      - graph_accuracy
+      - graph_benchmark
+    kind:
+      - Math
+    stages:
+      - stable: 'graph'
+  - id: sin
+    description: |
+      Computes the sine of each input element in graph mode.
+    for:
+      - sin
+    labels:
+      - flag_dnn
+      - graph
+      - graph_accuracy
+      - graph_benchmark
+    kind:
+      - Math
+    stages:
+      - stable: 'graph'
+  - id: cos
+    description: |
+      Computes the cosine of each input element in graph mode.
+    for:
+      - cos
+    labels:
+      - flag_dnn
+      - graph
+      - graph_accuracy
+      - graph_benchmark
+    kind:
+      - Math
+    stages:
+      - stable: 'graph'
+  - id: tan
+    description: |
+      Computes the tangent of each input element in graph mode.
+    for:
+      - tan
+    labels:
+      - flag_dnn
+      - graph
+      - graph_accuracy
+      - graph_benchmark
+    kind:
+      - Math
+    stages:
       - stable: 'graph'
   - id: bitwise_not
     description: |
@@ -1725,6 +1833,20 @@ ops:
       - Math
     stages:
       - alpha: 'eager'
+      - stable: 'graph'
+  - id: binary_select
+    description: |
+      Selects elements from two tensors according to a boolean predicate in graph mode.
+    for:
+      - binary_select
+    labels:
+      - flag_dnn
+      - graph
+      - graph_accuracy
+      - graph_benchmark
+    kind:
+      - Tensor
+    stages:
       - stable: 'graph'
   - id: one_hot
     description: |
@@ -1880,18 +2002,6 @@ ops:
       - Tensor
     stages:
       - stable: 'eager'
-  - id: embedding_renorm_
-    description: |
-      Renormalizes embedding weights in place.
-    for:
-      - embedding_renorm_
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Tensor
-    stages:
-      - alpha: 'eager'
   - id: cummin
     description: |
       Runs the FlagDNN `cummin` reduction or scan operator.
@@ -1984,59 +2094,3 @@ ops:
     stages:
       - stable: 'eager'
       - alpha: 'graph'
-  - id: bias_add
-    description: |
-      Adds a bias tensor to an activation tensor in graph capture.
-    for:
-      - bias_add
-    labels:
-      - flag_dnn
-      - graph
-      - graph_accuracy
-      - fused
-    kind:
-      - Fused
-    stages:
-      - beta: 'graph'
-  - id: fused_bias_gelu
-    description: |
-      Fuses bias addition with GELU in the graph executor.
-    for:
-      - fused_bias_gelu
-    labels:
-      - flag_dnn
-      - graph
-      - graph_accuracy
-      - fused
-    kind:
-      - Fused
-    stages:
-      - beta: 'graph'
-  - id: fused_bias_relu
-    description: |
-      Fuses bias addition with ReLU in the graph executor.
-    for:
-      - fused_bias_relu
-    labels:
-      - flag_dnn
-      - graph
-      - graph_accuracy
-      - fused
-    kind:
-      - Fused
-    stages:
-      - beta: 'graph'
-  - id: fused_conv2d_bias_relu
-    description: |
-      Fuses conv2d, bias addition, and ReLU in the graph executor.
-    for:
-      - fused_conv2d_bias_relu
-    labels:
-      - flag_dnn
-      - graph
-      - graph_accuracy
-      - fused
-    kind:
-      - Fused
-    stages:
-      - beta: 'graph'

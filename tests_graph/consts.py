@@ -83,6 +83,24 @@ MATMUL_CASES = (
     ((16, 32, 128), (16, 128, 64)),
 )
 
+# (batch, heads_q, heads_kv, seq_q, seq_kv, head_dim)
+SDPA_CASES = (
+    (2, 8, 8, 128, 128, 64),
+    (1, 8, 8, 512, 512, 128),
+    (2, 8, 2, 128, 128, 64),
+    (2, 4, 4, 100, 80, 64),
+    (2, 4, 4, 64, 64, 72),
+    (2, 8, 8, 1, 256, 64),
+)
+
+# Masked variants need seq_q > 1 to exercise the diagonal logic.
+SDPA_MASKED_CASES = (
+    (2, 8, 8, 128, 128, 64),
+    (2, 4, 4, 100, 80, 64),
+    (2, 4, 4, 100, 256, 64),
+    (1, 8, 8, 512, 512, 128),
+)
+
 
 def pointwise_layout(tensor):
     # 4D logical NCHW shapes use channels-last strides to match cuDNN NHWC.

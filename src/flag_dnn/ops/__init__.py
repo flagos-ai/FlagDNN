@@ -76,6 +76,8 @@ from flag_dnn.ops.softmin import softmin
 from flag_dnn.ops.mv import mv
 from flag_dnn.ops.mm import mm
 from flag_dnn.ops.matmul import matmul
+from flag_dnn.ops.sdpa import sdpa
+from flag_dnn.ops.sdpa_backward import sdpa_backward
 from flag_dnn.ops.dot import dot
 from flag_dnn.ops.conv1d import conv1d
 from flag_dnn.ops.conv2d import conv2d
@@ -286,6 +288,8 @@ __all__ = [
     "mv",
     "mm",
     "matmul",
+    "sdpa",
+    "sdpa_backward",
     "dot",
     "conv1d",
     "conv2d",

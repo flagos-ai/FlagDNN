@@ -49,6 +49,7 @@ class _SingleStepFastPath:
     input_sources: tuple[_InputSource, ...]
     input_indices: Optional[tuple[int, ...]] = None
     passthrough_inputs: bool = False
+    tuple_outputs: bool = False
 
     def run(self, inputs: tuple[Any, ...]) -> Any:
         if self.passthrough_inputs:
@@ -59,7 +60,10 @@ class _SingleStepFastPath:
             step_inputs = tuple(
                 source.resolve(inputs) for source in self.input_sources
             )
-        return self.step.run_fn(step_inputs, self.step.attrs)
+        result = self.step.run_fn(step_inputs, self.step.attrs)
+        if self.tuple_outputs and not isinstance(result, tuple):
+            return tuple(result)
+        return result
 
 
 @dataclass(frozen=True)
@@ -194,16 +198,16 @@ def _make_single_step_fast_path(
     constants: dict[int, Any],
     output_structure: Any,
 ) -> Optional[_SingleStepFastPath]:
-    if (
-        len(steps) != 1
-        or plan.workspace_size > 0
-        or len(plan.graph.outputs) != 1
-        or not _is_leaf_output(output_structure)
-    ):
+    if len(steps) != 1 or plan.workspace_size > 0:
         return None
 
     step = steps[0]
-    if len(step.outputs) != 1 or step.outputs[0] != plan.graph.outputs[0]:
+    if tuple(step.outputs) != tuple(plan.graph.outputs):
+        return None
+    if len(step.outputs) == 1:
+        if not _is_leaf_output(output_structure):
+            return None
+    elif not _is_flat_tuple_output(output_structure, len(step.outputs)):
         return None
 
     input_positions = {
@@ -233,11 +237,28 @@ def _make_single_step_fast_path(
         input_sources=tuple(input_sources),
         input_indices=indices,
         passthrough_inputs=passthrough_inputs,
+        tuple_outputs=len(step.outputs) > 1,
     )
 
 
 def _is_leaf_output(output_structure: Any) -> bool:
     return output_structure is None or output_structure == ("leaf",)
+
+
+def _is_flat_tuple_output(output_structure: Any, num_outputs: int) -> bool:
+    # A run_fn returning a tuple of tensors already matches the formatted
+    # output for these structures, so the single-step fast path can return
+    # it without unflattening.
+    if output_structure is None:
+        return True
+    if not isinstance(output_structure, tuple) or not output_structure:
+        return False
+    if output_structure[0] != "tuple":
+        return False
+    children = output_structure[1]
+    return len(children) == num_outputs and all(
+        child == ("leaf",) for child in children
+    )
 
 
 def _format_outputs(output_structure: Any, flat_outputs: list[Any]) -> Any:

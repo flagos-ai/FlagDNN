@@ -40,6 +40,14 @@ def prepare_run_fn(
     prepared = _prepare_pointwise(op_type, attrs, input_specs, default_run_fn)
     if prepared is not None:
         return prepared
+    if op_type == "sdpa":
+        prepared = _prepare_sdpa(attrs, input_specs, default_run_fn)
+        if prepared is not None:
+            return prepared
+    if op_type == "sdpa_backward":
+        prepared = _prepare_sdpa_backward(attrs, input_specs, default_run_fn)
+        if prepared is not None:
+            return prepared
     if op_type == "conv_fprop":
         prepared = _prepare_conv_fprop(attrs, input_specs, default_run_fn)
         if prepared is not None:
@@ -53,6 +61,561 @@ def prepare_run_fn(
         if prepared is not None:
             return prepared
     return default_run_fn
+
+
+def _static_shape(spec: TensorSpec) -> Optional[tuple[int, ...]]:
+    shape = tuple(spec.shape)
+    if not all(isinstance(dim, int) for dim in shape):
+        return None
+    return tuple(int(dim) for dim in shape)
+
+
+def _prepare_sdpa(
+    attrs: dict[str, Any],
+    input_specs: Sequence[TensorSpec],
+    default_run_fn: RunFn,
+) -> Optional[RunFn]:
+    # Bind every scalar kernel argument at plan time so graph replay only
+    # has to allocate outputs and launch the cached compiled kernel.
+    import math
+
+    import triton
+
+    from flag_dnn.ops.sdpa import (
+        _BOTTOM_RIGHT,
+        _LOG2E,
+        _UNBOUNDED_DIAG,
+        _sdpa_fwd_kernel,
+    )
+    from flag_dnn.runtime import torch_device_fn
+
+    has_bias = bool(attrs.get("has_bias"))
+    generate_stats = bool(attrs.get("generate_stats"))
+    expected_inputs = 4 if has_bias else 3
+    if len(input_specs) != expected_inputs:
+        return None
+
+    q_spec = input_specs[0]
+    shapes = [_static_shape(spec) for spec in input_specs]
+    if any(shape is None for shape in shapes):
+        return None
+    strides = [
+        None if spec.stride is None else tuple(spec.stride)
+        for spec in input_specs
+    ]
+    if any(stride is None for stride in strides):
+        return None
+
+    q_shape, k_shape, v_shape = shapes[0], shapes[1], shapes[2]
+    q_stride, k_stride, v_stride = strides[0], strides[1], strides[2]
+    if len(q_shape) != 4 or len(k_shape) != 4 or len(v_shape) != 4:
+        return None
+    batch, heads, sq, head_dim = q_shape
+    skv = k_shape[2]
+    v_dim = v_shape[3]
+    if 0 in q_shape or 0 in k_shape or 0 in v_shape:
+        return None
+    if heads % k_shape[1] != 0 or heads % v_shape[1] != 0:
+        return None
+
+    out_dtype = torch_dtype(q_spec.dtype)
+    out_shape = (batch, heads, sq, v_dim)
+    o_stride = (heads * sq * v_dim, sq * v_dim, v_dim, 1)
+    stats_shape = (batch, heads, sq, 1)
+    stats_stride = (heads * sq, sq, 1)
+
+    if has_bias:
+        bias_shape, bias_stride_full = shapes[3], strides[3]
+        if len(bias_shape) != 4:
+            return None
+        bias_stride = (
+            bias_stride_full[0] if bias_shape[0] != 1 else 0,
+            bias_stride_full[1] if bias_shape[1] != 1 else 0,
+            bias_stride_full[2],
+            bias_stride_full[3],
+        )
+        expected_bias_stride = bias_stride_full
+    else:
+        bias_stride = (0, 0, 0, 0)
+        expected_bias_stride = None
+
+    attn_scale = attrs.get("attn_scale")
+    if attn_scale is None:
+        attn_scale = 1.0 / math.sqrt(head_dim) if head_dim > 0 else 1.0
+    alignment = attrs.get("diagonal_alignment")
+    left = attrs.get("diagonal_band_left_bound")
+    right = attrs.get("diagonal_band_right_bound")
+    shift = skv - sq if alignment == _BOTTOM_RIGHT else 0
+    min_diag = 1 - left + shift if left is not None else -_UNBOUNDED_DIAG
+    max_diag = right + shift if right is not None else _UNBOUNDED_DIAG
+    banded = left is not None or right is not None
+
+    # The first replay goes through libentry/libtuner so the kernel is
+    # autotuned per tune_configs.yaml; the chosen BLOCK_M/BLOCK_N are read
+    # back to build the static argument list for direct CompiledKernel
+    # dispatch on every later replay.
+    constexpr_kwargs = dict(
+        HEAD_DIM=head_dim,
+        V_DIM=v_dim,
+        ELEM_SIZE=out_dtype.itemsize,
+        BLOCK_D=max(16, triton.next_power_of_2(head_dim)),
+        BLOCK_DV=max(16, triton.next_power_of_2(v_dim)),
+        HAS_BIAS=has_bias,
+        BANDED=banded,
+        GENERATE_STATS=generate_stats,
+    )
+    scalar_tail = (
+        attn_scale * _LOG2E,
+        heads,
+        sq,
+        skv,
+        heads // k_shape[1],
+        heads // v_shape[1],
+        min_diag,
+        max_diag,
+        *q_stride,
+        *k_stride,
+        *v_stride,
+        *bias_stride,
+        *o_stride,
+        *stats_stride,
+    )
+    batch_heads = batch * heads
+
+    def tune_grid(meta: dict[str, Any]) -> tuple[int, int]:
+        return (triton.cdiv(sq, meta["BLOCK_M"]), batch_heads)
+
+    # (CompiledKernel, static grid, positional args in signature order)
+    kernel_cache: list[Any] = [None, None, None]
+
+    def run(inputs: Sequence[Any], run_attrs: dict[str, Any]) -> Any:
+        q, k, v = inputs[0], inputs[1], inputs[2]
+        if (
+            not isinstance(q, torch.Tensor)
+            or q.stride() != q_stride
+            or k.stride() != k_stride
+            or v.stride() != v_stride
+        ):
+            return default_run_fn(inputs, run_attrs)
+        if has_bias:
+            bias = inputs[3]
+            if bias.stride() != expected_bias_stride:
+                return default_run_fn(inputs, run_attrs)
+        else:
+            bias = q
+        o = torch.empty(out_shape, dtype=out_dtype, device=q.device)
+        if generate_stats:
+            stats = torch.empty(
+                stats_shape, dtype=torch.float32, device=q.device
+            )
+        else:
+            stats = o
+        kernel = kernel_cache[0]
+        if kernel is None:
+            with torch_device_fn.device(q.device):
+                kernel, constexprs = _sdpa_fwd_kernel[tune_grid](
+                    q,
+                    k,
+                    v,
+                    bias,
+                    o,
+                    stats,
+                    *scalar_tail,
+                    **constexpr_kwargs,
+                )
+            block_m = int(constexprs["BLOCK_M"])
+            block_n = int(constexprs["BLOCK_N"])
+            kernel_cache[1] = (
+                triton.cdiv(sq, block_m),
+                batch_heads,
+                1,
+            )
+            kernel_cache[2] = scalar_tail + (
+                head_dim,
+                v_dim,
+                out_dtype.itemsize,
+                block_m,
+                block_n,
+                constexpr_kwargs["BLOCK_D"],
+                constexpr_kwargs["BLOCK_DV"],
+                has_bias,
+                banded,
+                generate_stats,
+            )
+            kernel_cache[0] = kernel
+        else:
+            kernel[kernel_cache[1]](q, k, v, bias, o, stats, *kernel_cache[2])
+        if generate_stats:
+            return o, stats
+        return o
+
+    return run
+
+
+def _prepare_sdpa_backward(
+    attrs: dict[str, Any],
+    input_specs: Sequence[TensorSpec],
+    default_run_fn: RunFn,
+) -> Optional[RunFn]:
+    import math
+
+    import triton
+
+    from flag_dnn.ops.sdpa import _BOTTOM_RIGHT, _TOP_LEFT, _UNBOUNDED_DIAG
+    from flag_dnn.ops.sdpa_backward import (
+        _sdpa_bwd_fused_atomic_causal_kernel,
+        _sdpa_bwd_fused_atomic_gqa_causal_kernel,
+        _sdpa_bwd_fused_atomic_kernel,
+        _single_tuned_config_kwargs,
+        _zero_three_contiguous_kernel,
+    )
+    from flag_dnn.runtime import torch_device_fn
+
+    if attrs.get("has_bias") or attrs.get("has_dbias"):
+        return None
+    if len(input_specs) != 6:
+        return None
+
+    shapes = [_static_shape(spec) for spec in input_specs]
+    if any(shape is None for shape in shapes):
+        return None
+    strides = [
+        None if spec.stride is None else tuple(spec.stride)
+        for spec in input_specs
+    ]
+    if any(stride is None for stride in strides):
+        return None
+
+    q_shape, k_shape, v_shape, o_shape, do_shape, stats_shape = cast(
+        list[tuple[int, ...]], shapes
+    )
+    q_stride, k_stride, v_stride, o_stride, do_stride, stats_stride = cast(
+        list[tuple[int, ...]], strides
+    )
+    if (
+        len(q_shape) != 4
+        or len(k_shape) != 4
+        or len(v_shape) != 4
+        or len(o_shape) != 4
+        or len(do_shape) != 4
+        or len(stats_shape) != 4
+    ):
+        return None
+    batch, heads, sq, head_dim = q_shape
+    kv_heads = k_shape[1]
+    v_heads = v_shape[1]
+    skv = k_shape[2]
+    v_dim = v_shape[3]
+    if 0 in q_shape or 0 in k_shape or 0 in v_shape:
+        return None
+    if k_shape[0] != batch or v_shape[0] != batch:
+        return None
+    if o_shape != (batch, heads, sq, v_dim) or do_shape != o_shape:
+        return None
+    if stats_shape != (batch, heads, sq, 1):
+        return None
+    if head_dim != v_dim or heads % kv_heads != 0 or heads % v_heads != 0:
+        return None
+    q_per_k = heads // kv_heads
+    q_per_v = heads // v_heads
+    if head_dim > 128 or sq > 1024 or skv > 1024:
+        return None
+
+    out_dtype = torch_dtype(input_specs[0].dtype)
+    if out_dtype not in (torch.float16, torch.bfloat16):
+        return None
+
+    alignment = attrs.get("diagonal_alignment")
+    left = attrs.get("diagonal_band_left_bound")
+    right = attrs.get("diagonal_band_right_bound")
+    shift = skv - sq if alignment == _BOTTOM_RIGHT else 0
+    min_diag = 1 - left + shift if left is not None else -_UNBOUNDED_DIAG
+    max_diag = right + shift if right is not None else _UNBOUNDED_DIAG
+    banded = left is not None or right is not None
+    causal_top_left = (
+        alignment == _TOP_LEFT and left is None and right == 0 and sq == skv
+    )
+    if banded and not causal_top_left:
+        return None
+    use_fused_gqa = (
+        causal_top_left
+        and q_per_k == q_per_v
+        and q_per_k > 1
+        and sq <= 512
+        and skv <= 512
+    )
+    if (q_per_k != 1 or q_per_v != 1) and not use_fused_gqa:
+        return None
+
+    attn_scale = attrs.get("attn_scale")
+    if attn_scale is None:
+        attn_scale = 1.0 / math.sqrt(head_dim) if head_dim > 0 else 1.0
+    attn_scale = float(attn_scale)
+
+    config_name = "sdpa_backward_fused_atomic"
+    if use_fused_gqa:
+        config_name = "sdpa_backward_fused_atomic_gqa_causal_d128"
+    elif causal_top_left:
+        config_name = (
+            "sdpa_backward_fused_atomic_causal_d128"
+            if head_dim > 64
+            else "sdpa_backward_fused_atomic_causal"
+        )
+    fused_config = _single_tuned_config_kwargs(config_name)
+    block_m = int(fused_config["BLOCK_M"])
+    block_n = int(fused_config["BLOCK_N"])
+    block_d = int(fused_config["BLOCK_D"])
+    zero_block = 1024
+    q_numel = batch * heads * sq * head_dim
+    k_numel = batch * kv_heads * skv * head_dim
+    v_numel = batch * v_heads * skv * v_dim
+    zero_grid = (triton.cdiv(max(q_numel, k_numel, v_numel), zero_block), 1, 1)
+    fused_grid = (
+        triton.cdiv(sq, block_m),
+        triton.cdiv(skv, block_n),
+        batch * heads,
+    )
+
+    dense_tail = (
+        attn_scale,
+        heads,
+        sq,
+        skv,
+        *q_stride,
+        *k_stride,
+        *v_stride,
+        *o_stride,
+        *do_stride,
+        stats_stride[0],
+        stats_stride[1],
+        stats_stride[2],
+        *q_stride,
+        *k_stride,
+        *v_stride,
+        head_dim,
+        block_m,
+        block_n,
+        block_d,
+    )
+    gqa_tail = (
+        attn_scale,
+        heads,
+        q_per_k,
+        sq,
+        skv,
+        min_diag,
+        max_diag,
+        *q_stride,
+        *k_stride,
+        *v_stride,
+        *o_stride,
+        *do_stride,
+        stats_stride[0],
+        stats_stride[1],
+        stats_stride[2],
+        *q_stride,
+        *k_stride,
+        *v_stride,
+        head_dim,
+        block_m,
+        block_n,
+        block_d,
+        banded,
+        causal_top_left,
+    )
+    causal_tail = (
+        attn_scale,
+        heads,
+        sq,
+        skv,
+        min_diag,
+        max_diag,
+        *q_stride,
+        *k_stride,
+        *v_stride,
+        *o_stride,
+        *do_stride,
+        stats_stride[0],
+        stats_stride[1],
+        stats_stride[2],
+        *q_stride,
+        *k_stride,
+        *v_stride,
+        head_dim,
+        block_m,
+        block_n,
+        block_d,
+        banded,
+        causal_top_left,
+    )
+    zero_cache: list[Any] = [None]
+    fused_cache: list[Any] = [None]
+
+    def run(inputs: Sequence[Any], run_attrs: dict[str, Any]) -> Any:
+        q, k, v, o, dO, stats = inputs[:6]
+        if (
+            not isinstance(q, torch.Tensor)
+            or q.stride() != q_stride
+            or k.stride() != k_stride
+            or v.stride() != v_stride
+            or o.stride() != o_stride
+            or dO.stride() != do_stride
+            or stats.stride() != stats_stride
+        ):
+            return default_run_fn(inputs, run_attrs)
+
+        dQ = torch.empty_strided(
+            q_shape, q_stride, dtype=out_dtype, device=q.device
+        )
+        dK = torch.empty_strided(
+            k_shape, k_stride, dtype=out_dtype, device=q.device
+        )
+        dV = torch.empty_strided(
+            v_shape, v_stride, dtype=out_dtype, device=q.device
+        )
+
+        zero_kernel = zero_cache[0]
+        if zero_kernel is None:
+            with torch_device_fn.device(q.device):
+                zero_cache[0] = _zero_three_contiguous_kernel[zero_grid](
+                    dQ,
+                    dK,
+                    dV,
+                    q_numel,
+                    k_numel,
+                    v_numel,
+                    BLOCK=zero_block,
+                )
+        else:
+            zero_kernel[zero_grid](
+                dQ,
+                dK,
+                dV,
+                q_numel,
+                k_numel,
+                v_numel,
+                zero_block,
+            )
+
+        fused_kernel = fused_cache[0]
+        if fused_kernel is None:
+            with torch_device_fn.device(q.device):
+                if causal_top_left and use_fused_gqa:
+                    fused_cache[0] = _sdpa_bwd_fused_atomic_gqa_causal_kernel[
+                        fused_grid
+                    ](
+                        q,
+                        k,
+                        v,
+                        o,
+                        dO,
+                        stats,
+                        dQ,
+                        dK,
+                        dV,
+                        attn_scale,
+                        heads,
+                        q_per_k,
+                        sq,
+                        skv,
+                        min_diag,
+                        max_diag,
+                        *q_stride,
+                        *k_stride,
+                        *v_stride,
+                        *o_stride,
+                        *do_stride,
+                        stats_stride[0],
+                        stats_stride[1],
+                        stats_stride[2],
+                        *q_stride,
+                        *k_stride,
+                        *v_stride,
+                        HEAD_DIM=head_dim,
+                        BANDED=banded,
+                        CAUSAL_TOP_LEFT=causal_top_left,
+                        **fused_config,
+                    )
+                elif causal_top_left:
+                    fused_cache[0] = _sdpa_bwd_fused_atomic_causal_kernel[
+                        fused_grid
+                    ](
+                        q,
+                        k,
+                        v,
+                        o,
+                        dO,
+                        stats,
+                        dQ,
+                        dK,
+                        dV,
+                        attn_scale,
+                        heads,
+                        sq,
+                        skv,
+                        min_diag,
+                        max_diag,
+                        *q_stride,
+                        *k_stride,
+                        *v_stride,
+                        *o_stride,
+                        *do_stride,
+                        stats_stride[0],
+                        stats_stride[1],
+                        stats_stride[2],
+                        *q_stride,
+                        *k_stride,
+                        *v_stride,
+                        HEAD_DIM=head_dim,
+                        BANDED=banded,
+                        CAUSAL_TOP_LEFT=causal_top_left,
+                        **fused_config,
+                    )
+                else:
+                    fused_cache[0] = _sdpa_bwd_fused_atomic_kernel[fused_grid](
+                        q,
+                        k,
+                        v,
+                        o,
+                        dO,
+                        stats,
+                        dQ,
+                        dK,
+                        dV,
+                        attn_scale,
+                        heads,
+                        sq,
+                        skv,
+                        *q_stride,
+                        *k_stride,
+                        *v_stride,
+                        *o_stride,
+                        *do_stride,
+                        stats_stride[0],
+                        stats_stride[1],
+                        stats_stride[2],
+                        *q_stride,
+                        *k_stride,
+                        *v_stride,
+                        HEAD_DIM=head_dim,
+                        **fused_config,
+                    )
+        elif causal_top_left and use_fused_gqa:
+            fused_kernel[fused_grid](
+                q, k, v, o, dO, stats, dQ, dK, dV, *gqa_tail
+            )
+        elif causal_top_left:
+            fused_kernel[fused_grid](
+                q, k, v, o, dO, stats, dQ, dK, dV, *causal_tail
+            )
+        else:
+            fused_kernel[fused_grid](
+                q, k, v, o, dO, stats, dQ, dK, dV, *dense_tail
+            )
+
+        return dQ, dK, dV
+
+    return run
 
 
 _POINTWISE_BINARY_OPS = {
