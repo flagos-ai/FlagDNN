@@ -196,6 +196,39 @@ def test_graph_sdpa_inference(cudnn_handle, dtype, shape):
 @pytest.mark.sdpa
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16))
+def test_graph_sdpa_gqa_decode_low_precision(cudnn_handle, dtype):
+    torch.manual_seed(8)
+    shape = (2, 8, 2, 1, 512, 64)
+    q, k, v = _make_qkv(shape, dtype)
+    cudnn_out = _cudnn_sdpa(q, k, v, cudnn_handle, generate_stats=True)
+    flag_out = _run_flag_dnn_sdpa_graph(q, k, v, generate_stats=True)
+    _assert_sdpa_close(flag_out, cudnn_out, dtype)
+    cudnn_o = _cudnn_sdpa(q, k, v, cudnn_handle, generate_stats=False)
+    flag_o = _run_flag_dnn_sdpa_graph(q, k, v)
+    utils.gems_assert_close(flag_o, cudnn_o, dtype, atol=_output_atol(dtype))
+
+
+@pytest.mark.sdpa
+@pytest.mark.graph
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16))
+def test_graph_sdpa_gqa_causal_d128_low_precision(cudnn_handle, dtype):
+    torch.manual_seed(9)
+    shape = (1, 8, 2, 128, 128, 128)
+    q, k, v = _make_qkv(shape, dtype)
+    cudnn_out = _cudnn_sdpa(
+        q, k, v, cudnn_handle, right_bound=0, generate_stats=True
+    )
+    flag_out = _run_flag_dnn_sdpa_graph(
+        q, k, v, diagonal_band_right_bound=0, generate_stats=True
+    )
+    _assert_sdpa_close(flag_out, cudnn_out, dtype)
+
+
+@pytest.mark.sdpa
+@pytest.mark.graph
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("shape", consts.SDPA_MASKED_CASES)
 def test_graph_sdpa_causal(cudnn_handle, dtype, shape):

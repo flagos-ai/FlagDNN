@@ -840,6 +840,152 @@ def _zero_three_contiguous_kernel(
 
 
 @triton.jit
+def _zero_three_and_delta_kernel(
+    a_ptr,
+    b_ptr,
+    c_ptr,
+    o_ptr,
+    do_ptr,
+    delta_ptr,
+    a_elements,
+    b_elements,
+    c_elements,
+    total_rows,
+    HQ: tl.constexpr,
+    SQ,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_dob: tl.constexpr,
+    stride_doh: tl.constexpr,
+    stride_dom: tl.constexpr,
+    stride_dod: tl.constexpr,
+    stride_delta_b: tl.constexpr,
+    stride_delta_h: tl.constexpr,
+    stride_delta_m: tl.constexpr,
+    BLOCK_ZERO: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+):
+    pid = tle.program_id(0)
+    offsets = pid * BLOCK_ZERO + tl.arange(0, BLOCK_ZERO)
+    zeros = tl.zeros((BLOCK_ZERO,), dtype=tl.float32)
+    tl.store(a_ptr + offsets, zeros, mask=offsets < a_elements)
+    tl.store(b_ptr + offsets, zeros, mask=offsets < b_elements)
+    tl.store(c_ptr + offsets, zeros, mask=offsets < c_elements)
+
+    row_ids = pid * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_d = tl.arange(0, BLOCK_D)
+    valid_rows = row_ids < total_rows
+    rows_per_batch = HQ * SQ
+    off_b = row_ids // rows_per_batch
+    rem = row_ids - off_b * rows_per_batch
+    off_h = rem // SQ
+    offs_m = rem - off_h * SQ
+    o = tl.load(
+        o_ptr
+        + off_b[:, None] * stride_ob
+        + off_h[:, None] * stride_oh
+        + offs_m[:, None] * stride_om
+        + offs_d[None, :] * stride_od,
+        mask=valid_rows[:, None] & (offs_d[None, :] < BLOCK_D),
+        other=0.0,
+    ).to(tl.float32)
+    do = tl.load(
+        do_ptr
+        + off_b[:, None] * stride_dob
+        + off_h[:, None] * stride_doh
+        + offs_m[:, None] * stride_dom
+        + offs_d[None, :] * stride_dod,
+        mask=valid_rows[:, None] & (offs_d[None, :] < BLOCK_D),
+        other=0.0,
+    ).to(tl.float32)
+    delta = tl.sum(o * do, axis=1)
+    tl.store(
+        delta_ptr
+        + off_b * stride_delta_b
+        + off_h * stride_delta_h
+        + offs_m * stride_delta_m,
+        delta,
+        mask=valid_rows,
+    )
+
+
+@triton.jit
+def _zero_three_equal_and_delta_kernel(
+    a_ptr,
+    b_ptr,
+    c_ptr,
+    o_ptr,
+    do_ptr,
+    delta_ptr,
+    total_rows,
+    HQ: tl.constexpr,
+    SQ: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_dob: tl.constexpr,
+    stride_doh: tl.constexpr,
+    stride_dom: tl.constexpr,
+    stride_dod: tl.constexpr,
+    stride_delta_b: tl.constexpr,
+    stride_delta_h: tl.constexpr,
+    stride_delta_m: tl.constexpr,
+    BLOCK_ZERO: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+):
+    pid = tle.program_id(0)
+    offsets = pid * BLOCK_ZERO + tl.arange(0, BLOCK_ZERO)
+    zeros = tl.zeros((BLOCK_ZERO,), dtype=tl.float32)
+    tl.store(a_ptr + offsets, zeros)
+    tl.store(b_ptr + offsets, zeros)
+    tl.store(c_ptr + offsets, zeros)
+
+    if pid * BLOCK_M < total_rows:
+        row_ids = pid * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_d = tl.arange(0, BLOCK_D)
+        valid_rows = row_ids < total_rows
+        rows_per_batch = HQ * SQ
+        off_b = row_ids // rows_per_batch
+        rem = row_ids - off_b * rows_per_batch
+        off_h = rem // SQ
+        offs_m = rem - off_h * SQ
+        o = tl.load(
+            o_ptr
+            + off_b[:, None] * stride_ob
+            + off_h[:, None] * stride_oh
+            + offs_m[:, None] * stride_om
+            + offs_d[None, :] * stride_od,
+            mask=valid_rows[:, None],
+            other=0.0,
+            eviction_policy="evict_last",
+        ).to(tl.float32)
+        do = tl.load(
+            do_ptr
+            + off_b[:, None] * stride_dob
+            + off_h[:, None] * stride_doh
+            + offs_m[:, None] * stride_dom
+            + offs_d[None, :] * stride_dod,
+            mask=valid_rows[:, None],
+            other=0.0,
+            eviction_policy="evict_last",
+        ).to(tl.float32)
+        delta = tl.sum(o * do, axis=1)
+        tl.store(
+            delta_ptr
+            + off_b * stride_delta_b
+            + off_h * stride_delta_h
+            + offs_m * stride_delta_m,
+            delta,
+            mask=valid_rows,
+        )
+
+
+@triton.jit
 def _sdpa_bwd_fused_atomic_kernel(
     q_ptr,
     k_ptr,
@@ -943,10 +1089,13 @@ def _sdpa_bwd_fused_atomic_kernel(
         mask=rows < SQ,
         other=float("-inf"),
     ).to(tl.float32)
+    stats_log2 = stats * 1.4426950408889634
 
-    score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * attn_scale
+    score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * (
+        attn_scale * 1.4426950408889634
+    )
     valid = (rows[:, None] < SQ) & (cols[None, :] < SKV)
-    p = tl.where(valid, tl.exp(score - stats[:, None]), 0.0)
+    p = tl.where(valid, tl.exp2(score - stats_log2[:, None]), 0.0)
     dp = tl.dot(do_tile, tl.trans(v_tile)).to(tl.float32)
     delta = tl.sum(o_tile * do_tile.to(tl.float32), axis=1)
     ds = p * (dp - delta[:, None])
@@ -1098,13 +1247,22 @@ def _sdpa_bwd_fused_atomic_causal_kernel(
         mask=rows < SQ,
         other=float("-inf"),
     ).to(tl.float32)
+    stats_log2 = stats * 1.4426950408889634
 
-    score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * attn_scale
-    valid = (rows[:, None] < SQ) & (cols[None, :] < SKV)
-    if BANDED:
-        diag = cols[None, :] - rows[:, None]
-        valid = valid & (diag >= min_diag) & (diag <= max_diag)
-    p = tl.where(valid, tl.exp(score - stats[:, None]), 0.0)
+    score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * (
+        attn_scale * 1.4426950408889634
+    )
+    full_tile = start_n + BLOCK_N <= start_m
+    full_tile = full_tile & (start_m + BLOCK_M <= SQ)
+    full_tile = full_tile & (start_n + BLOCK_N <= SKV)
+    if CAUSAL_TOP_LEFT and not BANDED and full_tile:
+        p = tl.exp2(score - stats_log2[:, None])
+    else:
+        valid = (rows[:, None] < SQ) & (cols[None, :] < SKV)
+        if BANDED:
+            diag = cols[None, :] - rows[:, None]
+            valid = valid & (diag >= min_diag) & (diag <= max_diag)
+        p = tl.where(valid, tl.exp2(score - stats_log2[:, None]), 0.0)
     dp = tl.dot(do_tile, tl.trans(v_tile)).to(tl.float32)
     delta = tl.sum(o_tile * do_tile.to(tl.float32), axis=1)
     ds = p * (dp - delta[:, None])
@@ -1142,6 +1300,306 @@ def _sdpa_bwd_fused_atomic_causal_kernel(
         dv.to(dv_ptr.dtype.element_ty),
         sem="relaxed",
         mask=(cols[:, None] < SKV) & (offs_d[None, :] < HEAD_DIM),
+    )
+
+
+@triton.jit
+def _sdpa_bwd_fused_atomic_causal_exact_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    o_ptr,
+    do_ptr,
+    stats_ptr,
+    dq_ptr,
+    dk_ptr,
+    dv_ptr,
+    attn_scale,
+    HQ: tl.constexpr,
+    SQ,
+    SKV,
+    min_diag,
+    max_diag,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_dob: tl.constexpr,
+    stride_doh: tl.constexpr,
+    stride_dom: tl.constexpr,
+    stride_dod: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
+    stride_dqb: tl.constexpr,
+    stride_dqh: tl.constexpr,
+    stride_dqm: tl.constexpr,
+    stride_dqd: tl.constexpr,
+    stride_dkb: tl.constexpr,
+    stride_dkh: tl.constexpr,
+    stride_dkn: tl.constexpr,
+    stride_dkd: tl.constexpr,
+    stride_dvb: tl.constexpr,
+    stride_dvh: tl.constexpr,
+    stride_dvn: tl.constexpr,
+    stride_dvd: tl.constexpr,
+    HEAD_DIM: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+    BANDED: tl.constexpr,
+    CAUSAL_TOP_LEFT: tl.constexpr,
+):
+    pid_m = tle.program_id(0)
+    pid_n = tle.program_id(1)
+    pid_bh = tle.program_id(2)
+    off_b = pid_bh // HQ
+    off_h = pid_bh % HQ
+
+    start_m = pid_m * BLOCK_M
+    start_n = pid_n * BLOCK_N
+    if start_n > start_m + BLOCK_M - 1:
+        return
+
+    rows = start_m + tl.arange(0, BLOCK_M)
+    cols = start_n + tl.arange(0, BLOCK_N)
+    offs_d = tl.arange(0, BLOCK_D)
+
+    q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
+    k_base = k_ptr + off_b * stride_kb + off_h * stride_kh
+    v_base = v_ptr + off_b * stride_vb + off_h * stride_vh
+    o_base = o_ptr + off_b * stride_ob + off_h * stride_oh
+    do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
+    stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
+
+    q_tile = tl.load(
+        q_base + rows[:, None] * stride_qm + offs_d[None, :] * stride_qd,
+        eviction_policy="evict_last",
+    )
+    k_tile = tl.load(
+        k_base + cols[:, None] * stride_kn + offs_d[None, :] * stride_kd,
+        eviction_policy="evict_last",
+    )
+    v_tile = tl.load(
+        v_base + cols[:, None] * stride_vn + offs_d[None, :] * stride_vd,
+        eviction_policy="evict_last",
+    )
+    o_tile = tl.load(
+        o_base + rows[:, None] * stride_om + offs_d[None, :] * stride_od,
+        eviction_policy="evict_last",
+    ).to(tl.float32)
+    do_tile = tl.load(
+        do_base + rows[:, None] * stride_dom + offs_d[None, :] * stride_dod,
+        eviction_policy="evict_last",
+    )
+    stats = tl.load(
+        stats_base + rows * stride_sm, eviction_policy="evict_last"
+    ).to(tl.float32)
+    stats_log2 = stats * 1.4426950408889634
+
+    score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * (
+        attn_scale * 1.4426950408889634
+    )
+    if start_n + BLOCK_N <= start_m:
+        p = tl.exp2(score - stats_log2[:, None])
+    else:
+        valid = cols[None, :] <= rows[:, None]
+        p = tl.where(valid, tl.exp2(score - stats_log2[:, None]), 0.0)
+    dp = tl.dot(do_tile, tl.trans(v_tile)).to(tl.float32)
+    delta = tl.sum(o_tile * do_tile.to(tl.float32), axis=1)
+    ds = p * (dp - delta[:, None])
+
+    dq = tl.dot(ds.to(k_tile.dtype), k_tile) * attn_scale
+    dk = tl.dot(tl.trans(ds).to(q_tile.dtype), q_tile) * attn_scale
+    dv = tl.dot(tl.trans(p).to(do_tile.dtype), do_tile)
+
+    tl.atomic_add(
+        dq_ptr
+        + off_b * stride_dqb
+        + off_h * stride_dqh
+        + rows[:, None] * stride_dqm
+        + offs_d[None, :] * stride_dqd,
+        dq.to(dq_ptr.dtype.element_ty),
+        sem="relaxed",
+    )
+    tl.atomic_add(
+        dk_ptr
+        + off_b * stride_dkb
+        + off_h * stride_dkh
+        + cols[:, None] * stride_dkn
+        + offs_d[None, :] * stride_dkd,
+        dk.to(dk_ptr.dtype.element_ty),
+        sem="relaxed",
+    )
+    tl.atomic_add(
+        dv_ptr
+        + off_b * stride_dvb
+        + off_h * stride_dvh
+        + cols[:, None] * stride_dvn
+        + offs_d[None, :] * stride_dvd,
+        dv.to(dv_ptr.dtype.element_ty),
+        sem="relaxed",
+    )
+
+
+@triton.jit
+def _sdpa_bwd_fused_atomic_causal_exact_delta_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    o_ptr,
+    do_ptr,
+    stats_ptr,
+    delta_ptr,
+    dq_ptr,
+    dk_ptr,
+    dv_ptr,
+    attn_scale,
+    HQ: tl.constexpr,
+    SQ,
+    SKV,
+    min_diag,
+    max_diag,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_dob: tl.constexpr,
+    stride_doh: tl.constexpr,
+    stride_dom: tl.constexpr,
+    stride_dod: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
+    stride_delta_b: tl.constexpr,
+    stride_delta_h: tl.constexpr,
+    stride_delta_m: tl.constexpr,
+    stride_dqb: tl.constexpr,
+    stride_dqh: tl.constexpr,
+    stride_dqm: tl.constexpr,
+    stride_dqd: tl.constexpr,
+    stride_dkb: tl.constexpr,
+    stride_dkh: tl.constexpr,
+    stride_dkn: tl.constexpr,
+    stride_dkd: tl.constexpr,
+    stride_dvb: tl.constexpr,
+    stride_dvh: tl.constexpr,
+    stride_dvn: tl.constexpr,
+    stride_dvd: tl.constexpr,
+    HEAD_DIM: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+    BANDED: tl.constexpr,
+    CAUSAL_TOP_LEFT: tl.constexpr,
+):
+    pid_m = tle.program_id(0)
+    pid_n = tle.program_id(1)
+    pid_bh = tle.program_id(2)
+    off_b = pid_bh // HQ
+    off_h = pid_bh % HQ
+
+    start_m = pid_m * BLOCK_M
+    start_n = pid_n * BLOCK_N
+    if start_n > start_m + BLOCK_M - 1:
+        return
+
+    rows = start_m + tl.arange(0, BLOCK_M)
+    cols = start_n + tl.arange(0, BLOCK_N)
+    offs_d = tl.arange(0, BLOCK_D)
+
+    q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
+    k_base = k_ptr + off_b * stride_kb + off_h * stride_kh
+    v_base = v_ptr + off_b * stride_vb + off_h * stride_vh
+    do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
+    stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
+
+    q_tile = tl.load(
+        q_base + rows[:, None] * stride_qm + offs_d[None, :] * stride_qd
+    )
+    k_tile = tl.load(
+        k_base + cols[:, None] * stride_kn + offs_d[None, :] * stride_kd
+    )
+    v_tile = tl.load(
+        v_base + cols[:, None] * stride_vn + offs_d[None, :] * stride_vd
+    )
+    do_tile = tl.load(
+        do_base + rows[:, None] * stride_dom + offs_d[None, :] * stride_dod
+    )
+    stats = tl.load(stats_base + rows * stride_sm).to(tl.float32)
+    stats_log2 = stats * 1.4426950408889634
+
+    score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * (
+        attn_scale * 1.4426950408889634
+    )
+    if start_n + BLOCK_N <= start_m:
+        p = tl.exp2(score - stats_log2[:, None])
+    else:
+        valid = cols[None, :] <= rows[:, None]
+        p = tl.where(valid, tl.exp2(score - stats_log2[:, None]), 0.0)
+    dp = tl.dot(do_tile, tl.trans(v_tile)).to(tl.float32)
+    delta = tl.load(
+        delta_ptr
+        + off_b * stride_delta_b
+        + off_h * stride_delta_h
+        + rows * stride_delta_m
+    ).to(tl.float32)
+    ds = p * (dp - delta[:, None])
+
+    dq = tl.dot(ds.to(k_tile.dtype), k_tile) * attn_scale
+    dk = tl.dot(tl.trans(ds).to(q_tile.dtype), q_tile) * attn_scale
+    dv = tl.dot(tl.trans(p).to(do_tile.dtype), do_tile)
+
+    tl.atomic_add(
+        dq_ptr
+        + off_b * stride_dqb
+        + off_h * stride_dqh
+        + rows[:, None] * stride_dqm
+        + offs_d[None, :] * stride_dqd,
+        dq.to(dq_ptr.dtype.element_ty),
+        sem="relaxed",
+    )
+    tl.atomic_add(
+        dk_ptr
+        + off_b * stride_dkb
+        + off_h * stride_dkh
+        + cols[:, None] * stride_dkn
+        + offs_d[None, :] * stride_dkd,
+        dk.to(dk_ptr.dtype.element_ty),
+        sem="relaxed",
+    )
+    tl.atomic_add(
+        dv_ptr
+        + off_b * stride_dvb
+        + off_h * stride_dvh
+        + cols[:, None] * stride_dvn
+        + offs_d[None, :] * stride_dvd,
+        dv.to(dv_ptr.dtype.element_ty),
+        sem="relaxed",
     )
 
 
@@ -1258,13 +1716,545 @@ def _sdpa_bwd_fused_atomic_gqa_causal_kernel(
         mask=rows < SQ,
         other=float("-inf"),
     ).to(tl.float32)
+    stats_log2 = stats * 1.4426950408889634
 
-    score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * attn_scale
-    valid = (rows[:, None] < SQ) & (cols[None, :] < SKV)
-    if BANDED:
-        diag = cols[None, :] - rows[:, None]
-        valid = valid & (diag >= min_diag) & (diag <= max_diag)
-    p = tl.where(valid, tl.exp(score - stats[:, None]), 0.0)
+    score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * (
+        attn_scale * 1.4426950408889634
+    )
+    full_tile = start_n + BLOCK_N <= start_m
+    full_tile = full_tile & (start_m + BLOCK_M <= SQ)
+    full_tile = full_tile & (start_n + BLOCK_N <= SKV)
+    if CAUSAL_TOP_LEFT and not BANDED and full_tile:
+        p = tl.exp2(score - stats_log2[:, None])
+    else:
+        valid = (rows[:, None] < SQ) & (cols[None, :] < SKV)
+        if BANDED:
+            diag = cols[None, :] - rows[:, None]
+            valid = valid & (diag >= min_diag) & (diag <= max_diag)
+        p = tl.where(valid, tl.exp2(score - stats_log2[:, None]), 0.0)
+    dp = tl.dot(do_tile, tl.trans(v_tile)).to(tl.float32)
+    delta = tl.sum(o_tile * do_tile.to(tl.float32), axis=1)
+    ds = p * (dp - delta[:, None])
+
+    dq = tl.dot(ds.to(k_tile.dtype), k_tile) * attn_scale
+    dk = tl.dot(tl.trans(ds).to(q_tile.dtype), q_tile) * attn_scale
+    dv = tl.dot(tl.trans(p).to(do_tile.dtype), do_tile)
+
+    tl.atomic_add(
+        dq_ptr
+        + off_b * stride_dqb
+        + off_h * stride_dqh
+        + rows[:, None] * stride_dqm
+        + offs_d[None, :] * stride_dqd,
+        dq.to(dq_ptr.dtype.element_ty),
+        sem="relaxed",
+        mask=(rows[:, None] < SQ) & (offs_d[None, :] < HEAD_DIM),
+    )
+    tl.atomic_add(
+        dk_ptr
+        + off_b * stride_dkb
+        + off_kh * stride_dkh
+        + cols[:, None] * stride_dkn
+        + offs_d[None, :] * stride_dkd,
+        dk.to(dk_ptr.dtype.element_ty),
+        sem="relaxed",
+        mask=(cols[:, None] < SKV) & (offs_d[None, :] < HEAD_DIM),
+    )
+    tl.atomic_add(
+        dv_ptr
+        + off_b * stride_dvb
+        + off_kh * stride_dvh
+        + cols[:, None] * stride_dvn
+        + offs_d[None, :] * stride_dvd,
+        dv.to(dv_ptr.dtype.element_ty),
+        sem="relaxed",
+        mask=(cols[:, None] < SKV) & (offs_d[None, :] < HEAD_DIM),
+    )
+
+
+@triton.jit
+def _sdpa_bwd_fused_atomic_causal_tri_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    o_ptr,
+    do_ptr,
+    stats_ptr,
+    dq_ptr,
+    dk_ptr,
+    dv_ptr,
+    attn_scale,
+    HQ: tl.constexpr,
+    SQ,
+    SKV,
+    min_diag,
+    max_diag,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_dob: tl.constexpr,
+    stride_doh: tl.constexpr,
+    stride_dom: tl.constexpr,
+    stride_dod: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
+    stride_dqb: tl.constexpr,
+    stride_dqh: tl.constexpr,
+    stride_dqm: tl.constexpr,
+    stride_dqd: tl.constexpr,
+    stride_dkb: tl.constexpr,
+    stride_dkh: tl.constexpr,
+    stride_dkn: tl.constexpr,
+    stride_dkd: tl.constexpr,
+    stride_dvb: tl.constexpr,
+    stride_dvh: tl.constexpr,
+    stride_dvn: tl.constexpr,
+    stride_dvd: tl.constexpr,
+    HEAD_DIM: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+    NUM_BLOCKS: tl.constexpr,
+    BANDED: tl.constexpr,
+    CAUSAL_TOP_LEFT: tl.constexpr,
+):
+    pid_t = tle.program_id(0)
+    pid_bh = tle.program_id(1)
+    pid_m = tl.full((), 0, tl.int64)
+    pid_n = tl.full((), 0, tl.int64)
+    row_base = 0
+    for row in tl.static_range(0, NUM_BLOCKS):
+        in_row = (pid_t >= row_base) & (pid_t < row_base + row + 1)
+        pid_m = tl.where(in_row, row, pid_m)
+        pid_n = tl.where(in_row, pid_t - row_base, pid_n)
+        row_base += row + 1
+    off_b = pid_bh // HQ
+    off_h = pid_bh % HQ
+
+    start_m = pid_m * BLOCK_M
+    start_n = pid_n * BLOCK_N
+    rows = start_m + tl.arange(0, BLOCK_M)
+    cols = start_n + tl.arange(0, BLOCK_N)
+    offs_d = tl.arange(0, BLOCK_D)
+
+    q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
+    k_base = k_ptr + off_b * stride_kb + off_h * stride_kh
+    v_base = v_ptr + off_b * stride_vb + off_h * stride_vh
+    o_base = o_ptr + off_b * stride_ob + off_h * stride_oh
+    do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
+    stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
+
+    q_tile = tl.load(
+        q_base + rows[:, None] * stride_qm + offs_d[None, :] * stride_qd,
+        mask=(rows[:, None] < SQ) & (offs_d[None, :] < HEAD_DIM),
+        other=0.0,
+    )
+    k_tile = tl.load(
+        k_base + cols[:, None] * stride_kn + offs_d[None, :] * stride_kd,
+        mask=(cols[:, None] < SKV) & (offs_d[None, :] < HEAD_DIM),
+        other=0.0,
+    )
+    v_tile = tl.load(
+        v_base + cols[:, None] * stride_vn + offs_d[None, :] * stride_vd,
+        mask=(cols[:, None] < SKV) & (offs_d[None, :] < HEAD_DIM),
+        other=0.0,
+    )
+    o_tile = tl.load(
+        o_base + rows[:, None] * stride_om + offs_d[None, :] * stride_od,
+        mask=(rows[:, None] < SQ) & (offs_d[None, :] < HEAD_DIM),
+        other=0.0,
+    ).to(tl.float32)
+    do_tile = tl.load(
+        do_base + rows[:, None] * stride_dom + offs_d[None, :] * stride_dod,
+        mask=(rows[:, None] < SQ) & (offs_d[None, :] < HEAD_DIM),
+        other=0.0,
+    )
+    stats = tl.load(
+        stats_base + rows * stride_sm,
+        mask=rows < SQ,
+        other=float("-inf"),
+    ).to(tl.float32)
+    stats_log2 = stats * 1.4426950408889634
+
+    score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * (
+        attn_scale * 1.4426950408889634
+    )
+    full_tile = start_n + BLOCK_N <= start_m
+    full_tile = full_tile & (start_m + BLOCK_M <= SQ)
+    full_tile = full_tile & (start_n + BLOCK_N <= SKV)
+    if CAUSAL_TOP_LEFT and not BANDED and full_tile:
+        p = tl.exp2(score - stats_log2[:, None])
+    else:
+        valid = (rows[:, None] < SQ) & (cols[None, :] < SKV)
+        if BANDED:
+            diag = cols[None, :] - rows[:, None]
+            valid = valid & (diag >= min_diag) & (diag <= max_diag)
+        p = tl.where(valid, tl.exp2(score - stats_log2[:, None]), 0.0)
+    dp = tl.dot(do_tile, tl.trans(v_tile)).to(tl.float32)
+    delta = tl.sum(o_tile * do_tile.to(tl.float32), axis=1)
+    ds = p * (dp - delta[:, None])
+
+    dq = tl.dot(ds.to(k_tile.dtype), k_tile) * attn_scale
+    dk = tl.dot(tl.trans(ds).to(q_tile.dtype), q_tile) * attn_scale
+    dv = tl.dot(tl.trans(p).to(do_tile.dtype), do_tile)
+
+    tl.atomic_add(
+        dq_ptr
+        + off_b * stride_dqb
+        + off_h * stride_dqh
+        + rows[:, None] * stride_dqm
+        + offs_d[None, :] * stride_dqd,
+        dq.to(dq_ptr.dtype.element_ty),
+        sem="relaxed",
+        mask=(rows[:, None] < SQ) & (offs_d[None, :] < HEAD_DIM),
+    )
+    tl.atomic_add(
+        dk_ptr
+        + off_b * stride_dkb
+        + off_h * stride_dkh
+        + cols[:, None] * stride_dkn
+        + offs_d[None, :] * stride_dkd,
+        dk.to(dk_ptr.dtype.element_ty),
+        sem="relaxed",
+        mask=(cols[:, None] < SKV) & (offs_d[None, :] < HEAD_DIM),
+    )
+    tl.atomic_add(
+        dv_ptr
+        + off_b * stride_dvb
+        + off_h * stride_dvh
+        + cols[:, None] * stride_dvn
+        + offs_d[None, :] * stride_dvd,
+        dv.to(dv_ptr.dtype.element_ty),
+        sem="relaxed",
+        mask=(cols[:, None] < SKV) & (offs_d[None, :] < HEAD_DIM),
+    )
+
+
+@triton.jit
+def _sdpa_bwd_fused_atomic_causal_delta_tri_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    o_ptr,
+    do_ptr,
+    stats_ptr,
+    delta_ptr,
+    dq_ptr,
+    dk_ptr,
+    dv_ptr,
+    attn_scale,
+    HQ: tl.constexpr,
+    SQ,
+    SKV,
+    min_diag,
+    max_diag,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_dob: tl.constexpr,
+    stride_doh: tl.constexpr,
+    stride_dom: tl.constexpr,
+    stride_dod: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
+    stride_delta_b: tl.constexpr,
+    stride_delta_h: tl.constexpr,
+    stride_delta_m: tl.constexpr,
+    stride_dqb: tl.constexpr,
+    stride_dqh: tl.constexpr,
+    stride_dqm: tl.constexpr,
+    stride_dqd: tl.constexpr,
+    stride_dkb: tl.constexpr,
+    stride_dkh: tl.constexpr,
+    stride_dkn: tl.constexpr,
+    stride_dkd: tl.constexpr,
+    stride_dvb: tl.constexpr,
+    stride_dvh: tl.constexpr,
+    stride_dvn: tl.constexpr,
+    stride_dvd: tl.constexpr,
+    HEAD_DIM: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+    NUM_BLOCKS: tl.constexpr,
+    BANDED: tl.constexpr,
+    CAUSAL_TOP_LEFT: tl.constexpr,
+):
+    pid_t = tle.program_id(0)
+    pid_bh = tle.program_id(1)
+    pid_m = tl.full((), 0, tl.int64)
+    pid_n = tl.full((), 0, tl.int64)
+    row_base = 0
+    for row in tl.static_range(0, NUM_BLOCKS):
+        in_row = (pid_t >= row_base) & (pid_t < row_base + row + 1)
+        pid_m = tl.where(in_row, row, pid_m)
+        pid_n = tl.where(in_row, pid_t - row_base, pid_n)
+        row_base += row + 1
+    off_b = pid_bh // HQ
+    off_h = pid_bh % HQ
+
+    start_m = pid_m * BLOCK_M
+    start_n = pid_n * BLOCK_N
+    rows = start_m + tl.arange(0, BLOCK_M)
+    cols = start_n + tl.arange(0, BLOCK_N)
+    offs_d = tl.arange(0, BLOCK_D)
+
+    q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
+    k_base = k_ptr + off_b * stride_kb + off_h * stride_kh
+    v_base = v_ptr + off_b * stride_vb + off_h * stride_vh
+    do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
+    stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
+
+    q_tile = tl.load(
+        q_base + rows[:, None] * stride_qm + offs_d[None, :] * stride_qd,
+        mask=(rows[:, None] < SQ) & (offs_d[None, :] < HEAD_DIM),
+        other=0.0,
+    )
+    k_tile = tl.load(
+        k_base + cols[:, None] * stride_kn + offs_d[None, :] * stride_kd,
+        mask=(cols[:, None] < SKV) & (offs_d[None, :] < HEAD_DIM),
+        other=0.0,
+    )
+    v_tile = tl.load(
+        v_base + cols[:, None] * stride_vn + offs_d[None, :] * stride_vd,
+        mask=(cols[:, None] < SKV) & (offs_d[None, :] < HEAD_DIM),
+        other=0.0,
+    )
+    do_tile = tl.load(
+        do_base + rows[:, None] * stride_dom + offs_d[None, :] * stride_dod,
+        mask=(rows[:, None] < SQ) & (offs_d[None, :] < HEAD_DIM),
+        other=0.0,
+    )
+    stats = tl.load(
+        stats_base + rows * stride_sm,
+        mask=rows < SQ,
+        other=float("-inf"),
+    ).to(tl.float32)
+    stats_log2 = stats * 1.4426950408889634
+
+    score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * (
+        attn_scale * 1.4426950408889634
+    )
+    full_tile = start_n + BLOCK_N <= start_m
+    full_tile = full_tile & (start_m + BLOCK_M <= SQ)
+    full_tile = full_tile & (start_n + BLOCK_N <= SKV)
+    if CAUSAL_TOP_LEFT and not BANDED and full_tile:
+        p = tl.exp2(score - stats_log2[:, None])
+    else:
+        valid = (rows[:, None] < SQ) & (cols[None, :] < SKV)
+        if BANDED:
+            diag = cols[None, :] - rows[:, None]
+            valid = valid & (diag >= min_diag) & (diag <= max_diag)
+        p = tl.where(valid, tl.exp2(score - stats_log2[:, None]), 0.0)
+    dp = tl.dot(do_tile, tl.trans(v_tile)).to(tl.float32)
+    delta = tl.load(
+        delta_ptr
+        + off_b * stride_delta_b
+        + off_h * stride_delta_h
+        + rows * stride_delta_m,
+        mask=rows < SQ,
+        other=0.0,
+    ).to(tl.float32)
+    ds = p * (dp - delta[:, None])
+
+    dq = tl.dot(ds.to(k_tile.dtype), k_tile) * attn_scale
+    dk = tl.dot(tl.trans(ds).to(q_tile.dtype), q_tile) * attn_scale
+    dv = tl.dot(tl.trans(p).to(do_tile.dtype), do_tile)
+
+    tl.atomic_add(
+        dq_ptr
+        + off_b * stride_dqb
+        + off_h * stride_dqh
+        + rows[:, None] * stride_dqm
+        + offs_d[None, :] * stride_dqd,
+        dq.to(dq_ptr.dtype.element_ty),
+        sem="relaxed",
+        mask=(rows[:, None] < SQ) & (offs_d[None, :] < HEAD_DIM),
+    )
+    tl.atomic_add(
+        dk_ptr
+        + off_b * stride_dkb
+        + off_h * stride_dkh
+        + cols[:, None] * stride_dkn
+        + offs_d[None, :] * stride_dkd,
+        dk.to(dk_ptr.dtype.element_ty),
+        sem="relaxed",
+        mask=(cols[:, None] < SKV) & (offs_d[None, :] < HEAD_DIM),
+    )
+    tl.atomic_add(
+        dv_ptr
+        + off_b * stride_dvb
+        + off_h * stride_dvh
+        + cols[:, None] * stride_dvn
+        + offs_d[None, :] * stride_dvd,
+        dv.to(dv_ptr.dtype.element_ty),
+        sem="relaxed",
+        mask=(cols[:, None] < SKV) & (offs_d[None, :] < HEAD_DIM),
+    )
+
+
+@triton.jit
+def _sdpa_bwd_fused_atomic_gqa_causal_tri_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    o_ptr,
+    do_ptr,
+    stats_ptr,
+    dq_ptr,
+    dk_ptr,
+    dv_ptr,
+    attn_scale,
+    HQ: tl.constexpr,
+    Q_PER: tl.constexpr,
+    SQ,
+    SKV,
+    min_diag,
+    max_diag,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_dob: tl.constexpr,
+    stride_doh: tl.constexpr,
+    stride_dom: tl.constexpr,
+    stride_dod: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
+    stride_dqb: tl.constexpr,
+    stride_dqh: tl.constexpr,
+    stride_dqm: tl.constexpr,
+    stride_dqd: tl.constexpr,
+    stride_dkb: tl.constexpr,
+    stride_dkh: tl.constexpr,
+    stride_dkn: tl.constexpr,
+    stride_dkd: tl.constexpr,
+    stride_dvb: tl.constexpr,
+    stride_dvh: tl.constexpr,
+    stride_dvn: tl.constexpr,
+    stride_dvd: tl.constexpr,
+    HEAD_DIM: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+    NUM_BLOCKS: tl.constexpr,
+    BANDED: tl.constexpr,
+    CAUSAL_TOP_LEFT: tl.constexpr,
+):
+    pid_t = tle.program_id(0)
+    pid_bh = tle.program_id(1)
+    pid_m = tl.full((), 0, tl.int64)
+    pid_n = tl.full((), 0, tl.int64)
+    row_base = 0
+    for row in tl.static_range(0, NUM_BLOCKS):
+        in_row = (pid_t >= row_base) & (pid_t < row_base + row + 1)
+        pid_m = tl.where(in_row, row, pid_m)
+        pid_n = tl.where(in_row, pid_t - row_base, pid_n)
+        row_base += row + 1
+    off_b = pid_bh // HQ
+    off_h = pid_bh % HQ
+    off_kh = off_h // Q_PER
+
+    start_m = pid_m * BLOCK_M
+    start_n = pid_n * BLOCK_N
+    rows = start_m + tl.arange(0, BLOCK_M)
+    cols = start_n + tl.arange(0, BLOCK_N)
+    offs_d = tl.arange(0, BLOCK_D)
+
+    q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
+    k_base = k_ptr + off_b * stride_kb + off_kh * stride_kh
+    v_base = v_ptr + off_b * stride_vb + off_kh * stride_vh
+    o_base = o_ptr + off_b * stride_ob + off_h * stride_oh
+    do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
+    stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
+
+    q_tile = tl.load(
+        q_base + rows[:, None] * stride_qm + offs_d[None, :] * stride_qd,
+        mask=(rows[:, None] < SQ) & (offs_d[None, :] < HEAD_DIM),
+        other=0.0,
+    )
+    k_tile = tl.load(
+        k_base + cols[:, None] * stride_kn + offs_d[None, :] * stride_kd,
+        mask=(cols[:, None] < SKV) & (offs_d[None, :] < HEAD_DIM),
+        other=0.0,
+    )
+    v_tile = tl.load(
+        v_base + cols[:, None] * stride_vn + offs_d[None, :] * stride_vd,
+        mask=(cols[:, None] < SKV) & (offs_d[None, :] < HEAD_DIM),
+        other=0.0,
+    )
+    o_tile = tl.load(
+        o_base + rows[:, None] * stride_om + offs_d[None, :] * stride_od,
+        mask=(rows[:, None] < SQ) & (offs_d[None, :] < HEAD_DIM),
+        other=0.0,
+    ).to(tl.float32)
+    do_tile = tl.load(
+        do_base + rows[:, None] * stride_dom + offs_d[None, :] * stride_dod,
+        mask=(rows[:, None] < SQ) & (offs_d[None, :] < HEAD_DIM),
+        other=0.0,
+    )
+    stats = tl.load(
+        stats_base + rows * stride_sm,
+        mask=rows < SQ,
+        other=float("-inf"),
+    ).to(tl.float32)
+    stats_log2 = stats * 1.4426950408889634
+
+    score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * (
+        attn_scale * 1.4426950408889634
+    )
+    full_tile = start_n + BLOCK_N <= start_m
+    full_tile = full_tile & (start_m + BLOCK_M <= SQ)
+    full_tile = full_tile & (start_n + BLOCK_N <= SKV)
+    if CAUSAL_TOP_LEFT and not BANDED and full_tile:
+        p = tl.exp2(score - stats_log2[:, None])
+    else:
+        valid = (rows[:, None] < SQ) & (cols[None, :] < SKV)
+        if BANDED:
+            diag = cols[None, :] - rows[:, None]
+            valid = valid & (diag >= min_diag) & (diag <= max_diag)
+        p = tl.where(valid, tl.exp2(score - stats_log2[:, None]), 0.0)
     dp = tl.dot(do_tile, tl.trans(v_tile)).to(tl.float32)
     delta = tl.sum(o_tile * do_tile.to(tl.float32), axis=1)
     ds = p * (dp - delta[:, None])

@@ -85,6 +85,10 @@ def _prepare_sdpa(
         _BOTTOM_RIGHT,
         _LOG2E,
         _UNBOUNDED_DIAG,
+        _sdpa_decode_combine_kernel,
+        _sdpa_decode_split_kernel,
+        _sdpa_fwd_dense_exact_kernel,
+        _sdpa_fwd_gqa_causal_kernel,
         _sdpa_fwd_kernel,
     )
     from flag_dnn.runtime import torch_device_fn
@@ -149,6 +153,7 @@ def _prepare_sdpa(
     min_diag = 1 - left + shift if left is not None else -_UNBOUNDED_DIAG
     max_diag = right + shift if right is not None else _UNBOUNDED_DIAG
     banded = left is not None or right is not None
+    reverse_causal = alignment != _BOTTOM_RIGHT and left is None and right == 0
 
     # The first replay goes through libentry/libtuner so the kernel is
     # autotuned per tune_configs.yaml; the chosen BLOCK_M/BLOCK_N are read
@@ -163,6 +168,7 @@ def _prepare_sdpa(
         HAS_BIAS=has_bias,
         BANDED=banded,
         GENERATE_STATS=generate_stats,
+        REVERSE_CAUSAL=reverse_causal,
     )
     scalar_tail = (
         attn_scale * _LOG2E,
@@ -182,13 +188,310 @@ def _prepare_sdpa(
     )
     batch_heads = batch * heads
 
+    use_decode = (
+        sq == 1
+        and not has_bias
+        and not banded
+        and out_dtype in (torch.float16, torch.bfloat16)
+        and k_shape[1] == v_shape[1]
+        and heads > k_shape[1]
+    )
+    if use_decode:
+        hkv = k_shape[1]
+        group = heads // hkv
+        chunk = min(skv, 1024)
+        splits = triton.cdiv(skv, chunk)
+        block_g = max(1, triton.next_power_of_2(group))
+        block_d = max(16, triton.next_power_of_2(head_dim))
+        block_dv = max(16, triton.next_power_of_2(v_dim))
+        part_last = v_dim + 2
+        part_shape = (batch, heads, splits, part_last)
+        part_stride = (
+            heads * splits * part_last,
+            splits * part_last,
+            part_last,
+            1,
+        )
+        split_grid = (splits, batch * hkv, 1)
+        combine_grid = (batch_heads, 1, 1)
+        split_constexpr = dict(
+            GROUP=group,
+            HEAD_DIM=head_dim,
+            V_DIM=v_dim,
+            ELEM_SIZE=out_dtype.itemsize,
+            BLOCK_G=block_g,
+            BLOCK_D=block_d,
+            BLOCK_DV=block_dv,
+        )
+        split_tail = (
+            attn_scale * _LOG2E,
+            hkv,
+            skv,
+            chunk,
+            q_stride[0],
+            q_stride[1],
+            q_stride[3],
+            *k_stride,
+            *v_stride,
+            *part_stride,
+        )
+        combine_tail = (
+            heads,
+            splits,
+            *part_stride,
+            o_stride[0],
+            o_stride[1],
+            o_stride[3],
+            stats_stride[0],
+            stats_stride[1],
+            v_dim,
+            max(1, triton.next_power_of_2(splits)),
+            block_dv,
+            generate_stats,
+        )
+        split_cache: list[Any] = [None, None]
+        combine_cache: list[Any] = [None]
+
+        def run_decode(
+            inputs: Sequence[Any], run_attrs: dict[str, Any]
+        ) -> Any:
+            q, k, v = inputs[0], inputs[1], inputs[2]
+            if (
+                not isinstance(q, torch.Tensor)
+                or q.stride() != q_stride
+                or k.stride() != k_stride
+                or v.stride() != v_stride
+            ):
+                return default_run_fn(inputs, run_attrs)
+            o = torch.empty(out_shape, dtype=out_dtype, device=q.device)
+            if generate_stats:
+                stats = torch.empty(
+                    stats_shape, dtype=torch.float32, device=q.device
+                )
+            else:
+                stats = o
+            part = torch.empty_strided(
+                part_shape, part_stride, dtype=torch.float32, device=q.device
+            )
+
+            split_kernel = split_cache[0]
+            if split_kernel is None:
+                with torch_device_fn.device(q.device):
+                    split_kernel, split_meta = _sdpa_decode_split_kernel[
+                        split_grid
+                    ](q, k, v, part, *split_tail, **split_constexpr)
+                block_n = int(split_meta["BLOCK_N"])
+                split_cache[1] = split_tail + (
+                    group,
+                    head_dim,
+                    v_dim,
+                    out_dtype.itemsize,
+                    block_g,
+                    block_n,
+                    block_d,
+                    block_dv,
+                )
+                split_cache[0] = split_kernel
+            else:
+                split_kernel[split_grid](
+                    q, k, v, part, *cast(tuple[Any, ...], split_cache[1])
+                )
+
+            combine_kernel = combine_cache[0]
+            if combine_kernel is None:
+                with torch_device_fn.device(q.device):
+                    combine_cache[0] = _sdpa_decode_combine_kernel[
+                        combine_grid
+                    ](part, o, stats, *combine_tail)
+            else:
+                combine_kernel[combine_grid](part, o, stats, *combine_tail)
+            if generate_stats:
+                return o, stats
+            return o
+
+        return run_decode
+
+    use_gqa_causal = (
+        sq > 1
+        and sq == skv
+        and not has_bias
+        and generate_stats
+        and banded
+        and alignment != _BOTTOM_RIGHT
+        and left is None
+        and right == 0
+        and out_dtype in (torch.float16, torch.bfloat16)
+        and head_dim == 128
+        and v_dim == 128
+        and k_shape[1] == v_shape[1]
+        and heads > k_shape[1]
+        and heads // k_shape[1] <= 4
+        and sq % 64 == 0
+        and skv % 64 == 0
+    )
+    if use_gqa_causal:
+        hkv = k_shape[1]
+        group = heads // hkv
+        gqa_constexpr = dict(
+            HEAD_DIM=head_dim,
+            V_DIM=v_dim,
+            ELEM_SIZE=out_dtype.itemsize,
+            BLOCK_D=head_dim,
+            BLOCK_DV=v_dim,
+        )
+        gqa_tail = (
+            attn_scale * _LOG2E,
+            hkv,
+            sq,
+            skv,
+            group,
+            *q_stride,
+            *k_stride,
+            *v_stride,
+            *o_stride,
+            *stats_stride,
+        )
+
+        def gqa_grid(meta: dict[str, Any]) -> tuple[int, int, int]:
+            return (
+                triton.cdiv(sq, meta["BLOCK_M"]),
+                batch * hkv,
+                triton.cdiv(group, meta["BLOCK_H"]),
+            )
+
+        gqa_cache: list[Any] = [None, None, None]
+
+        def run_gqa_causal(
+            inputs: Sequence[Any], run_attrs: dict[str, Any]
+        ) -> Any:
+            q, k, v = inputs[0], inputs[1], inputs[2]
+            if (
+                not isinstance(q, torch.Tensor)
+                or q.stride() != q_stride
+                or k.stride() != k_stride
+                or v.stride() != v_stride
+            ):
+                return default_run_fn(inputs, run_attrs)
+            o = torch.empty(out_shape, dtype=out_dtype, device=q.device)
+            stats = torch.empty(
+                stats_shape, dtype=torch.float32, device=q.device
+            )
+            kernel = gqa_cache[0]
+            if kernel is None:
+                with torch_device_fn.device(q.device):
+                    kernel, constexprs = _sdpa_fwd_gqa_causal_kernel[gqa_grid](
+                        q, k, v, o, stats, *gqa_tail, **gqa_constexpr
+                    )
+                block_m = int(constexprs["BLOCK_M"])
+                block_h = int(constexprs["BLOCK_H"])
+                block_n = int(constexprs["BLOCK_N"])
+                gqa_cache[1] = (
+                    triton.cdiv(sq, block_m),
+                    batch * hkv,
+                    triton.cdiv(group, block_h),
+                )
+                gqa_cache[2] = gqa_tail + (
+                    head_dim,
+                    v_dim,
+                    out_dtype.itemsize,
+                    block_m,
+                    block_h,
+                    block_n,
+                    head_dim,
+                    v_dim,
+                )
+                gqa_cache[0] = kernel
+            else:
+                kernel[gqa_cache[1]](
+                    q, k, v, o, stats, *cast(tuple[Any, ...], gqa_cache[2])
+                )
+            return o, stats
+
+        return run_gqa_causal
+
+    use_dense_exact = (
+        sq > 1
+        and not has_bias
+        and not generate_stats
+        and not banded
+        and out_dtype in (torch.float16, torch.bfloat16)
+        and head_dim == 128
+        and v_dim == 128
+        and sq % 64 == 0
+        and skv % 64 == 0
+    )
+    if use_dense_exact:
+        dense_constexpr = dict(
+            HEAD_DIM=head_dim,
+            V_DIM=v_dim,
+            ELEM_SIZE=out_dtype.itemsize,
+            BLOCK_D=head_dim,
+            BLOCK_DV=v_dim,
+        )
+        dense_tail = (
+            attn_scale * _LOG2E,
+            heads,
+            sq,
+            skv,
+            heads // k_shape[1],
+            heads // v_shape[1],
+            *q_stride,
+            *k_stride,
+            *v_stride,
+            *o_stride,
+        )
+
+        def dense_grid(meta: dict[str, Any]) -> tuple[int, int]:
+            return (triton.cdiv(sq, meta["BLOCK_M"]), batch_heads)
+
+        dense_cache: list[Any] = [None, None, None]
+
+        def run_dense_exact(
+            inputs: Sequence[Any], run_attrs: dict[str, Any]
+        ) -> Any:
+            q, k, v = inputs[0], inputs[1], inputs[2]
+            if (
+                not isinstance(q, torch.Tensor)
+                or q.stride() != q_stride
+                or k.stride() != k_stride
+                or v.stride() != v_stride
+            ):
+                return default_run_fn(inputs, run_attrs)
+            o = torch.empty(out_shape, dtype=out_dtype, device=q.device)
+            kernel = dense_cache[0]
+            if kernel is None:
+                with torch_device_fn.device(q.device):
+                    kernel, constexprs = _sdpa_fwd_dense_exact_kernel[
+                        dense_grid
+                    ](q, k, v, o, *dense_tail, **dense_constexpr)
+                block_m = int(constexprs["BLOCK_M"])
+                block_n = int(constexprs["BLOCK_N"])
+                dense_cache[1] = (triton.cdiv(sq, block_m), batch_heads, 1)
+                dense_cache[2] = dense_tail + (
+                    head_dim,
+                    v_dim,
+                    out_dtype.itemsize,
+                    block_m,
+                    block_n,
+                    head_dim,
+                    v_dim,
+                )
+                dense_cache[0] = kernel
+            else:
+                kernel[dense_cache[1]](
+                    q, k, v, o, *cast(tuple[Any, ...], dense_cache[2])
+                )
+            return o
+
+        return run_dense_exact
+
     def tune_grid(meta: dict[str, Any]) -> tuple[int, int]:
         return (triton.cdiv(sq, meta["BLOCK_M"]), batch_heads)
 
     # (CompiledKernel, static grid, positional args in signature order)
     kernel_cache: list[Any] = [None, None, None]
 
-    def run(inputs: Sequence[Any], run_attrs: dict[str, Any]) -> Any:
+    def run_sdpa(inputs: Sequence[Any], run_attrs: dict[str, Any]) -> Any:
         q, k, v = inputs[0], inputs[1], inputs[2]
         if (
             not isinstance(q, torch.Tensor)
@@ -241,6 +544,7 @@ def _prepare_sdpa(
                 has_bias,
                 banded,
                 generate_stats,
+                reverse_causal,
             )
             kernel_cache[0] = kernel
         else:
@@ -249,7 +553,7 @@ def _prepare_sdpa(
             return o, stats
         return o
 
-    return run
+    return run_sdpa
 
 
 def _prepare_sdpa_backward(
@@ -264,10 +568,17 @@ def _prepare_sdpa_backward(
     from flag_dnn.ops.sdpa import _BOTTOM_RIGHT, _TOP_LEFT, _UNBOUNDED_DIAG
     from flag_dnn.ops.sdpa_backward import (
         _sdpa_bwd_fused_atomic_causal_kernel,
+        _sdpa_bwd_fused_atomic_causal_delta_tri_kernel,
+        _sdpa_bwd_fused_atomic_causal_exact_delta_kernel,
+        _sdpa_bwd_fused_atomic_causal_exact_kernel,
+        _sdpa_bwd_fused_atomic_causal_tri_kernel,
         _sdpa_bwd_fused_atomic_gqa_causal_kernel,
+        _sdpa_bwd_fused_atomic_gqa_causal_tri_kernel,
         _sdpa_bwd_fused_atomic_kernel,
         _single_tuned_config_kwargs,
+        _zero_three_and_delta_kernel,
         _zero_three_contiguous_kernel,
+        _zero_three_equal_and_delta_kernel,
     )
     from flag_dnn.runtime import torch_device_fn
 
@@ -370,11 +681,55 @@ def _prepare_sdpa_backward(
     k_numel = batch * kv_heads * skv * head_dim
     v_numel = batch * v_heads * skv * v_dim
     zero_grid = (triton.cdiv(max(q_numel, k_numel, v_numel), zero_block), 1, 1)
-    fused_grid = (
-        triton.cdiv(sq, block_m),
-        triton.cdiv(skv, block_n),
-        batch * heads,
+    num_m_blocks = triton.cdiv(sq, block_m)
+    num_n_blocks = triton.cdiv(skv, block_n)
+    exact_causal = (
+        causal_top_left
+        and not use_fused_gqa
+        and q_per_k == 1
+        and q_per_v == 1
+        and head_dim == block_d
+        and v_dim == block_d
+        and sq % block_m == 0
+        and skv % block_n == 0
     )
+    triangular_causal = (
+        causal_top_left
+        and block_m == block_n
+        and sq == skv
+        and not exact_causal
+    )
+    use_exact_delta = (
+        exact_causal
+        and head_dim == 128
+        and q_numel == k_numel
+        and q_numel == v_numel
+        and q_numel % zero_block == 0
+    )
+    use_delta_fused = (
+        triangular_causal
+        and not use_fused_gqa
+        and q_per_k == 1
+        and head_dim > 64
+        and sq >= 1024
+    )
+    if triangular_causal:
+        fused_grid = (num_m_blocks * (num_m_blocks + 1) // 2, batch * heads, 1)
+    else:
+        fused_grid = (num_m_blocks, num_n_blocks, batch * heads)
+    delta_stride = (heads * sq, sq, 1)
+    delta_config = None
+    zero_delta_grid = zero_grid
+    if use_delta_fused or use_exact_delta:
+        delta_config = _single_tuned_config_kwargs("sdpa_backward_zero_delta")
+        zero_delta_grid = (
+            max(
+                zero_grid[0],
+                triton.cdiv(batch * heads * sq, int(delta_config["BLOCK_M"])),
+            ),
+            1,
+            1,
+        )
 
     dense_tail = (
         attn_scale,
@@ -413,6 +768,112 @@ def _prepare_sdpa_backward(
         stats_stride[0],
         stats_stride[1],
         stats_stride[2],
+        *q_stride,
+        *k_stride,
+        *v_stride,
+        head_dim,
+        block_m,
+        block_n,
+        block_d,
+        banded,
+        causal_top_left,
+    )
+    gqa_tri_tail = (
+        attn_scale,
+        heads,
+        q_per_k,
+        sq,
+        skv,
+        min_diag,
+        max_diag,
+        *q_stride,
+        *k_stride,
+        *v_stride,
+        *o_stride,
+        *do_stride,
+        stats_stride[0],
+        stats_stride[1],
+        stats_stride[2],
+        *q_stride,
+        *k_stride,
+        *v_stride,
+        head_dim,
+        block_m,
+        block_n,
+        block_d,
+        num_m_blocks,
+        banded,
+        causal_top_left,
+    )
+    causal_tri_tail = (
+        attn_scale,
+        heads,
+        sq,
+        skv,
+        min_diag,
+        max_diag,
+        *q_stride,
+        *k_stride,
+        *v_stride,
+        *o_stride,
+        *do_stride,
+        stats_stride[0],
+        stats_stride[1],
+        stats_stride[2],
+        *q_stride,
+        *k_stride,
+        *v_stride,
+        head_dim,
+        block_m,
+        block_n,
+        block_d,
+        num_m_blocks,
+        banded,
+        causal_top_left,
+    )
+    causal_delta_tri_tail = (
+        attn_scale,
+        heads,
+        sq,
+        skv,
+        min_diag,
+        max_diag,
+        *q_stride,
+        *k_stride,
+        *v_stride,
+        *o_stride,
+        *do_stride,
+        stats_stride[0],
+        stats_stride[1],
+        stats_stride[2],
+        *delta_stride,
+        *q_stride,
+        *k_stride,
+        *v_stride,
+        head_dim,
+        block_m,
+        block_n,
+        block_d,
+        num_m_blocks,
+        banded,
+        causal_top_left,
+    )
+    causal_exact_delta_tail = (
+        attn_scale,
+        heads,
+        sq,
+        skv,
+        min_diag,
+        max_diag,
+        *q_stride,
+        *k_stride,
+        *v_stride,
+        *o_stride,
+        *do_stride,
+        stats_stride[0],
+        stats_stride[1],
+        stats_stride[2],
+        *delta_stride,
         *q_stride,
         *k_stride,
         *v_stride,
@@ -473,34 +934,314 @@ def _prepare_sdpa_backward(
         dV = torch.empty_strided(
             v_shape, v_stride, dtype=out_dtype, device=q.device
         )
+        delta = None
+        if use_delta_fused or use_exact_delta:
+            delta = torch.empty(
+                (batch, heads, sq), dtype=torch.float32, device=q.device
+            )
 
         zero_kernel = zero_cache[0]
         if zero_kernel is None:
             with torch_device_fn.device(q.device):
-                zero_cache[0] = _zero_three_contiguous_kernel[zero_grid](
+                if use_exact_delta:
+                    assert delta is not None and delta_config is not None
+                    zero_cache[0] = _zero_three_equal_and_delta_kernel[
+                        zero_delta_grid
+                    ](
+                        dQ,
+                        dK,
+                        dV,
+                        o,
+                        dO,
+                        delta,
+                        batch * heads * sq,
+                        heads,
+                        sq,
+                        *o_stride,
+                        *do_stride,
+                        *delta_stride,
+                        **delta_config,
+                    )
+                elif use_delta_fused:
+                    assert delta is not None and delta_config is not None
+                    zero_cache[0] = _zero_three_and_delta_kernel[
+                        zero_delta_grid
+                    ](
+                        dQ,
+                        dK,
+                        dV,
+                        o,
+                        dO,
+                        delta,
+                        q_numel,
+                        k_numel,
+                        v_numel,
+                        batch * heads * sq,
+                        heads,
+                        sq,
+                        *o_stride,
+                        *do_stride,
+                        *delta_stride,
+                        **delta_config,
+                    )
+                else:
+                    zero_cache[0] = _zero_three_contiguous_kernel[zero_grid](
+                        dQ,
+                        dK,
+                        dV,
+                        q_numel,
+                        k_numel,
+                        v_numel,
+                        BLOCK=zero_block,
+                    )
+        else:
+            if use_exact_delta:
+                assert delta is not None and delta_config is not None
+                zero_kernel[zero_delta_grid](
+                    dQ,
+                    dK,
+                    dV,
+                    o,
+                    dO,
+                    delta,
+                    batch * heads * sq,
+                    heads,
+                    sq,
+                    *o_stride,
+                    *do_stride,
+                    *delta_stride,
+                    delta_config["BLOCK_ZERO"],
+                    delta_config["BLOCK_M"],
+                    delta_config["BLOCK_D"],
+                )
+            elif use_delta_fused:
+                assert delta is not None and delta_config is not None
+                zero_kernel[zero_delta_grid](
+                    dQ,
+                    dK,
+                    dV,
+                    o,
+                    dO,
+                    delta,
+                    q_numel,
+                    k_numel,
+                    v_numel,
+                    batch * heads * sq,
+                    heads,
+                    sq,
+                    *o_stride,
+                    *do_stride,
+                    *delta_stride,
+                    delta_config["BLOCK_ZERO"],
+                    delta_config["BLOCK_M"],
+                    delta_config["BLOCK_D"],
+                )
+            else:
+                zero_kernel[zero_grid](
                     dQ,
                     dK,
                     dV,
                     q_numel,
                     k_numel,
                     v_numel,
-                    BLOCK=zero_block,
+                    zero_block,
                 )
-        else:
-            zero_kernel[zero_grid](
-                dQ,
-                dK,
-                dV,
-                q_numel,
-                k_numel,
-                v_numel,
-                zero_block,
-            )
 
         fused_kernel = fused_cache[0]
         if fused_kernel is None:
             with torch_device_fn.device(q.device):
-                if causal_top_left and use_fused_gqa:
+                if use_exact_delta:
+                    assert delta is not None
+                    fused_cache[
+                        0
+                    ] = _sdpa_bwd_fused_atomic_causal_exact_delta_kernel[
+                        fused_grid
+                    ](
+                        q,
+                        k,
+                        v,
+                        o,
+                        dO,
+                        stats,
+                        delta,
+                        dQ,
+                        dK,
+                        dV,
+                        attn_scale,
+                        heads,
+                        sq,
+                        skv,
+                        min_diag,
+                        max_diag,
+                        *q_stride,
+                        *k_stride,
+                        *v_stride,
+                        *o_stride,
+                        *do_stride,
+                        stats_stride[0],
+                        stats_stride[1],
+                        stats_stride[2],
+                        *delta_stride,
+                        *q_stride,
+                        *k_stride,
+                        *v_stride,
+                        HEAD_DIM=head_dim,
+                        BANDED=banded,
+                        CAUSAL_TOP_LEFT=causal_top_left,
+                        **fused_config,
+                    )
+                elif exact_causal:
+                    fused_cache[
+                        0
+                    ] = _sdpa_bwd_fused_atomic_causal_exact_kernel[fused_grid](
+                        q,
+                        k,
+                        v,
+                        o,
+                        dO,
+                        stats,
+                        dQ,
+                        dK,
+                        dV,
+                        attn_scale,
+                        heads,
+                        sq,
+                        skv,
+                        min_diag,
+                        max_diag,
+                        *q_stride,
+                        *k_stride,
+                        *v_stride,
+                        *o_stride,
+                        *do_stride,
+                        stats_stride[0],
+                        stats_stride[1],
+                        stats_stride[2],
+                        *q_stride,
+                        *k_stride,
+                        *v_stride,
+                        HEAD_DIM=head_dim,
+                        BANDED=banded,
+                        CAUSAL_TOP_LEFT=causal_top_left,
+                        **fused_config,
+                    )
+                elif use_delta_fused:
+                    assert delta is not None
+                    fused_cache[
+                        0
+                    ] = _sdpa_bwd_fused_atomic_causal_delta_tri_kernel[
+                        fused_grid
+                    ](
+                        q,
+                        k,
+                        v,
+                        o,
+                        dO,
+                        stats,
+                        delta,
+                        dQ,
+                        dK,
+                        dV,
+                        attn_scale,
+                        heads,
+                        sq,
+                        skv,
+                        min_diag,
+                        max_diag,
+                        *q_stride,
+                        *k_stride,
+                        *v_stride,
+                        *o_stride,
+                        *do_stride,
+                        stats_stride[0],
+                        stats_stride[1],
+                        stats_stride[2],
+                        *delta_stride,
+                        *q_stride,
+                        *k_stride,
+                        *v_stride,
+                        HEAD_DIM=head_dim,
+                        NUM_BLOCKS=num_m_blocks,
+                        BANDED=banded,
+                        CAUSAL_TOP_LEFT=causal_top_left,
+                        **fused_config,
+                    )
+                elif triangular_causal and use_fused_gqa:
+                    fused_cache[
+                        0
+                    ] = _sdpa_bwd_fused_atomic_gqa_causal_tri_kernel[
+                        fused_grid
+                    ](
+                        q,
+                        k,
+                        v,
+                        o,
+                        dO,
+                        stats,
+                        dQ,
+                        dK,
+                        dV,
+                        attn_scale,
+                        heads,
+                        q_per_k,
+                        sq,
+                        skv,
+                        min_diag,
+                        max_diag,
+                        *q_stride,
+                        *k_stride,
+                        *v_stride,
+                        *o_stride,
+                        *do_stride,
+                        stats_stride[0],
+                        stats_stride[1],
+                        stats_stride[2],
+                        *q_stride,
+                        *k_stride,
+                        *v_stride,
+                        HEAD_DIM=head_dim,
+                        NUM_BLOCKS=num_m_blocks,
+                        BANDED=banded,
+                        CAUSAL_TOP_LEFT=causal_top_left,
+                        **fused_config,
+                    )
+                elif triangular_causal:
+                    fused_cache[0] = _sdpa_bwd_fused_atomic_causal_tri_kernel[
+                        fused_grid
+                    ](
+                        q,
+                        k,
+                        v,
+                        o,
+                        dO,
+                        stats,
+                        dQ,
+                        dK,
+                        dV,
+                        attn_scale,
+                        heads,
+                        sq,
+                        skv,
+                        min_diag,
+                        max_diag,
+                        *q_stride,
+                        *k_stride,
+                        *v_stride,
+                        *o_stride,
+                        *do_stride,
+                        stats_stride[0],
+                        stats_stride[1],
+                        stats_stride[2],
+                        *q_stride,
+                        *k_stride,
+                        *v_stride,
+                        HEAD_DIM=head_dim,
+                        NUM_BLOCKS=num_m_blocks,
+                        BANDED=banded,
+                        CAUSAL_TOP_LEFT=causal_top_left,
+                        **fused_config,
+                    )
+                elif causal_top_left and use_fused_gqa:
                     fused_cache[0] = _sdpa_bwd_fused_atomic_gqa_causal_kernel[
                         fused_grid
                     ](
@@ -600,6 +1341,48 @@ def _prepare_sdpa_backward(
                         HEAD_DIM=head_dim,
                         **fused_config,
                     )
+        elif use_exact_delta:
+            assert delta is not None
+            fused_kernel[fused_grid](
+                q,
+                k,
+                v,
+                o,
+                dO,
+                stats,
+                delta,
+                dQ,
+                dK,
+                dV,
+                *causal_exact_delta_tail,
+            )
+        elif exact_causal:
+            fused_kernel[fused_grid](
+                q, k, v, o, dO, stats, dQ, dK, dV, *causal_tail
+            )
+        elif use_delta_fused:
+            assert delta is not None
+            fused_kernel[fused_grid](
+                q,
+                k,
+                v,
+                o,
+                dO,
+                stats,
+                delta,
+                dQ,
+                dK,
+                dV,
+                *causal_delta_tri_tail,
+            )
+        elif triangular_causal and use_fused_gqa:
+            fused_kernel[fused_grid](
+                q, k, v, o, dO, stats, dQ, dK, dV, *gqa_tri_tail
+            )
+        elif triangular_causal:
+            fused_kernel[fused_grid](
+                q, k, v, o, dO, stats, dQ, dK, dV, *causal_tri_tail
+            )
         elif causal_top_left and use_fused_gqa:
             fused_kernel[fused_grid](
                 q, k, v, o, dO, stats, dQ, dK, dV, *gqa_tail

@@ -29,6 +29,8 @@ _UNBOUNDED_DIAG = 1 << 30
 
 _LOG2E_KERNEL = tl.constexpr(1.4426950408889634)
 
+_DECODE_CHUNK_SIZE = 1024
+
 
 @triton.jit
 def _sdpa_fwd_inner(
@@ -149,8 +151,28 @@ def _sdpa_fwd_inner(
 @libentry()
 @libtuner(
     configs=runtime.get_tuned_config("sdpa"),
-    key=["SQ", "SKV", "HEAD_DIM", "ELEM_SIZE", "BANDED"],
-    strategy=["log", "log", "default", "default", "default"],
+    key=[
+        "SQ",
+        "SKV",
+        "HEAD_DIM",
+        "V_DIM",
+        "ELEM_SIZE",
+        "HAS_BIAS",
+        "BANDED",
+        "GENERATE_STATS",
+        "REVERSE_CAUSAL",
+    ],
+    strategy=[
+        "log",
+        "log",
+        "default",
+        "default",
+        "default",
+        "default",
+        "default",
+        "default",
+        "default",
+    ],
     warmup=5,
     rep=10,
 )
@@ -205,8 +227,13 @@ def _sdpa_fwd_kernel(
     HAS_BIAS: tl.constexpr,
     BANDED: tl.constexpr,
     GENERATE_STATS: tl.constexpr,
+    REVERSE_CAUSAL: tl.constexpr,
 ):
-    pid_m = tle.program_id(0)
+    raw_pid_m = tle.program_id(0)
+    if REVERSE_CAUSAL:
+        pid_m = tl.cdiv(SQ, BLOCK_M) - 1 - raw_pid_m
+    else:
+        pid_m = raw_pid_m
     pid_bh = tle.program_id(1)
     off_b = pid_bh // HQ
     off_h = pid_bh % HQ
@@ -376,6 +403,290 @@ def _sdpa_fwd_kernel(
         stats = m_i / _LOG2E_KERNEL + tl.log(l_safe)
         stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
         tl.store(stats_base + offs_m * stride_sm, stats, mask=mask_m)
+
+
+@libentry()
+@libtuner(
+    configs=runtime.get_tuned_config("sdpa_dense_exact"),
+    key=["SQ", "SKV", "HEAD_DIM", "V_DIM", "ELEM_SIZE"],
+    strategy=["log", "log", "default", "default", "default"],
+    warmup=5,
+    rep=10,
+)
+@triton.jit
+def _sdpa_fwd_dense_exact_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    o_ptr,
+    qk_scale,
+    HQ,
+    SQ,
+    SKV,
+    q_per_k,
+    q_per_v,
+    stride_qb,
+    stride_qh,
+    stride_qm,
+    stride_qd,
+    stride_kb,
+    stride_kh,
+    stride_kn,
+    stride_kd,
+    stride_vb,
+    stride_vh,
+    stride_vn,
+    stride_vd,
+    stride_ob,
+    stride_oh,
+    stride_om,
+    stride_od,
+    HEAD_DIM: tl.constexpr,
+    V_DIM: tl.constexpr,
+    ELEM_SIZE: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+    BLOCK_DV: tl.constexpr,
+):
+    pid_m = tle.program_id(0)
+    pid_bh = tle.program_id(1)
+    off_b = pid_bh // HQ
+    off_h = pid_bh % HQ
+    off_kh = off_h // q_per_k
+    off_vh = off_h // q_per_v
+
+    start_m = pid_m * BLOCK_M
+    offs_m = start_m + tl.arange(0, BLOCK_M)
+    offs_d = tl.arange(0, BLOCK_D)
+    offs_dv = tl.arange(0, BLOCK_DV)
+
+    q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
+    k_base = k_ptr + off_b * stride_kb + off_kh * stride_kh
+    v_base = v_ptr + off_b * stride_vb + off_vh * stride_vh
+
+    q = tl.load(
+        q_base + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qd
+    )
+    acc = tl.zeros((BLOCK_M, BLOCK_DV), dtype=tl.float32)
+    l_i = tl.zeros((BLOCK_M,), dtype=tl.float32)
+    m_i = tl.full((BLOCK_M,), float("-inf"), dtype=tl.float32)
+
+    acc, l_i, m_i = _sdpa_fwd_inner(
+        acc,
+        l_i,
+        m_i,
+        q,
+        k_base,
+        v_base,
+        q_ptr,
+        qk_scale,
+        offs_m,
+        offs_d,
+        offs_dv,
+        0,
+        SKV,
+        SQ,
+        SKV,
+        -1073741824,
+        1073741824,
+        stride_kn,
+        stride_kd,
+        stride_vn,
+        stride_vd,
+        0,
+        0,
+        HEAD_DIM=HEAD_DIM,
+        V_DIM=V_DIM,
+        BLOCK_N=BLOCK_N,
+        PADDED_D=False,
+        PADDED_DV=False,
+        HAS_BIAS=False,
+        BANDED=False,
+        MASKED=False,
+    )
+
+    acc = acc / l_i[:, None]
+    o_base = o_ptr + off_b * stride_ob + off_h * stride_oh
+    tl.store(
+        o_base + offs_m[:, None] * stride_om + offs_dv[None, :] * stride_od,
+        acc.to(o_ptr.dtype.element_ty),
+    )
+
+
+@libentry()
+@libtuner(
+    configs=runtime.get_tuned_config("sdpa_gqa_causal"),
+    key=["SQ", "SKV", "HEAD_DIM", "V_DIM", "ELEM_SIZE", "GROUP"],
+    strategy=["log", "log", "default", "default", "default", "default"],
+    warmup=5,
+    rep=10,
+)
+@triton.jit
+def _sdpa_fwd_gqa_causal_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    o_ptr,
+    stats_ptr,
+    qk_scale,
+    HKV,
+    SQ,
+    SKV,
+    GROUP,
+    stride_qb,
+    stride_qh,
+    stride_qm,
+    stride_qd,
+    stride_kb,
+    stride_kh,
+    stride_kn,
+    stride_kd,
+    stride_vb,
+    stride_vh,
+    stride_vn,
+    stride_vd,
+    stride_ob,
+    stride_oh,
+    stride_om,
+    stride_od,
+    stride_sb,
+    stride_sh,
+    stride_sm,
+    HEAD_DIM: tl.constexpr,
+    V_DIM: tl.constexpr,
+    ELEM_SIZE: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_H: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+    BLOCK_DV: tl.constexpr,
+):
+    pid_m = tle.program_id(0)
+    pid_bkv = tle.program_id(1)
+    pid_hg = tle.program_id(2)
+    off_b = pid_bkv // HKV
+    off_kh = pid_bkv % HKV
+
+    start_m = pid_m * BLOCK_M
+    offs_mh = tl.arange(0, BLOCK_M * BLOCK_H)
+    offs_h = pid_hg * BLOCK_H + offs_mh // BLOCK_M
+    offs_m = start_m + (offs_mh % BLOCK_M)
+    q_head = off_kh * GROUP + offs_h
+    row_mask = (offs_h < GROUP) & (offs_m < SQ)
+    offs_d = tl.arange(0, BLOCK_D)
+    offs_dv = tl.arange(0, BLOCK_DV)
+
+    q = tl.load(
+        q_ptr
+        + off_b * stride_qb
+        + q_head[:, None] * stride_qh
+        + offs_m[:, None] * stride_qm
+        + offs_d[None, :] * stride_qd,
+        mask=row_mask[:, None],
+        other=0.0,
+    )
+
+    k_base = k_ptr + off_b * stride_kb + off_kh * stride_kh
+    v_base = v_ptr + off_b * stride_vb + off_kh * stride_vh
+    acc = tl.zeros((BLOCK_M * BLOCK_H, BLOCK_DV), dtype=tl.float32)
+    l_i = tl.zeros((BLOCK_M * BLOCK_H,), dtype=tl.float32)
+    m_i = tl.full((BLOCK_M * BLOCK_H,), float("-inf"), dtype=tl.float32)
+
+    hi = tl.minimum(start_m + BLOCK_M, SKV)
+    full_hi = ((start_m + 1) // BLOCK_N) * BLOCK_N
+    full_hi = tl.minimum(full_hi, hi)
+
+    if 0 < full_hi:
+        acc, l_i, m_i = _sdpa_fwd_inner(
+            acc,
+            l_i,
+            m_i,
+            q,
+            k_base,
+            v_base,
+            q_ptr,
+            qk_scale,
+            offs_m,
+            offs_d,
+            offs_dv,
+            0,
+            full_hi,
+            SQ,
+            SKV,
+            -1073741824,
+            0,
+            stride_kn,
+            stride_kd,
+            stride_vn,
+            stride_vd,
+            0,
+            0,
+            HEAD_DIM=HEAD_DIM,
+            V_DIM=V_DIM,
+            BLOCK_N=BLOCK_N,
+            PADDED_D=False,
+            PADDED_DV=False,
+            HAS_BIAS=False,
+            BANDED=True,
+            MASKED=False,
+        )
+    if full_hi < hi:
+        acc, l_i, m_i = _sdpa_fwd_inner(
+            acc,
+            l_i,
+            m_i,
+            q,
+            k_base,
+            v_base,
+            q_ptr,
+            qk_scale,
+            offs_m,
+            offs_d,
+            offs_dv,
+            full_hi,
+            hi,
+            SQ,
+            SKV,
+            -1073741824,
+            0,
+            stride_kn,
+            stride_kd,
+            stride_vn,
+            stride_vd,
+            0,
+            0,
+            HEAD_DIM=HEAD_DIM,
+            V_DIM=V_DIM,
+            BLOCK_N=BLOCK_N,
+            PADDED_D=False,
+            PADDED_DV=False,
+            HAS_BIAS=False,
+            BANDED=True,
+            MASKED=True,
+        )
+
+    l_safe = tl.where(l_i == 0.0, 1.0, l_i)
+    acc = acc / l_safe[:, None]
+    tl.store(
+        o_ptr
+        + off_b * stride_ob
+        + q_head[:, None] * stride_oh
+        + offs_m[:, None] * stride_om
+        + offs_dv[None, :] * stride_od,
+        acc.to(o_ptr.dtype.element_ty),
+        mask=row_mask[:, None],
+    )
+
+    stats = m_i / _LOG2E_KERNEL + tl.log(l_safe)
+    tl.store(
+        stats_ptr
+        + off_b * stride_sb
+        + q_head * stride_sh
+        + offs_m * stride_sm,
+        stats,
+        mask=row_mask,
+    )
 
 
 @libentry()
@@ -811,6 +1122,8 @@ def sdpa(
         max_diag = right + shift if right is not None else _UNBOUNDED_DIAG
         banded = left is not None or right is not None
 
+        reverse_causal = alignment == _TOP_LEFT and left is None and right == 0
+
         if bias is not None:
             bias_arg = bias
             stride_bias = (
@@ -829,57 +1142,256 @@ def sdpa(
             stats_arg = o
             stride_stats = (0, 0, 0)
 
-        def grid(meta):
-            return (triton.cdiv(sq, meta["BLOCK_M"]), batch * heads)
-
-        with torch_device_fn.device(q.device):
-            _sdpa_fwd_kernel[grid](
-                q,
-                k,
-                v,
-                bias_arg,
-                o,
-                stats_arg,
-                attn_scale * _LOG2E,
-                heads,
-                sq,
-                skv,
-                heads // int(k.shape[1]),
-                heads // int(v.shape[1]),
-                min_diag,
-                max_diag,
-                q.stride(0),
-                q.stride(1),
-                q.stride(2),
-                q.stride(3),
-                k.stride(0),
-                k.stride(1),
-                k.stride(2),
-                k.stride(3),
-                v.stride(0),
-                v.stride(1),
-                v.stride(2),
-                v.stride(3),
-                stride_bias[0],
-                stride_bias[1],
-                stride_bias[2],
-                stride_bias[3],
-                o.stride(0),
-                o.stride(1),
-                o.stride(2),
-                o.stride(3),
-                stride_stats[0],
-                stride_stats[1],
-                stride_stats[2],
-                HEAD_DIM=head_dim,
-                V_DIM=v_dim,
-                ELEM_SIZE=q.element_size(),
-                BLOCK_D=max(16, triton.next_power_of_2(head_dim)),
-                BLOCK_DV=max(16, triton.next_power_of_2(v_dim)),
-                HAS_BIAS=bias is not None,
-                BANDED=banded,
-                GENERATE_STATS=stats is not None,
+        used_decode = False
+        if (
+            sq == 1
+            and bias is None
+            and not banded
+            and q.dtype in (torch.float16, torch.bfloat16)
+            and k.shape[1] == v.shape[1]
+            and heads > int(k.shape[1])
+        ):
+            hkv = int(k.shape[1])
+            group = heads // hkv
+            chunk = min(skv, _DECODE_CHUNK_SIZE)
+            splits = triton.cdiv(skv, chunk)
+            part = torch.empty(
+                (batch, heads, splits, v_dim + 2),
+                device=q.device,
+                dtype=torch.float32,
             )
+            block_g = max(1, triton.next_power_of_2(group))
+            block_d = max(16, triton.next_power_of_2(head_dim))
+            block_dv = max(16, triton.next_power_of_2(v_dim))
+            with torch_device_fn.device(q.device):
+                _sdpa_decode_split_kernel[(splits, batch * hkv)](
+                    q,
+                    k,
+                    v,
+                    part,
+                    attn_scale * _LOG2E,
+                    hkv,
+                    skv,
+                    chunk,
+                    q.stride(0),
+                    q.stride(1),
+                    q.stride(3),
+                    k.stride(0),
+                    k.stride(1),
+                    k.stride(2),
+                    k.stride(3),
+                    v.stride(0),
+                    v.stride(1),
+                    v.stride(2),
+                    v.stride(3),
+                    part.stride(0),
+                    part.stride(1),
+                    part.stride(2),
+                    part.stride(3),
+                    GROUP=group,
+                    HEAD_DIM=head_dim,
+                    V_DIM=v_dim,
+                    ELEM_SIZE=q.element_size(),
+                    BLOCK_G=block_g,
+                    BLOCK_D=block_d,
+                    BLOCK_DV=block_dv,
+                )
+                _sdpa_decode_combine_kernel[(batch * heads,)](
+                    part,
+                    o,
+                    stats_arg,
+                    heads,
+                    splits,
+                    part.stride(0),
+                    part.stride(1),
+                    part.stride(2),
+                    part.stride(3),
+                    o.stride(0),
+                    o.stride(1),
+                    o.stride(3),
+                    stride_stats[0],
+                    stride_stats[1],
+                    V_DIM=v_dim,
+                    BLOCK_S=max(1, triton.next_power_of_2(splits)),
+                    BLOCK_DV=block_dv,
+                    GENERATE_STATS=stats is not None,
+                )
+            used_decode = True
+
+        if (
+            not used_decode
+            and sq > 1
+            and sq == skv
+            and bias is None
+            and stats is not None
+            and banded
+            and alignment == _TOP_LEFT
+            and left is None
+            and right == 0
+            and q.dtype in (torch.float16, torch.bfloat16)
+            and head_dim == 128
+            and v_dim == 128
+            and k.shape[1] == v.shape[1]
+            and heads > int(k.shape[1])
+            and heads // int(k.shape[1]) <= 4
+            and sq % 64 == 0
+            and skv % 64 == 0
+        ):
+            hkv = int(k.shape[1])
+            group = heads // hkv
+
+            def gqa_grid(meta):
+                return (
+                    triton.cdiv(sq, meta["BLOCK_M"]),
+                    batch * hkv,
+                    triton.cdiv(group, meta["BLOCK_H"]),
+                )
+
+            with torch_device_fn.device(q.device):
+                _sdpa_fwd_gqa_causal_kernel[gqa_grid](
+                    q,
+                    k,
+                    v,
+                    o,
+                    stats,
+                    attn_scale * _LOG2E,
+                    hkv,
+                    sq,
+                    skv,
+                    group,
+                    q.stride(0),
+                    q.stride(1),
+                    q.stride(2),
+                    q.stride(3),
+                    k.stride(0),
+                    k.stride(1),
+                    k.stride(2),
+                    k.stride(3),
+                    v.stride(0),
+                    v.stride(1),
+                    v.stride(2),
+                    v.stride(3),
+                    o.stride(0),
+                    o.stride(1),
+                    o.stride(2),
+                    o.stride(3),
+                    stride_stats[0],
+                    stride_stats[1],
+                    stride_stats[2],
+                    HEAD_DIM=head_dim,
+                    V_DIM=v_dim,
+                    ELEM_SIZE=q.element_size(),
+                    BLOCK_D=head_dim,
+                    BLOCK_DV=v_dim,
+                )
+            used_decode = True
+
+        if (
+            not used_decode
+            and sq > 1
+            and bias is None
+            and stats is None
+            and not banded
+            and q.dtype in (torch.float16, torch.bfloat16)
+            and head_dim == 128
+            and v_dim == 128
+            and sq % 64 == 0
+            and skv % 64 == 0
+        ):
+
+            def dense_grid(meta):
+                return (triton.cdiv(sq, meta["BLOCK_M"]), batch * heads)
+
+            with torch_device_fn.device(q.device):
+                _sdpa_fwd_dense_exact_kernel[dense_grid](
+                    q,
+                    k,
+                    v,
+                    o,
+                    attn_scale * _LOG2E,
+                    heads,
+                    sq,
+                    skv,
+                    heads // int(k.shape[1]),
+                    heads // int(v.shape[1]),
+                    q.stride(0),
+                    q.stride(1),
+                    q.stride(2),
+                    q.stride(3),
+                    k.stride(0),
+                    k.stride(1),
+                    k.stride(2),
+                    k.stride(3),
+                    v.stride(0),
+                    v.stride(1),
+                    v.stride(2),
+                    v.stride(3),
+                    o.stride(0),
+                    o.stride(1),
+                    o.stride(2),
+                    o.stride(3),
+                    HEAD_DIM=head_dim,
+                    V_DIM=v_dim,
+                    ELEM_SIZE=q.element_size(),
+                    BLOCK_D=head_dim,
+                    BLOCK_DV=v_dim,
+                )
+            used_decode = True
+
+        if not used_decode:
+
+            def grid(meta):
+                return (triton.cdiv(sq, meta["BLOCK_M"]), batch * heads)
+
+            with torch_device_fn.device(q.device):
+                _sdpa_fwd_kernel[grid](
+                    q,
+                    k,
+                    v,
+                    bias_arg,
+                    o,
+                    stats_arg,
+                    attn_scale * _LOG2E,
+                    heads,
+                    sq,
+                    skv,
+                    heads // int(k.shape[1]),
+                    heads // int(v.shape[1]),
+                    min_diag,
+                    max_diag,
+                    q.stride(0),
+                    q.stride(1),
+                    q.stride(2),
+                    q.stride(3),
+                    k.stride(0),
+                    k.stride(1),
+                    k.stride(2),
+                    k.stride(3),
+                    v.stride(0),
+                    v.stride(1),
+                    v.stride(2),
+                    v.stride(3),
+                    stride_bias[0],
+                    stride_bias[1],
+                    stride_bias[2],
+                    stride_bias[3],
+                    o.stride(0),
+                    o.stride(1),
+                    o.stride(2),
+                    o.stride(3),
+                    stride_stats[0],
+                    stride_stats[1],
+                    stride_stats[2],
+                    HEAD_DIM=head_dim,
+                    V_DIM=v_dim,
+                    ELEM_SIZE=q.element_size(),
+                    BLOCK_D=max(16, triton.next_power_of_2(head_dim)),
+                    BLOCK_DV=max(16, triton.next_power_of_2(v_dim)),
+                    HAS_BIAS=bias is not None,
+                    BANDED=banded,
+                    GENERATE_STATS=stats is not None,
+                    REVERSE_CAUSAL=reverse_causal,
+                )
     elif stats is not None:
         stats.fill_(float("-inf"))
 

@@ -134,8 +134,9 @@ softmax:
       - 3
       - 4         # 增加流水线深度，有助于掩盖大块访存延迟
 sdpa:
-  # Prefill-style tiles. Pareto set from the H100 sweep in
-  # .kernel-generate/optimization-log-sdpa.md (Rounds 02/04).
+  # Pareto set for generic SDPA forward after H100 autotune. Covers D64
+  # prefill/causal, D128 causal, and MHA decode; GQA decode and exact
+  # dense D128 use dedicated entries below.
   - gen: true
     param_map:
       META:
@@ -148,14 +149,14 @@ sdpa:
       - 128
     block_n:
       - 64
-      - 128
     warps:
       - 4
       - 8
     stages:
       - 2
       - 3
-  # Decode-style tiles (seq_q rounds to a tiny BLOCK_M, wide BLOCK_N).
+sdpa_dense_exact:
+  # Exact dense low-precision D128 SDPA forward without bias/stats.
   - gen: true
     param_map:
       META:
@@ -164,15 +165,52 @@ sdpa:
       num_warps: warps
       num_stages: stages
     block_m:
-      - 16
+      - 64
     block_n:
       - 64
       - 128
-      - 256
+    warps:
+      - 4
+    stages:
+      - 3
+sdpa_gqa_causal:
+  # Grouped-query causal prefill fast path for low-precision D128.
+  # Pareto points from H100 autotune for group<=4 GQA exact causal stats cases.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_H: block_h
+        BLOCK_N: block_n
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 16
+    block_h:
+      - 4
+    block_n:
+      - 64
     warps:
       - 4
     stages:
       - 2
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_H: block_h
+        BLOCK_N: block_n
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 32
+    block_h:
+      - 2
+    block_n:
+      - 64
+    warps:
+      - 4
+    stages:
       - 3
 sdpa_decode:
   # Split-KV flash-decoding partial kernel (seq_q == 1).
@@ -250,7 +288,7 @@ sdpa_backward_fused_atomic_causal_d128:
     warps:
       - 4
     stages:
-      - 2
+      - 3
 sdpa_backward_fused_atomic_gqa_causal_d128:
   # Atomic fused tile fast path for D128 top-left causal GQA backward cases.
   - gen: true
@@ -269,6 +307,26 @@ sdpa_backward_fused_atomic_gqa_causal_d128:
       - 128
     warps:
       - 4
+    stages:
+      - 2
+sdpa_backward_zero_delta:
+  # Combined output zeroing and row delta precompute for D128 causal fused backward.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_ZERO: block_zero
+        BLOCK_M: block_m
+        BLOCK_D: block_d
+      num_warps: warps
+      num_stages: stages
+    block_zero:
+      - 512
+    block_m:
+      - 32
+    block_d:
+      - 128
+    warps:
+      - 8
     stages:
       - 2
 sdpa_backward_dq:
