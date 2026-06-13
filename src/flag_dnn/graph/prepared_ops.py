@@ -86,9 +86,12 @@ def _prepare_sdpa(
         _LOG2E,
         _UNBOUNDED_DIAG,
         _sdpa_decode_combine_kernel,
+        _ensure_triton_tma_allocator,
         _sdpa_decode_split_kernel,
         _sdpa_fwd_dense_exact_kernel,
+        _sdpa_fwd_gqa_causal_desc_kernel,
         _sdpa_fwd_gqa_causal_kernel,
+        _sdpa_fwd_mha_causal_desc_kernel,
         _sdpa_fwd_kernel,
     )
     from flag_dnn.runtime import torch_device_fn
@@ -359,6 +362,70 @@ def _prepare_sdpa(
                 triton.cdiv(group, meta["BLOCK_H"]),
             )
 
+        use_gqa_desc = (
+            sq == 4096
+            and skv == 4096
+            and q_stride[3] == 1
+            and k_stride[3] == 1
+            and v_stride[3] == 1
+        )
+        if use_gqa_desc:
+            gqa_desc_cache: list[Any] = [None, None, None]
+
+            def run_gqa_causal_desc(
+                inputs: Sequence[Any], run_attrs: dict[str, Any]
+            ) -> Any:
+                q, k, v = inputs[0], inputs[1], inputs[2]
+                if (
+                    not isinstance(q, torch.Tensor)
+                    or q.stride() != q_stride
+                    or k.stride() != k_stride
+                    or v.stride() != v_stride
+                ):
+                    return default_run_fn(inputs, run_attrs)
+                _ensure_triton_tma_allocator()
+                o = torch.empty(out_shape, dtype=out_dtype, device=q.device)
+                stats = torch.empty(
+                    stats_shape, dtype=torch.float32, device=q.device
+                )
+                kernel = gqa_desc_cache[0]
+                if kernel is None:
+                    with torch_device_fn.device(q.device):
+                        kernel, constexprs = _sdpa_fwd_gqa_causal_desc_kernel[
+                            gqa_grid
+                        ](q, k, v, o, stats, *gqa_tail, **gqa_constexpr)
+                    block_m = int(constexprs["BLOCK_M"])
+                    block_h = int(constexprs["BLOCK_H"])
+                    block_n = int(constexprs["BLOCK_N"])
+                    gqa_desc_cache[1] = (
+                        triton.cdiv(sq, block_m),
+                        batch * hkv,
+                        triton.cdiv(group, block_h),
+                    )
+                    gqa_desc_cache[2] = gqa_tail + (
+                        head_dim,
+                        v_dim,
+                        out_dtype.itemsize,
+                        block_m,
+                        block_h,
+                        block_n,
+                        head_dim,
+                        v_dim,
+                    )
+                    gqa_desc_cache[0] = kernel
+                else:
+                    kernel[gqa_desc_cache[1]](
+                        q,
+                        k,
+                        v,
+                        o,
+                        stats,
+                        *cast(tuple[Any, ...], gqa_desc_cache[2]),
+                    )
+                return o, stats
+
+            return run_gqa_causal_desc
+
         gqa_cache: list[Any] = [None, None, None]
 
         def run_gqa_causal(
@@ -408,6 +475,97 @@ def _prepare_sdpa(
             return o, stats
 
         return run_gqa_causal
+
+    use_mha_causal_desc = (
+        sq == 2048
+        and skv == 2048
+        and not has_bias
+        and generate_stats
+        and banded
+        and alignment != _BOTTOM_RIGHT
+        and left is None
+        and right == 0
+        and out_dtype in (torch.float16, torch.bfloat16)
+        and head_dim == 128
+        and v_dim == 128
+        and heads == k_shape[1]
+        and heads == v_shape[1]
+        and q_stride[3] == 1
+        and k_stride[3] == 1
+        and v_stride[3] == 1
+    )
+    if use_mha_causal_desc:
+        mha_desc_constexpr = dict(
+            HEAD_DIM=head_dim,
+            V_DIM=v_dim,
+            ELEM_SIZE=out_dtype.itemsize,
+            BLOCK_D=head_dim,
+            BLOCK_DV=v_dim,
+        )
+        mha_desc_tail = (
+            attn_scale * _LOG2E,
+            heads,
+            sq,
+            skv,
+            *q_stride,
+            *k_stride,
+            *v_stride,
+            *o_stride,
+            *stats_stride,
+        )
+
+        def mha_desc_grid(meta: dict[str, Any]) -> tuple[int, int]:
+            return (batch_heads, triton.cdiv(sq, meta["BLOCK_M"]))
+
+        mha_desc_cache: list[Any] = [None, None, None]
+
+        def run_mha_causal_desc(
+            inputs: Sequence[Any], run_attrs: dict[str, Any]
+        ) -> Any:
+            q, k, v = inputs[0], inputs[1], inputs[2]
+            if (
+                not isinstance(q, torch.Tensor)
+                or q.stride() != q_stride
+                or k.stride() != k_stride
+                or v.stride() != v_stride
+            ):
+                return default_run_fn(inputs, run_attrs)
+            _ensure_triton_tma_allocator()
+            o = torch.empty(out_shape, dtype=out_dtype, device=q.device)
+            stats = torch.empty(
+                stats_shape, dtype=torch.float32, device=q.device
+            )
+            kernel = mha_desc_cache[0]
+            if kernel is None:
+                with torch_device_fn.device(q.device):
+                    kernel, constexprs = _sdpa_fwd_mha_causal_desc_kernel[
+                        mha_desc_grid
+                    ](q, k, v, o, stats, *mha_desc_tail, **mha_desc_constexpr)
+                block_m = int(constexprs["BLOCK_M"])
+                block_n = int(constexprs["BLOCK_N"])
+                mha_desc_cache[1] = (batch_heads, triton.cdiv(sq, block_m), 1)
+                mha_desc_cache[2] = mha_desc_tail + (
+                    head_dim,
+                    v_dim,
+                    out_dtype.itemsize,
+                    block_m,
+                    block_n,
+                    head_dim,
+                    v_dim,
+                )
+                mha_desc_cache[0] = kernel
+            else:
+                kernel[mha_desc_cache[1]](
+                    q,
+                    k,
+                    v,
+                    o,
+                    stats,
+                    *cast(tuple[Any, ...], mha_desc_cache[2]),
+                )
+            return o, stats
+
+        return run_mha_causal_desc
 
     use_dense_exact = (
         sq > 1

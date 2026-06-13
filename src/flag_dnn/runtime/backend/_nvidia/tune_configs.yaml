@@ -165,17 +165,17 @@ sdpa_dense_exact:
       num_warps: warps
       num_stages: stages
     block_m:
-      - 64
-    block_n:
-      - 64
       - 128
+    block_n:
+      - 32
     warps:
-      - 4
+      - 8
     stages:
       - 3
+      - 4
 sdpa_gqa_causal:
   # Grouped-query causal prefill fast path for low-precision D128.
-  # Pareto points from H100 autotune for group<=4 GQA exact causal stats cases.
+  # Retuned after reverse-M scheduling for group<=4 GQA exact causal stats cases.
   - gen: true
     param_map:
       META:
@@ -193,7 +193,7 @@ sdpa_gqa_causal:
     warps:
       - 4
     stages:
-      - 2
+      - 3
   - gen: true
     param_map:
       META:
@@ -206,6 +206,43 @@ sdpa_gqa_causal:
       - 32
     block_h:
       - 2
+    block_n:
+      - 64
+    warps:
+      - 4
+    stages:
+      - 3
+sdpa_mha_causal_desc:
+  # TMA descriptor-load MHA causal prefill for contiguous low-precision D128 shape2.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+    block_n:
+      - 64
+    warps:
+      - 4
+    stages:
+      - 3
+sdpa_gqa_causal_desc:
+  # TMA descriptor-load GQA causal prefill for contiguous low-precision D128 shape5.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_H: block_h
+        BLOCK_N: block_n
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 16
+    block_h:
+      - 4
     block_n:
       - 64
     warps:

@@ -380,3 +380,50 @@ tests_graph/
 4. SDPA backward + variable length/paged/sliding-window：进入训练和复杂 attention graph。
 5. block-scale quant/dequant + FP8/MXFP8 SDPA：低精度路线。
 6. SM100 grouped GEMM/MoE：专用高性能路线。
+
+## 9. SDPA 开发文件清单与职责
+
+当前 SDPA 的实现闭环不是单个 `ops/sdpa.py` 文件，而是 eager Triton kernel、graph schema、graph 编译期 fast path、调参配置、测试和 benchmark 一起维护。开发或扩展一个 SDPA 相关能力时，按下面清单同步。
+
+### 9.1 Forward：`sdpa`
+
+| 文件 | 需要实现/维护的内容 |
+|---|---|
+| `src/flag_dnn/ops/sdpa.py` | eager forward 主实现。包含 cuDNN-style API 参数、输入/ dtype / device 校验、`attn_scale` 默认值、`generate_stats/is_inference` 解析、causal/sliding-window/diagonal band 解析、dropout 限制、bias 检查、输出和 stats 分配，以及 Triton kernel 调度。当前 forward kernel 包括 generic `_sdpa_fwd_kernel`、D128 dense exact fast path、GQA causal fast path、decode split/combine fast path。新增 mask、layout、dtype 或 fast path 时首先改这里。 |
+| `src/flag_dnn/ops/__init__.py` | 从 `flag_dnn.ops.sdpa` 导入 `sdpa`，并加入 `__all__`，保证 `flag_dnn.ops.sdpa` 可直接使用。 |
+| `src/flag_dnn/__init__.py` | 顶层导入并导出 `sdpa`。如果需要参与 torch.library 覆盖，还要同步注册表；graph wrapper 安装依赖这里的全局符号。 |
+| `src/flag_dnn/graph/registry.py` | graph op 接入。`_normalize_sdpa` 负责把 cuDNN/Python 参数标准化成 graph attrs，并把 `q/k/v/bias` 转成 graph value；`_sdpa_shape` 负责输出和可选 stats 的 shape/dtype 推导；`_run_sdpa` 负责 executor fallback 调用 eager op；`OpSchema(name="sdpa", num_outputs=2, fusible=True)` 负责注册。新增参数时这里必须和 eager API 同步。 |
+| `src/flag_dnn/graph/wrappers.py` | 把 `"sdpa"` 放进 `GRAPH_AWARE_OPS`，保证 `@flag_dnn.graph` capture 时调用的是 graph op，而不是直接执行 eager op。 |
+| `src/flag_dnn/graph/prepared_ops.py` | graph 编译期 runner。`prepare_run_fn` 路由到 `_prepare_sdpa`；`_prepare_sdpa` 在 shape/stride/attrs 静态可知时绑定 scalar 参数、选择 fast path、缓存已编译 kernel 和 grid，运行时只分配输出并 launch kernel。当前 forward prepared path 覆盖 decode、GQA causal、dense exact 和 generic；输入 stride 或 bias stride 不匹配时 fallback 到 registry 的默认 run_fn。新增 forward fast path 时这里要和 `ops/sdpa.py` 的 eager dispatch 保持一致。 |
+| `src/flag_dnn/runtime/backend/_nvidia/tune_configs.yaml` | NVIDIA backend autotune 配置。forward 相关 key 当前包括 `sdpa`、`sdpa_dense_exact`、`sdpa_gqa_causal`、`sdpa_decode`。新增 `@runtime.heuristics`/`@runtime.autotune` kernel 或调整 meta 参数时，要同步新增或更新这里的配置。 |
+
+### 9.2 Backward：`sdpa_backward`
+
+| 文件 | 需要实现/维护的内容 |
+|---|---|
+| `src/flag_dnn/ops/sdpa_backward.py` | eager backward 主实现。包含 unsupported 参数拒绝、输入/输出/stats/dBias 校验、band/causal 解析、dQ/dK/dV/dBias 输出分配，以及 backward Triton kernel。当前包含普通分阶段 dQ/dK/dV/dBias kernel、fused atomic dense/causal/GQA fast path、triangular causal fast path、exact causal/delta fast path、zero/delta 预处理 kernel。新增 backward 语义或训练 fast path 时首先改这里。 |
+| `src/flag_dnn/ops/__init__.py`、`src/flag_dnn/__init__.py` | 导入并导出 `sdpa_backward`，必要时同步 torch.library 注册。 |
+| `src/flag_dnn/graph/registry.py` | `_normalize_sdpa_backward` 对齐 eager/cudnn 参数，处理 `bias/dBias` 可选输入并拒绝暂不支持的 seq_len/dropout/score callback/sink token 等；`_sdpa_backward_shape` 推导 `dQ/dK/dV`；`_run_sdpa_backward` 调 eager backward；`OpSchema(name="sdpa_backward", num_outputs=3)` 注册。 |
+| `src/flag_dnn/graph/wrappers.py` | 把 `"sdpa_backward"` 放进 `GRAPH_AWARE_OPS`。 |
+| `src/flag_dnn/graph/prepared_ops.py` | `_prepare_sdpa_backward` 做 graph 编译期 fast path：静态绑定 shape/stride/attrs，选择 fused atomic、causal、GQA、triangular、exact/delta 等路径，缓存 kernel/grid，并在运行时 fallback 到默认 graph run_fn。新增 backward kernel 时要同步 eager dispatch 和 prepared dispatch。 |
+| `src/flag_dnn/runtime/backend/_nvidia/tune_configs.yaml` | backward 相关 key 当前包括 `sdpa_backward_fused_atomic`、`sdpa_backward_fused_atomic_causal`、`sdpa_backward_fused_atomic_causal_d128`、`sdpa_backward_fused_atomic_gqa_causal_d128`、`sdpa_backward_zero_delta`、`sdpa_backward_dq`、`sdpa_backward_dkdv`、`sdpa_backward_dk`、`sdpa_backward_dv`。 |
+
+### 9.3 测试、benchmark 和用例集合
+
+| 文件 | 需要实现/维护的内容 |
+|---|---|
+| `tests_graph/test_graph_sdpa.py` | forward cuDNN graph 对标测试。覆盖默认 scale、`generate_stats`、inference 单输出、GQA decode、GQA causal D128、causal/top-left、bottom-right causal、sliding window、bias、fp32 bias torch fallback、显式 `attn_scale`、causal shorthand 等。新增 forward 语义时补这里。 |
+| `tests_graph/test_graph_sdpa_backward.py` | backward cuDNN graph 对标测试。覆盖 dense backward、causal backward、bias + dBias 等，并断言 graph capture 后节点类型是 `sdpa_backward`。新增 backward 语义时补这里。 |
+| `tests_graph/consts.py` | graph 正确性用例集合。forward 主要维护 `SDPA_CASES`、`SDPA_MASKED_CASES`；新增 shape、GQA/MQA、D128、seq_q/seq_kv 边界时同步这里。 |
+| `benchmark_graph/test_sdpa_perf.py` | forward graph 性能对标。构造 cuDNN graph runner 和 FlagDNN compiled graph runner，断言节点是 `sdpa`，并按 benchmark consts 跑 dtype/shape。新增 forward fast path 后应加性能覆盖。 |
+| `benchmark_graph/test_sdpa_backward_perf.py` | backward graph 性能对标。用 `flag_dnn.sdpa(..., generate_stats=True)` 生成 backward 输入，比较 cuDNN graph 和 FlagDNN compiled graph，断言节点是 `sdpa_backward`。新增 backward fast path 后应加性能覆盖。 |
+| `benchmark_graph/consts.py` | benchmark shape 集合和编译选项。新增性能场景时同步 `SDPA_SHAPES`、`SDPA_BACKWARD_SHAPES` 等。 |
+
+### 9.4 开发顺序建议
+
+1. 先在 `ops/sdpa.py` 或 `ops/sdpa_backward.py` 做 eager 语义和 Triton kernel，确保输入校验、输出 shape、stats/dBias 行为和 cuDNN 语义对齐。
+2. 再同步 `ops/__init__.py`、顶层 `__init__.py`、`graph/wrappers.py`，保证 eager 和 graph capture 都能看到新 op。
+3. 在 `graph/registry.py` 补 normalize、shape、run_fn 和 `OpSchema`，特别注意 multi-output 的 `num_outputs`、可选输入顺序、attrs 名称和 fallback 行为。
+4. 对热点场景在 `graph/prepared_ops.py` 加 prepared fast path，把 shape/stride/attrs、kernel constexpr、grid 和缓存逻辑静态化；不满足约束时必须 fallback 到默认 run_fn。
+5. 给新 kernel 在 `runtime/backend/_nvidia/tune_configs.yaml` 加 tune key，并让 eager dispatch 和 prepared dispatch 使用同一组配置名。
+6. 最后补 `tests_graph` 正确性、`benchmark_graph` 性能和 consts shape 集合；每个新语义至少要覆盖 eager graph capture、cuDNN 对标或明确的 torch fallback，以及 compiled graph 节点断言。

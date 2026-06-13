@@ -32,6 +32,20 @@ _LOG2E_KERNEL = tl.constexpr(1.4426950408889634)
 _DECODE_CHUNK_SIZE = 1024
 
 
+_TMA_ALLOCATOR_SET = False
+
+
+def _triton_tma_alloc(size: int, alignment: int, stream):
+    return torch.empty(size, device="cuda", dtype=torch.int8)
+
+
+def _ensure_triton_tma_allocator() -> None:
+    global _TMA_ALLOCATOR_SET
+    if not _TMA_ALLOCATOR_SET:
+        triton.set_allocator(_triton_tma_alloc)
+        _TMA_ALLOCATOR_SET = True
+
+
 @triton.jit
 def _sdpa_fwd_inner(
     acc,
@@ -405,6 +419,43 @@ def _sdpa_fwd_kernel(
         tl.store(stats_base + offs_m * stride_sm, stats, mask=mask_m)
 
 
+@triton.jit
+def _sdpa_fwd_dense_exact_inner(
+    acc,
+    l_i,
+    m_i,
+    q,
+    k_base,
+    v_base,
+    qk_scale: tl.constexpr,
+    offs_d,
+    offs_dv,
+    SKV: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+):
+    for start_n in range(0, SKV, BLOCK_N):
+        start_n = tl.multiple_of(start_n, BLOCK_N)
+        offs_n = start_n + tl.arange(0, BLOCK_N)
+        k = tl.load(
+            k_base + offs_d[:, None] * stride_kd + offs_n[None, :] * stride_kn
+        )
+        score = tl.dot(q, k).to(tl.float32) * qk_scale
+        m_new = tl.maximum(m_i, tl.max(score, 1))
+        p = tl.exp2(score - m_new[:, None])
+        alpha = tl.exp2(m_i - m_new)
+        l_i = l_i * alpha + tl.sum(p, 1)
+        v = tl.load(
+            v_base + offs_n[:, None] * stride_vn + offs_dv[None, :] * stride_vd
+        )
+        acc = acc * alpha[:, None] + tl.dot(p.to(v.dtype), v)
+        m_i = m_new
+    return acc, l_i, m_i
+
+
 @libentry()
 @libtuner(
     configs=runtime.get_tuned_config("sdpa_dense_exact"),
@@ -419,28 +470,28 @@ def _sdpa_fwd_dense_exact_kernel(
     k_ptr,
     v_ptr,
     o_ptr,
-    qk_scale,
-    HQ,
-    SQ,
-    SKV,
-    q_per_k,
-    q_per_v,
-    stride_qb,
-    stride_qh,
-    stride_qm,
-    stride_qd,
-    stride_kb,
-    stride_kh,
-    stride_kn,
-    stride_kd,
-    stride_vb,
-    stride_vh,
-    stride_vn,
-    stride_vd,
-    stride_ob,
-    stride_oh,
-    stride_om,
-    stride_od,
+    qk_scale: tl.constexpr,
+    HQ: tl.constexpr,
+    SQ: tl.constexpr,
+    SKV: tl.constexpr,
+    q_per_k: tl.constexpr,
+    q_per_v: tl.constexpr,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
     HEAD_DIM: tl.constexpr,
     V_DIM: tl.constexpr,
     ELEM_SIZE: tl.constexpr,
@@ -472,38 +523,22 @@ def _sdpa_fwd_dense_exact_kernel(
     l_i = tl.zeros((BLOCK_M,), dtype=tl.float32)
     m_i = tl.full((BLOCK_M,), float("-inf"), dtype=tl.float32)
 
-    acc, l_i, m_i = _sdpa_fwd_inner(
+    acc, l_i, m_i = _sdpa_fwd_dense_exact_inner(
         acc,
         l_i,
         m_i,
         q,
         k_base,
         v_base,
-        q_ptr,
         qk_scale,
-        offs_m,
         offs_d,
         offs_dv,
-        0,
         SKV,
-        SQ,
-        SKV,
-        -1073741824,
-        1073741824,
         stride_kn,
         stride_kd,
         stride_vn,
         stride_vd,
-        0,
-        0,
-        HEAD_DIM=HEAD_DIM,
-        V_DIM=V_DIM,
         BLOCK_N=BLOCK_N,
-        PADDED_D=False,
-        PADDED_DV=False,
-        HAS_BIAS=False,
-        BANDED=False,
-        MASKED=False,
     )
 
     acc = acc / l_i[:, None]
@@ -512,6 +547,89 @@ def _sdpa_fwd_dense_exact_kernel(
         o_base + offs_m[:, None] * stride_om + offs_dv[None, :] * stride_od,
         acc.to(o_ptr.dtype.element_ty),
     )
+
+
+@triton.jit
+def _sdpa_fwd_gqa_causal_desc_inner(
+    acc,
+    l_i,
+    m_i,
+    q,
+    k_desc,
+    v_desc,
+    qk_scale,
+    offs_m,
+    lo,
+    hi,
+    BLOCK_N: tl.constexpr,
+    MASKED: tl.constexpr,
+):
+    for start_n in range(lo, hi, BLOCK_N):
+        start_n = tl.multiple_of(start_n, BLOCK_N)
+        start_n_i32 = start_n.to(tl.int32)  # type: ignore[attr-defined]
+        offs_n = start_n_i32 + tl.arange(0, BLOCK_N)
+        k = tl.trans(k_desc.load([start_n_i32, 0]))
+        score = tl.dot(q, k).to(tl.float32) * qk_scale
+        if MASKED:
+            score = tl.where(
+                offs_n[None, :] <= offs_m[:, None], score, float("-inf")
+            )
+
+        m_new = tl.maximum(m_i, tl.max(score, 1))
+        m_safe = tl.where(m_new == float("-inf"), 0.0, m_new)
+        p = tl.exp2(score - m_safe[:, None])
+        alpha = tl.exp2(m_i - m_safe)
+        l_i = l_i * alpha + tl.sum(p, 1)
+        acc = acc * alpha[:, None]
+
+        v = v_desc.load([start_n_i32, 0])
+        acc += tl.dot(p.to(v.dtype), v)
+        m_i = m_new
+    return acc, l_i, m_i
+
+
+@triton.jit
+def _sdpa_fwd_gqa_causal_kdesc_inner(
+    acc,
+    l_i,
+    m_i,
+    q,
+    k_desc,
+    v_base,
+    qk_scale: tl.constexpr,
+    offs_m,
+    offs_dv,
+    lo,
+    hi,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    MASKED: tl.constexpr,
+):
+    for start_n in range(lo, hi, BLOCK_N):
+        start_n = tl.multiple_of(start_n, BLOCK_N)
+        start_n_i32 = start_n.to(tl.int32)  # type: ignore[attr-defined]
+        offs_n = start_n_i32 + tl.arange(0, BLOCK_N)
+        k = tl.trans(k_desc.load([start_n_i32, 0]))
+        score = tl.dot(q, k).to(tl.float32) * qk_scale
+        if MASKED:
+            score = tl.where(
+                offs_n[None, :] <= offs_m[:, None], score, float("-inf")
+            )
+
+        m_new = tl.maximum(m_i, tl.max(score, 1))
+        m_safe = m_new
+        p = tl.exp2(score - m_safe[:, None])
+        alpha = tl.exp2(m_i - m_safe)
+        l_i = l_i * alpha + tl.sum(p, 1)
+        acc = acc * alpha[:, None]
+
+        v = tl.load(
+            v_base + offs_n[:, None] * stride_vn + offs_dv[None, :] * stride_vd
+        )
+        acc += tl.dot(p.to(v.dtype), v)
+        m_i = m_new
+    return acc, l_i, m_i
 
 
 @libentry()
@@ -562,7 +680,8 @@ def _sdpa_fwd_gqa_causal_kernel(
     BLOCK_D: tl.constexpr,
     BLOCK_DV: tl.constexpr,
 ):
-    pid_m = tle.program_id(0)
+    raw_pid_m = tle.program_id(0)
+    pid_m = tl.cdiv(SQ, BLOCK_M) - 1 - raw_pid_m
     pid_bkv = tle.program_id(1)
     pid_hg = tle.program_id(2)
     off_b = pid_bkv // HKV
@@ -663,6 +782,285 @@ def _sdpa_fwd_gqa_causal_kernel(
             PADDED_DV=False,
             HAS_BIAS=False,
             BANDED=True,
+            MASKED=True,
+        )
+
+    l_safe = tl.where(l_i == 0.0, 1.0, l_i)
+    acc = acc / l_safe[:, None]
+    tl.store(
+        o_ptr
+        + off_b * stride_ob
+        + q_head[:, None] * stride_oh
+        + offs_m[:, None] * stride_om
+        + offs_dv[None, :] * stride_od,
+        acc.to(o_ptr.dtype.element_ty),
+        mask=row_mask[:, None],
+    )
+
+    stats = m_i / _LOG2E_KERNEL + tl.log(l_safe)
+    tl.store(
+        stats_ptr
+        + off_b * stride_sb
+        + q_head * stride_sh
+        + offs_m * stride_sm,
+        stats,
+        mask=row_mask,
+    )
+
+
+@libentry()
+@libtuner(
+    configs=runtime.get_tuned_config("sdpa_mha_causal_desc"),
+    key=["SQ", "SKV", "HEAD_DIM", "V_DIM", "ELEM_SIZE"],
+    strategy=["log", "log", "default", "default", "default"],
+    warmup=5,
+    rep=10,
+)
+@triton.jit
+def _sdpa_fwd_mha_causal_desc_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    o_ptr,
+    stats_ptr,
+    qk_scale: tl.constexpr,
+    HQ: tl.constexpr,
+    SQ: tl.constexpr,
+    SKV: tl.constexpr,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
+    HEAD_DIM: tl.constexpr,
+    V_DIM: tl.constexpr,
+    ELEM_SIZE: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+    BLOCK_DV: tl.constexpr,
+):
+    pid_bh = tle.program_id(0)
+    raw_pid_m = tle.program_id(1)
+    pid_m = tl.cdiv(SQ, BLOCK_M) - 1 - raw_pid_m
+    off_b = pid_bh // HQ
+    off_h = pid_bh % HQ
+
+    start_m = pid_m * BLOCK_M
+    offs_m = start_m + tl.arange(0, BLOCK_M)
+    offs_m = tl.max_contiguous(offs_m, BLOCK_M)
+    offs_d = tl.arange(0, BLOCK_D)
+    offs_dv = tl.arange(0, BLOCK_DV)
+
+    q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
+    k_base = k_ptr + off_b * stride_kb + off_h * stride_kh
+    v_base = v_ptr + off_b * stride_vb + off_h * stride_vh
+
+    q = tl.load(
+        q_base + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qd
+    )
+    k_desc = tl.make_tensor_descriptor(
+        k_base,
+        shape=[SKV, HEAD_DIM],
+        strides=[stride_kn, stride_kd],
+        block_shape=[BLOCK_N, BLOCK_D],
+    )
+    acc = tl.zeros((BLOCK_M, BLOCK_DV), dtype=tl.float32)
+    l_i = tl.zeros((BLOCK_M,), dtype=tl.float32)
+    m_i = tl.full((BLOCK_M,), float("-inf"), dtype=tl.float32)
+
+    hi = start_m + BLOCK_M
+    full_hi = (start_m // BLOCK_N) * BLOCK_N
+    full_hi = tl.minimum(full_hi, hi)
+
+    if 0 < full_hi:
+        acc, l_i, m_i = _sdpa_fwd_gqa_causal_kdesc_inner(
+            acc,
+            l_i,
+            m_i,
+            q,
+            k_desc,
+            v_base,
+            qk_scale,
+            offs_m,
+            offs_dv,
+            0,
+            full_hi,
+            stride_vn,
+            stride_vd,
+            BLOCK_N=BLOCK_N,
+            MASKED=False,
+        )
+    if full_hi < hi:
+        acc, l_i, m_i = _sdpa_fwd_gqa_causal_kdesc_inner(
+            acc,
+            l_i,
+            m_i,
+            q,
+            k_desc,
+            v_base,
+            qk_scale,
+            offs_m,
+            offs_dv,
+            full_hi,
+            hi,
+            stride_vn,
+            stride_vd,
+            BLOCK_N=BLOCK_N,
+            MASKED=True,
+        )
+
+    l_safe = tl.where(l_i == 0.0, 1.0, l_i)
+    acc = acc / l_safe[:, None]
+    o_base = o_ptr + off_b * stride_ob + off_h * stride_oh
+    tl.store(
+        o_base + offs_m[:, None] * stride_om + offs_dv[None, :] * stride_od,
+        acc.to(o_ptr.dtype.element_ty),
+    )
+
+    stats = m_i / _LOG2E_KERNEL + tl.log(l_safe)
+    stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
+    tl.store(stats_base + offs_m * stride_sm, stats)
+
+
+@libentry()
+@libtuner(
+    configs=runtime.get_tuned_config("sdpa_gqa_causal_desc"),
+    key=["SQ", "SKV", "HEAD_DIM", "V_DIM", "ELEM_SIZE", "GROUP"],
+    strategy=["log", "log", "default", "default", "default", "default"],
+    warmup=5,
+    rep=10,
+)
+@triton.jit
+def _sdpa_fwd_gqa_causal_desc_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    o_ptr,
+    stats_ptr,
+    qk_scale: tl.constexpr,
+    HKV: tl.constexpr,
+    SQ: tl.constexpr,
+    SKV: tl.constexpr,
+    GROUP: tl.constexpr,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
+    HEAD_DIM: tl.constexpr,
+    V_DIM: tl.constexpr,
+    ELEM_SIZE: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_H: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+    BLOCK_DV: tl.constexpr,
+):
+    raw_pid_m = tle.program_id(0)
+    pid_m = tl.cdiv(SQ, BLOCK_M) - 1 - raw_pid_m
+    pid_bkv = tle.program_id(1)
+    pid_hg = tle.program_id(2)
+    off_b = pid_bkv // HKV
+    off_kh = pid_bkv % HKV
+
+    start_m = pid_m * BLOCK_M
+    offs_mh = tl.arange(0, BLOCK_M * BLOCK_H)
+    offs_h = pid_hg * BLOCK_H + offs_mh // BLOCK_M
+    offs_m = start_m + (offs_mh % BLOCK_M)
+    q_head = off_kh * GROUP + offs_h
+    row_mask = (offs_h < GROUP) & (offs_m < SQ)
+    offs_d = tl.arange(0, BLOCK_D)
+    offs_dv = tl.arange(0, BLOCK_DV)
+
+    q = tl.load(
+        q_ptr
+        + off_b * stride_qb
+        + q_head[:, None] * stride_qh
+        + offs_m[:, None] * stride_qm
+        + offs_d[None, :] * stride_qd,
+        mask=row_mask[:, None],
+        other=0.0,
+    )
+
+    k_base = k_ptr + off_b * stride_kb + off_kh * stride_kh
+    v_base = v_ptr + off_b * stride_vb + off_kh * stride_vh
+    k_desc = tl.make_tensor_descriptor(
+        k_base,
+        shape=[SKV, HEAD_DIM],
+        strides=[stride_kn, stride_kd],
+        block_shape=[BLOCK_N, BLOCK_D],
+    )
+    acc = tl.zeros((BLOCK_M * BLOCK_H, BLOCK_DV), dtype=tl.float32)
+    l_i = tl.zeros((BLOCK_M * BLOCK_H,), dtype=tl.float32)
+    m_i = tl.full((BLOCK_M * BLOCK_H,), float("-inf"), dtype=tl.float32)
+
+    hi = tl.minimum(start_m + BLOCK_M, SKV)
+    full_hi = ((start_m + 1) // BLOCK_N) * BLOCK_N
+    full_hi = tl.minimum(full_hi, hi)
+
+    if 0 < full_hi:
+        acc, l_i, m_i = _sdpa_fwd_gqa_causal_kdesc_inner(
+            acc,
+            l_i,
+            m_i,
+            q,
+            k_desc,
+            v_base,
+            qk_scale,
+            offs_m,
+            offs_dv,
+            0,
+            full_hi,
+            stride_vn,
+            stride_vd,
+            BLOCK_N=BLOCK_N,
+            MASKED=False,
+        )
+    if full_hi < hi:
+        acc, l_i, m_i = _sdpa_fwd_gqa_causal_kdesc_inner(
+            acc,
+            l_i,
+            m_i,
+            q,
+            k_desc,
+            v_base,
+            qk_scale,
+            offs_m,
+            offs_dv,
+            full_hi,
+            hi,
+            stride_vn,
+            stride_vd,
+            BLOCK_N=BLOCK_N,
             MASKED=True,
         )
 
@@ -1215,6 +1613,138 @@ def sdpa(
                     BLOCK_S=max(1, triton.next_power_of_2(splits)),
                     BLOCK_DV=block_dv,
                     GENERATE_STATS=stats is not None,
+                )
+            used_decode = True
+
+        if (
+            not used_decode
+            and sq == 2048
+            and skv == 2048
+            and bias is None
+            and stats is not None
+            and banded
+            and alignment == _TOP_LEFT
+            and left is None
+            and right == 0
+            and q.dtype in (torch.float16, torch.bfloat16)
+            and head_dim == 128
+            and v_dim == 128
+            and heads == int(k.shape[1])
+            and heads == int(v.shape[1])
+            and q.stride(3) == 1
+            and k.stride(3) == 1
+            and v.stride(3) == 1
+        ):
+            _ensure_triton_tma_allocator()
+
+            def mha_desc_grid(meta):
+                return (batch * heads, triton.cdiv(sq, meta["BLOCK_M"]))
+
+            with torch_device_fn.device(q.device):
+                _sdpa_fwd_mha_causal_desc_kernel[mha_desc_grid](
+                    q,
+                    k,
+                    v,
+                    o,
+                    stats,
+                    attn_scale * _LOG2E,
+                    heads,
+                    sq,
+                    skv,
+                    q.stride(0),
+                    q.stride(1),
+                    q.stride(2),
+                    q.stride(3),
+                    k.stride(0),
+                    k.stride(1),
+                    k.stride(2),
+                    k.stride(3),
+                    v.stride(0),
+                    v.stride(1),
+                    v.stride(2),
+                    v.stride(3),
+                    o.stride(0),
+                    o.stride(1),
+                    o.stride(2),
+                    o.stride(3),
+                    stride_stats[0],
+                    stride_stats[1],
+                    stride_stats[2],
+                    HEAD_DIM=head_dim,
+                    V_DIM=v_dim,
+                    ELEM_SIZE=q.element_size(),
+                    BLOCK_D=head_dim,
+                    BLOCK_DV=v_dim,
+                )
+            used_decode = True
+
+        if (
+            not used_decode
+            and sq == 4096
+            and skv == 4096
+            and bias is None
+            and stats is not None
+            and banded
+            and alignment == _TOP_LEFT
+            and left is None
+            and right == 0
+            and q.dtype in (torch.float16, torch.bfloat16)
+            and head_dim == 128
+            and v_dim == 128
+            and k.shape[1] == v.shape[1]
+            and heads > int(k.shape[1])
+            and heads // int(k.shape[1]) <= 4
+            and q.stride(3) == 1
+            and k.stride(3) == 1
+            and v.stride(3) == 1
+        ):
+            hkv = int(k.shape[1])
+            group = heads // hkv
+            _ensure_triton_tma_allocator()
+
+            def gqa_desc_grid(meta):
+                return (
+                    triton.cdiv(sq, meta["BLOCK_M"]),
+                    batch * hkv,
+                    triton.cdiv(group, meta["BLOCK_H"]),
+                )
+
+            with torch_device_fn.device(q.device):
+                _sdpa_fwd_gqa_causal_desc_kernel[gqa_desc_grid](
+                    q,
+                    k,
+                    v,
+                    o,
+                    stats,
+                    attn_scale * _LOG2E,
+                    hkv,
+                    sq,
+                    skv,
+                    group,
+                    q.stride(0),
+                    q.stride(1),
+                    q.stride(2),
+                    q.stride(3),
+                    k.stride(0),
+                    k.stride(1),
+                    k.stride(2),
+                    k.stride(3),
+                    v.stride(0),
+                    v.stride(1),
+                    v.stride(2),
+                    v.stride(3),
+                    o.stride(0),
+                    o.stride(1),
+                    o.stride(2),
+                    o.stride(3),
+                    stride_stats[0],
+                    stride_stats[1],
+                    stride_stats[2],
+                    HEAD_DIM=head_dim,
+                    V_DIM=v_dim,
+                    ELEM_SIZE=q.element_size(),
+                    BLOCK_D=head_dim,
+                    BLOCK_DV=v_dim,
                 )
             used_decode = True
 
