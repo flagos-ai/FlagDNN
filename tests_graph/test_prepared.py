@@ -1,0 +1,246 @@
+from __future__ import annotations
+
+from contextlib import nullcontext
+from typing import Any, Sequence
+
+import torch
+
+from flag_dnn.graph import prepared
+from flag_dnn.graph.prepared import core as prepared_core
+from flag_dnn.graph.prepared import ops as prepared_ops
+from flag_dnn.graph.prepared import (
+    PreparedKernelPipelineSpec,
+    PreparedPipelineStepSpec,
+    PreparedSingleKernelRunSpec,
+    PreparedSingleKernelSpec,
+    RuntimeTensorCheck,
+    get_cached_empty_tensor,
+    make_kernel_pipeline_run_fn,
+    make_single_kernel_run_fn,
+    make_static_cached_call,
+    register_prepared_run_fn,
+    runtime_tensor_checks_from_specs,
+    runtime_tensor_checks_pass,
+)
+from flag_dnn.graph.tensor import TensorSpec
+
+
+class _CompiledKernel:
+    def __init__(self, name: str, calls: list[tuple[Any, ...]]) -> None:
+        self.name = name
+        self.calls = calls
+
+    def __getitem__(self, grid: Any) -> Any:
+        def launch(*args: Any) -> None:
+            self.calls.append((self.name, "cached", grid, args))
+
+        return launch
+
+
+class _KernelEntry:
+    def __init__(
+        self,
+        name: str,
+        calls: list[tuple[Any, ...]],
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.name = name
+        self.calls = calls
+        self.metadata = metadata
+
+    def __getitem__(self, grid: Any) -> Any:
+        def launch(*args: Any, **kwargs: Any) -> Any:
+            self.calls.append((self.name, "first", grid, args, kwargs))
+            compiled = _CompiledKernel(self.name, self.calls)
+            if self.metadata is None:
+                return compiled
+            return compiled, self.metadata
+
+        return launch
+
+
+def _fallback(inputs: Sequence[Any], attrs: dict[str, Any]) -> str:
+    return "fallback"
+
+
+def test_runtime_tensor_checks_from_specs_and_pass() -> None:
+    spec = TensorSpec("x", (2, 3), "float16", stride=(3, 1))
+    checks = runtime_tensor_checks_from_specs(
+        (spec,), (0,), require_dtype=True
+    )
+    assert checks == (
+        RuntimeTensorCheck(
+            0, shape=(2, 3), stride=(3, 1), dtype=torch.float16
+        ),
+    )
+
+    tensor = torch.empty((2, 3), dtype=torch.float16)
+    assert runtime_tensor_checks_pass((tensor,), checks)
+    assert not runtime_tensor_checks_pass((tensor.t(),), checks)
+
+    dynamic = TensorSpec("x", ("n", 3), "float16", stride=(3, 1))
+    assert runtime_tensor_checks_from_specs((dynamic,), (0,)) is None
+
+
+def test_static_cached_call_and_tensor_cache() -> None:
+    cached_call = make_static_cached_call((2, 1, 1), ("tail", 4))
+    assert cached_call({"ignored": True}) == ((2, 1, 1), ("tail", 4))
+
+    cache: dict[tuple[Any, ...], torch.Tensor] = {}
+    key = ("cpu", None, torch.float32, (2, 3))
+    first = get_cached_empty_tensor(
+        cache, key, (2, 3), device=torch.device("cpu"), dtype=torch.float32
+    )
+    second = get_cached_empty_tensor(
+        cache, key, (2, 3), device=torch.device("cpu"), dtype=torch.float32
+    )
+    assert first is second
+
+
+def test_single_kernel_run_fn_caches_launcher(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        prepared_core.runtime.torch_device_fn,
+        "device",
+        lambda device: nullcontext(),
+    )
+    calls: list[tuple[Any, ...]] = []
+    x = torch.empty((2, 3))
+
+    def grid(meta: dict[str, Any]) -> tuple[int, ...]:
+        return (1, 1, 1)
+
+    def build_cached_call(
+        metadata: dict[str, Any],
+    ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+        return (metadata["BLOCK"], 1, 1), ("cached-static",)
+
+    def output_factory(inputs: Sequence[Any]) -> torch.Tensor:
+        return torch.empty_like(inputs[0])
+
+    def runtime_args(inputs: Sequence[Any], output: Any) -> tuple[Any, ...]:
+        return inputs[0], output
+
+    run = make_single_kernel_run_fn(
+        PreparedSingleKernelRunSpec(
+            kernel=PreparedSingleKernelSpec(
+                kernel=_KernelEntry("single", calls, {"BLOCK": 4}),
+                grid=grid,
+                static_args=("first-static",),
+                constexpr_kwargs={"BLOCK_HINT": 8},
+                build_cached_call=build_cached_call,
+            ),
+            input_checks=(
+                RuntimeTensorCheck(0, shape=tuple(x.shape), stride=x.stride()),
+            ),
+            output_factory=output_factory,
+            runtime_args=runtime_args,
+        ),
+        _fallback,
+    )
+
+    assert isinstance(run((x,), {}), torch.Tensor)
+    assert isinstance(run((x,), {}), torch.Tensor)
+    assert run((x.t(),), {}) == "fallback"
+    assert calls[0][0:3] == ("single", "first", grid)
+    assert calls[1][0:3] == ("single", "cached", (4, 1, 1))
+    assert calls[1][3][-1] == "cached-static"
+
+
+def test_kernel_pipeline_run_fn_caches_each_step(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        prepared_core.runtime.torch_device_fn,
+        "device",
+        lambda device: nullcontext(),
+    )
+    calls: list[tuple[Any, ...]] = []
+    x = torch.empty((2, 3))
+
+    def make_context(inputs: Sequence[Any]) -> dict[str, Any]:
+        return {"tmp": "tmp", "out": "out"}
+
+    def split_args(inputs: Sequence[Any], context: Any) -> tuple[Any, ...]:
+        return inputs[0], context["tmp"]
+
+    def combine_args(inputs: Sequence[Any], context: Any) -> tuple[Any, ...]:
+        return context["tmp"], context["out"]
+
+    def split_cached_call(
+        metadata: dict[str, Any],
+    ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+        return (metadata["BLOCK_N"], 1, 1), ("split-static",)
+
+    run = make_kernel_pipeline_run_fn(
+        PreparedKernelPipelineSpec(
+            steps=(
+                PreparedPipelineStepSpec(
+                    kernel=_KernelEntry("split", calls, {"BLOCK_N": 8}),
+                    grid=(1, 1, 1),
+                    runtime_args=split_args,
+                    static_args=("first-split",),
+                    constexpr_kwargs={"BLOCK": 16},
+                    build_cached_call=split_cached_call,
+                    first_launch_returns_metadata=True,
+                ),
+                PreparedPipelineStepSpec(
+                    kernel=_KernelEntry("combine", calls),
+                    grid=(2, 1, 1),
+                    runtime_args=combine_args,
+                    static_args=("combine-static",),
+                ),
+            ),
+            input_checks=(
+                RuntimeTensorCheck(0, shape=tuple(x.shape), stride=x.stride()),
+            ),
+            context_factory=make_context,
+            result=lambda context: context["out"],
+        ),
+        _fallback,
+    )
+
+    assert run((x,), {}) == "out"
+    assert run((x,), {}) == "out"
+    assert run((x.t(),), {}) == "fallback"
+    assert calls[0][0:3] == ("split", "first", (1, 1, 1))
+    assert calls[1][0:3] == ("combine", "first", (2, 1, 1))
+    assert calls[2][0:3] == ("split", "cached", (8, 1, 1))
+    assert calls[2][3][-1] == "split-static"
+    assert calls[3][0:3] == ("combine", "cached", (2, 1, 1))
+    assert calls[3][3][-1] == "combine-static"
+
+
+def test_prepared_ops_import_registers_builtin_preparers() -> None:
+    assert prepared_ops.prepare_run_fn is prepared.prepare_run_fn
+    assert prepared_core._GENERIC_PREPARED_RUN_FNS
+    for op_type in (
+        "sdpa",
+        "sdpa_backward",
+        "conv_dgrad",
+        "conv_wgrad",
+        "conv_fprop",
+    ):
+        assert op_type in prepared_core._OP_PREPARED_RUN_FN_REGISTRY
+
+
+def test_register_prepared_run_fn_uses_first_non_none_preparer() -> None:
+    op_type = "__prepared_test_unique__"
+
+    @register_prepared_run_fn(op_type)
+    def skip_preparer(
+        attrs: dict[str, Any], specs: Sequence[TensorSpec], default: Any
+    ) -> None:
+        return None
+
+    @register_prepared_run_fn(op_type)
+    def use_preparer(
+        attrs: dict[str, Any], specs: Sequence[TensorSpec], default: Any
+    ) -> Any:
+        def run(inputs: Sequence[Any], run_attrs: dict[str, Any]) -> str:
+            return "prepared"
+
+        return run
+
+    def default(inputs: Sequence[Any], run_attrs: dict[str, Any]) -> str:
+        return "default"
+
+    run = prepared.prepare_run_fn(op_type, {}, (), default)
+    assert run((), {}) == "prepared"

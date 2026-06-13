@@ -1,0 +1,376 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Callable, Optional, Sequence
+
+import torch
+
+from flag_dnn import runtime
+from flag_dnn.graph.tensor import TensorSpec, torch_dtype
+
+__all__ = (
+    "RunFn",
+    "PrepareRunFn",
+    "GenericPrepareRunFn",
+    "PreparedTensorCache",
+    "RuntimeTensorCheck",
+    "PreparedPipelineStepSpec",
+    "PreparedKernelPipelineSpec",
+    "PreparedSingleKernelSpec",
+    "PreparedSingleKernelRunSpec",
+    "make_kernel_pipeline_launcher",
+    "make_kernel_pipeline_run_fn",
+    "make_static_cached_call",
+    "get_cached_empty_tensor",
+    "make_single_kernel_launcher",
+    "make_single_kernel_run_fn",
+    "prepare_run_fn",
+    "register_generic_prepared_run_fn",
+    "register_prepared_run_fn",
+    "runtime_tensor_checks_from_specs",
+    "runtime_tensor_checks_pass",
+)
+
+RunFn = Callable[[Sequence[Any], dict[str, Any]], Any]
+PrepareRunFn = Callable[
+    [dict[str, Any], Sequence[TensorSpec], RunFn], Optional[RunFn]
+]
+GenericPrepareRunFn = Callable[
+    [str, dict[str, Any], Sequence[TensorSpec], RunFn], Optional[RunFn]
+]
+KernelGrid = Callable[[dict[str, Any]], tuple[int, ...]]
+CachedKernelCallBuilder = Callable[
+    [dict[str, Any]], tuple[tuple[int, ...], tuple[Any, ...]]
+]
+OutputFactory = Callable[[Sequence[Any]], Any]
+RuntimeArgsBuilder = Callable[[Sequence[Any], Any], tuple[Any, ...]]
+ResultBuilder = Callable[[Any], Any]
+RuntimeGuard = Callable[[Sequence[Any]], bool]
+PreLaunchHook = Callable[[], None]
+PipelineContextFactory = Callable[[Sequence[Any]], Any]
+PipelineStepArgsBuilder = Callable[[Sequence[Any], Any], tuple[Any, ...]]
+PreparedTensorCache = dict[tuple[Any, ...], torch.Tensor]
+
+
+def _identity_result(output: Any) -> Any:
+    return output
+
+
+def make_static_cached_call(
+    grid: tuple[int, ...], args: tuple[Any, ...]
+) -> CachedKernelCallBuilder:
+    """Build a cached-call adapter when replay grid and args are fixed."""
+
+    def build(
+        metadata: dict[str, Any],
+    ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+        return grid, args
+
+    return build
+
+
+def get_cached_empty_tensor(
+    cache: PreparedTensorCache,
+    key: tuple[Any, ...],
+    size: tuple[int, ...],
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    tensor = cache.get(key)
+    if tensor is None:
+        tensor = torch.empty(size, device=device, dtype=dtype)
+        cache[key] = tensor
+    return tensor
+
+
+@dataclass(frozen=True)
+class RuntimeTensorCheck:
+    index: int
+    shape: Optional[tuple[int, ...]] = None
+    stride: Optional[tuple[int, ...]] = None
+    dtype: Optional[torch.dtype] = None
+
+
+def runtime_tensor_checks_from_specs(
+    input_specs: Sequence[TensorSpec],
+    indices: Sequence[int],
+    *,
+    require_shape: bool = True,
+    require_stride: bool = True,
+    require_dtype: bool = False,
+) -> Optional[tuple[RuntimeTensorCheck, ...]]:
+    checks: list[RuntimeTensorCheck] = []
+    for index in indices:
+        if index < 0 or index >= len(input_specs):
+            return None
+        spec = input_specs[index]
+        shape = None
+        if require_shape:
+            if not all(isinstance(dim, int) for dim in spec.shape):
+                return None
+            shape = tuple(int(dim) for dim in spec.shape)
+        stride = None
+        if require_stride:
+            if spec.stride is None:
+                return None
+            stride = tuple(int(dim) for dim in spec.stride)
+        dtype = torch_dtype(spec.dtype) if require_dtype else None
+        checks.append(
+            RuntimeTensorCheck(index, shape=shape, stride=stride, dtype=dtype)
+        )
+    return tuple(checks)
+
+
+@dataclass(frozen=True)
+class PreparedSingleKernelSpec:
+    kernel: Any
+    grid: KernelGrid
+    static_args: tuple[Any, ...]
+    constexpr_kwargs: dict[str, Any]
+    build_cached_call: CachedKernelCallBuilder
+
+
+@dataclass(frozen=True)
+class PreparedSingleKernelRunSpec:
+    kernel: PreparedSingleKernelSpec
+    input_checks: tuple[RuntimeTensorCheck, ...]
+    output_factory: OutputFactory
+    runtime_args: RuntimeArgsBuilder
+    result: ResultBuilder = _identity_result
+    extra_check: Optional[RuntimeGuard] = None
+    pre_launch: Optional[PreLaunchHook] = None
+    device_input_index: int = 0
+
+
+@dataclass(frozen=True)
+class PreparedPipelineStepSpec:
+    """One kernel launch in a prepared multi-kernel replay pipeline."""
+
+    kernel: Any
+    grid: Any
+    runtime_args: PipelineStepArgsBuilder
+    static_args: tuple[Any, ...] = ()
+    constexpr_kwargs: dict[str, Any] = field(default_factory=dict)
+    build_cached_call: Optional[CachedKernelCallBuilder] = None
+    first_launch_returns_metadata: bool = False
+
+
+@dataclass(frozen=True)
+class PreparedKernelPipelineSpec:
+    """Fixed-order kernel pipeline plus replay-time checks and context."""
+
+    steps: tuple[PreparedPipelineStepSpec, ...]
+    input_checks: tuple[RuntimeTensorCheck, ...]
+    context_factory: PipelineContextFactory
+    result: ResultBuilder = _identity_result
+    extra_check: Optional[RuntimeGuard] = None
+    pre_launch: Optional[PreLaunchHook] = None
+    device_input_index: int = 0
+
+
+_OP_PREPARED_RUN_FN_REGISTRY: dict[str, list[PrepareRunFn]] = {}
+_GENERIC_PREPARED_RUN_FNS: list[GenericPrepareRunFn] = []
+
+
+def register_prepared_run_fn(
+    op_type: str,
+) -> Callable[[PrepareRunFn], PrepareRunFn]:
+    """Register a graph compile-time fast path for one op type."""
+
+    def decorator(prepare_fn: PrepareRunFn) -> PrepareRunFn:
+        preparers = _OP_PREPARED_RUN_FN_REGISTRY.setdefault(op_type, [])
+        if prepare_fn not in preparers:
+            preparers.append(prepare_fn)
+        return prepare_fn
+
+    return decorator
+
+
+def register_generic_prepared_run_fn(
+    prepare_fn: GenericPrepareRunFn,
+) -> GenericPrepareRunFn:
+    """Register a graph compile-time fast path shared by many op types."""
+    if prepare_fn not in _GENERIC_PREPARED_RUN_FNS:
+        _GENERIC_PREPARED_RUN_FNS.append(prepare_fn)
+    return prepare_fn
+
+
+def make_single_kernel_launcher(
+    spec: PreparedSingleKernelSpec,
+) -> Callable[..., None]:
+    kernel_entry = spec.kernel
+    grid = spec.grid
+    static_args = spec.static_args
+    constexpr_kwargs = spec.constexpr_kwargs
+    build_cached_call = spec.build_cached_call
+    cached_launcher: Any = None
+    cached_static_args: tuple[Any, ...] = ()
+
+    def launch(device: Any, *runtime_args: Any) -> None:
+        nonlocal cached_launcher, cached_static_args
+        launcher = cached_launcher
+        if launcher is None:
+            with runtime.torch_device_fn.device(device):
+                compiled_kernel, constexprs = kernel_entry[grid](
+                    *runtime_args, *static_args, **constexpr_kwargs
+                )
+            static_grid, cached_static_args = build_cached_call(constexprs)
+            cached_launcher = compiled_kernel[static_grid]
+        else:
+            launcher(*runtime_args, *cached_static_args)
+
+    return launch
+
+
+def _make_pipeline_step_launcher(
+    spec: PreparedPipelineStepSpec,
+) -> Callable[[Any, Sequence[Any], Any], None]:
+    kernel_entry = spec.kernel
+    grid = spec.grid
+    static_args = spec.static_args
+    constexpr_kwargs = spec.constexpr_kwargs
+    runtime_args = spec.runtime_args
+    build_cached_call = spec.build_cached_call
+    first_launch_returns_metadata = spec.first_launch_returns_metadata
+    cached_launcher: Any = None
+    cached_static_args: tuple[Any, ...] = ()
+
+    def launch(device: Any, inputs: Sequence[Any], context: Any) -> None:
+        nonlocal cached_launcher, cached_static_args
+        call_args = runtime_args(inputs, context)
+        launcher = cached_launcher
+        if launcher is None:
+            with runtime.torch_device_fn.device(device):
+                first_result = kernel_entry[grid](
+                    *call_args, *static_args, **constexpr_kwargs
+                )
+            if first_launch_returns_metadata:
+                compiled_kernel, metadata = first_result
+                if build_cached_call is None:
+                    raise RuntimeError(
+                        "pipeline step metadata requires build_cached_call"
+                    )
+                static_grid, cached_static_args = build_cached_call(metadata)
+            else:
+                compiled_kernel = first_result
+                if build_cached_call is None:
+                    static_grid = grid
+                    cached_static_args = static_args
+                else:
+                    static_grid, cached_static_args = build_cached_call({})
+            # The first call already launched through libentry/Triton.
+            # Cache a direct launcher for later graph replays.
+            cached_launcher = compiled_kernel[static_grid]
+        else:
+            launcher(*call_args, *cached_static_args)
+
+    return launch
+
+
+def make_kernel_pipeline_launcher(
+    spec: PreparedKernelPipelineSpec,
+) -> Callable[[Any, Sequence[Any], Any], None]:
+    step_launchers = tuple(
+        _make_pipeline_step_launcher(step) for step in spec.steps
+    )
+
+    def launch(device: Any, inputs: Sequence[Any], context: Any) -> None:
+        for step in step_launchers:
+            step(device, inputs, context)
+
+    return launch
+
+
+def runtime_tensor_checks_pass(
+    inputs: Sequence[Any], checks: Sequence[RuntimeTensorCheck]
+) -> bool:
+    for check in checks:
+        if check.index < 0 or check.index >= len(inputs):
+            return False
+        value = inputs[check.index]
+        if not isinstance(value, torch.Tensor):
+            return False
+        if check.shape is not None and tuple(value.shape) != check.shape:
+            return False
+        if check.stride is not None and value.stride() != check.stride:
+            return False
+        if check.dtype is not None and value.dtype != check.dtype:
+            return False
+    return True
+
+
+def make_single_kernel_run_fn(
+    spec: PreparedSingleKernelRunSpec,
+    default_run_fn: RunFn,
+) -> RunFn:
+    launch = make_single_kernel_launcher(spec.kernel)
+    input_checks = spec.input_checks
+    output_factory = spec.output_factory
+    runtime_args = spec.runtime_args
+    result = spec.result
+    extra_check = spec.extra_check
+    pre_launch = spec.pre_launch
+    device_input_index = spec.device_input_index
+
+    def run(inputs: Sequence[Any], run_attrs: dict[str, Any]) -> Any:
+        if not runtime_tensor_checks_pass(inputs, input_checks):
+            return default_run_fn(inputs, run_attrs)
+        if extra_check is not None and not extra_check(inputs):
+            return default_run_fn(inputs, run_attrs)
+        device_source = inputs[device_input_index]
+        if not isinstance(device_source, torch.Tensor):
+            return default_run_fn(inputs, run_attrs)
+        if pre_launch is not None:
+            pre_launch()
+        output = output_factory(inputs)
+        launch(device_source.device, *runtime_args(inputs, output))
+        return result(output)
+
+    return run
+
+
+def make_kernel_pipeline_run_fn(
+    spec: PreparedKernelPipelineSpec,
+    default_run_fn: RunFn,
+) -> RunFn:
+    launch = make_kernel_pipeline_launcher(spec)
+    input_checks = spec.input_checks
+    context_factory = spec.context_factory
+    result = spec.result
+    extra_check = spec.extra_check
+    pre_launch = spec.pre_launch
+    device_input_index = spec.device_input_index
+
+    def run(inputs: Sequence[Any], run_attrs: dict[str, Any]) -> Any:
+        if not runtime_tensor_checks_pass(inputs, input_checks):
+            return default_run_fn(inputs, run_attrs)
+        if extra_check is not None and not extra_check(inputs):
+            return default_run_fn(inputs, run_attrs)
+        device_source = inputs[device_input_index]
+        if not isinstance(device_source, torch.Tensor):
+            return default_run_fn(inputs, run_attrs)
+        if pre_launch is not None:
+            pre_launch()
+        context = context_factory(inputs)
+        launch(device_source.device, inputs, context)
+        return result(context)
+
+    return run
+
+
+def prepare_run_fn(
+    op_type: str,
+    attrs: dict[str, Any],
+    input_specs: Sequence[TensorSpec],
+    default_run_fn: RunFn,
+) -> RunFn:
+    for generic_prepare in _GENERIC_PREPARED_RUN_FNS:
+        prepared = generic_prepare(op_type, attrs, input_specs, default_run_fn)
+        if prepared is not None:
+            return prepared
+    for op_prepare in _OP_PREPARED_RUN_FN_REGISTRY.get(op_type, []):
+        prepared = op_prepare(attrs, input_specs, default_run_fn)
+        if prepared is not None:
+            return prepared
+    return default_run_fn

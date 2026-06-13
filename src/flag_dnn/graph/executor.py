@@ -6,10 +6,9 @@ from typing import Any, Callable, Optional, Sequence, cast
 import torch
 
 from flag_dnn.graph.plan import ExecutionPlan
-from flag_dnn.graph.prepared_ops import prepare_run_fn
+from flag_dnn.graph.prepared.ops import prepare_run_fn
 from flag_dnn.graph.registry import get_op_schema
 from flag_dnn.graph.tensor import canonical_dtype
-
 
 RunFn = Callable[[Sequence[Any], dict[str, Any]], Any]
 

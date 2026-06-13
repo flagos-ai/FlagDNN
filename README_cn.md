@@ -28,6 +28,10 @@ cd FlagDNN
 pip install  .
 ```
 
+## 开发者指南
+
+新增或优化高性能算子时，请参考 [算子开发指南](./docs/operator_development.md)，其中列出了 eager 实现、graph 接入、prepared fast path、自动调优、测试和 benchmark 需要修改的文件。
+
 ## 使用示例
 
 ```python

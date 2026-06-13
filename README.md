@@ -26,6 +26,10 @@ cd FlagDNN
 pip install  .
 ```
 
+## Developer Guide
+
+See [Operator Development Guide](./docs/operator_development.md) for the files and graph integration steps required to add a high-performance operator.
+
 ## Usage Example
 
 ```python
