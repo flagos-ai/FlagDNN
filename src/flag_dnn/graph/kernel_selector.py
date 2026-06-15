@@ -88,6 +88,7 @@ class KernelSelector:
                         candidate.to_debug_dict() for candidate in choices
                     ],
                     "memory": memory_plan.to_dict(),
+                    "uses_workspace": False,
                     "selector": "kernel_selector_v1",
                 },
             )

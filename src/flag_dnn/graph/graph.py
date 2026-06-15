@@ -20,6 +20,7 @@ class Graph:
         self.attrs: dict[str, Any] = {}
         self._next_value_id = 0
         self._next_node_id = 0
+        self._nodes_by_id: dict[int, OpNode] = {}
 
     def new_value_id(self) -> int:
         value_id = self._next_value_id
@@ -95,6 +96,7 @@ class Graph:
             name=name,
         )
         self.nodes.append(node)
+        self._nodes_by_id[node_id] = node
         for value_id in inputs:
             self.values[value_id].users.append(node_id)
         graph_outputs = tuple(
@@ -105,10 +107,16 @@ class Graph:
         return graph_outputs
 
     def get_node(self, node_id: int) -> OpNode:
-        for node in self.nodes:
-            if node.id == node_id:
-                return node
-        raise KeyError(f"graph node not found: {node_id}")
+        node = self._nodes_by_id.get(node_id)
+        if node is None:
+            self._rebuild_node_index()
+            node = self._nodes_by_id.get(node_id)
+        if node is None:
+            raise KeyError(f"graph node not found: {node_id}")
+        return node
+
+    def _rebuild_node_index(self) -> None:
+        self._nodes_by_id = {node.id: node for node in self.nodes}
 
     def producer(self, value_id: int) -> Optional[OpNode]:
         producer_id = self.values[value_id].producer
@@ -171,7 +179,8 @@ class Graph:
         self.rebuild_metadata()
 
     def rebuild_metadata(self) -> None:
-        live_node_ids = {node.id for node in self.nodes}
+        self._rebuild_node_index()
+        live_node_ids = set(self._nodes_by_id)
         for value in self.values.values():
             value.users = []
             if (
@@ -197,6 +206,8 @@ class Graph:
 
     def lint(self) -> None:
         node_ids = {node.id for node in self.nodes}
+        if len(node_ids) != len(self.nodes):
+            raise RuntimeError("graph contains duplicate node ids")
         for value_id in self.inputs + self.outputs:
             if value_id not in self.values:
                 raise RuntimeError(

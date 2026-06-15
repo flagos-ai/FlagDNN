@@ -98,7 +98,11 @@ def execute_plan(plan: ExecutionPlan, inputs: tuple[Any, ...]) -> Any:
     }
     runtime_values.update(prepared.constants)
 
-    workspace = _allocate_workspace(plan, inputs)
+    workspace = (
+        _allocate_workspace(plan, inputs)
+        if _plan_uses_runtime_workspace(plan)
+        else None
+    )
     for step in prepared.steps:
         step_inputs = [runtime_values[value_id] for value_id in step.inputs]
         attrs = step.attrs
@@ -197,7 +201,7 @@ def _make_single_step_fast_path(
     constants: dict[int, Any],
     output_structure: Any,
 ) -> Optional[_SingleStepFastPath]:
-    if len(steps) != 1 or plan.workspace_size > 0:
+    if len(steps) != 1 or _plan_uses_runtime_workspace(plan):
         return None
 
     step = steps[0]
@@ -266,6 +270,12 @@ def _format_outputs(output_structure: Any, flat_outputs: list[Any]) -> Any:
             flat_outputs[0] if len(flat_outputs) == 1 else tuple(flat_outputs)
         )
     return unflatten_output(output_structure, flat_outputs)
+
+
+def _plan_uses_runtime_workspace(plan: ExecutionPlan) -> bool:
+    if bool(plan.debug_info.get("uses_workspace", False)):
+        return True
+    return any(bool(step.attrs.get("_uses_workspace")) for step in plan.steps)
 
 
 def _allocate_workspace(

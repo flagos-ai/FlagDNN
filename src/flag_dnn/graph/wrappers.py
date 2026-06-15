@@ -6,89 +6,18 @@ from typing import Any, Callable
 import torch
 
 from flag_dnn.graph.capture import current_capture, is_capturing
+from flag_dnn.graph.registry.core import (
+    graph_aware_op_names,
+    graph_output_keys,
+)
 from flag_dnn.graph.tensor import GraphTensor
 
-GRAPH_AWARE_OPS = (
-    "identity",
-    "reshape",
-    "transpose",
-    "slice",
-    "concatenate",
-    "gen_index",
-    "add",
-    "sub",
-    "mul",
-    "scale",
-    "div",
-    "mod",
-    "pow",
-    "max",
-    "min",
-    "minimum",
-    "maximum",
-    "eq",
-    "ne",
-    "lt",
-    "le",
-    "gt",
-    "ge",
-    "cmp_eq",
-    "cmp_neq",
-    "cmp_lt",
-    "cmp_le",
-    "cmp_gt",
-    "cmp_ge",
-    "bias_add",
-    "add_square",
-    "relu",
-    "swish",
-    "gelu",
-    "gelu_approx_tanh",
-    "leaky_relu",
-    "elu",
-    "softplus",
-    "conv2d",
-    "conv_fprop",
-    "conv_dgrad",
-    "conv_wgrad",
-    "causal_conv1d",
-    "mm",
-    "matmul",
-    "sdpa",
-    "sdpa_backward",
-    "batchnorm",
-    "batchnorm_inference",
-    "layernorm",
-    "rmsnorm",
-    "rmsnorm_rht_amax_wrapper_sm100",
-    "reduction",
-    "sqrt",
-    "square",
-    "rsqrt",
-    "exp",
-    "log",
-    "reciprocal",
-    "ceil",
-    "floor",
-    "erf",
-    "sin",
-    "cos",
-    "tan",
-    "abs",
-    "neg",
-    "tanh",
-    "sigmoid",
-    "sigmoid_backward",
-    "silu",
-    "logical_and",
-    "logical_or",
-    "logical_not",
-    "binary_select",
-)
-
+GRAPH_AWARE_OPS = graph_aware_op_names()
 
 _DICT_OUTPUT_OPS = {
-    "rmsnorm_rht_amax_wrapper_sm100": ("o_tensor", "amax_tensor"),
+    name: keys
+    for name in GRAPH_AWARE_OPS
+    if (keys := graph_output_keys(name)) is not None
 }
 
 
