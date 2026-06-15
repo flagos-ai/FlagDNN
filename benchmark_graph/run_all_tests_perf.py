@@ -10,7 +10,7 @@ from datetime import datetime
 # ================= 配置区 =================
 
 # 目标算子列表 (白名单)
-# 例如: ["relu", "add"]。如果留空 []，则自动测试目录下所有的 test_*_perf.py
+# 例如: ["relu", "add"]。如果留空 []，则自动测试目录下所有的 test_*.py
 TARGET_OPERATORS: list[str] = []
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -30,10 +30,10 @@ DATA_FILE = os.path.join(REPO_ROOT, "perf_graph_data.json")
 
 
 def get_operator_name(filename):
-    """从文件名中提取算子名，例如 test_relu_perf.py -> relu"""
+    """从文件名中提取算子名，例如 test_relu.py -> relu"""
     basename = os.path.basename(filename)
-    if basename.startswith("test_") and basename.endswith("_perf.py"):
-        return basename[5:-8]
+    if basename.startswith("test_") and basename.endswith(".py"):
+        return basename[5:-3]
     return basename
 
 
@@ -278,14 +278,12 @@ def main():
     os.makedirs(LOG_DIR, exist_ok=True)
 
     # 收集并过滤测试文件
-    all_test_files = sorted(
-        glob.glob(os.path.join(TEST_DIR, "test_*_perf.py"))
-    )
+    all_test_files = sorted(glob.glob(os.path.join(TEST_DIR, "test_*.py")))
 
     if not all_test_files:
         print(
             f"未在 {repo_relative_path(TEST_DIR)} 目录下找到任何 "
-            "test_*_perf.py 文件。"
+            "test_*.py 文件。"
         )
         return
 

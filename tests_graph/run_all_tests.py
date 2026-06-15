@@ -13,6 +13,17 @@ from datetime import datetime
 # If populated, only files named test_<operator>.py will be executed.
 TARGET_OPERATORS: list[str] = []
 
+# Non-operator test files to always skip. These are framework / self-check
+# tests, not per-operator coverage, so the operator runner ignores them.
+# Use the test_<name>.py suffix (e.g. "prepared" -> test_prepared.py).
+# Entries here are skipped even if also listed in TARGET_OPERATORS.
+EXCLUDED_OPERATORS: list[str] = [
+    "prepared",  # test_prepared.py: prepared fast-path framework test
+    "registry",  # test_registry.py: registry / capture-wrapper self-check
+    "graph",  # test_graph.py: graph capture/compile core test
+    "partial_completion",  # test_partial_completion.py
+]
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 TEST_DIR = SCRIPT_DIR
@@ -51,6 +62,21 @@ def main():
     else:
         test_files = all_test_files
         print("No operator filter configured; running all tests.")
+
+    if EXCLUDED_OPERATORS:
+        excluded = set(EXCLUDED_OPERATORS)
+        kept = [
+            file_path
+            for file_path in test_files
+            if get_operator_name(file_path) not in excluded
+        ]
+        skipped = len(test_files) - len(kept)
+        if skipped:
+            print(
+                f"Excluding {skipped} non-operator test file(s): "
+                f"{', '.join(sorted(excluded))}"
+            )
+        test_files = kept
 
     if not test_files:
         print("No test files matched TARGET_OPERATORS.")
