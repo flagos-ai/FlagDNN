@@ -8,8 +8,8 @@
 |---|---|---|---|
 | Eager 算子实现 | `src/flag_dnn/ops/<op>.py` | 必改。定义 public API、输入校验、输出分配、Triton kernel dispatch，并显式拒绝暂不支持的 cuDNN 功能。 | 这是算子语义和 eager 性能的源头。热路径 dispatch 要保持简单；只有 benchmark 证明有收益时，才保留 shape-specific fast path。 |
 | Eager 导出 | `src/flag_dnn/ops/__init__.py`、`src/flag_dnn/__init__.py` | 新增 public 算子时修改。 | 导出层不应增加运行时开销。 |
-| Graph metadata / wrapper | `src/flag_dnn/graph/registry/core.py`、`src/flag_dnn/graph/wrappers.py` | 算子需要被 `@flag_dnn.graph` capture 时，在 `GRAPH_OP_METADATA` 中登记；`wrappers.py` 会按 metadata 自动安装 wrapper。 | wrapper 主要发生在 capture 阶段，不要在这里添加 graph replay 的运行时逻辑。 |
-| Graph schema | `src/flag_dnn/graph/registry/schemas/<family>.py`、`registry/schemas/__init__.py`、`registry/ops.py`、`registry/__init__.py` | 在 family schema 文件添加 normalize 和 shape inference；`registry/schemas/__init__.py` 聚合导出；在 `registry/ops.py` 添加 fallback run function，并在对应 `_register_*_ops` helper 中注册 `OpSchema`；`registry/__init__.py` 只保留兼容导出入口。 | normalize 和 shape inference 在 graph 构建期执行；fallback run function 应调用 eager 算子，保证 prepared fast path 不适用时仍然正确。 |
+| Graph 算子定义 | `src/flag_dnn/graph/registry/schemas/<family>.py` | 在该 family 文件里**一处**完成：`_normalize_<op>`（args/kwargs→input ids+attrs）、`_<op>_shape`（输出 `TensorSpec` 推断）、`_run_<op>`（eager 回退），并在该文件的 `register(flag_ops)` 里加一行 `register_op_def(OpDef(...))`。`registry/ops.py` 只有在新增整个 family 时才改（多一行 `register` 调用）。 | normalize/shape 在 graph 构建期执行；run 调用 eager 算子，保证 prepared fast path 不适用时仍正确。共享 run helper 在 `schemas/_run_common.py`，共享 shape/normalize helper 在 `schemas/common.py`。 |
+| Graph capture wrapper | `src/flag_dnn/graph/wrappers.py`（通常无需改动） | 算子在 `OpDef` 里声明 `graph_aware=True`（默认）后，`wrappers.py` 自动从 registry 派生并安装 capture wrapper；eager 返回 dict 时在 `OpDef(output_keys=...)` 声明。`graph_aware`/`output_keys` 是**单一真相来源**，没有独立的 metadata 清单需要手动同步。 | wrapper 只在 capture 阶段起作用，不要在这里写 replay 运行时逻辑。fusion 内部算子（如 `fused_*`）用 `graph_aware=False`，自动不装 wrapper。 |
 | Graph 编译期 fast path | `src/flag_dnn/graph/prepared/core.py`、`src/flag_dnn/graph/prepared/ops.py`、`src/flag_dnn/graph/prepared/<family>.py` | 只有性能敏感 graph 路径需要静态绑定 shape、stride、attrs、grid、kernel constexpr 时才添加。框架 API 放在 `prepared/core.py`；`prepared/ops.py` 只做 side-effect import；具体 op/family preparer 放在 `prepared/<family>.py`。op-specific fast path 用 `@register_prepared_run_fn("<op>")` 注册；多个 op 共享的 preparer 用 `@register_generic_prepared_run_fn` 注册。 | 这是 graph 性能优化的关键层。返回的闭包会在 replay 中执行，因此应在闭包外预计算 scalar tail、grid、输出 stride 和 kernel cache。约束不满足时返回 `None` 或调用 `default_run_fn`。 |
 | 自动调优配置 | `src/flag_dnn/runtime/backend/_nvidia/tune_configs.yaml` | 每个存在 tunable `BLOCK_*`、tile、split、`num_warps`、`num_stages` 或 grouping meta 参数的 Triton kernel，都要新增或更新 tune key。 | kernel 中使用 `runtime.get_tuned_config()`。只要自动调优适用，最终性能路径不能长期停留在硬编码 meta 参数上。 |
 | 功能测试 | `tests_graph/test_graph_<op>.py`、`tests_graph/consts.py` | 添加 cuDNN graph 对标测试和 shape 集合。 | 测试要证明 graph capture 命中了目标 op，并且输出语义与参考实现一致。 |
@@ -19,12 +19,25 @@
 
 1. 先在 `src/flag_dnn/ops/<op>.py` 实现 eager 算子。public API 声称支持的语义必须对齐 cuDNN frontend。
 2. 在 `src/flag_dnn/ops/__init__.py` 和 `src/flag_dnn/__init__.py` 导出该算子。
-3. 如果需要 graph capture，在 `src/flag_dnn/graph/registry/core.py` 的 `GRAPH_OP_METADATA` 中登记算子名；如果 eager API 返回 dict，同时设置 `output_keys`。`src/flag_dnn/graph/wrappers.py` 会从 metadata 自动安装 wrapper。
-4. 添加 graph schema：
-   - 在 `src/flag_dnn/graph/registry/schemas/<family>.py` 中添加 `_normalize_<op>`，把位置参数和关键字参数转换成 graph input ids 与不可变 attrs。
-   - 在 `src/flag_dnn/graph/registry/schemas/<family>.py` 中添加 `_<op>_shape`，返回输出 `TensorSpec`；并把新 helper 加入该 family 模块的 `__all__`，由 `registry/schemas/__init__.py` 聚合导出。
-   - 在 `src/flag_dnn/graph/registry/ops.py` 中添加 `_run_<op>`，调用 eager 算子，作为正确性 fallback。
-   - 在 `src/flag_dnn/graph/registry/ops.py` 的对应 `_register_*_ops` helper 中注册 `OpSchema(name="<op>", ...)`。固定输出用 `num_outputs=<int>`；可变输出用 `num_outputs=(...)` 或 `None`，并确保 `shape_fn` 的返回数量符合 schema。新增 family 时先增加 `_register_<family>_ops`，再让 `register_default_ops()` 只多一行 helper 调用。
+3. 添加 graph 算子定义：在该算子所属 family 文件 `src/flag_dnn/graph/registry/schemas/<family>.py` 中**一处**完成下面四项，然后到 `register(flag_ops)` 末尾加一行注册即可，不需要改动任何其它文件：
+   - `_normalize_<op>(ctx, args, kwargs)`：把位置参数和关键字参数转换成 graph input ids 与不可变 attrs（`ctx` 是 `CaptureContext`，提供 `as_value`/`is_tensor_like`；简单算子可直接复用 `_normalize_unary`/`_normalize_binary` 等工厂）。
+   - `_<op>_shape(input_specs, attrs)`：返回输出 `TensorSpec` 列表（输出形状同输入时直接用 `common._shape_like_first`）。
+   - `_run_<op>(flag_ops)`：返回一个调用 eager 算子的 `run(inputs, attrs)`，作为 prepared fast path 不适用时的正确性 fallback（共享 helper 如 `_require_runtime_backend` 见 `_run_common`）。
+   - 在该文件的 `register(flag_ops)` 里加一行：
+
+     ```python
+     register_op_def(OpDef(
+         name="<op>",
+         normalize=_normalize_<op>,
+         shape=_<op>_shape,
+         run=_run_<op>(flag_ops),
+         # 可选：num_outputs=<int> 或 (..,)；fusible=True；
+         #       graph_aware=False（fusion 内部算子）；output_keys=(...)（dict 输出）
+     ))
+     ```
+
+   `graph_aware` 默认 `True`，capture wrapper 会自动从 registry 派生，无需再维护任何 metadata 清单。固定输出用 `num_outputs=<int>`，可变输出用 `num_outputs=(...)`，并确保 `_<op>_shape` 返回数量与之相符。
+4. 新增**整个 family** 时，新建 `src/flag_dnn/graph/registry/schemas/<family>.py`（含该 family 的 normalize/shape/run 和一个 `register(flag_ops)`），并在 `src/flag_dnn/graph/registry/ops.py` 的 `register_default_ops()` 里加一行 `<family>.register(flag_ops)`。
 5. 只有当 prepared fast path 能减少 replay 开销或启用专用 kernel 时，才增加 prepared run function。通用框架 API 来自 `src/flag_dnn/graph/prepared/core.py`；op-specific 代码放在对应 `prepared/<family>.py`，新 family 则新增 `prepared/<family>.py` 并在 `prepared/ops.py` 导入触发注册。op-specific preparer 推荐用 decorator 注册：
 
 ```python
@@ -67,7 +80,7 @@ def _prepare_family(
 7. 明确 prepared fast path 的缓存边界。第一次 replay 可以触发 Triton compile/autotune；之后应复用 compiled kernel、静态 grid 和静态参数。若某个 pipeline step 的首次 launch 返回 `(compiled_kernel, metadata)`，设置 `first_launch_returns_metadata=True` 并提供 `build_cached_call`；若 replay direct launcher 使用固定 grid/args，用 `make_static_cached_call(grid, args)`。
 
 8. 第一次正式性能结论前，在 `_nvidia/tune_configs.yaml` 添加或更新对应 tune key。
-9. 添加 graph 功能测试和性能 benchmark。新增或调整 registry 时先跑 `tests_graph/test_registry/__init__.py` 做 metadata、wrapper 和 schema 自检；benchmark shape 集合要小而有代表性，且必须覆盖性能敏感场景。
+9. 添加 graph 功能测试和性能 benchmark。新增或调整 registry 时先跑 `tests_graph/test_registry.py` 做 wrapper/schema 一致性自检（断言 graph_aware schema 与 capture wrapper 一一对应、fusion 内部算子无 wrapper、输出 arity 与 output_keys 相符）；benchmark shape 集合要小而有代表性，且必须覆盖性能敏感场景。
 
 ## Prepared 代码布局
 

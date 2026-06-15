@@ -4,11 +4,17 @@ from typing import Any
 
 import torch
 
+from flag_dnn.graph.registry.core import OpDef, register_op_def
+from flag_dnn.graph.registry.schemas._run_common import (
+    _require_runtime_backend,
+)
 from flag_dnn.graph.registry.schemas.common import (
     _normalize_axis,
     _numel,
     _rank_of,
+    _shape_like_first,
 )
+from flag_dnn.graph.registry.schemas.pointwise import _normalize_unary
 from flag_dnn.graph.tensor import TensorSpec, canonical_dtype
 
 
@@ -449,7 +455,143 @@ def _normalize_gen_index(
     return [ctx.as_value(x, "input")], attrs
 
 
+# --- eager-fallback run functions ---
+
+
+def _run_identity(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "identity")
+        return flag_ops.identity(
+            inputs[0],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_reshape(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "reshape")
+        return flag_ops.reshape(
+            inputs[0],
+            attrs["shape"],
+            name=attrs.get("name", ""),
+            reshape_mode=attrs.get("reshape_mode", "VIEW_ONLY"),
+        )
+
+    return run
+
+
+def _run_transpose(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "transpose")
+        return flag_ops.transpose(
+            inputs[0],
+            attrs["permutation"],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_slice(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "slice")
+        return flag_ops.slice(
+            inputs[0],
+            attrs.get("slices", ()),
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_concatenate(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "concatenate")
+        return flag_ops.concatenate(
+            inputs,
+            attrs["axis"],
+            in_place_index=attrs.get("in_place_index"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_gen_index(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "gen_index")
+        return flag_ops.gen_index(
+            inputs[0],
+            attrs["axis"],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def register(flag_ops: Any) -> None:
+    """Register the utility op family (identity / reshape / transpose /
+    slice / concatenate / gen_index)."""
+    register_op_def(
+        OpDef(
+            name="identity",
+            normalize=_normalize_unary(
+                "identity", ("compute_data_type", "name")
+            ),
+            shape=_shape_like_first,
+            run=_run_identity(flag_ops),
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="reshape",
+            normalize=_normalize_reshape,
+            shape=_reshape_shape,
+            run=_run_reshape(flag_ops),
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="transpose",
+            normalize=_normalize_transpose,
+            shape=_transpose_shape,
+            run=_run_transpose(flag_ops),
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="slice",
+            normalize=_normalize_slice,
+            shape=_slice_shape,
+            run=_run_slice(flag_ops),
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="concatenate",
+            normalize=_normalize_concatenate,
+            shape=_concatenate_shape,
+            run=_run_concatenate(flag_ops),
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="gen_index",
+            normalize=_normalize_gen_index,
+            shape=_gen_index_shape,
+            run=_run_gen_index(flag_ops),
+        )
+    )
+
+
 __all__ = (
+    "register",
     "_normalize_shape_arg",
     "_normalize_permutation_arg",
     "_swap_permutation",

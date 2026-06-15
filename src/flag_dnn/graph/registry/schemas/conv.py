@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from flag_dnn.graph.registry.schemas.common import _rank_of, _tuple_n
+from flag_dnn.graph.registry.core import OpDef, register_op_def
+from flag_dnn.graph.registry.schemas._run_common import (
+    _public_attrs,
+    _require_runtime_backend,
+)
+from flag_dnn.graph.registry.schemas.common import (
+    _rank_of,
+    _shape_like_first,
+    _tuple_n,
+)
 from flag_dnn.graph.tensor import TensorSpec
 
 
@@ -747,7 +756,164 @@ def _normalize_causal_conv1d(
     return input_ids, attrs
 
 
+# --- eager-fallback run functions ---
+
+
+def _run_conv2d(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs, "conv2d")
+        bias = inputs[2] if len(inputs) > 2 else None
+        op_attrs = _public_attrs(attrs)
+        return flag_ops.conv2d(
+            inputs[0],
+            inputs[1],
+            bias=bias,
+            stride=op_attrs.get("stride", 1),
+            padding=op_attrs.get("padding", 0),
+            dilation=op_attrs.get("dilation", 1),
+            groups=op_attrs.get("groups", 1),
+        )
+
+    return run
+
+
+def _run_conv_fprop(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs, "conv_fprop")
+        op_attrs = _public_attrs(attrs)
+        return flag_ops.conv_fprop(
+            inputs[0],
+            inputs[1],
+            padding=op_attrs.get("padding"),
+            pre_padding=op_attrs.get("pre_padding"),
+            post_padding=op_attrs.get("post_padding"),
+            stride=op_attrs.get("stride", 1),
+            dilation=op_attrs.get("dilation", 1),
+            convolution_mode=op_attrs.get(
+                "convolution_mode", "CROSS_CORRELATION"
+            ),
+            compute_data_type=op_attrs.get("compute_data_type"),
+            name=op_attrs.get("name", ""),
+            groups=op_attrs.get("groups", 1),
+        )
+
+    return run
+
+
+def _run_conv_dgrad(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs, "conv_dgrad")
+        op_attrs = _public_attrs(attrs)
+        return flag_ops.conv_dgrad(
+            inputs[0],
+            inputs[1],
+            input_size=op_attrs["input_size"],
+            padding=op_attrs.get("padding"),
+            pre_padding=op_attrs.get("pre_padding"),
+            post_padding=op_attrs.get("post_padding"),
+            stride=op_attrs.get("stride", 1),
+            dilation=op_attrs.get("dilation", 1),
+            convolution_mode=op_attrs.get(
+                "convolution_mode", "CROSS_CORRELATION"
+            ),
+            compute_data_type=op_attrs.get("compute_data_type"),
+            name=op_attrs.get("name", ""),
+            groups=op_attrs.get("groups", 1),
+        )
+
+    return run
+
+
+def _run_conv_wgrad(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs, "conv_wgrad")
+        op_attrs = _public_attrs(attrs)
+        return flag_ops.conv_wgrad(
+            inputs[0],
+            inputs[1],
+            filter_size=op_attrs["filter_size"],
+            padding=op_attrs.get("padding"),
+            pre_padding=op_attrs.get("pre_padding"),
+            post_padding=op_attrs.get("post_padding"),
+            stride=op_attrs.get("stride", 1),
+            dilation=op_attrs.get("dilation", 1),
+            convolution_mode=op_attrs.get(
+                "convolution_mode", "CROSS_CORRELATION"
+            ),
+            compute_data_type=op_attrs.get("compute_data_type"),
+            name=op_attrs.get("name", ""),
+            groups=op_attrs.get("groups", 1),
+        )
+
+    return run
+
+
+def _run_causal_conv1d(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs, "causal_conv1d")
+        bias = inputs[2] if attrs.get("has_bias") else None
+        return flag_ops.causal_conv1d(
+            inputs[0],
+            inputs[1],
+            bias=bias,
+            activation=attrs.get("activation", "identity"),
+        )
+
+    return run
+
+
+def register(flag_ops: Any) -> None:
+    """Register the convolution op family (conv2d / conv_fprop / conv_dgrad /
+    conv_wgrad / causal_conv1d)."""
+    register_op_def(
+        OpDef(
+            name="conv2d",
+            normalize=_normalize_conv2d,
+            shape=_conv2d_shape,
+            run=_run_conv2d(flag_ops),
+            fusible=True,
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="conv_fprop",
+            normalize=_normalize_conv_fprop,
+            shape=_conv_fprop_shape,
+            run=_run_conv_fprop(flag_ops),
+            fusible=True,
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="conv_dgrad",
+            normalize=_normalize_conv_dgrad,
+            shape=_conv_dgrad_shape,
+            run=_run_conv_dgrad(flag_ops),
+            fusible=True,
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="conv_wgrad",
+            normalize=_normalize_conv_wgrad,
+            shape=_conv_wgrad_shape,
+            run=_run_conv_wgrad(flag_ops),
+            fusible=True,
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="causal_conv1d",
+            normalize=_normalize_causal_conv1d,
+            shape=_shape_like_first,
+            run=_run_causal_conv1d(flag_ops),
+            fusible=True,
+        )
+    )
+
+
 __all__ = (
+    "register",
     "_pair",
     "_conv_out_dim",
     "_normalize_convolution_mode",

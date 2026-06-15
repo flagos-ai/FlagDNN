@@ -3,15 +3,18 @@ from __future__ import annotations
 from typing import Any
 
 from flag_dnn.graph.registry.core import (
-    GraphOpMetadata,
+    GraphWrapperSpec,
     NormalizeFn,
+    OpDef,
     OpSchema,
     OutputArity,
     RunFn,
     ShapeFn,
     graph_aware_op_names,
     graph_output_keys,
+    graph_wrapper_specs,
     register_op,
+    register_op_def,
 )
 from flag_dnn.graph.registry.ops import (
     get_op_schema,
@@ -21,8 +24,9 @@ from flag_dnn.graph.registry.ops import (
 import flag_dnn.graph.registry.ops as _registry_ops
 
 __all__ = [
-    "GraphOpMetadata",
+    "GraphWrapperSpec",
     "NormalizeFn",
+    "OpDef",
     "OpSchema",
     "OutputArity",
     "RunFn",
@@ -30,8 +34,10 @@ __all__ = [
     "get_op_schema",
     "graph_aware_op_names",
     "graph_output_keys",
+    "graph_wrapper_specs",
     "register_default_ops",
     "register_op",
+    "register_op_def",
     "registered_ops",
 ]
 

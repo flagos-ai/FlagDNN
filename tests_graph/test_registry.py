@@ -1,30 +1,59 @@
 from __future__ import annotations
 
+import flag_dnn  # noqa: F401  (ensures capture wrappers are installed)
 from flag_dnn.graph import wrappers
-from flag_dnn.graph.registry import get_op_schema, registered_ops
-from flag_dnn.graph.registry.core import (
-    GRAPH_OP_METADATA,
-    graph_aware_op_names,
+from flag_dnn.graph.registry import (
+    get_op_schema,
+    graph_wrapper_specs,
+    registered_ops,
 )
 
 
-def test_graph_metadata_ops_are_registered_and_wrapped() -> None:
+def test_wrapper_specs_are_derived_from_registry() -> None:
+    # The capture-wrapper set is derived from the registry, so a graph-aware
+    # schema and its wrapper can never drift apart (no parallel metadata list).
     schemas = registered_ops()
-    graph_aware = graph_aware_op_names()
+    specs = graph_wrapper_specs()
+    for name, spec in specs.items():
+        assert name in schemas, name
+        assert schemas[name].graph_aware
+        assert spec.eager_name
+    for name, schema in schemas.items():
+        assert (name in specs) == schema.graph_aware
 
-    assert wrappers.GRAPH_AWARE_OPS == graph_aware
-    missing = [name for name in graph_aware if name not in schemas]
-    assert missing == []
+
+def test_installed_wrappers_match_specs() -> None:
+    # GRAPH_AWARE_OPS is populated at install time straight from the registry.
+    assert set(wrappers.GRAPH_AWARE_OPS) == set(graph_wrapper_specs())
 
 
-def test_output_key_metadata_matches_schema_arity() -> None:
+def test_fusion_internal_ops_have_no_wrapper() -> None:
+    # Fusion-internal ops are registered (need shape/run) but are never user
+    # callable, so they must not get a capture wrapper.
     schemas = registered_ops()
-    for name, metadata in GRAPH_OP_METADATA.items():
-        if metadata.output_keys is None:
+    specs = graph_wrapper_specs()
+    for name in (
+        "fused_bias_relu",
+        "fused_bias_gelu",
+        "fused_conv2d_bias_relu",
+    ):
+        assert name in schemas
+        assert name not in specs
+
+
+def test_dict_output_op_keys() -> None:
+    schema = get_op_schema("rmsnorm_rht_amax_wrapper_sm100")
+    assert schema.output_keys == ("o_tensor", "amax_tensor")
+    schema.validate_output_count(len(schema.output_keys))
+    spec = graph_wrapper_specs()["rmsnorm_rht_amax_wrapper_sm100"]
+    assert spec.output_keys == ("o_tensor", "amax_tensor")
+
+
+def test_output_keys_match_schema_arity() -> None:
+    for schema in registered_ops().values():
+        if schema.output_keys is None:
             continue
-        schema = schemas[name]
-        assert schema.output_keys == metadata.output_keys
-        schema.validate_output_count(len(metadata.output_keys))
+        schema.validate_output_count(len(schema.output_keys))
 
 
 def test_variable_output_ops_are_explicit() -> None:

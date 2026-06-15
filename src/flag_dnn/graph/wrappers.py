@@ -1,39 +1,67 @@
 from __future__ import annotations
 
 import functools
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 import torch
 
 from flag_dnn.graph.capture import current_capture, is_capturing
-from flag_dnn.graph.registry.core import (
-    graph_aware_op_names,
-    graph_output_keys,
-)
+from flag_dnn.graph.registry.core import graph_wrapper_specs
 from flag_dnn.graph.tensor import GraphTensor
 
-GRAPH_AWARE_OPS = graph_aware_op_names()
+# Names actually wrapped by the most recent install_graph_wrappers call.
+# Populated lazily (the registry is the source of truth); kept for
+# introspection and tests.
+GRAPH_AWARE_OPS: tuple[str, ...] = ()
 
-_DICT_OUTPUT_OPS = {
-    name: keys
-    for name in GRAPH_AWARE_OPS
-    if (keys := graph_output_keys(name)) is not None
+
+def eager_bias_add(input: torch.Tensor, bias: torch.Tensor) -> torch.Tensor:
+    if bias.dim() == 1 and input.dim() >= 2:
+        shape = [1] * input.dim()
+        shape[1] = bias.numel()
+        bias = bias.reshape(shape)
+    from flag_dnn.ops.add import add
+
+    return add(input, bias)
+
+
+# Graph-only ops with no eager namespace function get their eager fallback
+# from here when installing wrappers.
+_SPECIAL_EAGER_FNS: dict[str, Callable[..., Any]] = {
+    "bias_add": eager_bias_add,
 }
 
 
 def install_graph_wrappers(namespace: dict[str, Any]) -> None:
-    for op_type in GRAPH_AWARE_OPS:
-        eager_fn = namespace.get(op_type)
-        if eager_fn is None and op_type == "bias_add":
-            eager_fn = eager_bias_add
+    """Install capture wrappers for every graph-aware op in ``namespace``.
+
+    The set of ops and their dict-output keys come straight from the registry
+    (``graph_wrapper_specs``), so there is no second list to keep in sync.
+    """
+    from flag_dnn.graph.registry import register_default_ops
+
+    register_default_ops()
+    global GRAPH_AWARE_OPS
+    GRAPH_AWARE_OPS = tuple(graph_wrapper_specs())
+
+    for op_type, spec in graph_wrapper_specs().items():
+        eager_fn = namespace.get(spec.eager_name)
+        if eager_fn is None:
+            eager_fn = _SPECIAL_EAGER_FNS.get(op_type)
         if eager_fn is None:
             continue
         if getattr(eager_fn, "__flagdnn_graph_wrapped__", False):
             continue
-        namespace[op_type] = make_graph_wrapper(op_type, eager_fn)
+        namespace[spec.eager_name] = make_graph_wrapper(
+            op_type, eager_fn, spec.output_keys
+        )
 
 
-def make_graph_wrapper(op_type: str, eager_fn: Callable[..., Any]):
+def make_graph_wrapper(
+    op_type: str,
+    eager_fn: Callable[..., Any],
+    output_keys: Optional[tuple[str, ...]] = None,
+):
     @functools.wraps(eager_fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         if (
@@ -47,7 +75,6 @@ def make_graph_wrapper(op_type: str, eager_fn: Callable[..., Any]):
                     f"FlagDNN graph op {op_type} used outside graph capture"
                 )
             outputs = ctx.add_op_call(op_type, args, kwargs)
-            output_keys = _DICT_OUTPUT_OPS.get(op_type)
             if output_keys is not None:
                 if not isinstance(outputs, tuple):
                     outputs = (outputs,)
@@ -63,16 +90,6 @@ def make_graph_wrapper(op_type: str, eager_fn: Callable[..., Any]):
     setattr(wrapper, "__flagdnn_graph_wrapped__", True)
     setattr(wrapper, "__flagdnn_eager_fn__", eager_fn)
     return wrapper
-
-
-def eager_bias_add(input: torch.Tensor, bias: torch.Tensor) -> torch.Tensor:
-    if bias.dim() == 1 and input.dim() >= 2:
-        shape = [1] * input.dim()
-        shape[1] = bias.numel()
-        bias = bias.reshape(shape)
-    from flag_dnn.ops.add import add
-
-    return add(input, bias)
 
 
 def _contains_graph_tensor(value: Any) -> bool:

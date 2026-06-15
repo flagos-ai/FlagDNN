@@ -4,8 +4,16 @@ from typing import Any
 
 import torch
 
-from flag_dnn.graph.registry.core import NormalizeFn
-from flag_dnn.graph.registry.schemas.common import _pop_operand
+from flag_dnn.graph.registry.core import NormalizeFn, OpDef, register_op_def
+from flag_dnn.graph.registry.schemas._run_common import (
+    _format_bias,
+    _require_runtime_backend,
+    _unsupported_triton_path,
+)
+from flag_dnn.graph.registry.schemas.common import (
+    _pop_operand,
+    _shape_like_first,
+)
 from flag_dnn.graph.tensor import TensorSpec, canonical_dtype, torch_dtype
 
 
@@ -434,7 +442,693 @@ def _normalize_bias_add(
     return [ctx.as_value(x, "input"), ctx.as_value(bias, "bias")], {}
 
 
+# --- eager-fallback run functions ---
+
+
+def _run_bias_add(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "bias_add")
+        x, bias = inputs
+        return flag_ops.add(x, _format_bias(x, bias))
+
+    return run
+
+
+def _binary_operands(
+    inputs: list[Any], attrs: dict[str, Any]
+) -> tuple[Any, Any]:
+    left = inputs[0]
+    if len(inputs) > 1:
+        right = inputs[1]
+    else:
+        right = attrs["other"]
+    if attrs.get("reverse"):
+        return right, left
+    return left, right
+
+
+def _run_binary(flag_ops: Any, op_type: str) -> Any:
+    if op_type == "add":
+        return _run_binary_add(flag_ops)
+    if op_type == "sub":
+        return _run_binary_sub(flag_ops)
+    if op_type == "mul":
+        return _run_binary_mul(flag_ops)
+    if op_type == "div":
+        return _run_binary_div(flag_ops)
+    if op_type == "mod":
+        return _run_binary_mod(flag_ops)
+    if op_type == "pow":
+        return _run_binary_pow(flag_ops)
+    if op_type == "max":
+        return _run_binary_max(flag_ops)
+    if op_type in ("min", "minimum"):
+        return _run_binary_min(flag_ops)
+    if op_type == "maximum":
+        return _run_binary_maximum(flag_ops)
+    if op_type in ("logical_and", "logical_or"):
+        return _run_binary_logical(flag_ops, op_type)
+    if op_type == "add_square":
+        return _run_add_square(flag_ops)
+    if op_type in ("eq", "ne", "lt", "le", "gt", "ge"):
+        return _run_binary_cmp(flag_ops, op_type)
+    raise RuntimeError(f"unsupported graph binary op: {op_type}")
+
+
+def _run_binary_add(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "add")
+        left, right = _binary_operands(inputs, attrs)
+        alpha = attrs.get("alpha", 1)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if not isinstance(left, torch.Tensor) and isinstance(
+            right, torch.Tensor
+        ):
+            return flag_ops.add(
+                right,
+                left,
+                alpha=alpha,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        if isinstance(left, torch.Tensor):
+            return flag_ops.add(
+                left,
+                right,
+                alpha=alpha,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path("add", "two scalar operands")
+
+    return run
+
+
+def _run_binary_sub(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "sub")
+        left, right = _binary_operands(inputs, attrs)
+        alpha = attrs.get("alpha", 1)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if isinstance(left, torch.Tensor):
+            return flag_ops.sub(
+                left,
+                right,
+                alpha=alpha,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path("sub", "scalar left operand")
+
+    return run
+
+
+def _run_binary_mul(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "mul")
+        left, right = _binary_operands(inputs, attrs)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if not isinstance(left, torch.Tensor) and isinstance(
+            right, torch.Tensor
+        ):
+            return flag_ops.mul(
+                right,
+                left,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        if isinstance(left, torch.Tensor):
+            return flag_ops.mul(
+                left,
+                right,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path("mul", "two scalar operands")
+
+    return run
+
+
+def _run_binary_div(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "div")
+        left, right = _binary_operands(inputs, attrs)
+        rounding_mode = attrs.get("rounding_mode")
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if isinstance(left, torch.Tensor):
+            return flag_ops.div(
+                left,
+                right,
+                rounding_mode=rounding_mode,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path("div", "scalar left operand")
+
+    return run
+
+
+def _run_binary_mod(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "mod")
+        left, right = _binary_operands(inputs, attrs)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if isinstance(left, torch.Tensor):
+            return flag_ops.mod(
+                left,
+                right,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path("mod", "scalar left operand")
+
+    return run
+
+
+def _run_binary_pow(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "pow")
+        left, right = _binary_operands(inputs, attrs)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if isinstance(left, torch.Tensor) or isinstance(right, torch.Tensor):
+            return flag_ops.pow(
+                left,
+                right,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path("pow", "two scalar operands")
+
+    return run
+
+
+def _run_binary_max(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "max")
+        left, right = _binary_operands(inputs, attrs)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if not isinstance(left, torch.Tensor) and isinstance(
+            right, torch.Tensor
+        ):
+            return flag_ops.max(
+                right,
+                left,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        if isinstance(left, torch.Tensor):
+            return flag_ops.max(
+                left,
+                right,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path("max", "two scalar operands")
+
+    return run
+
+
+def _run_binary_min(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "min")
+        left, right = _binary_operands(inputs, attrs)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if not isinstance(left, torch.Tensor) and isinstance(
+            right, torch.Tensor
+        ):
+            return flag_ops.minimum(
+                right,
+                left,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        if isinstance(left, torch.Tensor):
+            return flag_ops.minimum(
+                left,
+                right,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path("min", "two scalar operands")
+
+    return run
+
+
+def _run_binary_maximum(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "maximum")
+        left, right = _binary_operands(inputs, attrs)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if not isinstance(left, torch.Tensor) and isinstance(
+            right, torch.Tensor
+        ):
+            return flag_ops.maximum(
+                right,
+                left,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        if isinstance(left, torch.Tensor):
+            return flag_ops.maximum(
+                left,
+                right,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path("maximum", "two scalar operands")
+
+    return run
+
+
+def _run_binary_logical(flag_ops: Any, op_type: str) -> Any:
+    flag_fn = getattr(flag_ops, op_type)
+
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, op_type)
+        left, right = _binary_operands(inputs, attrs)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if not isinstance(left, torch.Tensor) and isinstance(
+            right, torch.Tensor
+        ):
+            return flag_fn(
+                right,
+                left,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        if isinstance(left, torch.Tensor):
+            return flag_fn(
+                left,
+                right,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path(op_type, "two scalar operands")
+
+    return run
+
+
+def _run_add_square(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "add_square")
+        return flag_ops.add_square(
+            inputs[0],
+            inputs[1],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_binary_cmp(flag_ops: Any, op_type: str) -> Any:
+    flag_fn = getattr(flag_ops, op_type)
+    reverse_op = {
+        "eq": "eq",
+        "ne": "ne",
+        "lt": "gt",
+        "le": "ge",
+        "gt": "lt",
+        "ge": "le",
+    }[op_type]
+    reverse_flag_fn = getattr(flag_ops, reverse_op)
+
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, op_type)
+        left, right = _binary_operands(inputs, attrs)
+        compute_data_type = attrs.get("compute_data_type")
+        name = attrs.get("name", "")
+        if isinstance(left, torch.Tensor):
+            return flag_fn(
+                left,
+                right,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        if isinstance(right, torch.Tensor):
+            return reverse_flag_fn(
+                right,
+                left,
+                compute_data_type=compute_data_type,
+                name=name,
+            )
+        _unsupported_triton_path(op_type, "two scalar operands")
+
+    return run
+
+
+def _run_binary_select(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "binary_select")
+        return flag_ops.binary_select(
+            inputs[0],
+            inputs[1],
+            inputs[2],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_relu(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "relu")
+        return flag_ops.relu(
+            inputs[0],
+            inplace=attrs.get("inplace", False),
+            negative_slope=attrs.get("negative_slope"),
+            lower_clip=attrs.get("lower_clip"),
+            upper_clip=attrs.get("upper_clip"),
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_swish(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "swish")
+        return flag_ops.swish(
+            inputs[0],
+            swish_beta=attrs.get("swish_beta"),
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_gelu(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "gelu")
+        return flag_ops.gelu(
+            inputs[0], approximate=attrs.get("approximate", "none")
+        )
+
+    return run
+
+
+def _run_gelu_approx_tanh(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "gelu_approx_tanh")
+        return flag_ops.gelu(inputs[0], approximate="tanh")
+
+    return run
+
+
+def _run_leaky_relu(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "leaky_relu")
+        negative_slope = attrs.get("negative_slope", 0.01)
+        if negative_slope is None:
+            negative_slope = 0.01
+        return flag_ops.leaky_relu(
+            inputs[0],
+            negative_slope=float(negative_slope),
+            inplace=False,
+        )
+
+    return run
+
+
+def _run_elu(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "elu")
+        alpha = attrs.get("alpha", 1.0)
+        if alpha is None:
+            alpha = 1.0
+        return flag_ops.elu(inputs[0], alpha=float(alpha), inplace=False)
+
+    return run
+
+
+def _run_softplus(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "softplus")
+        beta = attrs.get("beta", 1.0)
+        threshold = attrs.get("threshold", 20.0)
+        if beta is None:
+            beta = 1.0
+        if threshold is None:
+            threshold = 20.0
+        return flag_ops.softplus(
+            inputs[0],
+            beta=float(beta),
+            threshold=float(threshold),
+        )
+
+    return run
+
+
+def _run_unary_flag(flag_ops: Any, op_type: str) -> Any:
+    flag_fn = getattr(flag_ops, op_type)
+
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs, op_type)
+        return flag_fn(inputs[0])
+
+    return run
+
+
+def _run_logical_not(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "logical_not")
+        return flag_ops.logical_not(
+            inputs[0],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_abs(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "abs")
+        return flag_ops.abs(inputs[0])
+
+    return run
+
+
+def _run_sigmoid(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "sigmoid")
+        return flag_ops.sigmoid(
+            inputs[0],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_sigmoid_backward(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "sigmoid_backward")
+        return flag_ops.sigmoid_backward(
+            inputs[0],
+            inputs[1],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+# --- op specs and registration ---
+
+_BINARY_OP_TYPES = (
+    "add",
+    "sub",
+    "mul",
+    "div",
+    "mod",
+    "max",
+    "min",
+    "minimum",
+    "maximum",
+    "logical_and",
+    "logical_or",
+    "add_square",
+    "eq",
+    "ne",
+    "lt",
+    "le",
+    "gt",
+    "ge",
+)
+
+_ACTIVATION_OP_SPECS = (
+    (
+        "relu",
+        (
+            "inplace",
+            "negative_slope",
+            "lower_clip",
+            "upper_clip",
+            "compute_data_type",
+            "name",
+        ),
+        _run_relu,
+    ),
+    ("swish", ("swish_beta", "compute_data_type", "name"), _run_swish),
+    ("gelu", ("approximate",), _run_gelu),
+    (
+        "gelu_approx_tanh",
+        ("compute_data_type", "name"),
+        _run_gelu_approx_tanh,
+    ),
+    (
+        "leaky_relu",
+        ("negative_slope", "compute_data_type", "name", "inplace"),
+        _run_leaky_relu,
+    ),
+    ("elu", ("alpha", "compute_data_type", "name", "inplace"), _run_elu),
+    (
+        "softplus",
+        ("beta", "threshold", "compute_data_type", "name"),
+        _run_softplus,
+    ),
+)
+
+_UNARY_FLAG_OP_TYPES = (
+    "sqrt",
+    "square",
+    "rsqrt",
+    "exp",
+    "log",
+    "reciprocal",
+    "ceil",
+    "floor",
+    "erf",
+    "sin",
+    "cos",
+    "tan",
+    "neg",
+    "tanh",
+    "silu",
+)
+
+_POINTWISE_UNARY_OP_SPECS = (
+    ("logical_not", _run_logical_not),
+    ("sigmoid", _run_sigmoid),
+    ("abs", _run_abs),
+)
+
+
+def register(flag_ops: Any) -> None:
+    """Register the pointwise op family: binary arithmetic/compare/logical,
+    scale/pow/bias_add, activations and simple unary ops."""
+    for op_type in _BINARY_OP_TYPES:
+        register_op_def(
+            OpDef(
+                name=op_type,
+                normalize=_normalize_binary(op_type),
+                shape=_binary_shape,
+                run=_run_binary(flag_ops, op_type),
+            )
+        )
+    register_op_def(
+        OpDef(
+            name="binary_select",
+            normalize=_normalize_binary_select,
+            shape=_binary_select_shape,
+            run=_run_binary_select(flag_ops),
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="scale",
+            normalize=_normalize_scale,
+            shape=_binary_shape,
+            run=_run_binary(flag_ops, "mul"),
+            fusible=True,
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="pow",
+            normalize=_normalize_pow,
+            shape=_binary_shape,
+            run=_run_binary(flag_ops, "pow"),
+        )
+    )
+    for alias_name, op_type in _CMP_ALIAS_TO_OP.items():
+        register_op_def(
+            OpDef(
+                name=alias_name,
+                normalize=_normalize_cmp_alias(alias_name, op_type),
+                shape=_binary_shape,
+                run=_run_binary(flag_ops, op_type),
+            )
+        )
+    register_op_def(
+        OpDef(
+            name="bias_add",
+            normalize=_normalize_bias_add,
+            shape=_bias_add_shape,
+            run=_run_bias_add(flag_ops),
+            fusible=True,
+        )
+    )
+    for name, attrs, run_factory in _ACTIVATION_OP_SPECS:
+        register_op_def(
+            OpDef(
+                name=name,
+                normalize=_normalize_unary(name, attrs),
+                shape=_shape_like_first,
+                run=run_factory(flag_ops),
+                fusible=True,
+            )
+        )
+    for name in _UNARY_FLAG_OP_TYPES:
+        register_op_def(
+            OpDef(
+                name=name,
+                normalize=_normalize_unary(
+                    name, ("compute_data_type", "name")
+                ),
+                shape=_shape_like_first,
+                run=_run_unary_flag(flag_ops, name),
+                fusible=True,
+            )
+        )
+    for name, run_factory in _POINTWISE_UNARY_OP_SPECS:
+        register_op_def(
+            OpDef(
+                name=name,
+                normalize=_normalize_unary(
+                    name, ("compute_data_type", "name")
+                ),
+                shape=_shape_like_first,
+                run=run_factory(flag_ops),
+                fusible=True,
+            )
+        )
+    register_op_def(
+        OpDef(
+            name="sigmoid_backward",
+            normalize=_normalize_activation_backward("sigmoid_backward"),
+            shape=_activation_backward_shape,
+            run=_run_sigmoid_backward(flag_ops),
+        )
+    )
+
+
 __all__ = (
+    "register",
     "_broadcast_shape",
     "_binary_result_dtype",
     "_binary_shape",

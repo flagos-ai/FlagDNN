@@ -4,6 +4,10 @@ from typing import Any
 
 import torch
 
+from flag_dnn.graph.registry.core import OpDef, register_op_def
+from flag_dnn.graph.registry.schemas._run_common import (
+    _require_runtime_backend,
+)
 from flag_dnn.graph.registry.schemas.common import (
     _float32_spec,
     _pop_operand,
@@ -346,7 +350,135 @@ def _normalize_sdpa_backward(
     return input_ids, attrs
 
 
+# --- eager-fallback run functions ---
+
+
+def _run_mm(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "mm")
+        out_dtype = attrs.get("out_dtype")
+        return flag_ops.mm(
+            inputs[0],
+            inputs[1],
+            out_dtype=torch_dtype(out_dtype) if out_dtype else None,
+        )
+
+    return run
+
+
+def _run_matmul(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
+        _require_runtime_backend(inputs, "matmul")
+        return flag_ops.matmul(
+            inputs[0],
+            inputs[1],
+            compute_data_type=attrs.get("compute_data_type"),
+            padding=float(attrs.get("padding", 0.0)),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_sdpa(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs[:3], "sdpa")
+        bias = inputs[3] if attrs.get("has_bias") else None
+        return flag_ops.sdpa(
+            inputs[0],
+            inputs[1],
+            inputs[2],
+            attn_scale=attrs.get("attn_scale"),
+            bias=bias,
+            diagonal_alignment=attrs.get("diagonal_alignment"),
+            diagonal_band_left_bound=attrs.get("diagonal_band_left_bound"),
+            diagonal_band_right_bound=attrs.get("diagonal_band_right_bound"),
+            generate_stats=attrs.get("generate_stats", False),
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_sdpa_backward(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs[:6], "sdpa_backward")
+        idx = 6
+        bias = None
+        if attrs.get("has_bias"):
+            bias = inputs[idx]
+            idx += 1
+        dbias = None
+        if attrs.get("has_dbias"):
+            dbias = inputs[idx]
+        return flag_ops.sdpa_backward(
+            inputs[0],
+            inputs[1],
+            inputs[2],
+            inputs[3],
+            inputs[4],
+            inputs[5],
+            attn_scale=attrs.get("attn_scale"),
+            bias=bias,
+            dBias=dbias,
+            diagonal_alignment=attrs.get("diagonal_alignment"),
+            diagonal_band_left_bound=attrs.get("diagonal_band_left_bound"),
+            diagonal_band_right_bound=attrs.get("diagonal_band_right_bound"),
+            use_deterministic_algorithm=attrs.get(
+                "use_deterministic_algorithm", False
+            ),
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def register(flag_ops: Any) -> None:
+    """Register the matmul / attention op family (mm / matmul / sdpa /
+    sdpa_backward)."""
+    register_op_def(
+        OpDef(
+            name="mm",
+            normalize=_normalize_mm,
+            shape=_mm_shape,
+            run=_run_mm(flag_ops),
+            fusible=True,
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="matmul",
+            normalize=_normalize_matmul,
+            shape=_matmul_shape,
+            run=_run_matmul(flag_ops),
+            fusible=True,
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="sdpa",
+            normalize=_normalize_sdpa,
+            shape=_sdpa_shape,
+            run=_run_sdpa(flag_ops),
+            num_outputs=(1, 2),
+            fusible=True,
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="sdpa_backward",
+            normalize=_normalize_sdpa_backward,
+            shape=_sdpa_backward_shape,
+            run=_run_sdpa_backward(flag_ops),
+            num_outputs=3,
+        )
+    )
+
+
 __all__ = (
+    "register",
     "_matmul_shape",
     "_sdpa_shape",
     "_sdpa_backward_shape",

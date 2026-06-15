@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from flag_dnn.graph.registry.core import OpDef, register_op_def
+from flag_dnn.graph.registry.schemas._run_common import (
+    _require_runtime_backend,
+)
 from flag_dnn.graph.registry.schemas.common import (
     _float32_spec,
     _normalize_axis,
+    _shape_like_first,
 )
 from flag_dnn.graph.tensor import TensorSpec, canonical_dtype
 
@@ -427,7 +432,179 @@ def _normalize_batchnorm(
     return input_ids, attrs
 
 
+# --- eager-fallback run functions ---
+
+
+def _run_reduction(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs, "reduction")
+        return flag_ops.reduction(
+            inputs[0],
+            attrs.get("mode"),
+            dim=attrs.get("dim"),
+            keepdim=bool(attrs.get("keepdim", True)),
+            dtype=attrs.get("dtype"),
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_batchnorm_inference(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs, "batchnorm_inference")
+        return flag_ops.batchnorm_inference(
+            inputs[0],
+            inputs[1],
+            inputs[2],
+            inputs[3],
+            inputs[4],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_batchnorm(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs[:5], "batchnorm")
+        peer_count = int(attrs.get("peer_stats_count", 0))
+        return flag_ops.batchnorm(
+            inputs[0],
+            inputs[1],
+            inputs[2],
+            inputs[3],
+            inputs[4],
+            inputs[5],
+            inputs[6],
+            peer_stats=inputs[7 : 7 + peer_count],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_layernorm(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs[:3], "layernorm")
+        return flag_ops.layernorm(
+            attrs.get("norm_forward_phase"),
+            inputs[0],
+            inputs[1],
+            inputs[2],
+            inputs[3],
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_rmsnorm(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        has_bias = bool(attrs.get("has_bias"))
+        _require_runtime_backend(
+            inputs[:3] if has_bias else inputs[:2], "rmsnorm"
+        )
+        bias = inputs[2] if has_bias else None
+        epsilon = inputs[3] if has_bias else inputs[2]
+        return flag_ops.rmsnorm(
+            attrs.get("norm_forward_phase"),
+            inputs[0],
+            inputs[1],
+            bias,
+            epsilon,
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
+def _run_rmsnorm_rht_amax(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs[:2], "rmsnorm_rht_amax_wrapper_sm100")
+        result = flag_ops.rmsnorm_rht_amax_wrapper_sm100(
+            inputs[0],
+            inputs[1],
+            eps=attrs.get("eps", 1e-5),
+            num_threads=attrs.get("num_threads"),
+            rows_per_cta=attrs.get("rows_per_cta"),
+        )
+        return result["o_tensor"], result["amax_tensor"]
+
+    return run
+
+
+def register(flag_ops: Any) -> None:
+    """Register the norm / reduction op family (reduction / batchnorm /
+    batchnorm_inference / layernorm / rmsnorm / rmsnorm_rht_amax)."""
+    register_op_def(
+        OpDef(
+            name="reduction",
+            normalize=_normalize_reduction,
+            shape=_reduction_shape,
+            run=_run_reduction(flag_ops),
+            fusible=True,
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="batchnorm_inference",
+            normalize=_normalize_batchnorm_inference,
+            shape=_shape_like_first,
+            run=_run_batchnorm_inference(flag_ops),
+            fusible=True,
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="batchnorm",
+            normalize=_normalize_batchnorm,
+            shape=_batchnorm_shape,
+            run=_run_batchnorm(flag_ops),
+            num_outputs=5,
+            fusible=True,
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="layernorm",
+            normalize=_normalize_layernorm,
+            shape=_layernorm_shape,
+            run=_run_layernorm(flag_ops),
+            num_outputs=3,
+            fusible=True,
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="rmsnorm",
+            normalize=_normalize_rmsnorm,
+            shape=_rmsnorm_shape,
+            run=_run_rmsnorm(flag_ops),
+            num_outputs=2,
+            fusible=True,
+        )
+    )
+    register_op_def(
+        OpDef(
+            name="rmsnorm_rht_amax_wrapper_sm100",
+            normalize=_normalize_rmsnorm_rht_amax,
+            shape=_rmsnorm_rht_amax_shape,
+            run=_run_rmsnorm_rht_amax(flag_ops),
+            num_outputs=2,
+            fusible=True,
+            output_keys=("o_tensor", "amax_tensor"),
+        )
+    )
+
+
 __all__ = (
+    "register",
     "_normalize_reduction",
     "_reduction_shape",
     "_norm_axes_from_scale",
