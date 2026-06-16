@@ -471,6 +471,70 @@ def parse_pytest_counts(
     return result
 
 
+def snapshot_accuracy_reports() -> dict[Path, int]:
+    report_dir = ROOT / "out_tests"
+    if not report_dir.exists():
+        return {}
+    snapshot = {}
+    for path in report_dir.glob("result_*.json"):
+        try:
+            snapshot[path] = path.stat().st_mtime_ns
+        except OSError:
+            continue
+    return snapshot
+
+
+def _report_matches_suite(entry: Any, op: str, suite: str) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    marks = entry.get("opname", [])
+    if not isinstance(marks, list) or op not in marks:
+        return False
+    if suite == "graph_accuracy":
+        return "graph" in marks
+    return True
+
+
+def archive_accuracy_report(
+    op: str, suite: str, before: dict[Path, int], result_file: Path
+) -> bool:
+    report_dir = ROOT / "out_tests"
+    if not report_dir.exists():
+        return False
+
+    candidates = []
+    for path in report_dir.glob("result_*.json"):
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            continue
+        if path not in before or before[path] != mtime_ns:
+            candidates.append((mtime_ns, path))
+
+    for _, path in sorted(candidates, reverse=True):
+        try:
+            raw_data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, ValueError):
+            continue
+        if not isinstance(raw_data, dict):
+            continue
+
+        data = {
+            nodeid: entry
+            for nodeid, entry in raw_data.items()
+            if _report_matches_suite(entry, op, suite)
+        }
+        if not data and raw_data:
+            continue
+
+        result_file.write_text(
+            json.dumps(data, indent=2, default=str), encoding="utf-8"
+        )
+        return True
+
+    return False
+
+
 def parse_perf_json(op: str, result_file: Path) -> dict[str, Any]:
     try:
         raw_data = json.loads(result_file.read_text(encoding="utf-8"))
@@ -591,6 +655,13 @@ def run_accuracy_suite(gpu_id: int, op: str, suite: str) -> dict[str, Any]:
     spec = SUITES[suite]
     directory = ROOT / spec["directory"]
     marker = op if suite == "accuracy" else f"{op} and graph"
+    op_dir = CFG.output_dir / op
+    ensure_dir(op_dir)
+    result_file = op_dir / f"{suite}_result.json"
+    if result_file.exists():
+        result_file.unlink()
+
+    before_reports = snapshot_accuracy_reports()
     cmd = ["pytest", "-m", marker, "-q", "--tb=short"]
     if suite == "accuracy" and op not in CFG.skip_cpu_tests:
         cmd.extend(["--ref", "cpu"])
@@ -603,6 +674,8 @@ def run_accuracy_suite(gpu_id: int, op: str, suite: str) -> dict[str, Any]:
     )
     result["exit_code"] = run["exit_code"]
     result["duration"] = duration
+    if archive_accuracy_report(op, suite, before_reports, result_file):
+        result["data_file"] = str(result_file.relative_to(CFG.output_dir))
     return result
 
 

@@ -437,22 +437,22 @@ ops:
     stages:
       - stable: 'eager'
       - stable: 'graph'
-  - id: scale
-    description: |
-      Multiplies the input tensor by a scalar or tensor scale value.
-    for:
-      - scale
-    labels:
-      - flag_dnn
-      - eager
-      - graph
-      - graph_accuracy
-      - graph_benchmark
-    kind:
-      - Math
-    stages:
-      - alpha: 'eager'
-      - stable: 'graph'
+  # - id: scale
+  #   description: |
+  #     Multiplies the input tensor by a scalar or tensor scale value.
+  #   for:
+  #     - scale
+  #   labels:
+  #     - flag_dnn
+  #     - eager
+  #     - graph
+  #     - graph_accuracy
+  #     - graph_benchmark
+  #   kind:
+  #     - Math
+  #   stages:
+  #     - alpha: 'eager'
+  #     - stable: 'graph'
   - id: div
     description: |
       Computes the FlagDNN `div` elementwise binary operator.
@@ -519,22 +519,22 @@ ops:
     stages:
       - alpha: 'eager'
       - stable: 'graph'
-  - id: min
-    description: |
-      Computes the FlagDNN `min` elementwise binary operator.
-    for:
-      - min
-    labels:
-      - flag_dnn
-      - eager
-      - graph
-      - graph_accuracy
-      - graph_benchmark
-    kind:
-      - Math
-    stages:
-      - alpha: 'eager'
-      - stable: 'graph'
+  # - id: min
+  #   description: |
+  #     Computes the FlagDNN `min` elementwise binary operator.
+  #   for:
+  #     - min
+  #   labels:
+  #     - flag_dnn
+  #     - eager
+  #     - graph
+  #     - graph_accuracy
+  #     - graph_benchmark
+  #   kind:
+  #     - Math
+  #   stages:
+  #     - alpha: 'eager'
+  #     - stable: 'graph'
   - id: sqrt
     description: |
       Computes the FlagDNN `sqrt` elementwise unary operator.
@@ -1174,36 +1174,36 @@ ops:
     stages:
       - alpha: 'eager'
       - stable: 'graph'
-  - id: sdpa
-    description: |
-      Runs scaled dot product attention through the graph executor.
-    for:
-      - sdpa
-    labels:
-      - flag_dnn
-      - graph
-      - graph_accuracy
-      - graph_benchmark
-    kind:
-      - NeuralNetwork
-      - Attention
-    stages:
-      - alpha: 'graph'
-  - id: sdpa_backward
-    description: |
-      Computes scaled dot product attention backward through the graph executor.
-    for:
-      - sdpa_backward
-    labels:
-      - flag_dnn
-      - graph
-      - graph_accuracy
-      - graph_benchmark
-    kind:
-      - NeuralNetwork
-      - Attention
-    stages:
-      - alpha: 'graph'
+  # - id: sdpa
+  #   description: |
+  #     Runs scaled dot product attention through the graph executor.
+  #   for:
+  #     - sdpa
+  #   labels:
+  #     - flag_dnn
+  #     - graph
+  #     - graph_accuracy
+  #     - graph_benchmark
+  #   kind:
+  #     - NeuralNetwork
+  #     - Attention
+  #   stages:
+  #     - alpha: 'graph'
+  # - id: sdpa_backward
+  #   description: |
+  #     Computes scaled dot product attention backward through the graph executor.
+  #   for:
+  #     - sdpa_backward
+  #   labels:
+  #     - flag_dnn
+  #     - graph
+  #     - graph_accuracy
+  #     - graph_benchmark
+  #   kind:
+  #     - NeuralNetwork
+  #     - Attention
+  #   stages:
+  #     - alpha: 'graph'
   - id: dot
     description: |
       Runs the FlagDNN `dot` linear algebra operator.
@@ -1499,23 +1499,23 @@ ops:
     stages:
       - stable: 'eager'
       - alpha: 'graph'
-  - id: add_square
-    description: |
-      Computes a fused add followed by square operation.
-    for:
-      - add_square
-    labels:
-      - flag_dnn
-      - eager
-      - graph
-      - graph_accuracy
-      - graph_benchmark
-      - fused
-    kind:
-      - Fused
-    stages:
-      - alpha: 'eager'
-      - stable: 'graph'
+  # - id: add_square
+  #   description: |
+  #     Computes a fused add followed by square operation.
+  #   for:
+  #     - add_square
+  #   labels:
+  #     - flag_dnn
+  #     - eager
+  #     - graph
+  #     - graph_accuracy
+  #     - graph_benchmark
+  #     - fused
+  #   kind:
+  #     - Fused
+  #   stages:
+  #     - alpha: 'eager'
+  #     - stable: 'graph'
   - id: rmsnorm_rht_amax
     description: |
       Runs fused RMS normalization, randomized Hadamard transform, and row amax in graph mode.
