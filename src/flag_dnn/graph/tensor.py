@@ -38,6 +38,12 @@ _DTYPE_ALIASES = {
     "uint8": "uint8",
     "torch.bool": "bool",
     "bool": "bool",
+    "torch.float8_e4m3fn": "float8_e4m3fn",
+    "float8_e4m3fn": "float8_e4m3fn",
+    "fp8_e4m3": "float8_e4m3fn",
+    "torch.float8_e5m2": "float8_e5m2",
+    "float8_e5m2": "float8_e5m2",
+    "fp8_e5m2": "float8_e5m2",
 }
 
 _TORCH_DTYPES = {
@@ -51,6 +57,8 @@ _TORCH_DTYPES = {
     "int64": torch.int64,
     "uint8": torch.uint8,
     "bool": torch.bool,
+    "float8_e4m3fn": torch.float8_e4m3fn,
+    "float8_e5m2": torch.float8_e5m2,
 }
 
 _ITEM_SIZES = {
@@ -64,6 +72,8 @@ _ITEM_SIZES = {
     "bfloat16": 2,
     "float32": 4,
     "float64": 8,
+    "float8_e4m3fn": 1,
+    "float8_e5m2": 1,
 }
 
 

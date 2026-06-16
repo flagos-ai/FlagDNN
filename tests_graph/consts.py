@@ -60,17 +60,26 @@ POINTWISE_BINARY_CASES = (
     ((2, 3, 5, 7), (2, 3, 5, 7)),
 )
 
-ADD_CASES = POINTWISE_BINARY_CASES
-SUB_CASES = POINTWISE_BINARY_CASES
-MUL_CASES = POINTWISE_BINARY_CASES
-DIV_CASES = POINTWISE_BINARY_CASES
-MOD_CASES = POINTWISE_BINARY_CASES
+# Single-axis broadcast only: cuDNN computes multi-axis broadcast
+# (e.g. (1,1,C)->(N,M,C)) incorrectly, so it cannot be the reference there.
+BROADCAST_BINARY_CASES = (
+    ((2, 3, 17), (1, 3, 17)),
+    ((2, 3, 17), (2, 1, 17)),
+    ((3, 5, 7), (3, 1, 7)),
+    ((3, 5, 7), (1, 5, 7)),
+)
+
+ADD_CASES = POINTWISE_BINARY_CASES + BROADCAST_BINARY_CASES
+SUB_CASES = POINTWISE_BINARY_CASES + BROADCAST_BINARY_CASES
+MUL_CASES = POINTWISE_BINARY_CASES + BROADCAST_BINARY_CASES
+DIV_CASES = POINTWISE_BINARY_CASES + BROADCAST_BINARY_CASES
+MOD_CASES = POINTWISE_BINARY_CASES + BROADCAST_BINARY_CASES
 POW_CASES = POINTWISE_BINARY_CASES
-MAX_CASES = POINTWISE_BINARY_CASES
-MIN_CASES = POINTWISE_BINARY_CASES
+MAX_CASES = POINTWISE_BINARY_CASES + BROADCAST_BINARY_CASES
+MIN_CASES = POINTWISE_BINARY_CASES + BROADCAST_BINARY_CASES
 ADD_SQUARE_CASES = POINTWISE_BINARY_CASES
-LOGICAL_CASES = POINTWISE_BINARY_CASES
-CMP_CASES = POINTWISE_BINARY_CASES
+LOGICAL_CASES = POINTWISE_BINARY_CASES  # cuDNN backend has no logical engine
+CMP_CASES = POINTWISE_BINARY_CASES + BROADCAST_BINARY_CASES
 BINARY_SELECT_CASES = tuple(
     (x_shape, y_shape, tuple(torch.broadcast_shapes(x_shape, y_shape)))
     for x_shape, y_shape in POINTWISE_BINARY_CASES
@@ -81,6 +90,11 @@ MATMUL_CASES = (
     ((4, 16, 32), (4, 32, 24)),
     ((8, 32, 64), (8, 64, 32)),
     ((16, 32, 128), (16, 128, 64)),
+    # Non-aligned M / K / N.
+    ((4, 17, 30), (4, 30, 23)),
+    ((2, 65, 130), (2, 130, 33)),
+    # batch = 1.
+    ((1, 64, 64), (1, 64, 64)),
 )
 
 # (batch, heads_q, heads_kv, seq_q, seq_kv, head_dim)
@@ -99,6 +113,20 @@ SDPA_MASKED_CASES = (
     (2, 4, 4, 100, 80, 64),
     (2, 4, 4, 100, 256, 64),
     (1, 8, 8, 512, 512, 128),
+)
+
+# (batch, heads_q, heads_kv, seq_q, seq_kv, head_dim, causal)
+# fp8 SDPA forward correctness cases vs cuDNN sdpa_fp8. Cover MHA/GQA,
+# D64/D128, dense + top-left causal, and a non-multiple seq for boundary masks.
+# The seq-1024 dense case exercises the TMA-descriptor fast path.
+SDPA_FP8_CASES = (
+    (2, 8, 8, 128, 128, 128, False),
+    (2, 8, 8, 128, 128, 128, True),
+    (1, 8, 8, 512, 512, 128, True),
+    (2, 8, 2, 256, 256, 128, True),
+    (2, 4, 4, 256, 256, 64, False),
+    (1, 4, 4, 100, 128, 64, False),
+    (1, 4, 4, 1024, 1024, 128, False),
 )
 
 

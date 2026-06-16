@@ -93,9 +93,18 @@ BINARY_SELECT_SHAPES = (
 SIGMOID_BACKWARD_SHAPES = POINTWISE_BINARY_SHAPES
 SCALE_SHAPES = POINTWISE_BINARY_SHAPES
 MATMUL_SHAPES = (
+    # Small (launch-overhead regime).
     ((4, 16, 32), (4, 32, 24)),
     ((8, 32, 64), (8, 64, 32)),
     ((16, 32, 128), (16, 128, 64)),
+    # Compute-bound batched GEMM (LLM-class).
+    ((32, 512, 512), (32, 512, 512)),
+    ((16, 1024, 1024), (16, 1024, 1024)),
+    ((8, 2048, 2048), (8, 2048, 2048)),
+    ((4, 4096, 4096), (4, 4096, 4096)),
+    # Non-square projection-style GEMM.
+    ((16, 2048, 512), (16, 512, 2048)),
+    ((32, 1024, 4096), (32, 4096, 1024)),
 )
 
 # (batch, heads_q, heads_kv, seq_q, seq_kv, head_dim, causal, generate_stats)
@@ -117,16 +126,78 @@ SDPA_SHAPES = (
     (1, 32, 8, 4096, 4096, 128, True, True),
     (8, 32, 8, 1, 8192, 128, False, False),
     (32, 16, 16, 128, 128, 64, False, False),
+    # ===== YOLO12 attention, imgsz=640, batch=1 =====
+    (4, 2, 2, 400, 400, 32, False, False),  # YOLO12n P4 area=4
+    (1, 4, 4, 400, 400, 32, False, False),  # YOLO12n P5 area=1
+    (4, 4, 4, 400, 400, 32, False, False),  # YOLO12s P4 area=4
+    (1, 8, 8, 400, 400, 32, False, False),  # YOLO12s/m/l P5
+    (4, 8, 8, 400, 400, 32, False, False),  # YOLO12m/l P4
+    (4, 12, 12, 400, 400, 32, False, False),  # YOLO12x P4
+    (1, 12, 12, 400, 400, 32, False, False),  # YOLO12x P5
+    # ===== YOLO12 attention, imgsz=1280, batch=1 =====
+    (4, 8, 8, 1600, 1600, 32, False, False),  # YOLO12m/l P4, large image
+    (
+        1,
+        12,
+        12,
+        1600,
+        1600,
+        32,
+        False,
+        False,
+    ),  # YOLO12x P5/P4-like large image
+)
+
+
+# (batch, heads_q, heads_kv, seq_q, seq_kv, head_dim, causal, generate_stats)
+# fp8 SDPA forward performance regimes vs cuDNN sdpa_fp8 (all head_dim=128, the
+# fp8 attention sweet spot on Hopper):
+#   1. encoder-style mid-size bidirectional inference
+#   2. GPT-class 1k-context causal training with stats
+#   3. 7B-class 2k-context causal training with stats
+#   4. high-batch short-sequence bidirectional inference
+#   5. llama3-8B class GQA (32/8) 4k-context causal training with stats
+#   6. large bidirectional inference (2k context)
+#   7. batched 512-context causal inference
+#   8. large-head GQA (64/8) 2k-context causal training with stats
+SDPA_FP8_SHAPES = (
+    (4, 16, 16, 512, 512, 128, False, False),
+    (1, 32, 32, 1024, 1024, 128, True, True),
+    (2, 16, 16, 2048, 2048, 128, True, True),
+    (8, 32, 32, 256, 256, 128, False, False),
+    (1, 32, 8, 4096, 4096, 128, True, True),
+    (2, 32, 32, 1024, 1024, 128, False, False),
+    (4, 32, 32, 512, 512, 128, True, False),
+    (1, 64, 8, 2048, 2048, 128, True, True),
 )
 
 
 # (batch, heads_q, heads_kv, seq_q, seq_kv, head_dim, causal)
 SDPA_BACKWARD_SHAPES = (
-    (2, 8, 8, 256, 256, 64, False),
-    (1, 16, 16, 512, 512, 64, True),
-    (2, 8, 8, 1024, 1024, 128, True),
-    (4, 16, 16, 128, 128, 64, False),
-    (2, 16, 4, 512, 512, 128, True),
+    # ===== existing LLM / encoder shapes =====
+    (4, 16, 16, 512, 512, 64, False),
+    (1, 32, 32, 1024, 1024, 64, True),
+    (2, 16, 16, 2048, 2048, 128, True),
+    (8, 32, 32, 256, 256, 128, False),
+    # decode-like backward edge case
+    (4, 32, 32, 1, 2048, 128, False),
+    # LLaMA3 / Mistral / Qwen3-8B class GQA backward
+    (1, 32, 8, 4096, 4096, 128, True),
+    # GQA decode-like backward edge case
+    (8, 32, 8, 1, 8192, 128, False),
+    # large-batch short-sequence backward
+    (32, 16, 16, 128, 128, 64, False),
+    # ===== YOLO12 attention, imgsz=640, batch=1 =====
+    (4, 2, 2, 400, 400, 32, False),  # YOLO12n P4 area=4
+    (1, 4, 4, 400, 400, 32, False),  # YOLO12n P5 area=1
+    (4, 4, 4, 400, 400, 32, False),  # YOLO12s P4 area=4
+    (1, 8, 8, 400, 400, 32, False),  # YOLO12s/m/l P5
+    (4, 8, 8, 400, 400, 32, False),  # YOLO12m/l P4
+    (4, 12, 12, 400, 400, 32, False),  # YOLO12x P4
+    (1, 12, 12, 400, 400, 32, False),  # YOLO12x P5
+    # ===== YOLO12 attention, imgsz=1280, batch=1 =====
+    (4, 8, 8, 1600, 1600, 32, False),  # YOLO12m/l P4, large image
+    (1, 12, 12, 1600, 1600, 32, False),  # YOLO12x P5/P4-like large image
 )
 
 
@@ -206,6 +277,15 @@ CONV_FPROP_SHAPES = (
     ((4, 32, 35, 37), (48, 32, 3, 5), (1, 2), None, (1, 0), (1, 2), 1),
     ((2, 8, 8, 16, 16), (16, 8, 3, 3, 3), 1, 1, None, None, 1),
     ((1, 8, 10, 12, 14), (12, 8, 2, 3, 3), 1, None, (1, 0, 1), (0, 1, 2), 1),
+    # YOLO-n/s/m/x stem + deep stage representative
+    ((1, 3, 640, 640), (16, 3, 3, 3), 2, 1, None, None, 1),  # YOLO-n stem
+    ((1, 3, 640, 640), (32, 3, 3, 3), 2, 1, None, None, 1),  # YOLO-s stem
+    ((1, 3, 640, 640), (64, 3, 3, 3), 2, 1, None, None, 1),  # YOLO-m/l stem
+    ((1, 3, 640, 640), (96, 3, 3, 3), 2, 1, None, None, 1),  # YOLO-x stem
+    ((1, 128, 40, 40), (256, 128, 3, 3), 2, 1, None, None, 1),  # YOLO-n P5
+    ((1, 256, 40, 40), (512, 256, 3, 3), 2, 1, None, None, 1),  # YOLO-s P5
+    ((1, 512, 40, 40), (512, 512, 3, 3), 2, 1, None, None, 1),  # YOLO-m/l P5
+    ((1, 768, 40, 40), (768, 768, 3, 3), 2, 1, None, None, 1),  # YOLO-x P5
 )
 
 CONV_DGRAD_SHAPES = tuple(

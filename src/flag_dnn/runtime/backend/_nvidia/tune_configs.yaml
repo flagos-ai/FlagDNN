@@ -155,6 +155,80 @@ sdpa:
     stages:
       - 2
       - 3
+
+sdpa_fp8:
+  # Generic fp8 (e4m3/e5m2) SDPA forward on H100. fp8 wgmma favours larger
+  # KV tiles and deeper pipelines than the fp16/bf16 generic path.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+      - 128
+    block_n:
+      - 64
+      - 128
+    warps:
+      - 4
+      - 8
+    stages:
+      - 3
+      - 4
+
+sdpa_fp8_tma:
+  # TMA-descriptor fp8 SDPA forward (FA3-style): hardware K/V loads + deep
+  # pipeline for contiguous power-of-two head_dim, dense / top-left causal.
+  # TMA decouples loads from compute, so larger KV tiles (block_n up to 256)
+  # and deep pipelines pay off here unlike the manual-load lean path.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+      - 128
+    block_n:
+      - 64
+      - 128
+      - 256
+    warps:
+      - 4
+      - 8
+    stages:
+      - 3
+      - 4
+
+sdpa_fp8_fast:
+  # Lean fp8 SDPA forward (constexpr strides, dense / top-left causal, no bias)
+  # for power-of-two head_dim. Grid converged after H100 autotune: block_n=32
+  # and 2-stage variants were swept but never won, so they are dropped to keep
+  # tuning fast.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+      - 128
+    block_n:
+      - 64
+      - 128
+    warps:
+      - 4
+      - 8
+    stages:
+      - 3
+      - 4
 sdpa_dense_exact:
   # Exact dense low-precision D128 SDPA forward without bias/stats.
   - gen: true
