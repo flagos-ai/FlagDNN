@@ -110,6 +110,64 @@ def _sdpa_fp8_shape(
     return [out, amax_s, amax_o]
 
 
+def _sdpa_fp8_backward_shape(
+    input_specs: list[TensorSpec], attrs: dict[str, Any]
+) -> list[TensorSpec]:
+    q, k, v, o, dO, stats = input_specs[:6]
+    for name, spec in (
+        ("q", q),
+        ("k", k),
+        ("v", v),
+        ("o", o),
+        ("dO", dO),
+    ):
+        if len(spec.shape) != 4:
+            raise RuntimeError(
+                f"graph sdpa_fp8_backward {name} must be a 4D tensor"
+            )
+    if q.shape[3] != k.shape[3]:
+        raise RuntimeError(
+            "graph sdpa_fp8_backward q and k head dimensions must match: "
+            f"{q.shape} vs {k.shape}"
+        )
+    if k.shape[1] != v.shape[1]:
+        raise RuntimeError(
+            "graph sdpa_fp8_backward currently requires k and v to have "
+            f"the same head count: {k.shape} vs {v.shape}"
+        )
+    if k.shape[2] != v.shape[2]:
+        raise RuntimeError(
+            "graph sdpa_fp8_backward k and v sequence lengths must match: "
+            f"{k.shape} vs {v.shape}"
+        )
+    if v.shape[3] != q.shape[3]:
+        raise RuntimeError(
+            "graph sdpa_fp8_backward currently requires v head dimension "
+            f"to match q: {v.shape} vs {q.shape}"
+        )
+    expected_o = (q.shape[0], q.shape[1], q.shape[2], v.shape[3])
+    if o.shape != expected_o or dO.shape != expected_o:
+        raise RuntimeError(
+            "graph sdpa_fp8_backward expects o and dO shape "
+            f"{expected_o}, got {o.shape} and {dO.shape}"
+        )
+    expected_stats = (q.shape[0], q.shape[1], q.shape[2], 1)
+    if len(stats.shape) != 4 or stats.shape != expected_stats:
+        raise RuntimeError(
+            "graph sdpa_fp8_backward expects stats shape "
+            f"{expected_stats}, got {stats.shape}"
+        )
+    return [
+        TensorSpec(name="", shape=q.shape, dtype=q.dtype, device=q.device),
+        TensorSpec(name="", shape=k.shape, dtype=k.dtype, device=k.device),
+        TensorSpec(name="", shape=v.shape, dtype=v.dtype, device=v.device),
+        _float32_spec((1, 1, 1, 1), q.device),
+        _float32_spec((1, 1, 1, 1), q.device),
+        _float32_spec((1, 1, 1, 1), q.device),
+        _float32_spec((1, 1, 1, 1), q.device),
+    ]
+
+
 def _sdpa_backward_shape(
     input_specs: list[TensorSpec], attrs: dict[str, Any]
 ) -> list[TensorSpec]:
@@ -385,6 +443,109 @@ def _normalize_sdpa_fp8(
     return input_ids, attrs
 
 
+def _normalize_sdpa_fp8_backward(
+    ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[list[int], dict]:
+    from flag_dnn.ops.sdpa import _resolve_band
+    from flag_dnn.ops.sdpa_fp8 import _as_scalar
+    from flag_dnn.ops.sdpa_fp8_backward import _reject_unsupported
+
+    names = (
+        "q",
+        "k",
+        "v",
+        "o",
+        "dO",
+        "stats",
+        "descale_q",
+        "descale_k",
+        "descale_v",
+        "descale_o",
+        "descale_dO",
+        "descale_s",
+        "descale_dP",
+        "scale_s",
+        "scale_dQ",
+        "scale_dK",
+        "scale_dV",
+        "scale_dP",
+    )
+    if len(args) > len(names):
+        raise TypeError("sdpa_fp8_backward got too many positional args")
+    params = dict(kwargs)
+    values: dict[str, Any] = {}
+    for name, value in zip(names, args):
+        values[name] = value
+    for name in names[len(args) :]:
+        if name in params:
+            values[name] = params.pop(name)
+    for name in names:
+        if name not in values:
+            raise TypeError(f"sdpa_fp8_backward missing {name}")
+
+    attn_scale = params.pop("attn_scale", None)
+    if attn_scale is not None:
+        if not isinstance(attn_scale, (int, float)):
+            raise NotImplementedError(
+                "sdpa_fp8_backward graph only supports float attn_scale"
+            )
+        attn_scale = float(attn_scale)
+
+    use_padding_mask = bool(params.pop("use_padding_mask", False))
+    seq_len_q = params.pop("seq_len_q", None)
+    seq_len_kv = params.pop("seq_len_kv", None)
+    dropout = params.pop("dropout", None)
+    sink_token = params.pop("sink_token", None)
+    dsink_token = params.pop("dSink_token", None)
+    _reject_unsupported(
+        use_padding_mask,
+        seq_len_q,
+        seq_len_kv,
+        dropout,
+        sink_token,
+        dsink_token,
+    )
+
+    alignment, left, right = _resolve_band(
+        bool(params.pop("use_causal_mask", False)),
+        bool(params.pop("use_causal_mask_bottom_right", False)),
+        params.pop("sliding_window_length", None),
+        params.pop("diagonal_alignment", None),
+        params.pop("diagonal_band_left_bound", None),
+        params.pop("diagonal_band_right_bound", None),
+    )
+
+    attrs = {
+        "descale_q": _as_scalar(values["descale_q"], "descale_q"),
+        "descale_k": _as_scalar(values["descale_k"], "descale_k"),
+        "descale_v": _as_scalar(values["descale_v"], "descale_v"),
+        "descale_o": _as_scalar(values["descale_o"], "descale_o"),
+        "descale_dO": _as_scalar(values["descale_dO"], "descale_dO"),
+        "descale_s": _as_scalar(values["descale_s"], "descale_s"),
+        "descale_dP": _as_scalar(values["descale_dP"], "descale_dP"),
+        "scale_s": _as_scalar(values["scale_s"], "scale_s"),
+        "scale_dQ": _as_scalar(values["scale_dQ"], "scale_dQ"),
+        "scale_dK": _as_scalar(values["scale_dK"], "scale_dK"),
+        "scale_dV": _as_scalar(values["scale_dV"], "scale_dV"),
+        "scale_dP": _as_scalar(values["scale_dP"], "scale_dP"),
+        "attn_scale": attn_scale,
+        "diagonal_alignment": alignment,
+        "diagonal_band_left_bound": left,
+        "diagonal_band_right_bound": right,
+        "use_deterministic_algorithm": bool(
+            params.pop("use_deterministic_algorithm", False)
+        ),
+        "compute_data_type": params.pop("compute_data_type", None),
+        "name": params.pop("name", ""),
+    }
+    if params:
+        raise TypeError(
+            f"sdpa_fp8_backward got unsupported graph attrs: {sorted(params)}"
+        )
+
+    return [ctx.as_value(values[name], name) for name in names[:6]], attrs
+
+
 def _normalize_sdpa_backward(
     ctx: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> tuple[list[int], dict]:
@@ -555,6 +716,42 @@ def _run_sdpa_fp8(flag_ops: Any) -> Any:
     return run
 
 
+def _run_sdpa_fp8_backward(flag_ops: Any) -> Any:
+    def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
+        _require_runtime_backend(inputs[:6], "sdpa_fp8_backward")
+        return flag_ops.sdpa_fp8_backward(
+            inputs[0],
+            inputs[1],
+            inputs[2],
+            inputs[3],
+            inputs[4],
+            inputs[5],
+            attrs.get("descale_q"),
+            attrs.get("descale_k"),
+            attrs.get("descale_v"),
+            attrs.get("descale_o"),
+            attrs.get("descale_dO"),
+            attrs.get("descale_s"),
+            attrs.get("descale_dP"),
+            attrs.get("scale_s"),
+            attrs.get("scale_dQ"),
+            attrs.get("scale_dK"),
+            attrs.get("scale_dV"),
+            attrs.get("scale_dP"),
+            attn_scale=attrs.get("attn_scale"),
+            diagonal_alignment=attrs.get("diagonal_alignment"),
+            diagonal_band_left_bound=attrs.get("diagonal_band_left_bound"),
+            diagonal_band_right_bound=attrs.get("diagonal_band_right_bound"),
+            use_deterministic_algorithm=attrs.get(
+                "use_deterministic_algorithm", False
+            ),
+            compute_data_type=attrs.get("compute_data_type"),
+            name=attrs.get("name", ""),
+        )
+
+    return run
+
+
 def _run_sdpa_backward(flag_ops: Any) -> Any:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> Any:
         _require_runtime_backend(inputs[:6], "sdpa_backward")
@@ -632,6 +829,16 @@ def register(flag_ops: Any) -> None:
     )
     register_op_def(
         OpDef(
+            name="sdpa_fp8_backward",
+            normalize=_normalize_sdpa_fp8_backward,
+            shape=_sdpa_fp8_backward_shape,
+            run=_run_sdpa_fp8_backward(flag_ops),
+            num_outputs=7,
+            fusible=False,
+        )
+    )
+    register_op_def(
+        OpDef(
             name="sdpa_backward",
             normalize=_normalize_sdpa_backward,
             shape=_sdpa_backward_shape,
@@ -646,11 +853,13 @@ __all__ = (
     "_matmul_shape",
     "_sdpa_shape",
     "_sdpa_fp8_shape",
+    "_sdpa_fp8_backward_shape",
     "_sdpa_backward_shape",
     "_mm_shape",
     "_normalize_mm",
     "_normalize_matmul",
     "_normalize_sdpa",
     "_normalize_sdpa_fp8",
+    "_normalize_sdpa_fp8_backward",
     "_normalize_sdpa_backward",
 )

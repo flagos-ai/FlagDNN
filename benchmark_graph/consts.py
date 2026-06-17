@@ -173,6 +173,21 @@ SDPA_FP8_SHAPES = (
 
 
 # (batch, heads_q, heads_kv, seq_q, seq_kv, head_dim, causal)
+# fp8 SDPA backward uses the same eight Hopper-focused regimes as fp8 forward,
+# with stats always required by the backward op.
+SDPA_FP8_BACKWARD_SHAPES = (
+    (4, 16, 16, 512, 512, 128, False),
+    (1, 32, 32, 1024, 1024, 128, True),
+    (2, 16, 16, 2048, 2048, 128, True),
+    (8, 32, 32, 256, 256, 128, False),
+    (1, 32, 8, 4096, 4096, 128, True),
+    (2, 32, 32, 1024, 1024, 128, False),
+    (4, 32, 32, 512, 512, 128, True),
+    (1, 64, 8, 2048, 2048, 128, True),
+)
+
+
+# (batch, heads_q, heads_kv, seq_q, seq_kv, head_dim, causal)
 SDPA_BACKWARD_SHAPES = (
     # ===== existing LLM / encoder shapes =====
     (4, 16, 16, 512, 512, 64, False),

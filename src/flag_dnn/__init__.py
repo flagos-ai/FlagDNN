@@ -76,6 +76,7 @@ from flag_dnn.ops import (  # noqa: F401
     sdpa,
     sdpa_backward,
     sdpa_fp8,
+    sdpa_fp8_backward,
     dot,
     conv1d,
     conv2d,

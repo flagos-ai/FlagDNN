@@ -522,6 +522,84 @@ sdpa_backward_dv:
       - 4
     stages:
       - 2
+sdpa_fp8_backward_dq:
+  # Current-scaling fp8 SDPA backward dQ path for dense/top-left causal BHSD.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+        BLOCK_D: block_d
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 128
+    block_n:
+      - 64
+      - 128
+    block_d:
+      - 128
+    warps:
+      - 8
+    stages:
+      - 2
+sdpa_fp8_backward_dkdv:
+  # Current-scaling fp8 SDPA backward fused dK/dV path.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+        BLOCK_D: block_d
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 128
+    block_n:
+      - 128
+    block_d:
+      - 128
+    warps:
+      - 8
+    stages:
+      - 2
+sdpa_fp8_backward_gqa_accum:
+  # GQA fp8 SDPA backward partial dK/dV accumulation per query head.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+        BLOCK_D: block_d
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 128
+    block_n:
+      - 128
+    block_d:
+      - 128
+    warps:
+      - 8
+    stages:
+      - 2
+sdpa_fp8_backward_gqa_reduce:
+  # GQA fp8 SDPA backward reduce partial dK/dV and quantize.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_N: block_n
+        BLOCK_D: block_d
+      num_warps: warps
+      num_stages: stages
+    block_n:
+      - 32
+    block_d:
+      - 128
+    warps:
+      - 4
+    stages:
+      - 2
 batch_norm:
   - gen: true
     param_map:
