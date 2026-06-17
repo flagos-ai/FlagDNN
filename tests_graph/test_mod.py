@@ -109,12 +109,13 @@ def test_mod(cudnn_handle, dtype, case):
 @pytest.mark.mod
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-def test_graph_mod_matches_reference():
+def test_mod_single_case_matches_cudnn(cudnn_handle):
     torch.manual_seed(0)
     x, y = _make_inputs(consts.MOD_CASES[0], torch.float32)
 
+    cudnn_out = _cudnn_mod(x, y, cudnn_handle)
     flag_dnn_out = _run_flag_dnn_mod_graph(x, y)
-    utils.gems_assert_close(flag_dnn_out, torch.fmod(x, y), torch.float32)
+    utils.gems_assert_close(flag_dnn_out, cudnn_out, torch.float32)
 
 
 @pytest.mark.mod
@@ -133,8 +134,9 @@ def test_mod_signed(cudnn_handle, dtype):
 @pytest.mark.mod
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-def test_graph_mod_signed_matches_reference():
+def test_mod_signed_single_case_matches_cudnn(cudnn_handle):
     x, y = _make_signed_inputs(torch.float32)
 
+    cudnn_out = _cudnn_mod(x, y, cudnn_handle)
     flag_dnn_out = _run_flag_dnn_mod_graph(x, y)
-    utils.gems_assert_close(flag_dnn_out, torch.fmod(x, y), torch.float32)
+    utils.gems_assert_close(flag_dnn_out, cudnn_out, torch.float32)

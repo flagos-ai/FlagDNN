@@ -72,11 +72,12 @@ def test_logical_or(cudnn_handle, case):
 @pytest.mark.logical_or
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-def test_graph_logical_or_matches_torch_reference():
+def test_logical_or_single_case_matches_cudnn(cudnn_handle):
     torch.manual_seed(0)
     x_shape, y_shape = consts.LOGICAL_CASES[0]
     x = consts.pointwise_bool(x_shape, flag_dnn.device)
     y = consts.pointwise_bool(y_shape, flag_dnn.device)
 
+    cudnn_out = _cudnn_logical_or(x, y, cudnn_handle)
     flag_dnn_out = _run_flag_dnn_logical_or_graph(x, y)
-    utils.gems_assert_equal(flag_dnn_out, torch.logical_or(x, y))
+    utils.gems_assert_equal(flag_dnn_out, cudnn_out)

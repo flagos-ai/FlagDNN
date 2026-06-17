@@ -72,95 +72,14 @@ def _make_inputs(case, dtype):
     )
 
 
-def _ref_o_amax(q, k, v, attn_scale, dq, dk, dv, ss, ds, dtype, causal):
-    b, h, sq, d = q.shape
-    skv = k.shape[2]
-    qf, kf, vf = q.float(), k.float(), v.float()
-    if h != k.shape[1]:
-        kf = kf.repeat_interleave(h // k.shape[1], dim=1)
-    if h != v.shape[1]:
-        vf = vf.repeat_interleave(h // v.shape[1], dim=1)
-    s = torch.einsum("bhqd,bhkd->bhqk", qf, kf) * dq * dk * attn_scale
-    if causal:
-        mask = torch.triu(
-            torch.ones(sq, skv, device=q.device, dtype=torch.bool), diagonal=1
-        )
-        s = s.masked_fill(mask, float("-inf"))
-    m = s.max(dim=-1, keepdim=True).values
-    p = torch.exp(s - m).nan_to_num()
-    denom = p.sum(dim=-1, keepdim=True)
-    pq = (p * ss).to(dtype).float()
-    o = torch.einsum("bhqk,bhkd->bhqd", pq, vf) * dv * ds
-    o = o / denom.clamp(min=1.0)
-    return o.abs().max().item()
-
-
-def _reference_backward_scales(
-    q,
-    k,
-    v,
-    o,
-    dO,
-    dq,
-    dk,
-    dv,
-    do_descale,
-    ds,
-    ss,
-    so,
-    attn_scale,
-    causal,
-    dtype,
-):
-    b, hq, sq, _ = q.shape
-    hkv = k.shape[1]
-    skv = k.shape[2]
-    qf = q.float()
-    kf = k.float()
-    vf = v.float()
-    if hq != hkv:
-        kf_rep = kf.repeat_interleave(hq // hkv, dim=1)
-        vf_rep = vf.repeat_interleave(hq // hkv, dim=1)
-    else:
-        kf_rep = kf
-        vf_rep = vf
-
-    s = torch.einsum("bhqd,bhkd->bhqk", qf, kf_rep) * dq * dk * attn_scale
-    if causal:
-        mask = torch.triu(
-            torch.ones(sq, skv, device=q.device, dtype=torch.bool), diagonal=1
-        )
-        s = s.masked_fill(mask, float("-inf"))
-    p = torch.softmax(s, dim=-1).nan_to_num()
-    p_quant = (p * ss).to(dtype)
-    dV = (
-        torch.einsum("bhqk,bhqd->bhkd", p_quant.float(), dO.float())
-        * ds
-        * do_descale
-    )
-    dP = torch.einsum("bhqd,bhkd->bhqk", dO.float(), vf_rep) * do_descale * dv
-    D = (
-        (o.float() * dO.float()).sum(dim=-1, keepdim=True)
-        * (1.0 / so)
-        * do_descale
-    )
-    dS = p * (dP - D) * attn_scale
-
-    scale_dP = _fp8_scale(dP.abs().max().item(), dtype)
-    descale_dP = 1.0 / scale_dP
-    dS_quant = (dS * scale_dP).to(dtype).float()
-    dQ = torch.einsum("bhqk,bhkd->bhqd", dS_quant, kf_rep) * dk * descale_dP
-    dK = torch.einsum("bhqk,bhqd->bhkd", dS_quant, qf) * dq * descale_dP
-    if hq != hkv:
-        dK = dK.reshape(b, hkv, hq // hkv, skv, q.shape[-1]).sum(dim=2)
-        dV = dV.reshape(b, hkv, hq // hkv, skv, q.shape[-1]).sum(dim=2)
-
+def _backward_scales(dtype):
+    dP = _fp8_scale(1.0, dtype)
     return {
-        "dP": scale_dP,
-        "descale_dP": descale_dP,
-        "dQ": _fp8_scale(dQ.abs().max().item(), dtype),
-        "dK": _fp8_scale(dK.abs().max().item(), dtype),
-        "dV": _fp8_scale(dV.abs().max().item(), dtype),
+        "dP": dP,
+        "descale_dP": 1.0 / dP,
+        "dQ": 1.0,
+        "dK": 1.0,
+        "dV": 1.0,
     }
 
 
@@ -466,20 +385,7 @@ def test_sdpa_fp8_backward_vs_cudnn(cudnn_handle, dtype, case):
     attn_scale = 1.0 / math.sqrt(q.shape[-1])
     ss = _fp8_scale(1.0, dtype)
     ds = 1.0 / ss
-    o_amax = _ref_o_amax(
-        q,
-        k,
-        v,
-        attn_scale,
-        descale["q"],
-        descale["k"],
-        descale["v"],
-        ss,
-        ds,
-        dtype,
-        causal,
-    )
-    so = _fp8_scale(o_amax, dtype)
+    so = 1.0
     o, stats = _cudnn_sdpa_fp8_forward(
         cudnn_handle,
         q,
@@ -495,23 +401,7 @@ def test_sdpa_fp8_backward_vs_cudnn(cudnn_handle, dtype, case):
         causal,
         dtype,
     )
-    scales = _reference_backward_scales(
-        q,
-        k,
-        v,
-        o,
-        dO,
-        descale["q"],
-        descale["k"],
-        descale["v"],
-        descale["dO"],
-        ds,
-        ss,
-        so,
-        attn_scale,
-        causal,
-        dtype,
-    )
+    scales = _backward_scales(dtype)
     scales["s"] = ss
     scales["o"] = so
     cudnn_out = _cudnn_sdpa_fp8_backward(

@@ -102,11 +102,10 @@ def test_binary_select(cudnn_handle, dtype, case):
 @pytest.mark.binary_select
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-def test_graph_binary_select_matches_reference():
+def test_binary_select_single_case_matches_cudnn(cudnn_handle):
     torch.manual_seed(0)
     x, y, mask = _make_inputs(consts.BINARY_SELECT_CASES[0], torch.float32)
 
+    cudnn_out = _cudnn_binary_select(x, y, mask, cudnn_handle)
     flag_dnn_out = _run_flag_dnn_binary_select_graph(x, y, mask)
-    utils.gems_assert_close(
-        flag_dnn_out, torch.where(mask != 0, x, y), torch.float32
-    )
+    utils.gems_assert_close(flag_dnn_out, cudnn_out, torch.float32)

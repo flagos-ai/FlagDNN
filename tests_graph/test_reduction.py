@@ -101,14 +101,9 @@ def test_reduction(cudnn_handle, dtype, shape, dim, mode):
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("mode", ["ADD", "AVG", "MUL"])
-def test_graph_reduction_matches_torch_reference(mode):
+def test_reduction_single_case_matches_cudnn(cudnn_handle, mode):
     torch.manual_seed(0)
     x = _input((2, 4, 8, 8), mode, torch.float32).contiguous()
-    out = _run_flag_dnn_reduction_graph(x, 1, mode)
-    if mode == "ADD":
-        ref = torch.sum(x, dim=1, keepdim=True)
-    elif mode == "AVG":
-        ref = torch.mean(x, dim=1, keepdim=True)
-    else:
-        ref = torch.prod(x, dim=1, keepdim=True)
-    torch.testing.assert_close(out, ref, atol=1e-4, rtol=1e-4)
+    cudnn_out = _cudnn_reduction(x, 1, mode, cudnn_handle)
+    flag_dnn_out = _run_flag_dnn_reduction_graph(x, 1, mode)
+    torch.testing.assert_close(flag_dnn_out, cudnn_out, atol=1e-4, rtol=1e-4)

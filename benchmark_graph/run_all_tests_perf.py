@@ -225,23 +225,23 @@ def parse_perf_output(stdout_text):
 
         parts = line.split()
 
-        # SUCCESS TorchLatency GemsLatency Speedup TorchGBPS GemsGBPS ...
+        # SUCCESS CudnnLatency FlagDNNLatency Speedup CudnnGBPS FlagDNNGBPS ...
         if len(parts) < 4:
             continue
 
-        torch_latency = parse_float(parts[1])
-        gems_latency = parse_float(parts[2])
+        cudnn_latency = parse_float(parts[1])
+        flagdnn_latency = parse_float(parts[2])
         speedup = parse_float(parts[3])
 
-        if torch_latency is None or gems_latency is None or speedup is None:
+        if cudnn_latency is None or flagdnn_latency is None or speedup is None:
             continue
 
         record = {
             "operator": current_context["operator"],
             "dtype": current_context["dtype"],
             "dtype_short": current_context["dtype_short"],
-            "torch_latency": torch_latency,
-            "gems_latency": gems_latency,
+            "cudnn_latency": cudnn_latency,
+            "flagdnn_latency": flagdnn_latency,
             "speedup": speedup,
         }
 
@@ -254,12 +254,12 @@ def parse_perf_output(stdout_text):
 
         # 如果日志中有 GBPS 数据，也一并提取
         if len(parts) >= 6:
-            torch_gbps = parse_float(parts[4])
-            gems_gbps = parse_float(parts[5])
+            cudnn_gbps = parse_float(parts[4])
+            flagdnn_gbps = parse_float(parts[5])
 
-            if torch_gbps is not None and gems_gbps is not None:
-                record["torch_gbps"] = torch_gbps
-                record["gems_gbps"] = gems_gbps
+            if cudnn_gbps is not None and flagdnn_gbps is not None:
+                record["cudnn_gbps"] = cudnn_gbps
+                record["flagdnn_gbps"] = flagdnn_gbps
 
         # 提取 shape 信息
         # 例子：

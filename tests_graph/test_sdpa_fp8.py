@@ -60,29 +60,6 @@ def _make_inputs(case, dtype):
     return q, k, v, descale, causal
 
 
-def _ref_o_amax(q, k, v, attn_scale, dq, dk, dv, ss, ds, dtype, causal):
-    b, h, sq, d = q.shape
-    skv = k.shape[2]
-    qf, kf, vf = q.float(), k.float(), v.float()
-    if h != k.shape[1]:
-        kf = kf.repeat_interleave(h // k.shape[1], dim=1)
-    if h != v.shape[1]:
-        vf = vf.repeat_interleave(h // v.shape[1], dim=1)
-    s = torch.einsum("bhqd,bhkd->bhqk", qf, kf) * dq * dk * attn_scale
-    if causal:
-        mask = torch.triu(
-            torch.ones(sq, skv, device=q.device, dtype=torch.bool), diagonal=1
-        )
-        s = s.masked_fill(mask, float("-inf"))
-    m = s.max(dim=-1, keepdim=True).values
-    p = torch.exp(s - m).nan_to_num()
-    denom = p.sum(dim=-1, keepdim=True)
-    pq = (p * ss).to(dtype).float()
-    o = torch.einsum("bhqk,bhkd->bhqd", pq, vf) * dv * ds
-    o = o / denom.clamp(min=1.0)
-    return o.abs().max().item()
-
-
 def _cudnn_sdpa_fp8(
     handle, q, k, v, dq, dk, dv, ds, ss, so, attn_scale, causal, stats, dtype
 ):
@@ -247,14 +224,11 @@ def _assert_fp8_close(flag_out, cudnn_out, descale_o, stats):
         )
 
 
-def _scales(q, k, v, descale, attn_scale, causal, dtype):
+def _scales(descale, dtype):
     dq, dk, dv = descale["q"], descale["k"], descale["v"]
     ss = _fp8_scale(1.0, dtype)
     ds = 1.0 / ss
-    o_amax = _ref_o_amax(
-        q, k, v, attn_scale, dq, dk, dv, ss, ds, dtype, causal
-    )
-    so = _fp8_scale(o_amax, dtype)
+    so = 1.0
     return dq, dk, dv, ds, ss, so
 
 
@@ -267,9 +241,7 @@ def test_sdpa_fp8_vs_cudnn_with_stats(cudnn_handle, dtype, case):
     torch.manual_seed(0)
     q, k, v, descale, causal = _make_inputs(case, dtype)
     attn_scale = 1.0 / math.sqrt(q.shape[-1])
-    dq, dk, dv, ds, ss, so = _scales(
-        q, k, v, descale, attn_scale, causal, dtype
-    )
+    dq, dk, dv, ds, ss, so = _scales(descale, dtype)
 
     cudnn_out = _cudnn_sdpa_fp8(
         cudnn_handle,
@@ -302,9 +274,7 @@ def test_sdpa_fp8_inference_no_stats(cudnn_handle, case):
     torch.manual_seed(0)
     q, k, v, descale, causal = _make_inputs(case, dtype)
     attn_scale = 1.0 / math.sqrt(q.shape[-1])
-    dq, dk, dv, ds, ss, so = _scales(
-        q, k, v, descale, attn_scale, causal, dtype
-    )
+    dq, dk, dv, ds, ss, so = _scales(descale, dtype)
 
     cudnn_out = _cudnn_sdpa_fp8(
         cudnn_handle,

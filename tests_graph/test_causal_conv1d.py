@@ -1,24 +1,47 @@
 import pytest
 import torch
-import torch.nn.functional as F
+
 import flag_dnn
 from tests import accuracy_utils as utils
+from tests_graph.base import get_cudnn
 
 COMPARE_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
 
+_DTYPE_TO_CUDNN_INT = {
+    torch.float32: 0,
+    torch.float16: 2,
+    torch.bfloat16: 9,
+}
 
-def _reference_causal_conv1d(x, weight, bias, activation):
-    kernel = weight.shape[1]
-    conv_weight = weight.reshape(weight.shape[0], 1, kernel)
-    y = F.conv1d(
-        F.pad(x, (kernel - 1, 0)),
-        conv_weight,
-        bias=bias,
-        groups=x.shape[1],
+_ACTIVATION_TO_CUDNN_INT = {
+    "identity": 0,
+    "silu": 1,
+}
+
+
+def _cudnn_causal_conv1d(x, weight, bias, activation):
+    cudnn = get_cudnn()
+    if not hasattr(cudnn, "causal_conv1d_forward"):
+        pytest.skip("cuDNN frontend was built without causal_conv1d_forward")
+
+    batch, dim, seq_len = x.shape
+    kernel_size = weight.shape[1]
+    out = torch.empty_like(x)
+    cudnn.causal_conv1d_forward(
+        torch.cuda.current_stream().cuda_stream,
+        x.data_ptr(),
+        weight.data_ptr(),
+        bias.data_ptr(),
+        out.data_ptr(),
+        batch,
+        dim,
+        seq_len,
+        kernel_size,
+        _DTYPE_TO_CUDNN_INT[x.dtype],
+        _ACTIVATION_TO_CUDNN_INT[activation],
     )
-    if activation == "silu":
-        y = F.silu(y)
-    return y
+    torch.cuda.synchronize()
+    return out
 
 
 def _run_flag_dnn_causal_conv1d_graph(x, weight, bias, activation):
@@ -47,7 +70,7 @@ def _run_flag_dnn_causal_conv1d_graph(x, weight, bias, activation):
 @pytest.mark.parametrize("dtype", COMPARE_DTYPES)
 @pytest.mark.parametrize("shape_kernel", [((2, 4, 16), 3), ((3, 8, 33), 5)])
 @pytest.mark.parametrize("activation", ["identity", "silu"])
-def test_graph_causal_conv1d_matches_torch(dtype, shape_kernel, activation):
+def test_causal_conv1d_matches_cudnn(dtype, shape_kernel, activation):
     torch.manual_seed(0)
     shape, kernel = shape_kernel
     x = torch.randn(shape, device=flag_dnn.device, dtype=dtype)
@@ -55,7 +78,7 @@ def test_graph_causal_conv1d_matches_torch(dtype, shape_kernel, activation):
         (shape[1], kernel), device=flag_dnn.device, dtype=dtype
     )
     bias = torch.randn((shape[1],), device=flag_dnn.device, dtype=dtype)
-    expected = _reference_causal_conv1d(x, weight, bias, activation)
+    cudnn_out = _cudnn_causal_conv1d(x, weight, bias, activation)
     actual = _run_flag_dnn_causal_conv1d_graph(x, weight, bias, activation)
     atol = 2e-2 if dtype in (torch.float16, torch.bfloat16) else 2e-4
-    utils.gems_assert_close(actual, expected, dtype, atol=atol)
+    utils.gems_assert_close(actual, cudnn_out, dtype, atol=atol)

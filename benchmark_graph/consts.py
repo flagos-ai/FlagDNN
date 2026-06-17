@@ -92,6 +92,20 @@ BINARY_SELECT_SHAPES = (
 )
 SIGMOID_BACKWARD_SHAPES = POINTWISE_BINARY_SHAPES
 SCALE_SHAPES = POINTWISE_BINARY_SHAPES
+CAUSAL_CONV1D_SHAPES = (
+    # (batch, dim, seq_len, kernel_size, activation)
+    # Small launch-overhead and non-power-of-two regimes.
+    (1, 64, 128, 3, "identity"),
+    (3, 192, 257, 4, "silu"),
+    # Mamba/SSM-style sequence-mixing regimes.
+    (8, 512, 1024, 3, "identity"),
+    (4, 768, 2048, 4, "silu"),
+    (2, 1024, 4096, 4, "silu"),
+    (1, 2048, 8192, 4, "silu"),
+    # High-batch serving and wider-channel regimes.
+    (16, 1024, 512, 4, "silu"),
+    (1, 4096, 2048, 5, "silu"),
+)
 MATMUL_SHAPES = (
     # Small (launch-overhead regime).
     ((4, 16, 32), (4, 32, 24)),

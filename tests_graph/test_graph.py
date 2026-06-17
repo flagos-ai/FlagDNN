@@ -2,9 +2,67 @@ import pytest
 import torch
 
 import flag_dnn
+from tests_graph.base import cudnn, cudnn_graph, execute_cudnn_graph
 
 
-def test_graph_capture_fuses_bias_relu_and_eliminates_dead_node():
+def _contiguous_stride(shape):
+    stride = []
+    running = 1
+    for size in reversed(shape):
+        stride.append(running)
+        running *= size
+    return tuple(reversed(stride))
+
+
+def _cudnn_add(x, y, cudnn_handle):
+    graph = cudnn_graph(x.dtype, cudnn_handle)
+    x_tensor = graph.tensor_like(x)
+    y_tensor = graph.tensor_like(y)
+    out_tensor = graph.add(
+        a=x_tensor,
+        b=y_tensor,
+        compute_data_type=cudnn.data_type.FLOAT,
+        name="add",
+    )
+    output_shape = torch.broadcast_shapes(tuple(x.shape), tuple(y.shape))
+    out_tensor.set_dim(output_shape).set_stride(
+        _contiguous_stride(output_shape)
+    )
+    return execute_cudnn_graph(
+        graph,
+        {x_tensor: x, y_tensor: y},
+        out_tensor,
+        torch.empty(output_shape, device=x.device, dtype=x.dtype),
+        cudnn_handle,
+        "add",
+    )
+
+
+def _cudnn_relu(x, cudnn_handle):
+    graph = cudnn_graph(x.dtype, cudnn_handle)
+    x_tensor = graph.tensor_like(x)
+    out_tensor = graph.relu(
+        input=x_tensor,
+        negative_slope=0.0,
+        lower_clip=0.0,
+        compute_data_type=cudnn.data_type.FLOAT,
+        name="relu",
+    )
+    return execute_cudnn_graph(
+        graph,
+        {x_tensor: x},
+        out_tensor,
+        torch.empty_like(x),
+        cudnn_handle,
+        "relu",
+    )
+
+
+def _cudnn_add_relu(x, y, cudnn_handle):
+    return _cudnn_relu(_cudnn_add(x, y, cudnn_handle), cudnn_handle)
+
+
+def test_capture_fuses_bias_relu_and_eliminates_dead_node():
     @flag_dnn.graph
     def fn(x, bias):
         y = flag_dnn.bias_add(x, bias)
@@ -26,7 +84,7 @@ def test_graph_capture_fuses_bias_relu_and_eliminates_dead_node():
     assert compiled.plan.debug_info["fusion"]["bias_activation_fused"] == 1
 
 
-def test_graph_executor_rejects_cpu_without_torch_fallback():
+def test_executor_rejects_cpu_without_torch_fallback():
     @flag_dnn.graph
     def fn(x, bias):
         return flag_dnn.relu(flag_dnn.bias_add(x, bias))
@@ -37,27 +95,28 @@ def test_graph_executor_rejects_cpu_without_torch_fallback():
         flag_dnn.compile(fn, inputs=[x, bias], options={"cache": None})
 
 
-def test_graph_torch_backend_is_not_available():
+def test_torch_backend_is_not_available():
     with pytest.raises(ValueError, match="no longer supports torch fallback"):
         flag_dnn.resolve_backend("torch")
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-def test_graph_operator_overload_capture():
+def test_operator_overload_capture(cudnn_handle):
     @flag_dnn.graph
     def fn(x, y):
         return flag_dnn.relu(x + y)
 
-    x = torch.randn(4, 5, device=flag_dnn.device)
-    y = torch.randn(4, 5, device=flag_dnn.device)
+    x = torch.randn(1, 4, 5, device=flag_dnn.device)
+    y = torch.randn(1, 4, 5, device=flag_dnn.device)
     compiled = flag_dnn.compile(fn, inputs=[x, y], options={"cache": None})
 
     op_types = [node.op_type for node in compiled.graph.nodes]
     assert op_types == ["add", "relu"]
-    torch.testing.assert_close(compiled(x, y), torch.relu(x + y))
+    cudnn_out = _cudnn_add_relu(x, y, cudnn_handle)
+    torch.testing.assert_close(compiled(x, y), cudnn_out)
 
 
-def test_graph_conv2d_bias_relu_fuses_in_ir():
+def test_conv2d_bias_relu_fuses_in_ir():
     @flag_dnn.graph
     def fn(x, weight, bias):
         y = flag_dnn.conv2d(x, weight, padding=1)
@@ -85,7 +144,7 @@ def test_graph_conv2d_bias_relu_fuses_in_ir():
     )
 
 
-def test_graph_memory_plan_cache_hit():
+def test_memory_plan_cache_hit():
     cache = flag_dnn.PlanCache(enable_disk=False)
 
     @flag_dnn.graph
@@ -105,7 +164,7 @@ def test_graph_memory_plan_cache_hit():
     assert second.plan.debug_info["cache_layer"] == "memory"
 
 
-def test_graph_autotune_rejects_cpu_without_torch_fallback():
+def test_autotune_rejects_cpu_without_torch_fallback():
     @flag_dnn.graph
     def fn(x, bias):
         return flag_dnn.relu(flag_dnn.bias_add(x, bias))
@@ -121,7 +180,7 @@ def test_graph_autotune_rejects_cpu_without_torch_fallback():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-def test_graph_ops_namespace_add_capture():
+def test_ops_namespace_add_capture():
     @flag_dnn.graph
     def fn(x, y):
         return flag_dnn.ops.add(
@@ -131,8 +190,8 @@ def test_graph_ops_namespace_add_capture():
             name="add",
         )
 
-    x = torch.randn(4, 5, device=flag_dnn.device)
-    y = torch.randn(4, 5, device=flag_dnn.device)
+    x = torch.randn(1, 4, 5, device=flag_dnn.device)
+    y = torch.randn(1, 4, 5, device=flag_dnn.device)
     compiled = flag_dnn.compile(fn, inputs=[x, y], options={"cache": None})
 
     assert [node.op_type for node in compiled.graph.nodes] == ["add"]
@@ -141,7 +200,7 @@ def test_graph_ops_namespace_add_capture():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-def test_graph_ops_namespace_sub_capture():
+def test_ops_namespace_sub_capture():
     @flag_dnn.graph
     def fn(x, y):
         return flag_dnn.ops.sub(
@@ -151,8 +210,8 @@ def test_graph_ops_namespace_sub_capture():
             name="sub",
         )
 
-    x = torch.randn(4, 5, device=flag_dnn.device)
-    y = torch.randn(4, 5, device=flag_dnn.device)
+    x = torch.randn(1, 4, 5, device=flag_dnn.device)
+    y = torch.randn(1, 4, 5, device=flag_dnn.device)
     compiled = flag_dnn.compile(fn, inputs=[x, y], options={"cache": None})
 
     assert [node.op_type for node in compiled.graph.nodes] == ["sub"]
