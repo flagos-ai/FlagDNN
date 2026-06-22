@@ -741,6 +741,28 @@ binary:
     stages:
       - 2
       - 3
+add_square:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+        TILES_PER_PROGRAM: tiles_per_program
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 256
+      - 512
+      - 1024
+      - 2048
+      - 4096
+    tiles_per_program:
+      - 1
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
 unary:
   - gen: true
     param_map:
@@ -1536,6 +1558,143 @@ mv_wide_fp64:
       - 3
       - 4
       - 5
+matmul:
+  - gen: true
+    param_map:
+      META: meta
+      num_warps: warps
+      num_stages: stages
+    meta:
+      - BLOCK_M: 16
+        BLOCK_N: 32
+        BLOCK_K: 32
+        GROUP_M: 8
+      - BLOCK_M: 32
+        BLOCK_N: 32
+        BLOCK_K: 32
+        GROUP_M: 8
+      - BLOCK_M: 32
+        BLOCK_N: 64
+        BLOCK_K: 32
+        GROUP_M: 8
+      - BLOCK_M: 64
+        BLOCK_N: 64
+        BLOCK_K: 32
+        GROUP_M: 8
+    warps:
+      - 4
+    stages:
+      - 3
+  - gen: true
+    param_map:
+      META: meta
+      num_warps: warps
+      num_stages: stages
+    meta:
+      - BLOCK_M: 64
+        BLOCK_N: 128
+        BLOCK_K: 64
+        GROUP_M: 8
+      - BLOCK_M: 128
+        BLOCK_N: 64
+        BLOCK_K: 64
+        GROUP_M: 8
+      - BLOCK_M: 128
+        BLOCK_N: 128
+        BLOCK_K: 64
+        GROUP_M: 8
+    warps:
+      - 8
+    stages:
+      - 3
+  - gen: true
+    param_map:
+      META: meta
+      num_warps: warps
+      num_stages: stages
+    meta:
+      - BLOCK_M: 128
+        BLOCK_N: 256
+        BLOCK_K: 64
+        GROUP_M: 4
+      - BLOCK_M: 256
+        BLOCK_N: 128
+        BLOCK_K: 64
+        GROUP_M: 4
+    warps:
+      - 8
+    stages:
+      - 3
+      - 4
+  - gen: true
+    param_map:
+      META: meta
+      num_warps: warps
+      num_stages: stages
+    meta:
+      - BLOCK_M: 128
+        BLOCK_N: 128
+        BLOCK_K: 128
+        GROUP_M: 8
+      - BLOCK_M: 128
+        BLOCK_N: 256
+        BLOCK_K: 128
+        GROUP_M: 4
+      - BLOCK_M: 256
+        BLOCK_N: 128
+        BLOCK_K: 128
+        GROUP_M: 4
+    warps:
+      - 8
+    stages:
+      - 2
+  - gen: true
+    param_map:
+      META: meta
+      num_warps: warps
+      num_stages: stages
+    meta:
+      - BLOCK_M: 128
+        BLOCK_N: 256
+        BLOCK_K: 32
+        GROUP_M: 4
+      - BLOCK_M: 256
+        BLOCK_N: 128
+        BLOCK_K: 32
+        GROUP_M: 4
+    warps:
+      - 8
+    stages:
+      - 4
+  - gen: true
+    param_map:
+      META: meta
+      num_warps: warps
+      num_stages: stages
+    meta:
+      - BLOCK_M: 128
+        BLOCK_N: 256
+        BLOCK_K: 64
+        GROUP_M: 16
+    warps:
+      - 8
+    stages:
+      - 4
+  - gen: true
+    param_map:
+      META: meta
+      num_warps: warps
+      num_stages: stages
+    meta:
+      - BLOCK_M: 256
+        BLOCK_N: 128
+        BLOCK_K: 64
+        GROUP_M: 1
+    warps:
+      - 16
+    stages:
+      - 3
+
 mm:
   - META:
       BLOCK_M: 16

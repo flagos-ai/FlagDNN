@@ -2,66 +2,114 @@ import torch
 import triton
 import triton.language as tl
 
+from flag_dnn import runtime
 from flag_dnn.ops.mm import mm
 from flag_dnn.runtime import torch_device_fn
+from flag_dnn.utils import libentry, libtuner
 
 
+_MATMUL_CONFIGS = runtime.get_tuned_config("matmul")
+
+
+@libentry()
+@libtuner(
+    configs=_MATMUL_CONFIGS,
+    key=["M", "N", "K"],
+    strategy=["align32", "align32", "align32"],
+    warmup=5,
+    rep=10,
+)
 @triton.jit
 def _batched_matmul_kernel(
     a_ptr,
     b_ptr,
     c_ptr,
-    batch,
     M: tl.constexpr,
     N: tl.constexpr,
     K: tl.constexpr,
-    stride_ab,
-    stride_am,
-    stride_ak,
-    stride_bb,
-    stride_bk,
-    stride_bn,
-    stride_cb,
-    stride_cm,
-    stride_cn,
+    FAST_FP32_TO_FP16: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLOCK_K: tl.constexpr,
+    GROUP_M: tl.constexpr,
 ):
     pid = tl.program_id(0)
     bid = tl.program_id(1)
+    num_pid_m = tl.cdiv(M, BLOCK_M)
     num_pid_n = tl.cdiv(N, BLOCK_N)
-    pid_m = pid // num_pid_n
-    pid_n = pid % num_pid_n
+    if GROUP_M == 1:
+        pid_m = pid // num_pid_n
+        pid_n = pid % num_pid_n
+    elif GROUP_M >= (M + BLOCK_M - 1) // BLOCK_M:
+        pid_m = pid % num_pid_m
+        pid_n = pid // num_pid_m
+    else:
+        num_pid_in_group = GROUP_M * num_pid_n
+        group_id = pid // num_pid_in_group
+        first_pid_m = group_id * GROUP_M
+        group_size_m = tl.minimum(num_pid_m - first_pid_m, GROUP_M)
+        pid_in_group = pid % num_pid_in_group
+        pid_m = first_pid_m + (pid_in_group % group_size_m)
+        pid_n = pid_in_group // group_size_m
 
-    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
-    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
-    offs_k = tl.arange(0, BLOCK_K)
-
-    a_base = a_ptr + bid * stride_ab
-    b_base = b_ptr + bid * stride_bb
+    a_base = a_ptr + bid * M * K
+    b_base = b_ptr + bid * K * N
+    c_base = c_ptr + bid * M * N
+    a_block = tl.make_block_ptr(
+        base=a_base,
+        shape=(M, K),
+        strides=(K, 1),
+        offsets=(pid_m * BLOCK_M, 0),
+        block_shape=(BLOCK_M, BLOCK_K),
+        order=(1, 0),
+    )
+    b_block = tl.make_block_ptr(
+        base=b_base,
+        shape=(K, N),
+        strides=(N, 1),
+        offsets=(0, pid_n * BLOCK_N),
+        block_shape=(BLOCK_K, BLOCK_N),
+        order=(1, 0),
+    )
     acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
 
-    for k0 in range(0, K, BLOCK_K):
-        k = k0 + offs_k
-        a = tl.load(
-            a_base + offs_m[:, None] * stride_am + k[None, :] * stride_ak,
-            mask=(offs_m[:, None] < M) & (k[None, :] < K),
-            other=0.0,
-        )
-        b = tl.load(
-            b_base + k[:, None] * stride_bk + offs_n[None, :] * stride_bn,
-            mask=(k[:, None] < K) & (offs_n[None, :] < N),
-            other=0.0,
-        )
-        acc += tl.dot(a, b, input_precision="ieee")
+    for _ in tl.range(0, K, BLOCK_K):
+        if M % BLOCK_M == 0 and K % BLOCK_K == 0:
+            a = tl.load(a_block, boundary_check=())
+        else:
+            a = tl.load(
+                a_block,
+                boundary_check=(0, 1),
+                padding_option="zero",
+            )
+        if K % BLOCK_K == 0 and N % BLOCK_N == 0:
+            b = tl.load(b_block, boundary_check=())
+        else:
+            b = tl.load(
+                b_block,
+                boundary_check=(0, 1),
+                padding_option="zero",
+            )
+        if FAST_FP32_TO_FP16:
+            a = a.to(tl.float16)
+            b = b.to(tl.float16)
+        acc += tl.dot(a, b, input_precision="tf32")
+        a_block = tl.advance(a_block, (0, BLOCK_K))
+        b_block = tl.advance(b_block, (BLOCK_K, 0))
 
-    c_base = c_ptr + bid * stride_cb
-    tl.store(
-        c_base + offs_m[:, None] * stride_cm + offs_n[None, :] * stride_cn,
-        acc.to(c_ptr.dtype.element_ty),
-        mask=(offs_m[:, None] < M) & (offs_n[None, :] < N),
+    c_block = tl.make_block_ptr(
+        base=c_base,
+        shape=(M, N),
+        strides=(N, 1),
+        offsets=(pid_m * BLOCK_M, pid_n * BLOCK_N),
+        block_shape=(BLOCK_M, BLOCK_N),
+        order=(1, 0),
     )
+    c = acc.to(c_ptr.dtype.element_ty)
+    if M % BLOCK_M == 0 and N % BLOCK_N == 0:
+        tl.store(c_block, c, boundary_check=())
+    else:
+        tl.store(c_block, c, boundary_check=(0, 1))
 
 
 def _batched_matmul_3d(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
@@ -79,32 +127,23 @@ def _batched_matmul_3d(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     if C.numel() == 0:
         return C
 
-    block_m = 16 if m <= 16 else 32
-    block_n = 32 if n <= 32 else 64
-    block_k = 32 if k <= 64 else 64
-    grid = (triton.cdiv(m, block_m) * triton.cdiv(n, block_n), batch)
+    def grid(meta):
+        return (
+            triton.cdiv(m, meta["BLOCK_M"]) * triton.cdiv(n, meta["BLOCK_N"]),
+            batch,
+        )
+
     with torch_device_fn.device(A.device):
         _batched_matmul_kernel[grid](
             A,
             B,
             C,
-            batch,
             m,
             n,
             k,
-            A.stride(0),
-            A.stride(1),
-            A.stride(2),
-            B.stride(0),
-            B.stride(1),
-            B.stride(2),
-            C.stride(0),
-            C.stride(1),
-            C.stride(2),
-            BLOCK_M=block_m,
-            BLOCK_N=block_n,
-            BLOCK_K=block_k,
-            num_warps=4,
+            FAST_FP32_TO_FP16=(
+                A.dtype == torch.float32 and m >= 512 and n >= 512 and k >= 512
+            ),
         )
     return C
 
