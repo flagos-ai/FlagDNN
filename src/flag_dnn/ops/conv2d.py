@@ -7,6 +7,7 @@ import triton
 import triton.language as tl
 
 from flag_dnn import runtime
+from flag_dnn.ops.matmul import _batched_matmul_kernel
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 
@@ -630,6 +631,44 @@ def _use_spatial_3x3_split_nchw(
     return cin_per_group >= 256 and cout_per_group >= 256
 
 
+def _use_im2col_stride2_pad1_nchw(
+    dtype: torch.dtype,
+    n: int,
+    groups: int,
+    is_depthwise: bool,
+    kh: int,
+    kw: int,
+    stride: Tuple[int, int],
+    padding_2d: Tuple[int, int, int, int],
+    dilation: Tuple[int, int],
+    h: int,
+    w: int,
+    cin_per_group: int,
+    cout_per_group: int,
+    oh: int,
+    ow: int,
+) -> bool:
+    if dtype not in (torch.float16, torch.bfloat16, torch.float32):
+        return False
+    if n != 1 or groups != 1 or is_depthwise:
+        return False
+    if kh != 3 or kw != 3:
+        return False
+    if stride != (2, 2) or padding_2d != (1, 1, 1, 1):
+        return False
+    if dilation != (1, 1):
+        return False
+
+    return (
+        h == 40
+        and w == 40
+        and oh == 20
+        and ow == 20
+        and cin_per_group >= 256
+        and cout_per_group >= 512
+    )
+
+
 def _use_depthwise_c1_nchw(
     c_in: int,
     kh: int,
@@ -651,6 +690,44 @@ def _use_depthwise_c1_nchw(
 # -----------------------------------------------------------------------------
 # NCHW kernels
 # -----------------------------------------------------------------------------
+
+
+@triton.jit
+def conv2d_spatial_nchw_3x3_stride2_pad1_im2col_kernel(
+    x_ptr,
+    col_ptr,
+    TOTAL: tl.constexpr,
+    XH: tl.constexpr,
+    XW: tl.constexpr,
+    OH: tl.constexpr,
+    OW: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+):
+    offsets = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    HW = OH * OW
+    kernel_area = 9
+
+    k = offsets // HW
+    hw = offsets - k * HW
+    ic = k // kernel_area
+    rem = k - ic * kernel_area
+    kh = rem // 3
+    kw = rem - kh * 3
+
+    oh_o = hw // OW
+    ow_o = hw - oh_o * OW
+    ih = oh_o * 2 - 1 + kh
+    iw = ow_o * 2 - 1 + kw
+
+    in_range = offsets < TOTAL
+    valid = in_range & (ih >= 0) & (ih < XH) & (iw >= 0) & (iw < XW)
+    x = tl.load(
+        x_ptr + ic * (XH * XW) + ih * XW + iw,
+        mask=valid,
+        other=0.0,
+    )
+    tl.store(col_ptr + offsets, x, mask=in_range)
 
 
 @libentry()
@@ -3888,6 +3965,84 @@ def conv2d(
         output = torch.empty(
             (n, c_out, oh, ow), device=input.device, dtype=input.dtype
         )
+
+        if bias is None and _use_im2col_stride2_pad1_nchw(
+            input.dtype,
+            n,
+            groups,
+            is_depthwise,
+            kh,
+            kw,
+            stride,
+            padding_2d,
+            dilation,
+            h,
+            w,
+            cin_per_group,
+            cout_per_group,
+            oh,
+            ow,
+        ):
+            kdim = cin_per_group * kh * kw
+            hw = oh * ow
+            cols = torch.empty(
+                (kdim, hw), device=input.device, dtype=input.dtype
+            )
+            total = kdim * hw
+            block_size = 512 if input.dtype == torch.float32 else 1024
+            conv2d_spatial_nchw_3x3_stride2_pad1_im2col_kernel[
+                (triton.cdiv(total, block_size),)
+            ](
+                input,
+                cols,
+                total,
+                h,
+                w,
+                oh,
+                ow,
+                cin_per_group,
+                BLOCK_SIZE=block_size,
+                num_warps=4,
+            )
+
+            weight_2d = weight.reshape(c_out, kdim)
+            output_2d = output.reshape(c_out, hw)
+
+            def grid_im2col_mm(meta):
+                return (
+                    triton.cdiv(c_out, meta["BLOCK_M"])
+                    * triton.cdiv(hw, meta["BLOCK_N"]),
+                    1,
+                )
+
+            if input.dtype == torch.float32:
+                block_n = 128 if cin_per_group >= 768 else 64
+                _batched_matmul_kernel.fn.fn[grid_im2col_mm](
+                    weight_2d,
+                    cols,
+                    output_2d,
+                    c_out,
+                    hw,
+                    kdim,
+                    FAST_FP32_TO_FP16=False,
+                    BLOCK_M=32,
+                    BLOCK_N=block_n,
+                    BLOCK_K=128,
+                    GROUP_M=8,
+                    num_warps=4,
+                    num_stages=3,
+                )
+            else:
+                _batched_matmul_kernel[grid_im2col_mm](
+                    weight_2d,
+                    cols,
+                    output_2d,
+                    c_out,
+                    hw,
+                    kdim,
+                    FAST_FP32_TO_FP16=False,
+                )
+            return output
 
         if is_depthwise:
             w_dw = _pack_depthwise_weight_khw_c(weight, groups)
