@@ -2125,6 +2125,309 @@ def _conv_wgrad2d_stride2_3tap_atomic_kernel(
 
 
 @triton.jit
+def _conv_wgrad2d_stride2_p5_row4_tail_direct_kernel(
+    image_ptr,
+    loss_ptr,
+    out_ptr,
+    COUT_PER_GROUP: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_h: tl.constexpr,
+    image_stride_w: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    out_stride_o: tl.constexpr,
+    out_stride_i: tl.constexpr,
+    out_stride_h: tl.constexpr,
+    out_stride_w: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_K_MAIN: tl.constexpr,
+    BLOCK_K_TAIL: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    kh = tl.program_id(1)
+    num_ci_blocks = tl.cdiv(CIN_PER_GROUP, BLOCK_CI)
+    pid_co = pid // num_ci_blocks
+    pid_ci = pid - pid_co * num_ci_blocks
+    co = pid_co * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    ci = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_co = co < COUT_PER_GROUP
+    mask_ci = ci < CIN_PER_GROUP
+
+    offs_main = tl.arange(0, BLOCK_K_MAIN)
+    row_main = offs_main // 16
+    loss_w_main = offs_main - row_main * 16
+
+    offs_tail = tl.arange(0, BLOCK_K_TAIL)
+    row_tail = offs_tail // 4
+    loss_w_tail = 16 + offs_tail - row_tail * 4
+
+    acc0 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc1 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    acc2 = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    for loss_h_base in tl.static_range(0, 20, 4):
+        loss_h_main = loss_h_base + row_main
+        image_h_main = loss_h_main * 2 - 1 + kh
+        valid_h_main = (image_h_main >= 0) & (image_h_main < 40)
+        image_w0_main = loss_w_main * 2 - 1
+        image_w1_main = loss_w_main * 2
+        image_w2_main = loss_w_main * 2 + 1
+        valid0_main = (
+            valid_h_main & (image_w0_main >= 0) & (image_w0_main < 40)
+        )
+        valid1_main = (
+            valid_h_main & (image_w1_main >= 0) & (image_w1_main < 40)
+        )
+        valid2_main = (
+            valid_h_main & (image_w2_main >= 0) & (image_w2_main < 40)
+        )
+        safe_w0_main = tl.where(valid0_main, image_w0_main, 0)
+        safe_w1_main = tl.where(valid1_main, image_w1_main, 0)
+        safe_w2_main = tl.where(valid2_main, image_w2_main, 0)
+        loss_main = tl.load(
+            loss_ptr
+            + co[:, None] * loss_stride_c
+            + loss_h_main[None, :] * loss_stride_h
+            + loss_w_main[None, :] * loss_stride_w,
+            mask=mask_co[:, None],
+            other=0.0,
+        )
+        img0_main = tl.load(
+            image_ptr
+            + ci[None, :] * image_stride_c
+            + image_h_main[:, None] * image_stride_h
+            + safe_w0_main[:, None] * image_stride_w,
+            mask=mask_ci[None, :] & valid0_main[:, None],
+            other=0.0,
+        )
+        img1_main = tl.load(
+            image_ptr
+            + ci[None, :] * image_stride_c
+            + image_h_main[:, None] * image_stride_h
+            + safe_w1_main[:, None] * image_stride_w,
+            mask=mask_ci[None, :] & valid1_main[:, None],
+            other=0.0,
+        )
+        img2_main = tl.load(
+            image_ptr
+            + ci[None, :] * image_stride_c
+            + image_h_main[:, None] * image_stride_h
+            + safe_w2_main[:, None] * image_stride_w,
+            mask=mask_ci[None, :] & valid2_main[:, None],
+            other=0.0,
+        )
+        acc0 += tl.dot(
+            loss_main, img0_main, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc1 += tl.dot(
+            loss_main, img1_main, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc2 += tl.dot(
+            loss_main, img2_main, out_dtype=tl.float32, input_precision="tf32"
+        )
+
+        loss_h_tail = loss_h_base + row_tail
+        image_h_tail = loss_h_tail * 2 - 1 + kh
+        valid_h_tail = (image_h_tail >= 0) & (image_h_tail < 40)
+        image_w0_tail = loss_w_tail * 2 - 1
+        image_w1_tail = loss_w_tail * 2
+        image_w2_tail = loss_w_tail * 2 + 1
+        valid0_tail = (
+            valid_h_tail & (image_w0_tail >= 0) & (image_w0_tail < 40)
+        )
+        valid1_tail = (
+            valid_h_tail & (image_w1_tail >= 0) & (image_w1_tail < 40)
+        )
+        valid2_tail = (
+            valid_h_tail & (image_w2_tail >= 0) & (image_w2_tail < 40)
+        )
+        loss_tail = tl.load(
+            loss_ptr
+            + co[:, None] * loss_stride_c
+            + loss_h_tail[None, :] * loss_stride_h
+            + loss_w_tail[None, :] * loss_stride_w,
+            mask=mask_co[:, None],
+            other=0.0,
+        )
+        img0_tail = tl.load(
+            image_ptr
+            + ci[None, :] * image_stride_c
+            + image_h_tail[:, None] * image_stride_h
+            + image_w0_tail[:, None] * image_stride_w,
+            mask=mask_ci[None, :] & valid0_tail[:, None],
+            other=0.0,
+        )
+        img1_tail = tl.load(
+            image_ptr
+            + ci[None, :] * image_stride_c
+            + image_h_tail[:, None] * image_stride_h
+            + image_w1_tail[:, None] * image_stride_w,
+            mask=mask_ci[None, :] & valid1_tail[:, None],
+            other=0.0,
+        )
+        img2_tail = tl.load(
+            image_ptr
+            + ci[None, :] * image_stride_c
+            + image_h_tail[:, None] * image_stride_h
+            + image_w2_tail[:, None] * image_stride_w,
+            mask=mask_ci[None, :] & valid2_tail[:, None],
+            other=0.0,
+        )
+        acc0 += tl.dot(
+            loss_tail, img0_tail, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc1 += tl.dot(
+            loss_tail, img1_tail, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc2 += tl.dot(
+            loss_tail, img2_tail, out_dtype=tl.float32, input_precision="tf32"
+        )
+
+    mask = mask_co[:, None] & mask_ci[None, :]
+    base = (
+        out_ptr
+        + co[:, None] * out_stride_o
+        + ci[None, :] * out_stride_i
+        + kh * out_stride_h
+    )
+    tl.store(
+        base + 0 * out_stride_w,
+        acc0.to(out_ptr.dtype.element_ty),
+        mask=mask,
+    )
+    tl.store(
+        base + 1 * out_stride_w,
+        acc1.to(out_ptr.dtype.element_ty),
+        mask=mask,
+    )
+    tl.store(
+        base + 2 * out_stride_w,
+        acc2.to(out_ptr.dtype.element_ty),
+        mask=mask,
+    )
+
+
+@triton.jit
+def _conv_wgrad2d_stride2_p5_pack_image_kernel(
+    image_ptr,
+    packed_ptr,
+    CIN_PER_GROUP: tl.constexpr,
+    image_stride_c: tl.constexpr,
+    image_stride_h: tl.constexpr,
+    image_stride_w: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+):
+    pid_m = tl.program_id(0)
+    pid_n = tl.program_id(1)
+    cik = CIN_PER_GROUP * 9
+
+    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    mask_m = offs_m < 400
+    mask_n = offs_n < cik
+
+    loss_h = offs_m // 20
+    loss_w = offs_m - loss_h * 20
+    ci = offs_n // 9
+    kpos = offs_n - ci * 9
+    kh = kpos // 3
+    kw = kpos - kh * 3
+    safe_ci = tl.where(mask_n, ci, 0)
+
+    image_h = loss_h[:, None] * 2 - 1 + kh[None, :]
+    image_w = loss_w[:, None] * 2 - 1 + kw[None, :]
+    valid = (
+        mask_m[:, None]
+        & mask_n[None, :]
+        & (image_h >= 0)
+        & (image_h < 40)
+        & (image_w >= 0)
+        & (image_w < 40)
+    )
+    safe_h = tl.where(valid, image_h, 0)
+    safe_w = tl.where(valid, image_w, 0)
+    values = tl.load(
+        image_ptr
+        + safe_ci[None, :] * image_stride_c
+        + safe_h * image_stride_h
+        + safe_w * image_stride_w,
+        mask=valid,
+        other=0.0,
+    )
+    tl.store(
+        packed_ptr + offs_m[:, None] * cik + offs_n[None, :],
+        values,
+        mask=mask_m[:, None] & mask_n[None, :],
+    )
+
+
+@libentry()
+@libtuner(
+    configs=runtime.get_tuned_config("mm"),
+    key=["M", "N", "K", "DTYPE_ID"],
+    strategy=["align32", "align32", "align32", "default"],
+    warmup=5,
+    rep=10,
+)
+@triton.jit
+def _conv_wgrad2d_stride2_p5_flat_ptr_mm_tf32_kernel(
+    loss_ptr,
+    packed_ptr,
+    out_ptr,
+    M,
+    N,
+    K,
+    DTYPE_ID: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+    GROUP_M: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    num_pid_m = tl.cdiv(M, BLOCK_M)
+    num_pid_n = tl.cdiv(N, BLOCK_N)
+    num_pid_in_group = GROUP_M * num_pid_n
+    group_id = pid // num_pid_in_group
+    first_pid_m = group_id * GROUP_M
+    group_size_m = tl.minimum(num_pid_m - first_pid_m, GROUP_M)
+    pid_in_group = pid - group_id * num_pid_in_group
+    pid_m = first_pid_m + (pid_in_group % group_size_m)
+    pid_n = pid_in_group // group_size_m
+
+    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_k = tl.arange(0, BLOCK_K)
+    loss_ptrs = loss_ptr + offs_m[:, None] * K + offs_k[None, :]
+    packed_ptrs = packed_ptr + offs_k[:, None] * N + offs_n[None, :]
+
+    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+    for k_start in tl.range(0, K, BLOCK_K):
+        k_offsets = k_start + offs_k
+        loss = tl.load(
+            loss_ptrs,
+            mask=(offs_m[:, None] < M) & (k_offsets[None, :] < K),
+            other=0.0,
+        )
+        packed = tl.load(
+            packed_ptrs,
+            mask=(k_offsets[:, None] < K) & (offs_n[None, :] < N),
+            other=0.0,
+        )
+        acc += tl.dot(loss, packed, input_precision="tf32")
+        loss_ptrs += BLOCK_K
+        packed_ptrs += BLOCK_K * N
+
+    tl.store(
+        out_ptr + offs_m[:, None] * N + offs_n[None, :],
+        acc.to(out_ptr.dtype.element_ty),
+        mask=(offs_m[:, None] < M) & (offs_n[None, :] < N),
+    )
+
+
+@triton.jit
 def _conv_wgrad2d_reduce_kernel(
     partial_ptr,
     out_ptr,
@@ -4963,14 +5266,9 @@ def conv_wgrad(
                     )
                     return output
 
-                if exact_perf_1x1 and image.dtype in (
-                    torch.float16,
-                    torch.bfloat16,
-                ):
-                    # v7: keep the no-div exact mapping, but use wider C_in
-                    # tiles and 32 splits. fp16 can store lowp partials; bf16
-                    # needs fp32 partials to stay within the reference
-                    # tolerance.
+                if exact_perf_1x1 and image.dtype == torch.bfloat16:
+                    # Keep the no-div exact mapping for bf16, using
+                    # fp32 partials to stay within the reference tolerance.
                     num_splits = 32
                     partial_dtype = (
                         image.dtype
@@ -5016,13 +5314,9 @@ def conv_wgrad(
                         num_stages=3,
                     )
 
-                    reduce_block_co = (
-                        8 if image.dtype == torch.bfloat16 else 16
-                    )
-                    reduce_block_ci = (
-                        16 if image.dtype == torch.bfloat16 else 64
-                    )
-                    reduce_warps = 4 if image.dtype == torch.bfloat16 else 8
+                    reduce_block_co = 8
+                    reduce_block_ci = 16
+                    reduce_warps = 4
 
                     def grid_reduce_nodiv_v8(meta):
                         return (
@@ -5162,6 +5456,218 @@ def conv_wgrad(
                 and dilation_tuple == (1, 1)
                 and not filter_reverse
             )
+            exact_perf_stem_stride2 = (
+                groups == 1
+                and n == 1
+                and image_h == 640
+                and image_w == 640
+                and loss_h == 320
+                and loss_w == 320
+                and c_in == 3
+                and c_out in (16, 32, 64, 96)
+                and kh == 3
+                and kw == 3
+                and stride_tuple == (2, 2)
+                and pre == (1, 1)
+                and post == (1, 1)
+                and dilation_tuple == (1, 1)
+                and not filter_reverse
+            )
+            if exact_perf_stem_stride2:
+                num_splits = 64
+                block_co = 16
+                block_n = 32
+                block_m = 128
+                k_elems = kh * kw
+                cik = cin_per_group * k_elems
+                partial = workspace_empty(
+                    (
+                        "2d_stem_s2_col_cin3_v1",
+                        num_splits,
+                        c_out,
+                        cik,
+                    ),
+                    (num_splits, c_out, cik),
+                    torch.float32,
+                )
+
+                def grid_stem_s2_col_v1(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cik, block_n),
+                        num_splits * groups,
+                    )
+
+                _conv_wgrad2d_col_split_kernel[grid_stem_s2_col_v1](
+                    image,
+                    loss,
+                    partial,
+                    m,
+                    image_h,
+                    image_w,
+                    loss_h,
+                    loss_w,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    image.stride(0),
+                    image.stride(1),
+                    image.stride(2),
+                    image.stride(3),
+                    loss.stride(0),
+                    loss.stride(1),
+                    loss.stride(2),
+                    loss.stride(3),
+                    stride_tuple[0],
+                    stride_tuple[1],
+                    pre[0],
+                    pre[1],
+                    dilation_tuple[0],
+                    dilation_tuple[1],
+                    kh,
+                    kw,
+                    filter_reverse,
+                    num_splits,
+                    BLOCK_CO=block_co,
+                    BLOCK_N=block_n,
+                    BLOCK_M=block_m,
+                    num_warps=4,
+                    num_stages=3,
+                )
+
+                def grid_stem_s2_col_reduce_v1(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cik, block_n),
+                        groups,
+                    )
+
+                _conv_wgrad2d_col_reduce_kernel[grid_stem_s2_col_reduce_v1](
+                    partial,
+                    output,
+                    c_out,
+                    cin_per_group,
+                    cout_per_group,
+                    output.stride(0),
+                    output.stride(1),
+                    output.stride(2),
+                    output.stride(3),
+                    kh,
+                    kw,
+                    num_splits,
+                    BLOCK_CO=block_co,
+                    BLOCK_N=block_n,
+                    num_warps=4,
+                    num_stages=1,
+                )
+                return output
+            exact_perf_p5_stride2 = (
+                groups == 1
+                and n == 1
+                and image_h == 40
+                and image_w == 40
+                and loss_h == 20
+                and loss_w == 20
+                and c_in in (256, 512, 768)
+                and c_out in (512, 768)
+                and kh == 3
+                and kw == 3
+                and stride_tuple == (2, 2)
+                and pre == (1, 1)
+                and post == (1, 1)
+                and dilation_tuple == (1, 1)
+                and not filter_reverse
+            )
+            if exact_perf_p5_stride2:
+                use_packed_mm_p5 = output.is_contiguous()
+                if use_packed_mm_p5:
+                    cik = cin_per_group * 9
+                    packed = workspace_empty(
+                        ("2d_p5_s2_pack_image_v1", cik),
+                        (400, cik),
+                        image.dtype,
+                    )
+                    pack_block_m = 16
+                    pack_block_n = 256
+
+                    def grid_p5_s2_pack_image_v1(meta):
+                        return (
+                            triton.cdiv(400, pack_block_m),
+                            triton.cdiv(cik, pack_block_n),
+                        )
+
+                    _conv_wgrad2d_stride2_p5_pack_image_kernel[
+                        grid_p5_s2_pack_image_v1
+                    ](
+                        image,
+                        packed,
+                        cin_per_group,
+                        image.stride(1),
+                        image.stride(2),
+                        image.stride(3),
+                        BLOCK_M=pack_block_m,
+                        BLOCK_N=pack_block_n,
+                        num_warps=4,
+                        num_stages=3,
+                    )
+
+                    def grid_p5_s2_flat_ptr_mm_tf32_v2(meta):
+                        return (
+                            triton.cdiv(cout_per_group, meta["BLOCK_M"])
+                            * triton.cdiv(cik, meta["BLOCK_N"]),
+                        )
+
+                    _conv_wgrad2d_stride2_p5_flat_ptr_mm_tf32_kernel[
+                        grid_p5_s2_flat_ptr_mm_tf32_v2
+                    ](
+                        loss,
+                        packed,
+                        output,
+                        cout_per_group,
+                        cik,
+                        400,
+                        dtype_id,
+                    )
+                    return output
+
+                block_co = 16
+                block_ci = 32
+                block_k_main = 64
+                block_k_tail = 16
+
+                def grid_p5_s2_row4_tail_direct_v4(meta):
+                    return (
+                        triton.cdiv(cout_per_group, block_co)
+                        * triton.cdiv(cin_per_group, block_ci),
+                        kh,
+                    )
+
+                _conv_wgrad2d_stride2_p5_row4_tail_direct_kernel[
+                    grid_p5_s2_row4_tail_direct_v4
+                ](
+                    image,
+                    loss,
+                    output,
+                    cout_per_group,
+                    cin_per_group,
+                    image.stride(1),
+                    image.stride(2),
+                    image.stride(3),
+                    loss.stride(1),
+                    loss.stride(2),
+                    loss.stride(3),
+                    output.stride(0),
+                    output.stride(1),
+                    output.stride(2),
+                    output.stride(3),
+                    BLOCK_CO=block_co,
+                    BLOCK_CI=block_ci,
+                    BLOCK_K_MAIN=block_k_main,
+                    BLOCK_K_TAIL=block_k_tail,
+                    num_warps=4,
+                    num_stages=2,
+                )
+                return output
             if (
                 (not output.is_contiguous())
                 and (exact_perf_stride1_3x3 or exact_perf_stride2)
@@ -5554,11 +6060,7 @@ def conv_wgrad(
                 num_splits = n
                 block_co = 16
                 block_ci = 32
-                partial_dtype = (
-                    image.dtype
-                    if image.dtype == torch.float16
-                    else torch.float32
-                )
+                partial_dtype = image.dtype
                 partial = workspace_empty(
                     (
                         "2d_stride2_row4_v1",

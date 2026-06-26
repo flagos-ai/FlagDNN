@@ -340,8 +340,8 @@ sdpa_decode:
     stages:
       - 2
       - 3
-sdpa_backward_fused_atomic:
-  # Atomic fused tile fast path for small dense non-causal backward cases.
+sdpa_backward_fused_atomic_d32:
+  # Atomic fused tile fast path for dense non-causal D32 backward cases.
   - gen: true
     param_map:
       META:
@@ -351,15 +351,101 @@ sdpa_backward_fused_atomic:
       num_warps: warps
       num_stages: stages
     block_m:
-      - 32
+      - 64
     block_n:
+      - 64
+    block_d:
       - 32
+    warps:
+      - 4
+    stages:
+      - 2
+
+sdpa_backward_fused_atomic:
+  # Atomic fused tile fast path for dense non-causal D64 backward cases.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+        BLOCK_D: block_d
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+    block_n:
+      - 64
     block_d:
       - 64
     warps:
       - 4
     stages:
       - 2
+
+sdpa_backward_fused_atomic_d128:
+  # Atomic fused tile fast path for dense non-causal D128 backward cases.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+        BLOCK_D: block_d
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+    block_n:
+      - 64
+    block_d:
+      - 128
+    warps:
+      - 4
+    stages:
+      - 2
+
+
+sdpa_backward_dense_mloop_d64:
+  # Dense non-causal D64 backward: dQ direct write, dK/dV atomic.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+        BLOCK_D: block_d
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+    block_n:
+      - 64
+    block_d:
+      - 64
+    warps:
+      - 4
+    stages:
+      - 3
+
+sdpa_backward_dense_mloop_d128:
+  # Dense non-causal D128 backward: dQ direct write, dK/dV atomic.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+        BLOCK_D: block_d
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+    block_n:
+      - 64
+    block_d:
+      - 128
+    warps:
+      - 4
+    stages:
+      - 2
+
 sdpa_backward_fused_atomic_causal:
   # Atomic fused tile fast path for small top-left causal backward cases.
   - gen: true
@@ -420,6 +506,63 @@ sdpa_backward_fused_atomic_gqa_causal_d128:
       - 4
     stages:
       - 2
+sdpa_backward_gqa_dq_delta_d128:
+  # GQA D128 top-left causal backward dQ path that also stores row delta.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+        BLOCK_D: block_d
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+    block_n:
+      - 64
+    block_d:
+      - 128
+    warps:
+      - 4
+    stages:
+      - 2
+sdpa_backward_mloop_causal_d128:
+  # M-loop D128 top-left causal backward: dQ direct write, dK/dV atomic.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+        BLOCK_D: block_d
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 64
+    block_n:
+      - 64
+    block_d:
+      - 128
+    warps:
+      - 4
+    stages:
+      - 2
+sdpa_backward_decode_d128:
+  # SQ=1 non-GQA D128 backward: dK/dV direct store and dQ atomic accumulation.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_N: block_n
+        BLOCK_D: block_d
+      num_warps: warps
+      num_stages: stages
+    block_n:
+      - 256
+    block_d:
+      - 128
+    warps:
+      - 8
+    stages:
+      - 2
 sdpa_backward_zero_delta:
   # Combined output zeroing and row delta precompute for D128 causal fused backward.
   - gen: true
@@ -431,13 +574,13 @@ sdpa_backward_zero_delta:
       num_warps: warps
       num_stages: stages
     block_zero:
-      - 512
+      - 1024
     block_m:
-      - 32
+      - 64
     block_d:
       - 128
     warps:
-      - 8
+      - 4
     stages:
       - 2
 sdpa_backward_dq:
@@ -1695,6 +1838,77 @@ matmul:
     stages:
       - 3
 
+
+
+matmul_persistent:
+  - gen: true
+    param_map:
+      META: meta
+      num_warps: warps
+      num_stages: stages
+    meta:
+      - BLOCK_M: 128
+        BLOCK_N: 256
+        BLOCK_K: 64
+        GROUP_M: 16
+    warps:
+      - 8
+    stages:
+      - 4
+
+matmul_fp32_direct:
+  - gen: true
+    param_map:
+      META: meta
+      num_warps: warps
+      num_stages: stages
+    meta:
+      - BLOCK_M: 256
+        BLOCK_N: 128
+        BLOCK_K: 64
+        GROUP_M: 1
+      - BLOCK_M: 256
+        BLOCK_N: 128
+        BLOCK_K: 64
+        GROUP_M: 4
+    warps:
+      - 16
+    stages:
+      - 3
+  - gen: true
+    param_map:
+      META: meta
+      num_warps: warps
+      num_stages: stages
+    meta:
+      - BLOCK_M: 256
+        BLOCK_N: 128
+        BLOCK_K: 32
+        GROUP_M: 1
+      - BLOCK_M: 128
+        BLOCK_N: 256
+        BLOCK_K: 32
+        GROUP_M: 4
+    warps:
+      - 8
+      - 16
+    stages:
+      - 4
+  - gen: true
+    param_map:
+      META: meta
+      num_warps: warps
+      num_stages: stages
+    meta:
+      - BLOCK_M: 128
+        BLOCK_N: 256
+        BLOCK_K: 64
+        GROUP_M: 4
+    warps:
+      - 8
+    stages:
+      - 3
+
 mm:
   - META:
       BLOCK_M: 16
@@ -2372,6 +2586,7 @@ conv_dgrad_2d_stride2_pad1_3x3_mci:
     warps: [8]
     stages: [3]
 
+
 conv_dgrad_2d_stride2_pad1_3x3_packed:
   - gen: true
     param_map:
@@ -2387,7 +2602,7 @@ conv_dgrad_2d_stride2_pad1_3x3_packed:
     warps: [4]
     stages: [3]
 
-conv_dgrad_2d_stride2_pad1_3x3_tile4:
+conv_dgrad_2d_stride2_pad1_3x3_packed_mci:
   - gen: true
     param_map:
       META:
@@ -2396,9 +2611,24 @@ conv_dgrad_2d_stride2_pad1_3x3_tile4:
         BLOCK_CO: block_co
       num_warps: warps
       num_stages: stages
-    block_m: [16, 32]
-    block_ci: [16]
-    block_co: [32, 64, 128]
+    block_m: [16, 32, 64]
+    block_ci: [32, 64]
+    block_co: [128, 256]
+    warps: [4]
+    stages: [3]
+
+conv_dgrad_2d_stride2_pad1_3x3_tile2w:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [32]
+    block_ci: [64]
+    block_co: [128]
     warps: [4]
     stages: [3]
 
@@ -2410,11 +2640,56 @@ conv_dgrad_2d_stride2_pad1_3x3_tile4:
         BLOCK_CO: block_co
       num_warps: warps
       num_stages: stages
-    block_m: [16]
-    block_ci: [16]
-    block_co: [32, 64]
-    warps: [2]
+    block_m: [32]
+    block_ci: [64]
+    block_co: [64, 128]
+    warps: [4]
+    stages: [2]
+
+
+conv_dgrad_2d_stride2_pad1_3x3_tile4:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [32]
+    block_ci: [16, 32]
+    block_co: [64, 128]
+    warps: [4]
     stages: [3]
+
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [64]
+    block_ci: [4, 8]
+    block_co: [64, 128]
+    warps: [4]
+    stages: [3]
+
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_CI: block_ci
+        BLOCK_CO: block_co
+      num_warps: warps
+      num_stages: stages
+    block_m: [64]
+    block_ci: [8, 16]
+    block_co: [64]
+    warps: [4]
+    stages: [2, 3]
+
 
 conv_dgrad_3d:
   - gen: true

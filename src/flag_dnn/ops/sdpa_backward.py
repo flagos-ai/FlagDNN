@@ -823,13 +823,27 @@ def _zero_contiguous_kernel(ptr, n_elements, BLOCK: tl.constexpr):
 
 
 @triton.jit
+def _zero_two_contiguous_kernel(
+    b_ptr,
+    c_ptr,
+    b_elements: tl.constexpr,
+    c_elements: tl.constexpr,
+    BLOCK: tl.constexpr,
+):
+    offsets = tle.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+    zeros = tl.zeros((BLOCK,), dtype=tl.float32)
+    tl.store(b_ptr + offsets, zeros, mask=offsets < b_elements)
+    tl.store(c_ptr + offsets, zeros, mask=offsets < c_elements)
+
+
+@triton.jit
 def _zero_three_contiguous_kernel(
     a_ptr,
     b_ptr,
     c_ptr,
-    a_elements,
-    b_elements,
-    c_elements,
+    a_elements: tl.constexpr,
+    b_elements: tl.constexpr,
+    c_elements: tl.constexpr,
     BLOCK: tl.constexpr,
 ):
     offsets = tle.program_id(0) * BLOCK + tl.arange(0, BLOCK)
@@ -847,12 +861,12 @@ def _zero_three_and_delta_kernel(
     o_ptr,
     do_ptr,
     delta_ptr,
-    a_elements,
-    b_elements,
-    c_elements,
-    total_rows,
+    a_elements: tl.constexpr,
+    b_elements: tl.constexpr,
+    c_elements: tl.constexpr,
+    total_rows: tl.constexpr,
     HQ: tl.constexpr,
-    SQ,
+    SQ: tl.constexpr,
     stride_ob: tl.constexpr,
     stride_oh: tl.constexpr,
     stride_om: tl.constexpr,
@@ -875,41 +889,42 @@ def _zero_three_and_delta_kernel(
     tl.store(b_ptr + offsets, zeros, mask=offsets < b_elements)
     tl.store(c_ptr + offsets, zeros, mask=offsets < c_elements)
 
-    row_ids = pid * BLOCK_M + tl.arange(0, BLOCK_M)
-    offs_d = tl.arange(0, BLOCK_D)
-    valid_rows = row_ids < total_rows
-    rows_per_batch = HQ * SQ
-    off_b = row_ids // rows_per_batch
-    rem = row_ids - off_b * rows_per_batch
-    off_h = rem // SQ
-    offs_m = rem - off_h * SQ
-    o = tl.load(
-        o_ptr
-        + off_b[:, None] * stride_ob
-        + off_h[:, None] * stride_oh
-        + offs_m[:, None] * stride_om
-        + offs_d[None, :] * stride_od,
-        mask=valid_rows[:, None] & (offs_d[None, :] < BLOCK_D),
-        other=0.0,
-    ).to(tl.float32)
-    do = tl.load(
-        do_ptr
-        + off_b[:, None] * stride_dob
-        + off_h[:, None] * stride_doh
-        + offs_m[:, None] * stride_dom
-        + offs_d[None, :] * stride_dod,
-        mask=valid_rows[:, None] & (offs_d[None, :] < BLOCK_D),
-        other=0.0,
-    ).to(tl.float32)
-    delta = tl.sum(o * do, axis=1)
-    tl.store(
-        delta_ptr
-        + off_b * stride_delta_b
-        + off_h * stride_delta_h
-        + offs_m * stride_delta_m,
-        delta,
-        mask=valid_rows,
-    )
+    if pid * BLOCK_M < total_rows:
+        row_ids = pid * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_d = tl.arange(0, BLOCK_D)
+        valid_rows = row_ids < total_rows
+        rows_per_batch = HQ * SQ
+        off_b = row_ids // rows_per_batch
+        rem = row_ids - off_b * rows_per_batch
+        off_h = rem // SQ
+        offs_m = rem - off_h * SQ
+        o = tl.load(
+            o_ptr
+            + off_b[:, None] * stride_ob
+            + off_h[:, None] * stride_oh
+            + offs_m[:, None] * stride_om
+            + offs_d[None, :] * stride_od,
+            mask=valid_rows[:, None] & (offs_d[None, :] < BLOCK_D),
+            other=0.0,
+        ).to(tl.float32)
+        do = tl.load(
+            do_ptr
+            + off_b[:, None] * stride_dob
+            + off_h[:, None] * stride_doh
+            + offs_m[:, None] * stride_dom
+            + offs_d[None, :] * stride_dod,
+            mask=valid_rows[:, None] & (offs_d[None, :] < BLOCK_D),
+            other=0.0,
+        ).to(tl.float32)
+        delta = tl.sum(o * do, axis=1)
+        tl.store(
+            delta_ptr
+            + off_b * stride_delta_b
+            + off_h * stride_delta_h
+            + offs_m * stride_delta_m,
+            delta,
+            mask=valid_rows,
+        )
 
 
 @triton.jit
@@ -2295,6 +2310,749 @@ def _sdpa_bwd_fused_atomic_gqa_causal_tri_kernel(
     )
 
 
+@triton.jit
+def _sdpa_bwd_mloop_causal_d128_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    o_ptr,
+    do_ptr,
+    stats_ptr,
+    dq_ptr,
+    dk_ptr,
+    dv_ptr,
+    attn_scale,
+    HQ: tl.constexpr,
+    Q_PER: tl.constexpr,
+    SQ: tl.constexpr,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_dob: tl.constexpr,
+    stride_doh: tl.constexpr,
+    stride_dom: tl.constexpr,
+    stride_dod: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
+    stride_dqb: tl.constexpr,
+    stride_dqh: tl.constexpr,
+    stride_dqm: tl.constexpr,
+    stride_dqd: tl.constexpr,
+    stride_dkb: tl.constexpr,
+    stride_dkh: tl.constexpr,
+    stride_dkn: tl.constexpr,
+    stride_dkd: tl.constexpr,
+    stride_dvb: tl.constexpr,
+    stride_dvh: tl.constexpr,
+    stride_dvn: tl.constexpr,
+    stride_dvd: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+):
+    pid_m = tle.program_id(0)
+    pid_bh = tle.program_id(1)
+    off_b = pid_bh // HQ
+    off_h = pid_bh % HQ
+    off_kh = off_h // Q_PER
+    start_m = pid_m * BLOCK_M
+    rows = start_m + tl.arange(0, BLOCK_M)
+    cols_base = tl.arange(0, BLOCK_N)
+    offs_d = tl.arange(0, BLOCK_D)
+
+    q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
+    k_base = k_ptr + off_b * stride_kb + off_kh * stride_kh
+    v_base = v_ptr + off_b * stride_vb + off_kh * stride_vh
+    o_base = o_ptr + off_b * stride_ob + off_h * stride_oh
+    do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
+    stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
+
+    q_tile = tl.load(
+        q_base + rows[:, None] * stride_qm + offs_d[None, :] * stride_qd,
+        eviction_policy="evict_last",
+    )
+    do_tile = tl.load(
+        do_base + rows[:, None] * stride_dom + offs_d[None, :] * stride_dod,
+        eviction_policy="evict_last",
+    )
+    o_tile = tl.load(
+        o_base + rows[:, None] * stride_om + offs_d[None, :] * stride_od,
+        eviction_policy="evict_last",
+    ).to(tl.float32)
+    delta = tl.sum(o_tile * do_tile.to(tl.float32), axis=1)
+    stats = tl.load(
+        stats_base + rows * stride_sm, eviction_policy="evict_last"
+    ).to(tl.float32)
+    stats_log2 = stats * 1.4426950408889634
+    dq = tl.zeros((BLOCK_M, BLOCK_D), dtype=tl.float32)
+
+    for start_n in tl.range(0, start_m + BLOCK_M, BLOCK_N):
+        cols = start_n + cols_base
+        k_tile = tl.load(
+            k_base + cols[:, None] * stride_kn + offs_d[None, :] * stride_kd,
+            eviction_policy="evict_last",
+        )
+        v_tile = tl.load(
+            v_base + cols[:, None] * stride_vn + offs_d[None, :] * stride_vd,
+            eviction_policy="evict_last",
+        )
+        score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * (
+            attn_scale * 1.4426950408889634
+        )
+        if start_n + BLOCK_N <= start_m:
+            p = tl.exp2(score - stats_log2[:, None])
+        else:
+            valid = cols[None, :] <= rows[:, None]
+            p = tl.where(valid, tl.exp2(score - stats_log2[:, None]), 0.0)
+        dp = tl.dot(do_tile, tl.trans(v_tile)).to(tl.float32)
+        ds = p * (dp - delta[:, None])
+        dq += tl.dot(ds.to(k_tile.dtype), k_tile)
+        dk = tl.dot(tl.trans(ds).to(q_tile.dtype), q_tile) * attn_scale
+        dv = tl.dot(tl.trans(p).to(do_tile.dtype), do_tile)
+        tl.atomic_add(
+            dk_ptr
+            + off_b * stride_dkb
+            + off_kh * stride_dkh
+            + cols[:, None] * stride_dkn
+            + offs_d[None, :] * stride_dkd,
+            dk.to(dk_ptr.dtype.element_ty),
+            sem="relaxed",
+        )
+        tl.atomic_add(
+            dv_ptr
+            + off_b * stride_dvb
+            + off_kh * stride_dvh
+            + cols[:, None] * stride_dvn
+            + offs_d[None, :] * stride_dvd,
+            dv.to(dv_ptr.dtype.element_ty),
+            sem="relaxed",
+        )
+
+    tl.store(
+        dq_ptr
+        + off_b * stride_dqb
+        + off_h * stride_dqh
+        + rows[:, None] * stride_dqm
+        + offs_d[None, :] * stride_dqd,
+        (dq * attn_scale).to(dq_ptr.dtype.element_ty),
+    )
+
+
+@triton.jit
+def _sdpa_bwd_dense_mloop_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    o_ptr,
+    do_ptr,
+    stats_ptr,
+    dq_ptr,
+    dk_ptr,
+    dv_ptr,
+    attn_scale,
+    HQ: tl.constexpr,
+    SQ: tl.constexpr,
+    SKV: tl.constexpr,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_dob: tl.constexpr,
+    stride_doh: tl.constexpr,
+    stride_dom: tl.constexpr,
+    stride_dod: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
+    stride_dqb: tl.constexpr,
+    stride_dqh: tl.constexpr,
+    stride_dqm: tl.constexpr,
+    stride_dqd: tl.constexpr,
+    stride_dkb: tl.constexpr,
+    stride_dkh: tl.constexpr,
+    stride_dkn: tl.constexpr,
+    stride_dkd: tl.constexpr,
+    stride_dvb: tl.constexpr,
+    stride_dvh: tl.constexpr,
+    stride_dvn: tl.constexpr,
+    stride_dvd: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+):
+    pid_m = tle.program_id(0)
+    pid_bh = tle.program_id(1)
+    off_b = pid_bh // HQ
+    off_h = pid_bh % HQ
+    start_m = pid_m * BLOCK_M
+    rows = start_m + tl.arange(0, BLOCK_M)
+    cols_base = tl.arange(0, BLOCK_N)
+    offs_d = tl.arange(0, BLOCK_D)
+
+    q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
+    k_base = k_ptr + off_b * stride_kb + off_h * stride_kh
+    v_base = v_ptr + off_b * stride_vb + off_h * stride_vh
+    o_base = o_ptr + off_b * stride_ob + off_h * stride_oh
+    do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
+    stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
+
+    q_tile = tl.load(
+        q_base + rows[:, None] * stride_qm + offs_d[None, :] * stride_qd,
+        eviction_policy="evict_last",
+    )
+    do_tile = tl.load(
+        do_base + rows[:, None] * stride_dom + offs_d[None, :] * stride_dod,
+        eviction_policy="evict_last",
+    )
+    o_tile = tl.load(
+        o_base + rows[:, None] * stride_om + offs_d[None, :] * stride_od,
+        eviction_policy="evict_last",
+    ).to(tl.float32)
+    delta = tl.sum(o_tile * do_tile.to(tl.float32), axis=1)
+    stats = tl.load(
+        stats_base + rows * stride_sm, eviction_policy="evict_last"
+    ).to(tl.float32)
+    stats_log2 = stats * 1.4426950408889634
+    dq = tl.zeros((BLOCK_M, BLOCK_D), dtype=tl.float32)
+
+    for start_n in tl.range(0, SKV, BLOCK_N):
+        cols = start_n + cols_base
+        k_tile = tl.load(
+            k_base + cols[:, None] * stride_kn + offs_d[None, :] * stride_kd,
+            eviction_policy="evict_last",
+        )
+        v_tile = tl.load(
+            v_base + cols[:, None] * stride_vn + offs_d[None, :] * stride_vd,
+            eviction_policy="evict_last",
+        )
+        score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * (
+            attn_scale * 1.4426950408889634
+        )
+        p = tl.exp2(score - stats_log2[:, None])
+        dp = tl.dot(do_tile, tl.trans(v_tile)).to(tl.float32)
+        ds = p * (dp - delta[:, None])
+        dq += tl.dot(ds.to(k_tile.dtype), k_tile)
+        dk = tl.dot(tl.trans(ds).to(q_tile.dtype), q_tile) * attn_scale
+        dv = tl.dot(tl.trans(p).to(do_tile.dtype), do_tile)
+        tl.atomic_add(
+            dk_ptr
+            + off_b * stride_dkb
+            + off_h * stride_dkh
+            + cols[:, None] * stride_dkn
+            + offs_d[None, :] * stride_dkd,
+            dk.to(dk_ptr.dtype.element_ty),
+            sem="relaxed",
+        )
+        tl.atomic_add(
+            dv_ptr
+            + off_b * stride_dvb
+            + off_h * stride_dvh
+            + cols[:, None] * stride_dvn
+            + offs_d[None, :] * stride_dvd,
+            dv.to(dv_ptr.dtype.element_ty),
+            sem="relaxed",
+        )
+
+    tl.store(
+        dq_ptr
+        + off_b * stride_dqb
+        + off_h * stride_dqh
+        + rows[:, None] * stride_dqm
+        + offs_d[None, :] * stride_dqd,
+        (dq * attn_scale).to(dq_ptr.dtype.element_ty),
+    )
+
+
+@triton.jit
+def _sdpa_bwd_gqa_dq_delta_causal_d128_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    do_ptr,
+    stats_ptr,
+    delta_ptr,
+    dq_ptr,
+    attn_scale,
+    HQ: tl.constexpr,
+    Q_PER: tl.constexpr,
+    SQ: tl.constexpr,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_dob: tl.constexpr,
+    stride_doh: tl.constexpr,
+    stride_dom: tl.constexpr,
+    stride_dod: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
+    stride_delta_b: tl.constexpr,
+    stride_delta_h: tl.constexpr,
+    stride_delta_m: tl.constexpr,
+    stride_dqb: tl.constexpr,
+    stride_dqh: tl.constexpr,
+    stride_dqm: tl.constexpr,
+    stride_dqd: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+):
+    pid_m = tle.program_id(0)
+    pid_bh = tle.program_id(1)
+    off_b = pid_bh // HQ
+    off_h = pid_bh % HQ
+    off_kh = off_h // Q_PER
+    start_m = pid_m * BLOCK_M
+    rows = start_m + tl.arange(0, BLOCK_M)
+    cols_base = tl.arange(0, BLOCK_N)
+    offs_d = tl.arange(0, BLOCK_D)
+    q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
+    k_base = k_ptr + off_b * stride_kb + off_kh * stride_kh
+    v_base = v_ptr + off_b * stride_vb + off_kh * stride_vh
+    do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
+    stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
+    delta_base = delta_ptr + off_b * stride_delta_b + off_h * stride_delta_h
+    q_tile = tl.load(
+        q_base + rows[:, None] * stride_qm + offs_d[None, :] * stride_qd,
+        eviction_policy="evict_last",
+    )
+    do_tile = tl.load(
+        do_base + rows[:, None] * stride_dom + offs_d[None, :] * stride_dod,
+        eviction_policy="evict_last",
+    )
+    delta = tl.load(
+        delta_base + rows * stride_delta_m, eviction_policy="evict_last"
+    ).to(tl.float32)
+    stats = tl.load(
+        stats_base + rows * stride_sm, eviction_policy="evict_last"
+    ).to(tl.float32)
+    stats_log2 = stats * 1.4426950408889634
+    dq = tl.zeros((BLOCK_M, BLOCK_D), dtype=tl.float32)
+    for start_n in tl.range(0, start_m + BLOCK_M, BLOCK_N):
+        cols = start_n + cols_base
+        k_tile = tl.load(
+            k_base + cols[:, None] * stride_kn + offs_d[None, :] * stride_kd,
+            eviction_policy="evict_last",
+        )
+        v_tile = tl.load(
+            v_base + cols[:, None] * stride_vn + offs_d[None, :] * stride_vd,
+            eviction_policy="evict_last",
+        )
+        score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * (
+            attn_scale * 1.4426950408889634
+        )
+        if start_n + BLOCK_N <= start_m:
+            p = tl.exp2(score - stats_log2[:, None])
+        else:
+            valid = cols[None, :] <= rows[:, None]
+            p = tl.where(valid, tl.exp2(score - stats_log2[:, None]), 0.0)
+        dp = tl.dot(do_tile, tl.trans(v_tile)).to(tl.float32)
+        ds = p * (dp - delta[:, None])
+        dq += tl.dot(ds.to(k_tile.dtype), k_tile)
+    tl.store(
+        dq_ptr
+        + off_b * stride_dqb
+        + off_h * stride_dqh
+        + rows[:, None] * stride_dqm
+        + offs_d[None, :] * stride_dqd,
+        (dq * attn_scale).to(dq_ptr.dtype.element_ty),
+    )
+
+
+@triton.jit
+def _sdpa_bwd_gqa_dq_store_delta_causal_d128_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    o_ptr,
+    do_ptr,
+    stats_ptr,
+    delta_ptr,
+    dq_ptr,
+    attn_scale,
+    HQ: tl.constexpr,
+    Q_PER: tl.constexpr,
+    SQ: tl.constexpr,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_dob: tl.constexpr,
+    stride_doh: tl.constexpr,
+    stride_dom: tl.constexpr,
+    stride_dod: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
+    stride_delta_b: tl.constexpr,
+    stride_delta_h: tl.constexpr,
+    stride_delta_m: tl.constexpr,
+    stride_dqb: tl.constexpr,
+    stride_dqh: tl.constexpr,
+    stride_dqm: tl.constexpr,
+    stride_dqd: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+):
+    pid_m = tle.program_id(0)
+    pid_bh = tle.program_id(1)
+    off_b = pid_bh // HQ
+    off_h = pid_bh % HQ
+    off_kh = off_h // Q_PER
+    start_m = pid_m * BLOCK_M
+    rows = start_m + tl.arange(0, BLOCK_M)
+    cols_base = tl.arange(0, BLOCK_N)
+    offs_d = tl.arange(0, BLOCK_D)
+    q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
+    k_base = k_ptr + off_b * stride_kb + off_kh * stride_kh
+    v_base = v_ptr + off_b * stride_vb + off_kh * stride_vh
+    o_base = o_ptr + off_b * stride_ob + off_h * stride_oh
+    do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
+    stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
+    delta_base = delta_ptr + off_b * stride_delta_b + off_h * stride_delta_h
+    q_tile = tl.load(
+        q_base + rows[:, None] * stride_qm + offs_d[None, :] * stride_qd,
+        eviction_policy="evict_last",
+    )
+    do_tile = tl.load(
+        do_base + rows[:, None] * stride_dom + offs_d[None, :] * stride_dod,
+        eviction_policy="evict_last",
+    )
+    o_tile = tl.load(
+        o_base + rows[:, None] * stride_om + offs_d[None, :] * stride_od,
+        eviction_policy="evict_last",
+    ).to(tl.float32)
+    delta = tl.sum(o_tile * do_tile.to(tl.float32), axis=1)
+    tl.store(delta_base + rows * stride_delta_m, delta)
+    stats = tl.load(
+        stats_base + rows * stride_sm, eviction_policy="evict_last"
+    ).to(tl.float32)
+    stats_log2 = stats * 1.4426950408889634
+    dq = tl.zeros((BLOCK_M, BLOCK_D), dtype=tl.float32)
+    for start_n in tl.range(0, start_m + BLOCK_M, BLOCK_N):
+        cols = start_n + cols_base
+        k_tile = tl.load(
+            k_base + cols[:, None] * stride_kn + offs_d[None, :] * stride_kd,
+            eviction_policy="evict_last",
+        )
+        v_tile = tl.load(
+            v_base + cols[:, None] * stride_vn + offs_d[None, :] * stride_vd,
+            eviction_policy="evict_last",
+        )
+        score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * (
+            attn_scale * 1.4426950408889634
+        )
+        if start_n + BLOCK_N <= start_m:
+            p = tl.exp2(score - stats_log2[:, None])
+        else:
+            valid = cols[None, :] <= rows[:, None]
+            p = tl.where(valid, tl.exp2(score - stats_log2[:, None]), 0.0)
+        dp = tl.dot(do_tile, tl.trans(v_tile)).to(tl.float32)
+        ds = p * (dp - delta[:, None])
+        dq += tl.dot(ds.to(k_tile.dtype), k_tile)
+    tl.store(
+        dq_ptr
+        + off_b * stride_dqb
+        + off_h * stride_dqh
+        + rows[:, None] * stride_dqm
+        + offs_d[None, :] * stride_dqd,
+        (dq * attn_scale).to(dq_ptr.dtype.element_ty),
+    )
+
+
+@triton.jit
+def _sdpa_bwd_gqa_dkdv_atomic_causal_d128_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    do_ptr,
+    stats_ptr,
+    delta_ptr,
+    dk_ptr,
+    dv_ptr,
+    attn_scale,
+    HQ: tl.constexpr,
+    Q_PER: tl.constexpr,
+    SQ: tl.constexpr,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_dob: tl.constexpr,
+    stride_doh: tl.constexpr,
+    stride_dom: tl.constexpr,
+    stride_dod: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
+    stride_delta_b: tl.constexpr,
+    stride_delta_h: tl.constexpr,
+    stride_delta_m: tl.constexpr,
+    stride_dkb: tl.constexpr,
+    stride_dkh: tl.constexpr,
+    stride_dkn: tl.constexpr,
+    stride_dkd: tl.constexpr,
+    stride_dvb: tl.constexpr,
+    stride_dvh: tl.constexpr,
+    stride_dvn: tl.constexpr,
+    stride_dvd: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+):
+    pid_n = tle.program_id(0)
+    pid_bh = tle.program_id(1)
+    off_b = pid_bh // HQ
+    off_h = pid_bh % HQ
+    off_kh = off_h // Q_PER
+    start_n = pid_n * BLOCK_N
+    cols = start_n + tl.arange(0, BLOCK_N)
+    rows_base = tl.arange(0, BLOCK_M)
+    offs_d = tl.arange(0, BLOCK_D)
+    k_base = k_ptr + off_b * stride_kb + off_kh * stride_kh
+    v_base = v_ptr + off_b * stride_vb + off_kh * stride_vh
+    q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
+    do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
+    stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
+    delta_base = delta_ptr + off_b * stride_delta_b + off_h * stride_delta_h
+    k_tile = tl.load(
+        k_base + cols[:, None] * stride_kn + offs_d[None, :] * stride_kd,
+        eviction_policy="evict_last",
+    )
+    v_tile = tl.load(
+        v_base + cols[:, None] * stride_vn + offs_d[None, :] * stride_vd,
+        eviction_policy="evict_last",
+    )
+    dk = tl.zeros((BLOCK_N, BLOCK_D), dtype=tl.float32)
+    dv = tl.zeros((BLOCK_N, BLOCK_D), dtype=tl.float32)
+    for start_m in tl.range((start_n // BLOCK_M) * BLOCK_M, SQ, BLOCK_M):
+        rows = start_m + rows_base
+        q_tile = tl.load(
+            q_base + rows[:, None] * stride_qm + offs_d[None, :] * stride_qd,
+            eviction_policy="evict_last",
+        )
+        do_tile = tl.load(
+            do_base
+            + rows[:, None] * stride_dom
+            + offs_d[None, :] * stride_dod,
+            eviction_policy="evict_last",
+        )
+        stats = tl.load(
+            stats_base + rows * stride_sm, eviction_policy="evict_last"
+        ).to(tl.float32)
+        stats_log2 = stats * 1.4426950408889634
+        delta = tl.load(
+            delta_base + rows * stride_delta_m, eviction_policy="evict_last"
+        ).to(tl.float32)
+        score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * (
+            attn_scale * 1.4426950408889634
+        )
+        if start_m >= start_n + BLOCK_N:
+            p = tl.exp2(score - stats_log2[:, None])
+        else:
+            valid = cols[None, :] <= rows[:, None]
+            p = tl.where(valid, tl.exp2(score - stats_log2[:, None]), 0.0)
+        dp = tl.dot(do_tile, tl.trans(v_tile)).to(tl.float32)
+        ds = p * (dp - delta[:, None])
+        dk += tl.dot(tl.trans(ds).to(q_tile.dtype), q_tile)
+        dv += tl.dot(tl.trans(p).to(do_tile.dtype), do_tile)
+    tl.atomic_add(
+        dk_ptr
+        + off_b * stride_dkb
+        + off_kh * stride_dkh
+        + cols[:, None] * stride_dkn
+        + offs_d[None, :] * stride_dkd,
+        (dk * attn_scale).to(dk_ptr.dtype.element_ty),
+        sem="relaxed",
+    )
+    tl.atomic_add(
+        dv_ptr
+        + off_b * stride_dvb
+        + off_kh * stride_dvh
+        + cols[:, None] * stride_dvn
+        + offs_d[None, :] * stride_dvd,
+        dv.to(dv_ptr.dtype.element_ty),
+        sem="relaxed",
+    )
+
+
+@triton.jit
+def _sdpa_bwd_decode_dkdv_dq_atomic_kernel(
+    q,
+    k,
+    v,
+    o,
+    do,
+    stats,
+    dq,
+    dk,
+    dv,
+    attn_scale,
+    HQ: tl.constexpr,
+    SKV: tl.constexpr,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_dob: tl.constexpr,
+    stride_doh: tl.constexpr,
+    stride_dom: tl.constexpr,
+    stride_dod: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
+    stride_dqb: tl.constexpr,
+    stride_dqh: tl.constexpr,
+    stride_dqm: tl.constexpr,
+    stride_dqd: tl.constexpr,
+    stride_dkb: tl.constexpr,
+    stride_dkh: tl.constexpr,
+    stride_dkn: tl.constexpr,
+    stride_dkd: tl.constexpr,
+    stride_dvb: tl.constexpr,
+    stride_dvh: tl.constexpr,
+    stride_dvn: tl.constexpr,
+    stride_dvd: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+):
+    pid_n = tle.program_id(0)
+    pid_bh = tle.program_id(1)
+    off_b = pid_bh // HQ
+    off_h = pid_bh % HQ
+    cols = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_d = tl.arange(0, BLOCK_D)
+
+    q_base = q + off_b * stride_qb + off_h * stride_qh
+    k_base = k + off_b * stride_kb + off_h * stride_kh
+    v_base = v + off_b * stride_vb + off_h * stride_vh
+    o_base = o + off_b * stride_ob + off_h * stride_oh
+    do_base = do + off_b * stride_dob + off_h * stride_doh
+
+    qv = tl.load(q_base + offs_d * stride_qd, eviction_policy="evict_last")
+    dov = tl.load(do_base + offs_d * stride_dod, eviction_policy="evict_last")
+    ov = tl.load(o_base + offs_d * stride_od, eviction_policy="evict_last").to(
+        tl.float32
+    )
+    delta = tl.sum(ov * dov.to(tl.float32), axis=0)
+    st = tl.load(stats + off_b * stride_sb + off_h * stride_sh).to(tl.float32)
+    st_log2 = st * 1.4426950408889634
+
+    kt = tl.load(
+        k_base + cols[:, None] * stride_kn + offs_d[None, :] * stride_kd,
+        mask=cols[:, None] < SKV,
+        other=0.0,
+        eviction_policy="evict_last",
+    )
+    vt = tl.load(
+        v_base + cols[:, None] * stride_vn + offs_d[None, :] * stride_vd,
+        mask=cols[:, None] < SKV,
+        other=0.0,
+        eviction_policy="evict_last",
+    )
+    score = tl.sum(kt.to(tl.float32) * qv[None, :].to(tl.float32), axis=1) * (
+        attn_scale * 1.4426950408889634
+    )
+    p = tl.where(cols < SKV, tl.exp2(score - st_log2), 0.0)
+    dp = tl.sum(vt.to(tl.float32) * dov[None, :].to(tl.float32), axis=1)
+    ds = p * (dp - delta)
+    dq_partial = tl.sum(ds[:, None] * kt.to(tl.float32), axis=0) * attn_scale
+    mask = cols[:, None] < SKV
+    tl.store(
+        dk
+        + off_b * stride_dkb
+        + off_h * stride_dkh
+        + cols[:, None] * stride_dkn
+        + offs_d[None, :] * stride_dkd,
+        (ds[:, None] * qv[None, :].to(tl.float32) * attn_scale).to(
+            dk.dtype.element_ty
+        ),
+        mask=mask,
+    )
+    tl.store(
+        dv
+        + off_b * stride_dvb
+        + off_h * stride_dvh
+        + cols[:, None] * stride_dvn
+        + offs_d[None, :] * stride_dvd,
+        (p[:, None] * dov[None, :].to(tl.float32)).to(dv.dtype.element_ty),
+        mask=mask,
+    )
+    tl.atomic_add(
+        dq + off_b * stride_dqb + off_h * stride_dqh + offs_d * stride_dqd,
+        dq_partial.to(dq.dtype.element_ty),
+        sem="relaxed",
+    )
+
+
 def _reject_unsupported(
     use_alibi_mask: bool,
     use_padding_mask: bool,
@@ -2530,8 +3288,8 @@ def sdpa_backward(
         and q_per_k > 1
         and head_dim == v_dim
         and head_dim <= 128
-        and sq <= 512
-        and skv <= 512
+        and sq <= 4096
+        and skv <= 4096
     )
     fused_config_name = "sdpa_backward_fused_atomic"
     if use_fused_gqa:
@@ -2542,9 +3300,19 @@ def sdpa_backward(
             if head_dim > 64
             else "sdpa_backward_fused_atomic_causal"
         )
+    elif head_dim <= 32:
+        fused_config_name = "sdpa_backward_fused_atomic_d32"
+    elif head_dim > 64:
+        fused_config_name = "sdpa_backward_fused_atomic_d128"
     fused_atomic_config = _single_tuned_config_kwargs(fused_config_name)
     full_attention = False
 
+    small_supported = sq <= 1024 and skv <= 1024
+    long_causal_supported = causal_top_left and sq <= 4096 and skv <= 4096
+    dense_d32_supported = (
+        not causal_top_left and head_dim <= 32 and sq <= 2048 and skv <= 2048
+    )
+    decode_supported = not causal_top_left and sq == 1 and skv <= 2048
     use_fused_atomic = (
         (not banded or causal_top_left)
         and bias is None
@@ -2552,8 +3320,12 @@ def sdpa_backward(
         and head_dim == v_dim
         and ((q_per_k == 1 and q_per_v == 1) or use_fused_gqa)
         and head_dim <= 128
-        and sq <= 1024
-        and skv <= 1024
+        and (
+            small_supported
+            or long_causal_supported
+            or dense_d32_supported
+            or decode_supported
+        )
         and q.dtype in (torch.float16, torch.bfloat16)
     )
 

@@ -34,6 +34,13 @@ _CONV_DGRAD_2D_STRIDE2_3X3_TILE4_CONFIGS = runtime.get_tuned_config(
 _CONV_DGRAD_2D_STRIDE2_3X3_PACKED_CONFIGS = runtime.get_tuned_config(
     "conv_dgrad_2d_stride2_pad1_3x3_packed"
 )
+_CONV_DGRAD_2D_STRIDE2_3X3_PACKED_MCI_CONFIGS = runtime.get_tuned_config(
+    "conv_dgrad_2d_stride2_pad1_3x3_packed_mci"
+)
+_CONV_DGRAD_2D_STRIDE2_3X3_TILE2W_CONFIGS = runtime.get_tuned_config(
+    "conv_dgrad_2d_stride2_pad1_3x3_tile2w"
+)
+
 _CONV_DGRAD_3D_CONFIGS = runtime.get_tuned_config("conv_dgrad_3d")
 _CONV_DGRAD_3D_PAD1_3X3_FP32_CI8_DOT_CONFIGS = runtime.get_tuned_config(
     "conv_dgrad_3d_pad1_3x3_fp32_ci8_dot"
@@ -1144,10 +1151,7 @@ def _conv_dgrad2d_stride2_pad1_3x3_packed_kernel(
                     other=0.0,
                 )
                 acc += tl.dot(
-                    loss,
-                    weight,
-                    out_dtype=tl.float32,
-                    input_precision="tf32",
+                    loss, weight, out_dtype=tl.float32, input_precision="tf32"
                 )
 
     tl.store(
@@ -1159,6 +1163,1118 @@ def _conv_dgrad2d_stride2_pad1_3x3_packed_kernel(
         acc.to(out_ptr.dtype.element_ty),
         mask=mask_m[:, None] & mask_ci[None, :],
     )
+
+
+@libentry()
+@libtuner(
+    configs=_CONV_DGRAD_2D_STRIDE2_3X3_PACKED_MCI_CONFIGS,
+    key=[
+        "M",
+        "PARITY_H_COUNT",
+        "PARITY_W_COUNT",
+        "CIN_PER_GROUP",
+        "COUT_PER_GROUP",
+        "PH",
+        "PW",
+        "DTYPE_ID",
+    ],
+    warmup=5,
+    rep=10,
+)
+@triton.jit
+def _conv_dgrad2d_stride2_pad1_3x3_packed_mci_kernel(
+    loss_ptr,
+    weight_ptr,
+    out_ptr,
+    M: tl.constexpr,
+    XH: tl.constexpr,
+    XW: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    C_IN: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    out_stride_n: tl.constexpr,
+    out_stride_c: tl.constexpr,
+    out_stride_h: tl.constexpr,
+    out_stride_w: tl.constexpr,
+    PARITY_H_COUNT: tl.constexpr,
+    PARITY_W_COUNT: tl.constexpr,
+    PH: tl.constexpr,
+    PW: tl.constexpr,
+    KH_COUNT: tl.constexpr,
+    KW_COUNT: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    DTYPE_ID: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    num_m_blocks = tl.cdiv(M, BLOCK_M)
+    pid_ci = pid // num_m_blocks
+    pid_m = pid - pid_ci * num_m_blocks
+
+    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_ci_rel = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_m = offs_m < M
+    mask_ci = offs_ci_rel < CIN_PER_GROUP
+
+    parity_spatial = PARITY_H_COUNT * PARITY_W_COUNT
+    n_idx = offs_m // parity_spatial
+    spatial_idx = offs_m - n_idx * parity_spatial
+    yh = spatial_idx // PARITY_W_COUNT
+    yw = spatial_idx - yh * PARITY_W_COUNT
+    xh = yh * 2 + PH
+    xw = yw * 2 + PW
+    ci = offs_ci_rel
+
+    acc = tl.zeros((BLOCK_M, BLOCK_CI), dtype=tl.float32)
+
+    for kh_i in tl.static_range(0, KH_COUNT):
+        if PH == 0:
+            kh = 1
+            loss_h = yh
+        else:
+            kh = kh_i * 2
+            loss_h = yh + (1 if kh_i == 0 else 0)
+        valid_h = loss_h < LOSS_H
+        weight_h = 2 - kh if FILTER_REVERSE else kh
+
+        for kw_i in tl.static_range(0, KW_COUNT):
+            if PW == 0:
+                kw = 1
+                loss_w = yw
+            else:
+                kw = kw_i * 2
+                loss_w = yw + (1 if kw_i == 0 else 0)
+            valid_w = loss_w < LOSS_W
+            valid_hw = valid_h & valid_w
+            weight_w = 2 - kw if FILTER_REVERSE else kw
+
+            for co_start in tl.static_range(0, COUT_PER_GROUP, BLOCK_CO):
+                offs_co_rel = co_start + tl.arange(0, BLOCK_CO)
+                mask_co = offs_co_rel < COUT_PER_GROUP
+
+                loss = tl.load(
+                    loss_ptr
+                    + n_idx[:, None] * loss_stride_n
+                    + offs_co_rel[None, :] * loss_stride_c
+                    + loss_h[:, None] * loss_stride_h
+                    + loss_w[:, None] * loss_stride_w,
+                    mask=(
+                        mask_m[:, None] & mask_co[None, :] & valid_hw[:, None]
+                    ),
+                    other=0.0,
+                )
+                weight = tl.load(
+                    weight_ptr
+                    + (
+                        (
+                            (weight_h * 3 + weight_w) * COUT_PER_GROUP
+                            + offs_co_rel[:, None]
+                        )
+                        * CIN_PER_GROUP
+                    )
+                    + offs_ci_rel[None, :],
+                    mask=mask_co[:, None] & mask_ci[None, :],
+                    other=0.0,
+                )
+                acc += tl.dot(
+                    loss, weight, out_dtype=tl.float32, input_precision="tf32"
+                )
+
+    tl.store(
+        out_ptr
+        + n_idx[:, None] * out_stride_n
+        + ci[None, :] * out_stride_c
+        + xh[:, None] * out_stride_h
+        + xw[:, None] * out_stride_w,
+        acc.to(out_ptr.dtype.element_ty),
+        mask=mask_m[:, None] & mask_ci[None, :],
+    )
+
+
+@libentry()
+@libtuner(
+    configs=_CONV_DGRAD_2D_STRIDE2_3X3_TILE2W_CONFIGS,
+    key=[
+        "M",
+        "PARITY_H_COUNT",
+        "LOSS_W",
+        "CIN_PER_GROUP",
+        "COUT_PER_GROUP",
+        "PH",
+        "DTYPE_ID",
+    ],
+    warmup=5,
+    rep=10,
+)
+@triton.jit
+def _conv_dgrad2d_stride2_pad1_3x3_tile2w_kernel(
+    loss_ptr,
+    weight_ptr,
+    out_ptr,
+    M: tl.constexpr,
+    XH: tl.constexpr,
+    XW: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    C_IN: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    out_stride_n: tl.constexpr,
+    out_stride_c: tl.constexpr,
+    out_stride_h: tl.constexpr,
+    out_stride_w: tl.constexpr,
+    PARITY_H_COUNT: tl.constexpr,
+    PH: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    DTYPE_ID: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    num_m_blocks = tl.cdiv(M, BLOCK_M)
+    pid_ci = pid // num_m_blocks
+    pid_m = pid - pid_ci * num_m_blocks
+
+    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_ci_rel = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_m = offs_m < M
+    mask_ci = offs_ci_rel < CIN_PER_GROUP
+
+    parity_spatial = PARITY_H_COUNT * LOSS_W
+    n_idx = offs_m // parity_spatial
+    spatial_idx = offs_m - n_idx * parity_spatial
+    yh = spatial_idx // LOSS_W
+    yw = spatial_idx - yh * LOSS_W
+    xh = yh * 2 + PH
+    xw0 = yw * 2
+    xw1 = xw0 + 1
+    yh1 = yh + 1
+    yw1 = yw + 1
+    ci = offs_ci_rel
+
+    valid0 = mask_m & (xh < XH) & (xw0 < XW)
+    valid1 = mask_m & (xh < XH) & (xw1 < XW)
+    valid_yh1 = yh1 < LOSS_H
+    valid_yw1 = yw1 < LOSS_W
+
+    if FILTER_REVERSE:
+        w0 = 2
+        w1 = 1
+        w2 = 0
+    else:
+        w0 = 0
+        w1 = 1
+        w2 = 2
+
+    acc0 = tl.zeros((BLOCK_M, BLOCK_CI), dtype=tl.float32)
+    acc1 = tl.zeros((BLOCK_M, BLOCK_CI), dtype=tl.float32)
+
+    for co_start in tl.static_range(0, COUT_PER_GROUP, BLOCK_CO):
+        offs_co_rel = co_start + tl.arange(0, BLOCK_CO)
+        mask_co = offs_co_rel < COUT_PER_GROUP
+
+        loss00 = tl.load(
+            loss_ptr
+            + n_idx[:, None] * loss_stride_n
+            + offs_co_rel[None, :] * loss_stride_c
+            + yh[:, None] * loss_stride_h
+            + yw[:, None] * loss_stride_w,
+            mask=mask_m[:, None] & mask_co[None, :],
+            other=0.0,
+        )
+        loss01 = tl.load(
+            loss_ptr
+            + n_idx[:, None] * loss_stride_n
+            + offs_co_rel[None, :] * loss_stride_c
+            + yh[:, None] * loss_stride_h
+            + yw1[:, None] * loss_stride_w,
+            mask=mask_m[:, None] & mask_co[None, :] & valid_yw1[:, None],
+            other=0.0,
+        )
+
+        if PH == 0:
+            weight11 = tl.load(
+                weight_ptr
+                + (
+                    ((w1 * 3 + w1) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            weight12 = tl.load(
+                weight_ptr
+                + (
+                    ((w1 * 3 + w2) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            weight10 = tl.load(
+                weight_ptr
+                + (
+                    ((w1 * 3 + w0) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            acc0 += tl.dot(
+                loss00, weight11, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss00, weight12, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss01, weight10, out_dtype=tl.float32, input_precision="tf32"
+            )
+        else:
+            loss10 = tl.load(
+                loss_ptr
+                + n_idx[:, None] * loss_stride_n
+                + offs_co_rel[None, :] * loss_stride_c
+                + yh1[:, None] * loss_stride_h
+                + yw[:, None] * loss_stride_w,
+                mask=mask_m[:, None] & mask_co[None, :] & valid_yh1[:, None],
+                other=0.0,
+            )
+            loss11 = tl.load(
+                loss_ptr
+                + n_idx[:, None] * loss_stride_n
+                + offs_co_rel[None, :] * loss_stride_c
+                + yh1[:, None] * loss_stride_h
+                + yw1[:, None] * loss_stride_w,
+                mask=mask_m[:, None]
+                & mask_co[None, :]
+                & valid_yh1[:, None]
+                & valid_yw1[:, None],
+                other=0.0,
+            )
+            weight21 = tl.load(
+                weight_ptr
+                + (
+                    ((w2 * 3 + w1) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            weight01 = tl.load(
+                weight_ptr
+                + (
+                    ((w0 * 3 + w1) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            weight22 = tl.load(
+                weight_ptr
+                + (
+                    ((w2 * 3 + w2) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            weight20 = tl.load(
+                weight_ptr
+                + (
+                    ((w2 * 3 + w0) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            weight02 = tl.load(
+                weight_ptr
+                + (
+                    ((w0 * 3 + w2) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            weight00 = tl.load(
+                weight_ptr
+                + (
+                    ((w0 * 3 + w0) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            acc0 += tl.dot(
+                loss00, weight21, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc0 += tl.dot(
+                loss10, weight01, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss00, weight22, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss01, weight20, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss10, weight02, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss11, weight00, out_dtype=tl.float32, input_precision="tf32"
+            )
+
+    out_base = (
+        out_ptr + n_idx[:, None] * out_stride_n + ci[None, :] * out_stride_c
+    )
+    tl.store(
+        out_base + xh[:, None] * out_stride_h + xw0[:, None] * out_stride_w,
+        acc0.to(out_ptr.dtype.element_ty),
+        mask=valid0[:, None] & mask_ci[None, :],
+    )
+    tl.store(
+        out_base + xh[:, None] * out_stride_h + xw1[:, None] * out_stride_w,
+        acc1.to(out_ptr.dtype.element_ty),
+        mask=valid1[:, None] & mask_ci[None, :],
+    )
+
+
+@triton.jit
+def _conv_dgrad2d_stride2_pad1_3x3_tile2w_splitk_kernel(
+    loss_ptr,
+    weight_ptr,
+    out_ptr,
+    M: tl.constexpr,
+    XH: tl.constexpr,
+    XW: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    C_IN: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    out_stride_n: tl.constexpr,
+    out_stride_c: tl.constexpr,
+    out_stride_h: tl.constexpr,
+    out_stride_w: tl.constexpr,
+    PARITY_H_COUNT: tl.constexpr,
+    PH: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    GROUP_K: tl.constexpr,
+    SPLIT_K_BLOCKS: tl.constexpr,
+    K_OFFSET: tl.constexpr,
+    STORE: tl.constexpr,
+):
+    num_m_blocks = tl.cdiv(M, BLOCK_M)
+    pid = tl.program_id(0)
+    pid_k_rel = pid % SPLIT_K_BLOCKS
+    pid_k_group = pid_k_rel + K_OFFSET
+    pid_tmp = pid // SPLIT_K_BLOCKS
+    pid_m = pid_tmp % num_m_blocks
+    pid_ci = pid_tmp // num_m_blocks
+
+    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_ci_rel = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_m = offs_m < M
+    mask_ci = offs_ci_rel < CIN_PER_GROUP
+
+    parity_spatial = PARITY_H_COUNT * LOSS_W
+    n_idx = offs_m // parity_spatial
+    spatial_idx = offs_m - n_idx * parity_spatial
+    yh = spatial_idx // LOSS_W
+    yw = spatial_idx - yh * LOSS_W
+    xh = yh * 2 + PH
+    xw0 = yw * 2
+    xw1 = xw0 + 1
+    yh1 = yh + 1
+    yw1 = yw + 1
+    ci = offs_ci_rel
+
+    valid0 = mask_m & (xh < XH) & (xw0 < XW)
+    valid1 = mask_m & (xh < XH) & (xw1 < XW)
+    valid_yh1 = yh1 < LOSS_H
+    valid_yw1 = yw1 < LOSS_W
+
+    if FILTER_REVERSE:
+        w0 = 2
+        w1 = 1
+        w2 = 0
+    else:
+        w0 = 0
+        w1 = 1
+        w2 = 2
+
+    acc0 = tl.zeros((BLOCK_M, BLOCK_CI), dtype=tl.float32)
+    acc1 = tl.zeros((BLOCK_M, BLOCK_CI), dtype=tl.float32)
+
+    for k_inner in tl.static_range(0, GROUP_K):
+        pid_k = pid_k_group * GROUP_K + k_inner
+        offs_co_rel = pid_k * BLOCK_CO + tl.arange(0, BLOCK_CO)
+        mask_co = offs_co_rel < COUT_PER_GROUP
+
+        loss00 = tl.load(
+            loss_ptr
+            + n_idx[:, None] * loss_stride_n
+            + offs_co_rel[None, :] * loss_stride_c
+            + yh[:, None] * loss_stride_h
+            + yw[:, None] * loss_stride_w,
+            mask=mask_m[:, None] & mask_co[None, :],
+            other=0.0,
+        )
+        loss01 = tl.load(
+            loss_ptr
+            + n_idx[:, None] * loss_stride_n
+            + offs_co_rel[None, :] * loss_stride_c
+            + yh[:, None] * loss_stride_h
+            + yw1[:, None] * loss_stride_w,
+            mask=mask_m[:, None] & mask_co[None, :] & valid_yw1[:, None],
+            other=0.0,
+        )
+
+        if PH == 0:
+            weight11 = tl.load(
+                weight_ptr
+                + (
+                    ((w1 * 3 + w1) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            weight12 = tl.load(
+                weight_ptr
+                + (
+                    ((w1 * 3 + w2) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            weight10 = tl.load(
+                weight_ptr
+                + (
+                    ((w1 * 3 + w0) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            acc0 += tl.dot(
+                loss00, weight11, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss00, weight12, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss01, weight10, out_dtype=tl.float32, input_precision="tf32"
+            )
+        else:
+            loss10 = tl.load(
+                loss_ptr
+                + n_idx[:, None] * loss_stride_n
+                + offs_co_rel[None, :] * loss_stride_c
+                + yh1[:, None] * loss_stride_h
+                + yw[:, None] * loss_stride_w,
+                mask=mask_m[:, None] & mask_co[None, :] & valid_yh1[:, None],
+                other=0.0,
+            )
+            loss11 = tl.load(
+                loss_ptr
+                + n_idx[:, None] * loss_stride_n
+                + offs_co_rel[None, :] * loss_stride_c
+                + yh1[:, None] * loss_stride_h
+                + yw1[:, None] * loss_stride_w,
+                mask=(
+                    mask_m[:, None]
+                    & mask_co[None, :]
+                    & valid_yh1[:, None]
+                    & valid_yw1[:, None]
+                ),
+                other=0.0,
+            )
+            weight21 = tl.load(
+                weight_ptr
+                + (
+                    ((w2 * 3 + w1) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            weight01 = tl.load(
+                weight_ptr
+                + (
+                    ((w0 * 3 + w1) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            weight22 = tl.load(
+                weight_ptr
+                + (
+                    ((w2 * 3 + w2) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            weight20 = tl.load(
+                weight_ptr
+                + (
+                    ((w2 * 3 + w0) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            weight02 = tl.load(
+                weight_ptr
+                + (
+                    ((w0 * 3 + w2) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            weight00 = tl.load(
+                weight_ptr
+                + (
+                    ((w0 * 3 + w0) * COUT_PER_GROUP + offs_co_rel[:, None])
+                    * CIN_PER_GROUP
+                )
+                + offs_ci_rel[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            acc0 += tl.dot(
+                loss00, weight21, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc0 += tl.dot(
+                loss10, weight01, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss00, weight22, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss01, weight20, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss10, weight02, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss11, weight00, out_dtype=tl.float32, input_precision="tf32"
+            )
+
+    out_base = (
+        out_ptr + n_idx[:, None] * out_stride_n + ci[None, :] * out_stride_c
+    )
+    ptr0 = out_base + xh[:, None] * out_stride_h + xw0[:, None] * out_stride_w
+    ptr1 = out_base + xh[:, None] * out_stride_h + xw1[:, None] * out_stride_w
+    mask = mask_m[:, None] & mask_ci[None, :]
+    if STORE:
+        tl.store(ptr0, acc0, mask=valid0[:, None] & mask_ci[None, :])
+        tl.store(ptr1, acc1, mask=valid1[:, None] & mask_ci[None, :])
+    else:
+        tl.atomic_add(ptr0, acc0, sem="relaxed", mask=mask)
+        tl.atomic_add(ptr1, acc1, sem="relaxed", mask=mask)
+
+
+@triton.jit
+def _conv_dgrad2d_stride2_pad1_3x3_p5_tile2w_splitk_kernel(
+    loss,
+    weight,
+    out,
+    M: tl.constexpr,
+    XH: tl.constexpr,
+    XW: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    C_IN: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    out_stride_n: tl.constexpr,
+    out_stride_c: tl.constexpr,
+    out_stride_h: tl.constexpr,
+    out_stride_w: tl.constexpr,
+    PARITY_H_COUNT: tl.constexpr,
+    PH: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    GROUP_K: tl.constexpr,
+    SPLIT_K_BLOCKS: tl.constexpr,
+    K_OFFSET: tl.constexpr,
+    STORE: tl.constexpr,
+):
+    num_m_blocks = tl.cdiv(400, BLOCK_M)
+    pid = tl.program_id(0)
+    pid_m = pid % num_m_blocks
+    pid_tmp = pid // num_m_blocks
+    pid_k_rel = pid_tmp % SPLIT_K_BLOCKS
+    pid_k_group = pid_k_rel + K_OFFSET
+    pid_ci = pid_tmp // SPLIT_K_BLOCKS
+
+    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_ci = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_m = offs_m < 400
+    mask_ci = offs_ci < 768
+
+    yh = offs_m // 20
+    yw = offs_m - yh * 20
+    x_base = (yh * 2 + PH) * 40 + yw * 2
+    loss_base = yh * 20 + yw
+    valid_yh1 = yh < 19
+    valid_yw1 = yw < 19
+
+    acc0 = tl.zeros((BLOCK_M, BLOCK_CI), dtype=tl.float32)
+    acc1 = tl.zeros((BLOCK_M, BLOCK_CI), dtype=tl.float32)
+
+    for k_inner in tl.static_range(0, GROUP_K):
+        pid_k = pid_k_group * GROUP_K + k_inner
+        offs_co = pid_k * BLOCK_CO + tl.arange(0, BLOCK_CO)
+        mask_co = offs_co < 768
+        loss00 = tl.load(
+            loss + offs_co[None, :] * 400 + loss_base[:, None],
+            mask=mask_m[:, None] & mask_co[None, :],
+            other=0.0,
+        )
+        loss01 = tl.load(
+            loss + offs_co[None, :] * 400 + (loss_base + 1)[:, None],
+            mask=mask_m[:, None] & mask_co[None, :] & valid_yw1[:, None],
+            other=0.0,
+        )
+        if PH == 0:
+            w11 = tl.load(
+                weight
+                + ((1 * 3 + 1) * 768 + offs_co[:, None]) * 768
+                + offs_ci[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            w12 = tl.load(
+                weight
+                + ((1 * 3 + 2) * 768 + offs_co[:, None]) * 768
+                + offs_ci[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            w10 = tl.load(
+                weight
+                + ((1 * 3 + 0) * 768 + offs_co[:, None]) * 768
+                + offs_ci[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            acc0 += tl.dot(
+                loss00, w11, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss00, w12, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss01, w10, out_dtype=tl.float32, input_precision="tf32"
+            )
+        else:
+            loss10 = tl.load(
+                loss + offs_co[None, :] * 400 + (loss_base + 20)[:, None],
+                mask=mask_m[:, None] & mask_co[None, :] & valid_yh1[:, None],
+                other=0.0,
+            )
+            loss11 = tl.load(
+                loss + offs_co[None, :] * 400 + (loss_base + 21)[:, None],
+                mask=mask_m[:, None]
+                & mask_co[None, :]
+                & valid_yh1[:, None]
+                & valid_yw1[:, None],
+                other=0.0,
+            )
+            w21 = tl.load(
+                weight
+                + ((2 * 3 + 1) * 768 + offs_co[:, None]) * 768
+                + offs_ci[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            w01 = tl.load(
+                weight
+                + ((0 * 3 + 1) * 768 + offs_co[:, None]) * 768
+                + offs_ci[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            w22 = tl.load(
+                weight
+                + ((2 * 3 + 2) * 768 + offs_co[:, None]) * 768
+                + offs_ci[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            w20 = tl.load(
+                weight
+                + ((2 * 3 + 0) * 768 + offs_co[:, None]) * 768
+                + offs_ci[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            w02 = tl.load(
+                weight
+                + ((0 * 3 + 2) * 768 + offs_co[:, None]) * 768
+                + offs_ci[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            w00 = tl.load(
+                weight
+                + ((0 * 3 + 0) * 768 + offs_co[:, None]) * 768
+                + offs_ci[None, :],
+                mask=mask_co[:, None] & mask_ci[None, :],
+                other=0.0,
+            )
+            acc0 += tl.dot(
+                loss00, w21, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc0 += tl.dot(
+                loss10, w01, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss00, w22, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss01, w20, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss10, w02, out_dtype=tl.float32, input_precision="tf32"
+            )
+            acc1 += tl.dot(
+                loss11, w00, out_dtype=tl.float32, input_precision="tf32"
+            )
+
+    ptr0 = out + offs_ci[None, :] * 1600 + x_base[:, None]
+    ptr1 = ptr0 + 1
+    mask = mask_m[:, None] & mask_ci[None, :]
+    if STORE:
+        tl.store(ptr0, acc0, mask=mask)
+        tl.store(ptr1, acc1, mask=mask)
+    else:
+        tl.atomic_add(ptr0, acc0, sem="relaxed", mask=mask)
+        tl.atomic_add(ptr1, acc1, sem="relaxed", mask=mask)
+
+
+@triton.jit
+def _conv_dgrad2d_p5_zero_kernel(
+    out,
+    TOTAL: tl.constexpr,
+    BLOCK: tl.constexpr,
+):
+    offs = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+    tl.store(
+        out + offs, tl.zeros((BLOCK,), dtype=tl.float32), mask=offs < TOTAL
+    )
+
+
+@triton.jit
+def _conv_dgrad2d_stride2_pad1_3x3_tile4_splitk_kernel(
+    loss_ptr,
+    weight_ptr,
+    out_ptr,
+    M: tl.constexpr,
+    XH: tl.constexpr,
+    XW: tl.constexpr,
+    LOSS_H: tl.constexpr,
+    LOSS_W: tl.constexpr,
+    C_IN: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    loss_stride_n: tl.constexpr,
+    loss_stride_c: tl.constexpr,
+    loss_stride_h: tl.constexpr,
+    loss_stride_w: tl.constexpr,
+    weight_stride_o: tl.constexpr,
+    weight_stride_i: tl.constexpr,
+    weight_stride_h: tl.constexpr,
+    weight_stride_w: tl.constexpr,
+    out_stride_n: tl.constexpr,
+    out_stride_c: tl.constexpr,
+    out_stride_h: tl.constexpr,
+    out_stride_w: tl.constexpr,
+    FILTER_REVERSE: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    GROUP_K: tl.constexpr,
+    SPLIT_K_BLOCKS: tl.constexpr,
+    K_OFFSET: tl.constexpr,
+    STORE: tl.constexpr,
+):
+    num_m_blocks = tl.cdiv(M, BLOCK_M)
+    pid = tl.program_id(0)
+    pid_k_rel = pid % SPLIT_K_BLOCKS
+    pid_k_group = pid_k_rel + K_OFFSET
+    pid_tmp = pid // SPLIT_K_BLOCKS
+    pid_m = pid_tmp % num_m_blocks
+    pid_ci = pid_tmp // num_m_blocks
+
+    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_ci_rel = pid_ci * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    mask_m = offs_m < M
+    mask_ci = offs_ci_rel < CIN_PER_GROUP
+
+    n_idx = offs_m // (LOSS_H * LOSS_W)
+    spatial = offs_m - n_idx * (LOSS_H * LOSS_W)
+    yh = spatial // LOSS_W
+    yw = spatial - yh * LOSS_W
+    xh0 = yh * 2
+    xw0 = yw * 2
+    xh1 = xh0 + 1
+    xw1 = xw0 + 1
+    yh1 = yh + 1
+    yw1 = yw + 1
+    ci = offs_ci_rel
+    valid_yh1 = yh1 < LOSS_H
+    valid_yw1 = yw1 < LOSS_W
+
+    if FILTER_REVERSE:
+        w0 = 2
+        w1 = 1
+        w2 = 0
+    else:
+        w0 = 0
+        w1 = 1
+        w2 = 2
+
+    acc00 = tl.zeros((BLOCK_M, BLOCK_CI), dtype=tl.float32)
+    acc01 = tl.zeros((BLOCK_M, BLOCK_CI), dtype=tl.float32)
+    acc10 = tl.zeros((BLOCK_M, BLOCK_CI), dtype=tl.float32)
+    acc11 = tl.zeros((BLOCK_M, BLOCK_CI), dtype=tl.float32)
+
+    for k_inner in tl.static_range(0, GROUP_K):
+        pid_k = pid_k_group * GROUP_K + k_inner
+        offs_co_rel = pid_k * BLOCK_CO + tl.arange(0, BLOCK_CO)
+        mask_co = offs_co_rel < COUT_PER_GROUP
+
+        loss00 = tl.load(
+            loss_ptr
+            + n_idx[:, None] * loss_stride_n
+            + offs_co_rel[None, :] * loss_stride_c
+            + yh[:, None] * loss_stride_h
+            + yw[:, None] * loss_stride_w,
+            mask=mask_m[:, None] & mask_co[None, :],
+            other=0.0,
+        )
+        loss01 = tl.load(
+            loss_ptr
+            + n_idx[:, None] * loss_stride_n
+            + offs_co_rel[None, :] * loss_stride_c
+            + yh[:, None] * loss_stride_h
+            + yw1[:, None] * loss_stride_w,
+            mask=mask_m[:, None] & mask_co[None, :] & valid_yw1[:, None],
+            other=0.0,
+        )
+        loss10 = tl.load(
+            loss_ptr
+            + n_idx[:, None] * loss_stride_n
+            + offs_co_rel[None, :] * loss_stride_c
+            + yh1[:, None] * loss_stride_h
+            + yw[:, None] * loss_stride_w,
+            mask=mask_m[:, None] & mask_co[None, :] & valid_yh1[:, None],
+            other=0.0,
+        )
+        loss11 = tl.load(
+            loss_ptr
+            + n_idx[:, None] * loss_stride_n
+            + offs_co_rel[None, :] * loss_stride_c
+            + yh1[:, None] * loss_stride_h
+            + yw1[:, None] * loss_stride_w,
+            mask=mask_m[:, None]
+            & mask_co[None, :]
+            & valid_yh1[:, None]
+            & valid_yw1[:, None],
+            other=0.0,
+        )
+
+        weight11 = tl.load(
+            weight_ptr
+            + offs_co_rel[:, None] * weight_stride_o
+            + ci[None, :] * weight_stride_i
+            + w1 * weight_stride_h
+            + w1 * weight_stride_w,
+            mask=mask_co[:, None] & mask_ci[None, :],
+            other=0.0,
+        )
+        weight12 = tl.load(
+            weight_ptr
+            + offs_co_rel[:, None] * weight_stride_o
+            + ci[None, :] * weight_stride_i
+            + w1 * weight_stride_h
+            + w2 * weight_stride_w,
+            mask=mask_co[:, None] & mask_ci[None, :],
+            other=0.0,
+        )
+        weight10 = tl.load(
+            weight_ptr
+            + offs_co_rel[:, None] * weight_stride_o
+            + ci[None, :] * weight_stride_i
+            + w1 * weight_stride_h
+            + w0 * weight_stride_w,
+            mask=mask_co[:, None] & mask_ci[None, :],
+            other=0.0,
+        )
+        weight21 = tl.load(
+            weight_ptr
+            + offs_co_rel[:, None] * weight_stride_o
+            + ci[None, :] * weight_stride_i
+            + w2 * weight_stride_h
+            + w1 * weight_stride_w,
+            mask=mask_co[:, None] & mask_ci[None, :],
+            other=0.0,
+        )
+        weight01 = tl.load(
+            weight_ptr
+            + offs_co_rel[:, None] * weight_stride_o
+            + ci[None, :] * weight_stride_i
+            + w0 * weight_stride_h
+            + w1 * weight_stride_w,
+            mask=mask_co[:, None] & mask_ci[None, :],
+            other=0.0,
+        )
+        weight22 = tl.load(
+            weight_ptr
+            + offs_co_rel[:, None] * weight_stride_o
+            + ci[None, :] * weight_stride_i
+            + w2 * weight_stride_h
+            + w2 * weight_stride_w,
+            mask=mask_co[:, None] & mask_ci[None, :],
+            other=0.0,
+        )
+        weight20 = tl.load(
+            weight_ptr
+            + offs_co_rel[:, None] * weight_stride_o
+            + ci[None, :] * weight_stride_i
+            + w2 * weight_stride_h
+            + w0 * weight_stride_w,
+            mask=mask_co[:, None] & mask_ci[None, :],
+            other=0.0,
+        )
+        weight02 = tl.load(
+            weight_ptr
+            + offs_co_rel[:, None] * weight_stride_o
+            + ci[None, :] * weight_stride_i
+            + w0 * weight_stride_h
+            + w2 * weight_stride_w,
+            mask=mask_co[:, None] & mask_ci[None, :],
+            other=0.0,
+        )
+        weight00 = tl.load(
+            weight_ptr
+            + offs_co_rel[:, None] * weight_stride_o
+            + ci[None, :] * weight_stride_i
+            + w0 * weight_stride_h
+            + w0 * weight_stride_w,
+            mask=mask_co[:, None] & mask_ci[None, :],
+            other=0.0,
+        )
+
+        acc00 += tl.dot(
+            loss00, weight11, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc01 += tl.dot(
+            loss00, weight12, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc01 += tl.dot(
+            loss01, weight10, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc10 += tl.dot(
+            loss00, weight21, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc10 += tl.dot(
+            loss10, weight01, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc11 += tl.dot(
+            loss00, weight22, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc11 += tl.dot(
+            loss01, weight20, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc11 += tl.dot(
+            loss10, weight02, out_dtype=tl.float32, input_precision="tf32"
+        )
+        acc11 += tl.dot(
+            loss11, weight00, out_dtype=tl.float32, input_precision="tf32"
+        )
+
+    out_base = (
+        out_ptr + n_idx[:, None] * out_stride_n + ci[None, :] * out_stride_c
+    )
+    ptr00 = (
+        out_base + xh0[:, None] * out_stride_h + xw0[:, None] * out_stride_w
+    )
+    ptr01 = (
+        out_base + xh0[:, None] * out_stride_h + xw1[:, None] * out_stride_w
+    )
+    ptr10 = (
+        out_base + xh1[:, None] * out_stride_h + xw0[:, None] * out_stride_w
+    )
+    ptr11 = (
+        out_base + xh1[:, None] * out_stride_h + xw1[:, None] * out_stride_w
+    )
+    mask = mask_m[:, None] & mask_ci[None, :]
+    if STORE:
+        tl.store(ptr00, acc00, mask=mask)
+        tl.store(ptr01, acc01, mask=mask)
+        tl.store(ptr10, acc10, mask=mask)
+        tl.store(ptr11, acc11, mask=mask)
+    else:
+        tl.atomic_add(ptr00, acc00, sem="relaxed", mask=mask)
+        tl.atomic_add(ptr01, acc01, sem="relaxed", mask=mask)
+        tl.atomic_add(ptr10, acc10, sem="relaxed", mask=mask)
+        tl.atomic_add(ptr11, acc11, sem="relaxed", mask=mask)
 
 
 @libentry()
@@ -2634,6 +3750,359 @@ def conv_dgrad(
                 and kw == 3
             ):
                 packed_filter = _pack_weight_2d_khw_oci(filter, groups)
+                if cin_per_group == 3:
+                    m_loss = n * loss_h * loss_w
+
+                    def grid_tile4(meta):
+                        return (
+                            triton.cdiv(m_loss, meta["BLOCK_M"])
+                            * triton.cdiv(cin_per_group, meta["BLOCK_CI"]),
+                            groups,
+                        )
+
+                    _conv_dgrad2d_stride2_pad1_3x3_tile4_kernel[grid_tile4](
+                        loss,
+                        packed_filter,
+                        output,
+                        m_loss,
+                        xh,
+                        xw,
+                        loss_h,
+                        loss_w,
+                        c_in,
+                        c_out,
+                        cin_per_group,
+                        cout_per_group,
+                        loss.stride(0),
+                        loss.stride(1),
+                        loss.stride(2),
+                        loss.stride(3),
+                        cin_per_group,
+                        1,
+                        3 * cout_per_group * cin_per_group,
+                        cout_per_group * cin_per_group,
+                        output.stride(0),
+                        output.stride(1),
+                        output.stride(2),
+                        output.stride(3),
+                        filter_reverse,
+                        DTYPE_ID=dtype_id,
+                    )
+                    return output.squeeze(0) if is_unbatched_1d else output
+
+                if (
+                    dtype_id == 2
+                    and n == 1
+                    and xh == 40
+                    and xw == 40
+                    and loss_h == 20
+                    and loss_w == 20
+                    and cin_per_group == 768
+                    and cout_per_group == 768
+                    and groups == 1
+                    and not filter_reverse
+                ):
+                    block_m = 32
+                    block_ci = 64
+                    block_co = 64
+                    group_k = 2
+                    splitk_warps = 4
+                    full_k_blocks = triton.cdiv(cout_per_group, block_co)
+                    full_groups = triton.cdiv(full_k_blocks, group_k)
+                    zero_block = 2048
+                    _conv_dgrad2d_p5_zero_kernel[
+                        (triton.cdiv(output.numel(), zero_block),)
+                    ](
+                        output,
+                        TOTAL=output.numel(),
+                        BLOCK=zero_block,
+                        num_warps=4,
+                        num_stages=4,
+                    )
+                    for ph in range(2):
+                        parity_h_count = (xh + 1 - ph) // 2
+                        m_tile = n * parity_h_count * loss_w
+                        base_grid = triton.cdiv(m_tile, block_m) * triton.cdiv(
+                            cin_per_group, block_ci
+                        )
+                        _conv_dgrad2d_stride2_pad1_3x3_p5_tile2w_splitk_kernel[
+                            (base_grid * full_groups,)
+                        ](
+                            loss,
+                            packed_filter,
+                            output,
+                            m_tile,
+                            xh,
+                            xw,
+                            loss_h,
+                            loss_w,
+                            c_in,
+                            c_out,
+                            cin_per_group,
+                            cout_per_group,
+                            loss.stride(0),
+                            loss.stride(1),
+                            loss.stride(2),
+                            loss.stride(3),
+                            output.stride(0),
+                            output.stride(1),
+                            output.stride(2),
+                            output.stride(3),
+                            parity_h_count,
+                            ph,
+                            filter_reverse,
+                            BLOCK_M=block_m,
+                            BLOCK_CI=block_ci,
+                            BLOCK_CO=block_co,
+                            GROUP_K=group_k,
+                            SPLIT_K_BLOCKS=full_groups,
+                            K_OFFSET=0,
+                            STORE=False,
+                            num_warps=splitk_warps,
+                            num_stages=3,
+                        )
+                    return output.squeeze(0) if is_unbatched_1d else output
+
+                if (
+                    dtype_id == 2
+                    and loss_h * loss_w <= 1024
+                    and cin_per_group == cout_per_group
+                    and (cin_per_group == 512 or cin_per_group == 768)
+                ):
+                    m_loss = n * loss_h * loss_w
+                    if cin_per_group == 512:
+                        block_m = 32
+                        block_ci = 64
+                        block_co = 64
+                        group_k = 1
+                        splitk_warps = 8
+                    else:
+                        block_m = 32
+                        block_ci = 32
+                        block_co = 64
+                        group_k = 2
+                        splitk_warps = 4
+                    full_k_blocks = triton.cdiv(cout_per_group, block_co)
+                    full_groups = triton.cdiv(full_k_blocks, group_k)
+                    base_grid = triton.cdiv(m_loss, block_m) * triton.cdiv(
+                        cin_per_group, block_ci
+                    )
+
+                    _conv_dgrad2d_stride2_pad1_3x3_tile4_splitk_kernel[
+                        (base_grid,)
+                    ](
+                        loss,
+                        packed_filter,
+                        output,
+                        m_loss,
+                        xh,
+                        xw,
+                        loss_h,
+                        loss_w,
+                        c_in,
+                        c_out,
+                        cin_per_group,
+                        cout_per_group,
+                        loss.stride(0),
+                        loss.stride(1),
+                        loss.stride(2),
+                        loss.stride(3),
+                        cin_per_group,
+                        1,
+                        3 * cout_per_group * cin_per_group,
+                        cout_per_group * cin_per_group,
+                        output.stride(0),
+                        output.stride(1),
+                        output.stride(2),
+                        output.stride(3),
+                        filter_reverse,
+                        BLOCK_M=block_m,
+                        BLOCK_CI=block_ci,
+                        BLOCK_CO=block_co,
+                        GROUP_K=group_k,
+                        SPLIT_K_BLOCKS=1,
+                        K_OFFSET=0,
+                        STORE=True,
+                        num_warps=splitk_warps,
+                        num_stages=3,
+                    )
+                    if full_groups > 1:
+                        _conv_dgrad2d_stride2_pad1_3x3_tile4_splitk_kernel[
+                            (base_grid * (full_groups - 1),)
+                        ](
+                            loss,
+                            packed_filter,
+                            output,
+                            m_loss,
+                            xh,
+                            xw,
+                            loss_h,
+                            loss_w,
+                            c_in,
+                            c_out,
+                            cin_per_group,
+                            cout_per_group,
+                            loss.stride(0),
+                            loss.stride(1),
+                            loss.stride(2),
+                            loss.stride(3),
+                            cin_per_group,
+                            1,
+                            3 * cout_per_group * cin_per_group,
+                            cout_per_group * cin_per_group,
+                            output.stride(0),
+                            output.stride(1),
+                            output.stride(2),
+                            output.stride(3),
+                            filter_reverse,
+                            BLOCK_M=block_m,
+                            BLOCK_CI=block_ci,
+                            BLOCK_CO=block_co,
+                            GROUP_K=group_k,
+                            SPLIT_K_BLOCKS=full_groups - 1,
+                            K_OFFSET=1,
+                            STORE=False,
+                            num_warps=splitk_warps,
+                            num_stages=3,
+                        )
+                    return output.squeeze(0) if is_unbatched_1d else output
+
+                if (
+                    cin_per_group >= 128
+                    and cin_per_group <= 512
+                    and loss_h * loss_w <= 1024
+                ):
+                    m_loss = n * loss_h * loss_w
+
+                    def grid(meta):
+                        return (
+                            triton.cdiv(m_loss, meta["BLOCK_M"])
+                            * triton.cdiv(cin_per_group, meta["BLOCK_CI"]),
+                            groups,
+                        )
+
+                    _conv_dgrad2d_stride2_pad1_3x3_tile4_kernel[grid](
+                        loss,
+                        packed_filter,
+                        output,
+                        m_loss,
+                        xh,
+                        xw,
+                        loss_h,
+                        loss_w,
+                        c_in,
+                        c_out,
+                        cin_per_group,
+                        cout_per_group,
+                        loss.stride(0),
+                        loss.stride(1),
+                        loss.stride(2),
+                        loss.stride(3),
+                        cin_per_group,
+                        1,
+                        3 * cout_per_group * cin_per_group,
+                        cout_per_group * cin_per_group,
+                        output.stride(0),
+                        output.stride(1),
+                        output.stride(2),
+                        output.stride(3),
+                        filter_reverse,
+                        DTYPE_ID=dtype_id,
+                    )
+                    return output.squeeze(0) if is_unbatched_1d else output
+
+                if cin_per_group >= 128 and loss_h * loss_w <= 1024:
+                    for ph in range(2):
+                        parity_h_count = (xh + 1 - ph) // 2
+                        m_tile = n * parity_h_count * loss_w
+
+                        def grid_tile2w(meta, m_tile=m_tile):
+                            return (
+                                triton.cdiv(m_tile, meta["BLOCK_M"])
+                                * triton.cdiv(cin_per_group, meta["BLOCK_CI"]),
+                            )
+
+                        _conv_dgrad2d_stride2_pad1_3x3_tile2w_kernel[
+                            grid_tile2w
+                        ](
+                            loss,
+                            packed_filter,
+                            output,
+                            m_tile,
+                            xh,
+                            xw,
+                            loss_h,
+                            loss_w,
+                            c_in,
+                            c_out,
+                            cin_per_group,
+                            cout_per_group,
+                            loss.stride(0),
+                            loss.stride(1),
+                            loss.stride(2),
+                            loss.stride(3),
+                            output.stride(0),
+                            output.stride(1),
+                            output.stride(2),
+                            output.stride(3),
+                            parity_h_count,
+                            ph,
+                            filter_reverse,
+                            DTYPE_ID=dtype_id,
+                        )
+                    return output.squeeze(0) if is_unbatched_1d else output
+
+                if cin_per_group >= 128:
+                    for ph in range(2):
+                        parity_h_count = (xh + 1 - ph) // 2
+                        kh_count = 1 if ph == 0 else 2
+                        for pw in range(2):
+                            parity_w_count = (xw + 1 - pw) // 2
+                            kw_count = 1 if pw == 0 else 2
+                            m_parity = n * parity_h_count * parity_w_count
+
+                            def grid_packed_mci(meta, m_parity=m_parity):
+                                return (
+                                    triton.cdiv(m_parity, meta["BLOCK_M"])
+                                    * triton.cdiv(
+                                        cin_per_group, meta["BLOCK_CI"]
+                                    ),
+                                )
+
+                            _conv_dgrad2d_stride2_pad1_3x3_packed_mci_kernel[
+                                grid_packed_mci
+                            ](
+                                loss,
+                                packed_filter,
+                                output,
+                                m_parity,
+                                xh,
+                                xw,
+                                loss_h,
+                                loss_w,
+                                c_in,
+                                c_out,
+                                cin_per_group,
+                                cout_per_group,
+                                loss.stride(0),
+                                loss.stride(1),
+                                loss.stride(2),
+                                loss.stride(3),
+                                output.stride(0),
+                                output.stride(1),
+                                output.stride(2),
+                                output.stride(3),
+                                parity_h_count,
+                                parity_w_count,
+                                ph,
+                                pw,
+                                kh_count,
+                                kw_count,
+                                filter_reverse,
+                                DTYPE_ID=dtype_id,
+                            )
+                    return output.squeeze(0) if is_unbatched_1d else output
+
                 max_parity_h_count = (xh + 1) // 2
                 max_parity_w_count = (xw + 1) // 2
                 m_parity_max = n * max_parity_h_count * max_parity_w_count
