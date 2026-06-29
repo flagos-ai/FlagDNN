@@ -1,4 +1,4 @@
-exclude: '^(docs/|cudnn_frontend_op_gap\.md|deep_opt\.md|optimization\.md|workflow\.md|gen_html_eager\.py|gen_html_graph\.py)$'
+exclude: '^(docs/|cudnn_frontend_op_gap\.md|gen_html_eager\.py|gen_html_graph\.py)$'
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
