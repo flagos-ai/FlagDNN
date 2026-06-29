@@ -946,6 +946,182 @@ def _sdpa_fp8_fwd_tma_kernel(
         tl.store(stats_base + offs_m * stride_sm, stats, mask=mask_m)
 
 
+@libentry()
+@libtuner(
+    configs=runtime.get_tuned_config("sdpa_fp8_gqa_causal_tma"),
+    key=[
+        "SQ",
+        "SKV",
+        "HEAD_DIM",
+        "V_DIM",
+        "GROUP",
+        "GENERATE_STATS",
+    ],
+    strategy=[
+        "log",
+        "log",
+        "default",
+        "default",
+        "default",
+        "default",
+    ],
+    warmup=5,
+    rep=10,
+)
+@triton.jit
+def _sdpa_fp8_fwd_gqa_causal_tma_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    o_ptr,
+    stats_ptr,
+    amax_s_ptr,
+    amax_o_ptr,
+    qk_scale,
+    s_scale,
+    sv_descale,
+    o_scale,
+    HKV: tl.constexpr,
+    SQ: tl.constexpr,
+    SKV: tl.constexpr,
+    GROUP: tl.constexpr,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
+    HEAD_DIM: tl.constexpr,
+    V_DIM: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_H: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+    BLOCK_DV: tl.constexpr,
+    GENERATE_STATS: tl.constexpr,
+):
+    raw_pid_m = tle.program_id(0)
+    pid_m = tl.cdiv(SQ, BLOCK_M) - 1 - raw_pid_m
+    pid_bkv = tle.program_id(1)
+    pid_hg = tle.program_id(2)
+    off_b = pid_bkv // HKV
+    off_kh = pid_bkv % HKV
+
+    start_m = pid_m * BLOCK_M
+    offs_mh = tl.arange(0, BLOCK_M * BLOCK_H)
+    offs_h = pid_hg * BLOCK_H + offs_mh // BLOCK_M
+    offs_m = start_m + (offs_mh % BLOCK_M)
+    q_head = off_kh * GROUP + offs_h
+    row_mask = (offs_h < GROUP) & (offs_m < SQ)
+    offs_d = tl.arange(0, BLOCK_D)
+    offs_dv = tl.arange(0, BLOCK_DV)
+
+    q = tl.load(
+        q_ptr
+        + off_b * stride_qb
+        + q_head[:, None] * stride_qh
+        + offs_m[:, None] * stride_qm
+        + offs_d[None, :] * stride_qd,
+        mask=row_mask[:, None],
+        other=0.0,
+    )
+    k_desc = tl.make_tensor_descriptor(
+        k_ptr + off_b * stride_kb + off_kh * stride_kh,
+        shape=[SKV, HEAD_DIM],
+        strides=[stride_kn, stride_kd],
+        block_shape=[BLOCK_N, BLOCK_D],
+    )
+    v_desc = tl.make_tensor_descriptor(
+        v_ptr + off_b * stride_vb + off_kh * stride_vh,
+        shape=[SKV, V_DIM],
+        strides=[stride_vn, stride_vd],
+        block_shape=[BLOCK_N, BLOCK_DV],
+    )
+
+    acc = tl.zeros((BLOCK_M * BLOCK_H, BLOCK_DV), dtype=tl.float32)
+    l_i = tl.zeros((BLOCK_M * BLOCK_H,), dtype=tl.float32)
+    m_i = tl.full((BLOCK_M * BLOCK_H,), float("-inf"), dtype=tl.float32)
+
+    hi = tl.minimum(start_m + BLOCK_M, SKV)
+    full_hi = tl.minimum((start_m // BLOCK_N) * BLOCK_N, hi)
+    if 0 < full_hi:
+        acc, l_i, m_i = _sdpa_fp8_tma_inner(
+            acc,
+            l_i,
+            m_i,
+            q,
+            k_desc,
+            v_desc,
+            qk_scale,
+            s_scale,
+            offs_m,
+            0,
+            full_hi,
+            SKV,
+            BLOCK_N=BLOCK_N,
+            CAUSAL_MASK=False,
+            TAIL_MASK=False,
+        )
+    if full_hi < hi:
+        acc, l_i, m_i = _sdpa_fp8_tma_inner(
+            acc,
+            l_i,
+            m_i,
+            q,
+            k_desc,
+            v_desc,
+            qk_scale,
+            s_scale,
+            offs_m,
+            full_hi,
+            hi,
+            SKV,
+            BLOCK_N=BLOCK_N,
+            CAUSAL_MASK=True,
+            TAIL_MASK=False,
+        )
+
+    l_safe = tl.maximum(l_i, 1.0)
+    o_val = acc * (sv_descale / l_safe[:, None])
+    local_amax_o = tl.max(tl.where(row_mask[:, None], tl.abs(o_val), 0.0))
+    tl.atomic_max(amax_o_ptr, local_amax_o)
+    amax_s_val = tl.max(tl.where(row_mask, tl.abs(m_i), 0.0)) * _LN2_KERNEL
+    tl.atomic_max(amax_s_ptr, amax_s_val)
+
+    tl.store(
+        o_ptr
+        + off_b * stride_ob
+        + q_head[:, None] * stride_oh
+        + offs_m[:, None] * stride_om
+        + offs_dv[None, :] * stride_od,
+        (o_val * o_scale).to(o_ptr.dtype.element_ty),
+        mask=row_mask[:, None],
+    )
+    if GENERATE_STATS:
+        stats = m_i / _LOG2E_KERNEL + tl.log(l_safe)
+        tl.store(
+            stats_ptr
+            + off_b * stride_sb
+            + q_head * stride_sh
+            + offs_m * stride_sm,
+            stats,
+            mask=row_mask,
+        )
+
+
 def _as_scalar(value, name: str) -> float:
     if isinstance(value, torch.Tensor):
         if value.numel() != 1:
@@ -1157,6 +1333,10 @@ def sdpa_fp8(
         # to long sequences (>=2048) or dense medium sequences (>=1024); short
         # / medium-causal cases stay on the lower-overhead lean kernel.
         tma_amortizes = skv >= 2048 or (skv >= 1024 and not pure_causal)
+        hkv = int(k.shape[1])
+        hv = int(v.shape[1])
+        q_per_k = heads // hkv
+        q_per_v = heads // hv
         tma_ok = (
             fast_ok
             and tma_amortizes
@@ -1166,12 +1346,76 @@ def sdpa_fp8(
             and head_dim % 16 == 0
             and v_dim % 16 == 0
         )
+        gqa_causal_tma_ok = (
+            tma_ok
+            and pure_causal
+            and stats is not None
+            and sq == skv
+            and skv >= 1024
+            and hkv == hv
+            and heads > hkv
+            and q_per_k <= 8
+            and head_dim == 128
+            and v_dim == 128
+        )
 
         def fast_grid(meta):
             return (triton.cdiv(sq, meta["BLOCK_M"]), batch * heads)
 
+        def gqa_tma_grid(meta):
+            return (
+                triton.cdiv(sq, meta["BLOCK_M"]),
+                batch * hkv,
+                triton.cdiv(q_per_k, meta["BLOCK_H"]),
+            )
+
         used_fast = False
-        if tma_ok:
+        if gqa_causal_tma_ok:
+            _ensure_triton_tma_allocator()
+            with torch_device_fn.device(q.device):
+                _sdpa_fp8_fwd_gqa_causal_tma_kernel[gqa_tma_grid](
+                    q,
+                    k,
+                    v,
+                    o,
+                    stats_arg,
+                    amax_s,
+                    amax_o,
+                    qk_scale,
+                    scale_s,
+                    sv_descale,
+                    scale_o,
+                    hkv,
+                    sq,
+                    skv,
+                    q_per_k,
+                    q.stride(0),
+                    q.stride(1),
+                    q.stride(2),
+                    q.stride(3),
+                    k.stride(0),
+                    k.stride(1),
+                    k.stride(2),
+                    k.stride(3),
+                    v.stride(0),
+                    v.stride(1),
+                    v.stride(2),
+                    v.stride(3),
+                    o.stride(0),
+                    o.stride(1),
+                    o.stride(2),
+                    o.stride(3),
+                    stride_stats[0],
+                    stride_stats[1],
+                    stride_stats[2],
+                    HEAD_DIM=head_dim,
+                    V_DIM=v_dim,
+                    BLOCK_D=head_dim,
+                    BLOCK_DV=v_dim,
+                    GENERATE_STATS=stats is not None,
+                )
+            used_fast = True
+        elif tma_ok:
             _ensure_triton_tma_allocator()
             with torch_device_fn.device(q.device):
                 _sdpa_fp8_fwd_tma_kernel[fast_grid](
@@ -1189,8 +1433,8 @@ def sdpa_fp8(
                     heads,
                     sq,
                     skv,
-                    heads // int(k.shape[1]),
-                    heads // int(v.shape[1]),
+                    q_per_k,
+                    q_per_v,
                     q.stride(0),
                     q.stride(1),
                     q.stride(2),
@@ -1235,8 +1479,8 @@ def sdpa_fp8(
                     heads,
                     sq,
                     skv,
-                    heads // int(k.shape[1]),
-                    heads // int(v.shape[1]),
+                    q_per_k,
+                    q_per_v,
                     q.stride(0),
                     q.stride(1),
                     q.stride(2),
@@ -1286,8 +1530,8 @@ def sdpa_fp8(
                     heads,
                     sq,
                     skv,
-                    heads // int(k.shape[1]),
-                    heads // int(v.shape[1]),
+                    q_per_k,
+                    q_per_v,
                     min_diag,
                     max_diag,
                     q.stride(0),

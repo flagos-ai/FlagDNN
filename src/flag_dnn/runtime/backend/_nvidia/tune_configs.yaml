@@ -205,11 +205,39 @@ sdpa_fp8_tma:
       - 3
       - 4
 
+sdpa_fp8_gqa_causal_tma:
+  # Grouped-query causal fp8 SDPA forward for D128 contiguous GQA prefill.
+  # One CTA covers multiple query heads that share one K/V head, reducing
+  # repeated descriptor loads on the LLaMA-class fp8 GQA benchmark shapes.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_H: block_h
+        BLOCK_N: block_n
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 16
+      - 32
+    block_h:
+      - 2
+      - 4
+    block_n:
+      - 64
+      - 128
+    warps:
+      - 4
+      - 8
+    stages:
+      - 3
+      - 4
+
 sdpa_fp8_fast:
   # Lean fp8 SDPA forward (constexpr strides, dense / top-left causal, no bias)
-  # for power-of-two head_dim. Grid converged after H100 autotune: block_n=32
-  # and 2-stage variants were swept but never won, so they are dropped to keep
-  # tuning fast.
+  # for power-of-two head_dim. Keep a narrow grid, but include block_n=256 and
+  # 2-stage variants for short dense/causal D128 cases where they can reduce
+  # loop overhead.
   - gen: true
     param_map:
       META:
@@ -223,10 +251,12 @@ sdpa_fp8_fast:
     block_n:
       - 64
       - 128
+      - 256
     warps:
       - 4
       - 8
     stages:
+      - 2
       - 3
       - 4
 sdpa_dense_exact:
