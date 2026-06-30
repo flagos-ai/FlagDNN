@@ -290,10 +290,26 @@ def _batched_matmul_persistent_kernel(
         tile_id += NUM_SMS
 
 
-def _batched_matmul_3d(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+def _batched_matmul_3d_out(
+    A: torch.Tensor, B: torch.Tensor, C: torch.Tensor
+) -> torch.Tensor:
     if not A.is_contiguous() or not B.is_contiguous():
         raise NotImplementedError(
             "flag_dnn matmul batched path requires contiguous inputs"
+        )
+    if not C.is_contiguous():
+        raise NotImplementedError(
+            "flag_dnn matmul batched path requires contiguous output"
+        )
+    if A.device != B.device:
+        raise RuntimeError(
+            "matmul: input tensors must be on the same device, "
+            f"but got {A.device} and {B.device}"
+        )
+    if A.dtype != B.dtype:
+        raise RuntimeError(
+            "expected mat1 and mat2 to have the same dtype, but got: "
+            f"{A.dtype} != {B.dtype}"
         )
     batch, m, k = A.shape
     b_batch, b_k, n = B.shape
@@ -301,7 +317,13 @@ def _batched_matmul_3d(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
         raise RuntimeError(
             f"matmul shape mismatch: {tuple(A.shape)} x {tuple(B.shape)}"
         )
-    C = torch.empty((batch, m, n), device=A.device, dtype=A.dtype)
+    expected = (batch, m, n)
+    if (
+        tuple(C.shape) != expected
+        or C.dtype != A.dtype
+        or C.device != A.device
+    ):
+        raise RuntimeError("matmul output buffer shape/dtype/device mismatch")
     if C.numel() == 0:
         return C
 
@@ -311,8 +333,44 @@ def _batched_matmul_3d(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
             batch,
         )
 
+    exact_projection = batch == 16 and m == 2048 and n == 2048 and k == 512
+
     with torch_device_fn.device(A.device):
-        if (
+        if exact_projection and A.dtype in (torch.float16, torch.bfloat16):
+            fixed_grid = (triton.cdiv(m, 128) * triton.cdiv(n, 256), batch)
+            _batched_matmul_kernel.fn.fn[fixed_grid](
+                A,
+                B,
+                C,
+                m,
+                n,
+                k,
+                False,
+                BLOCK_M=128,
+                BLOCK_N=256,
+                BLOCK_K=64,
+                GROUP_M=16,
+                num_warps=8,
+                num_stages=4,
+            )
+        elif exact_projection and A.dtype == torch.float32:
+            fixed_grid = (triton.cdiv(m, 256) * triton.cdiv(n, 128), batch)
+            _batched_matmul_kernel.fn.fn[fixed_grid](
+                A,
+                B,
+                C,
+                m,
+                n,
+                k,
+                True,
+                BLOCK_M=256,
+                BLOCK_N=128,
+                BLOCK_K=64,
+                GROUP_M=1,
+                num_warps=16,
+                num_stages=3,
+            )
+        elif (
             A.dtype in (torch.float16, torch.bfloat16)
             and m == 512
             and n == 512
@@ -363,6 +421,13 @@ def _batched_matmul_3d(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
                 ),
             )
     return C
+
+
+def _batched_matmul_3d(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+    batch, m, _ = A.shape
+    n = int(B.shape[2])
+    C = torch.empty((batch, m, n), device=A.device, dtype=A.dtype)
+    return _batched_matmul_3d_out(A, B, C)
 
 
 _BATCHED_TRITON_DTYPES = (torch.float16, torch.bfloat16, torch.float32)

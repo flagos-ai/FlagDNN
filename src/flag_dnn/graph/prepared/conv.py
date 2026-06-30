@@ -335,7 +335,7 @@ def _prepare_conv_wgrad(
                             num_stages=1,
                         )
                     else:
-                        _conv_wgrad2d_1x1_reduce_kernel[(8, 1)](
+                        _conv_wgrad2d_1x1_reduce_kernel[(32, 1)](
                             partial,
                             output,
                             128,
@@ -344,9 +344,9 @@ def _prepare_conv_wgrad(
                             64,
                             1,
                             32,
-                            BLOCK_CO=16,
-                            BLOCK_CI=64,
-                            num_warps=8,
+                            BLOCK_CO=8,
+                            BLOCK_CI=32,
+                            num_warps=4,
                             num_stages=1,
                         )
                     return output
@@ -557,6 +557,47 @@ def _prepare_conv_fprop(
     if rank == 2:
         stride_2d = cast(tuple[int, int], stride)
         dilation_2d = cast(tuple[int, int], dilation)
+        image_spec = input_specs[0]
+        weight_spec = input_specs[1]
+        workspace_cache: PreparedTensorCache = {}
+        use_workspace_cache = False
+        if (
+            image_spec.layout == "contiguous"
+            and weight_spec.contiguous is True
+            and image_spec.dtype == "bfloat16"
+            and not isinstance(padding, str)
+            and all(isinstance(dim, int) for dim in image_spec.shape)
+            and all(isinstance(dim, int) for dim in weight_spec.shape)
+        ):
+            n, cin, h, w = (int(dim) for dim in image_spec.shape)
+            c_out, _, kh, kw = (int(dim) for dim in weight_spec.shape)
+            padding_tuple: tuple[int, ...]
+            if isinstance(padding, int):
+                padding_tuple = (int(padding),) * 4
+            else:
+                raw_padding = tuple(int(dim) for dim in padding)
+                if len(raw_padding) == 2:
+                    padding_tuple = (
+                        raw_padding[0],
+                        raw_padding[0],
+                        raw_padding[1],
+                        raw_padding[1],
+                    )
+                else:
+                    padding_tuple = raw_padding
+            use_workspace_cache = (
+                n == 1
+                and h == 40
+                and w == 40
+                and kh == 3
+                and kw == 3
+                and cin >= 256
+                and c_out >= 512
+                and groups == 1
+                and stride_2d == (2, 2)
+                and dilation_2d == (1, 1)
+                and padding_tuple == (1, 1, 1, 1)
+            )
 
         def run_conv2d(inputs: Sequence[Any], _attrs: dict[str, Any]) -> Any:
             _require_runtime_backend(inputs, "conv_fprop")
@@ -567,6 +608,7 @@ def _prepare_conv_fprop(
                 padding=padding,
                 dilation=dilation_2d,
                 groups=groups,
+                _workspace=workspace_cache if use_workspace_cache else None,
             )
 
         return run_conv2d

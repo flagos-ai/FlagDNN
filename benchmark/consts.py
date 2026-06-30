@@ -353,9 +353,14 @@ def compile_options():
 
 
 BATCHNORM_INFERENCE_SHAPES = (
-    (8, 32, 32, 32),
-    (16, 64, 16, 16),
-    (4, 128, 16, 16),
+    (8, 32, 32, 32),  # launch-sensitive small/medium activation
+    (16, 64, 16, 16),  # same element count with larger C
+    (4, 128, 16, 16),  # higher C, smaller batch
+    (8, 64, 56, 56),  # early CNN/ResNet stage, large spatial
+    (16, 128, 28, 28),  # mid-stage activation
+    (16, 256, 14, 14),  # late-stage activation
+    (8, 512, 7, 7),  # high-channel small spatial
+    (32, 1024, 1, 1),  # per-channel 1x1 normalization
 )
 
 REDUCTION_SHAPES = (

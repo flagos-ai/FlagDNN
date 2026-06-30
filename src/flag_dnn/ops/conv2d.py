@@ -664,8 +664,8 @@ def _use_im2col_stride2_pad1_nchw(
         and w == 40
         and oh == 20
         and ow == 20
-        and cin_per_group >= 256
-        and cout_per_group >= 512
+        and cin_per_group >= 128
+        and cout_per_group >= 256
     )
 
 
@@ -3672,6 +3672,8 @@ def conv2d(
     padding: Union[str, int, Tuple[int, ...]] = 0,
     dilation: Union[int, Tuple[int, int]] = 1,
     groups: int = 1,
+    *,
+    _workspace: Optional[dict] = None,
 ) -> torch.Tensor:
     stride = _pair(stride)
     dilation = _pair(dilation)
@@ -3695,6 +3697,8 @@ def conv2d(
 
     if oh < 0 or ow < 0:
         raise RuntimeError("computed output size is negative")
+    output_shape = (n, c_out, oh, ow)
+
     if oh == 0 or ow == 0:
         return torch.empty(
             (n, c_out, max(oh, 0), max(ow, 0)),
@@ -3720,7 +3724,7 @@ def conv2d(
             weight = weight.contiguous()
 
         output = torch.empty(
-            (n, c_out, oh, ow), device=input.device, dtype=input.dtype
+            output_shape, device=input.device, dtype=input.dtype
         )
 
         with torch_device_fn.device(input.device):
@@ -3823,7 +3827,7 @@ def conv2d(
     with torch_device_fn.device(input.device):
         if use_channels_last:
             output = torch.empty(
-                (n, c_out, oh, ow),
+                output_shape,
                 device=input.device,
                 dtype=input.dtype,
                 memory_format=torch.channels_last,
@@ -3963,7 +3967,7 @@ def conv2d(
             weight = weight.contiguous()
 
         output = torch.empty(
-            (n, c_out, oh, ow), device=input.device, dtype=input.dtype
+            output_shape, device=input.device, dtype=input.dtype
         )
 
         if bias is None and _use_im2col_stride2_pad1_nchw(
@@ -3985,9 +3989,25 @@ def conv2d(
         ):
             kdim = cin_per_group * kh * kw
             hw = oh * ow
-            cols = torch.empty(
-                (kdim, hw), device=input.device, dtype=input.dtype
+            cols_key = (
+                "stride2_pad1_im2col",
+                input.device.type,
+                input.device.index,
+                input.dtype,
+                kdim,
+                hw,
             )
+            if _workspace is not None:
+                cols = _workspace.get(cols_key)
+                if cols is None:
+                    cols = torch.empty(
+                        (kdim, hw), device=input.device, dtype=input.dtype
+                    )
+                    _workspace[cols_key] = cols
+            else:
+                cols = torch.empty(
+                    (kdim, hw), device=input.device, dtype=input.dtype
+                )
             total = kdim * hw
             block_size = 512 if input.dtype == torch.float32 else 1024
             conv2d_spatial_nchw_3x3_stride2_pad1_im2col_kernel[
@@ -4016,32 +4036,33 @@ def conv2d(
                 )
 
             if input.dtype == torch.float32:
+                block_m = 32
                 block_n = 128 if cin_per_group >= 768 else 64
-                _batched_matmul_kernel.fn.fn[grid_im2col_mm](
-                    weight_2d,
-                    cols,
-                    output_2d,
-                    c_out,
-                    hw,
-                    kdim,
-                    FAST_FP32_TO_FP16=False,
-                    BLOCK_M=32,
-                    BLOCK_N=block_n,
-                    BLOCK_K=128,
-                    GROUP_M=8,
-                    num_warps=4,
-                    num_stages=3,
-                )
             else:
-                _batched_matmul_kernel[grid_im2col_mm](
-                    weight_2d,
-                    cols,
-                    output_2d,
-                    c_out,
-                    hw,
-                    kdim,
-                    FAST_FP32_TO_FP16=False,
+                block_m = 64
+                block_n = 64
+
+            def grid_fixed_im2col_mm(meta):
+                return (
+                    triton.cdiv(c_out, block_m) * triton.cdiv(hw, block_n),
+                    1,
                 )
+
+            _batched_matmul_kernel.fn.fn[grid_fixed_im2col_mm](
+                weight_2d,
+                cols,
+                output_2d,
+                c_out,
+                hw,
+                kdim,
+                FAST_FP32_TO_FP16=False,
+                BLOCK_M=block_m,
+                BLOCK_N=block_n,
+                BLOCK_K=128,
+                GROUP_M=8,
+                num_warps=4,
+                num_stages=3,
+            )
             return output
 
         if is_depthwise:

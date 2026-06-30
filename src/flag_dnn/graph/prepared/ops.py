@@ -6,7 +6,9 @@ from flag_dnn.graph.prepared import prepare_run_fn
 
 # Import prepared op modules for registration side effects.
 for _module_name in (
+    "batchnorm",
     "conv",
+    "matmul",
     "pointwise",
     "sdpa_backward",
     "sdpa_forward",
