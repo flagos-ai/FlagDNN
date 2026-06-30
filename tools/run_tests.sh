@@ -22,10 +22,10 @@ export CUDA_VISIBLE_DEVICES=0
 source tools/run_command.sh
 
 echo "----------------------------------------------------"
-echo "开始执行 graph 功能测试..."
+echo "开始执行功能测试..."
 
-# 按 conf/operators.yaml 中的 graph_accuracy label 自动选择功能测试
-run_command python tools/run_tests.py --suites graph_accuracy
+# 按 conf/operators.yaml 中的 accuracy label 自动选择功能测试
+run_command python tools/run_tests.py --suites accuracy
 
 
 echo "===================================================="

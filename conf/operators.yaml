@@ -9,8 +9,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Tensor
     stages:
@@ -23,8 +23,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Tensor
     stages:
@@ -37,8 +37,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Tensor
     stages:
@@ -51,8 +51,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Tensor
     stages:
@@ -65,8 +65,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Tensor
     stages:
@@ -79,8 +79,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Tensor
     stages:
@@ -94,8 +94,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - NeuralNetwork
     stages:
@@ -110,8 +110,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - NeuralNetwork
     stages:
@@ -154,8 +154,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - NeuralNetwork
     stages:
@@ -170,8 +170,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - NeuralNetwork
     stages:
@@ -221,7 +221,7 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
+      - accuracy
     kind:
       - NeuralNetwork
     stages:
@@ -236,8 +236,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - NeuralNetwork
     stages:
@@ -251,7 +251,7 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
+      - accuracy
     kind:
       - NeuralNetwork
     stages:
@@ -289,7 +289,7 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
+      - accuracy
     kind:
       - NeuralNetwork
     stages:
@@ -364,8 +364,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -380,8 +380,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -396,8 +396,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -412,8 +412,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -428,8 +428,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -444,8 +444,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -459,8 +459,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -474,8 +474,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -490,8 +490,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -520,8 +520,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -598,7 +598,7 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
+      - accuracy
     kind:
       - Reduction
     stages:
@@ -665,8 +665,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -681,8 +681,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -697,8 +697,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -713,8 +713,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -729,8 +729,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -745,8 +745,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -917,8 +917,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - NeuralNetwork
     stages:
@@ -981,8 +981,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - NeuralNetwork
     stages:
@@ -1059,8 +1059,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - LinearAlg
     stages:
@@ -1074,8 +1074,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - NeuralNetwork
       - Attention
@@ -1089,8 +1089,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - NeuralNetwork
       - Attention
@@ -1155,8 +1155,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - NeuralNetwork
     stages:
@@ -1170,8 +1170,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - NeuralNetwork
     stages:
@@ -1185,8 +1185,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - NeuralNetwork
     stages:
@@ -1201,7 +1201,7 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
+      - accuracy
     kind:
       - NeuralNetwork
     stages:
@@ -1290,8 +1290,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - NeuralNetwork
     stages:
@@ -1306,8 +1306,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - NeuralNetwork
     stages:
@@ -1372,8 +1372,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
       - fused
     kind:
       - Fused
@@ -1388,8 +1388,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
       - fused
     kind:
       - NeuralNetwork
@@ -1405,8 +1405,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -1433,8 +1433,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -1449,8 +1449,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -1464,8 +1464,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -1478,8 +1478,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -1492,8 +1492,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -1506,8 +1506,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -1520,8 +1520,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -1534,8 +1534,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -1548,8 +1548,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -1639,8 +1639,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -1655,8 +1655,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -1671,8 +1671,8 @@ ops:
       - flag_dnn
       - eager
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Math
     stages:
@@ -1686,8 +1686,8 @@ ops:
     labels:
       - flag_dnn
       - graph
-      - graph_accuracy
-      - graph_benchmark
+      - accuracy
+      - benchmark
     kind:
       - Tensor
     stages:

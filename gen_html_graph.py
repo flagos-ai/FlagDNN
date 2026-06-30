@@ -7,7 +7,7 @@ from datetime import datetime
 # ============ 配置区 ============
 SUMMARY_FILE = "perf_graph_summary.json"
 PERF_FILE = "perf_graph_data.json"
-OUTPUT_HTML = "flagdnn_graph_benchmark_report.html"
+OUTPUT_HTML = "flagdnn_benchmark_report.html"
 # ================================
 
 

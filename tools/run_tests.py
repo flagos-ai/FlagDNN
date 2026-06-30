@@ -60,15 +60,15 @@ if not USE_COLORS:
     RED = GREEN = YELLOW = CYAN = DIM = NC = ""
 
 SUITES = {
-    "graph_accuracy": {
-        "label": "graph_accuracy",
+    "accuracy": {
+        "label": "accuracy",
         "directory": "tests",
         "kind": "accuracy",
     },
-    "graph_performance": {
-        "label": "graph_benchmark",
+    "benchmark": {
+        "label": "benchmark",
         "directory": "benchmark",
-        "kind": "graph_performance",
+        "kind": "benchmark",
     },
 }
 
@@ -445,14 +445,14 @@ def parse_pytest_counts(
     total = sum(counts.values())
     if exit_code == TIMEOUT:
         status = "Timeout"
-    elif exit_code == 5:
+    elif exit_code == 5 and total == 0:
         status = "NotFound"
     elif counts["failed"] or counts["errors"] or exit_code not in (0, 5):
         status = "Failed"
-    elif total == 0:
-        status = "NotFound"
     elif counts["passed"] == 0 and counts["skipped"] > 0:
         status = "Skipped"
+    elif total == 0:
+        status = "NotFound"
     else:
         status = "Passed"
 
@@ -461,7 +461,7 @@ def parse_pytest_counts(
     return result
 
 
-def parse_graph_perf_stdout(
+def parse_benchmark_stdout(
     op: str, stdout: str, exit_code: int
 ) -> dict[str, Any]:
     if exit_code == TIMEOUT:
@@ -525,8 +525,8 @@ def suite_is_available(op: str, suite: str) -> bool:
     return op in MARKS_BY_SUITE.get(suite, set())
 
 
-def run_graph_accuracy_suite(gpu_id: int, op: str) -> dict[str, Any]:
-    suite = "graph_accuracy"
+def run_accuracy_suite(gpu_id: int, op: str) -> dict[str, Any]:
+    suite = "accuracy"
     if not suite_is_available(op, suite):
         return {"status": "NotFound", "exit_code": 5, "duration": 0.0}
 
@@ -545,8 +545,8 @@ def run_graph_accuracy_suite(gpu_id: int, op: str) -> dict[str, Any]:
     return result
 
 
-def run_graph_performance_suite(gpu_id: int, op: str) -> dict[str, Any]:
-    suite = "graph_performance"
+def run_benchmark_suite(gpu_id: int, op: str) -> dict[str, Any]:
+    suite = "benchmark"
     if not suite_is_available(op, suite):
         return {
             "status": "NotFound",
@@ -569,17 +569,17 @@ def run_graph_performance_suite(gpu_id: int, op: str) -> dict[str, Any]:
     start = time.time()
     run = run_cmd(op, suite, cmd, cwd=directory, env=env, timeout=CFG.timeout)
     duration = time.time() - start
-    record = parse_graph_perf_stdout(op, run["stdout"], run["exit_code"])
+    record = parse_benchmark_stdout(op, run["stdout"], run["exit_code"])
     record["duration"] = duration
     record["exit_code"] = run["exit_code"]
     return record
 
 
 def run_suite(gpu_id: int, op: str, suite: str) -> dict[str, Any]:
-    if suite == "graph_accuracy":
-        return run_graph_accuracy_suite(gpu_id, op)
-    if suite == "graph_performance":
-        return run_graph_performance_suite(gpu_id, op)
+    if suite == "accuracy":
+        return run_accuracy_suite(gpu_id, op)
+    if suite == "benchmark":
+        return run_benchmark_suite(gpu_id, op)
     return {"status": "Skipped", "duration": 0.0, "exit_code": 0}
 
 
@@ -849,7 +849,7 @@ def main() -> None:
         default="auto",
         help=(
             "comma-separated suites, 'all', or 'auto'. "
-            "Suites: graph_accuracy,graph_performance"
+            "Suites: accuracy,benchmark"
         ),
     )
     parser.add_argument(
