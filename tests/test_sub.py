@@ -1,143 +1,80 @@
 import pytest
+from tests.base import (
+    CUDNN_COMPARE_DTYPES,
+    cudnn,
+    cudnn_graph,
+    execute_cudnn_graph,
+)
 import torch
+
 import flag_dnn
-from . import accuracy_utils as utils
-from . import conftest as cfg
+from tests import consts
+from tests import accuracy_utils as utils
 
 
-if cfg.QUICK_MODE:
-    FLOAT_DTYPES = [torch.float32]
-    INTEGER_DTYPES = [torch.int32]
-else:
-    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
-    INTEGER_DTYPES = utils.ALL_INT_DTYPES
+def _cudnn_sub(x, y, cudnn_handle):
+    graph = cudnn_graph(x.dtype, cudnn_handle)
+    x_tensor = graph.tensor_like(x)
+    y_tensor = graph.tensor_like(y)
+    out_tensor = graph.sub(
+        a=x_tensor,
+        b=y_tensor,
+        compute_data_type=cudnn.data_type.FLOAT,
+        name="sub",
+    )
+    output_shape = torch.broadcast_shapes(tuple(x.shape), tuple(y.shape))
+    output_template = torch.empty(
+        output_shape,
+        device=x.device,
+        dtype=x.dtype,
+    )
+    return execute_cudnn_graph(
+        graph,
+        {x_tensor: x, y_tensor: y},
+        out_tensor,
+        output_template,
+        cudnn_handle,
+        "sub",
+    )
 
 
-SHAPES = utils.POINTWISE_SHAPES
+def _run_flag_dnn_sub_graph(x, y):
+    @flag_dnn.graph
+    def flag_dnn_sub_graph(x, y):
+        return flag_dnn.sub(
+            x,
+            y,
+            compute_data_type="float32",
+            name="sub",
+        )
 
-BROADCAST_SHAPES = [
-    ((4, 4), (4,)),  # 1D broadcast to 2D
-    ((2, 3, 4), (3, 1)),  # 内部维度广播
-    ((1, 5), (5, 5)),  # 单一维度扩展
-    ((2, 1, 4, 1), (1, 3, 1, 5)),  # 复杂高维双向广播
-    ((), (17, 31)),  # 标量 Tensor 广播到矩阵
-]
-
-
-@pytest.mark.sub
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-@pytest.mark.parametrize("shape", SHAPES)
-def test_accuracy_sub(dtype, shape):
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-
-    x = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
-    y = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
-
-    ref_x = utils.to_reference(x, ref_kind="compute")
-    ref_y = utils.to_reference(y, ref_kind="compute")
-
-    ref_out = torch.sub(ref_x, ref_y)
-    with flag_dnn.use_dnn():
-        out = torch.sub(x, y)
-
-    utils.gems_assert_close(out, ref_out, dtype)
-
-
-@pytest.mark.sub
-@pytest.mark.parametrize("dtype", INTEGER_DTYPES)
-@pytest.mark.parametrize("shape", SHAPES)
-def test_accuracy_sub_integer_dtype(dtype, shape):
-    x = torch.randint(-5, 6, shape, dtype=dtype, device=flag_dnn.device)
-    y = torch.randint(-5, 6, shape, dtype=dtype, device=flag_dnn.device)
-
-    ref_x = utils.to_reference(x, ref_kind="compute")
-    ref_y = utils.to_reference(y, ref_kind="compute")
-
-    ref_out = torch.sub(ref_x, ref_y)
-    with flag_dnn.use_dnn():
-        out = torch.sub(x, y)
-
-    assert out.dtype == dtype
-    utils.gems_assert_equal(out, ref_out)
+    compiled = flag_dnn.compile(
+        flag_dnn_sub_graph,
+        inputs=[
+            flag_dnn.TensorSpec.from_tensor(x, "x"),
+            flag_dnn.TensorSpec.from_tensor(y, "y"),
+        ],
+        options={"cache": None},
+    )
+    assert [node.op_type for node in compiled.graph.nodes] == ["sub"]
+    assert compiled.graph.nodes[0].attrs["compute_data_type"] == "float32"
+    assert compiled.graph.nodes[0].attrs["name"] == "sub"
+    return compiled.run(x.clone(), y.clone())
 
 
 @pytest.mark.sub
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-def test_accuracy_sub_empty_tensor(dtype):
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
+@pytest.mark.graph
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
+@pytest.mark.parametrize("case", consts.SUB_CASES)
+def test_sub(cudnn_handle, dtype, case):
+    torch.manual_seed(0)
+    x_shape, y_shape = case
+    x = consts.pointwise_randn(x_shape, dtype, flag_dnn.device)
+    y = consts.pointwise_randn(y_shape, dtype, flag_dnn.device)
 
-    # 测试空张量 (shape 为 0)
-    x = torch.randn(0, dtype=dtype, device=flag_dnn.device)
-    y = torch.randn(0, dtype=dtype, device=flag_dnn.device)
+    cudnn_out = _cudnn_sub(x, y, cudnn_handle)
+    flag_dnn_out = _run_flag_dnn_sub_graph(x, y)
 
-    ref_x = utils.to_reference(x, ref_kind="compute")
-    ref_y = utils.to_reference(y, ref_kind="compute")
-
-    ref_out = torch.sub(ref_x, ref_y)
-    with flag_dnn.use_dnn():
-        out = torch.sub(x, y)
-
-    assert out.shape == (0,)
-    assert out.dtype == dtype
-    assert out.device == x.device
-    utils.gems_assert_close(out, ref_out, dtype)
-
-
-@pytest.mark.sub
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-def test_accuracy_sub_scalar(dtype):
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-
-    x = torch.randn(100, dtype=dtype, device=flag_dnn.device)
-    scalar = 3.14
-
-    ref_x = utils.to_reference(x, ref_kind="compute")
-
-    ref_out = torch.sub(ref_x, scalar)
-    with flag_dnn.use_dnn():
-        out = torch.sub(x, scalar)
-
-    utils.gems_assert_close(out, ref_out, dtype)
-
-
-@pytest.mark.sub
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-def test_accuracy_sub_alpha(dtype):
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-
-    x = torch.randn(100, dtype=dtype, device=flag_dnn.device)
-    y = torch.randn(100, dtype=dtype, device=flag_dnn.device)
-    alpha = 2.5
-
-    ref_x = utils.to_reference(x, ref_kind="compute")
-    ref_y = utils.to_reference(y, ref_kind="compute")
-
-    ref_out = torch.sub(ref_x, ref_y, alpha=alpha)
-    with flag_dnn.use_dnn():
-        out = torch.sub(x, y, alpha=alpha)
-
-    utils.gems_assert_close(out, ref_out, dtype)
-
-
-@pytest.mark.sub
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-@pytest.mark.parametrize("input_shape, other_shape", BROADCAST_SHAPES)
-def test_accuracy_sub_broadcast(dtype, input_shape, other_shape):
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-
-    x = torch.randn(input_shape, dtype=dtype, device=flag_dnn.device)
-    y = torch.randn(other_shape, dtype=dtype, device=flag_dnn.device)
-
-    ref_x = utils.to_reference(x, ref_kind="compute")
-    ref_y = utils.to_reference(y, ref_kind="compute")
-
-    ref_out = torch.sub(ref_x, ref_y)
-    with flag_dnn.use_dnn():
-        out = torch.sub(x, y)
-
-    utils.gems_assert_close(out, ref_out, dtype)
+    atol = 5e-2 if dtype == torch.bfloat16 else 2e-2
+    utils.gems_assert_close(flag_dnn_out, cudnn_out, dtype, atol=atol)

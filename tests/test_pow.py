@@ -1,156 +1,91 @@
 import pytest
+from tests.base import (
+    CUDNN_COMPARE_DTYPES,
+    cudnn,
+    cudnn_graph,
+    execute_cudnn_graph,
+)
 import torch
+
 import flag_dnn
-from . import accuracy_utils as utils
-from . import conftest as cfg
+from tests import consts
+from tests import accuracy_utils as utils
 
 
-if cfg.QUICK_MODE:
-    FLOAT_DTYPES = [torch.float32]
-else:
-    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
+def _make_inputs(case, dtype):
+    x_shape, y_shape = case
+    x = consts.pointwise_layout(
+        consts.pointwise_rand(x_shape, dtype, flag_dnn.device) + 0.5
+    )
+    y = consts.pointwise_layout(
+        consts.pointwise_rand(y_shape, dtype, flag_dnn.device) * 2.0
+    )
+    return x, y
 
 
-SHAPES = utils.POINTWISE_SHAPES
-
-BROADCAST_SHAPES = [
-    ((4, 4), (4,)),  # 1D broadcast to 2D
-    ((2, 3, 4), (3, 1)),  # 内部维度广播
-    ((1, 5), (5, 5)),  # 单一维度扩展
-    ((2, 1, 4, 1), (1, 3, 1, 5)),  # 复杂高维双向广播
-    ((), (17, 31)),  # 标量 Tensor 广播到矩阵
-]
-
-
-def _get_positive_tensor(shape, dtype, device):
-    """
-    生成严格为正数的张量。
-    对于 pow 运算，如果底数为负数且指数为小数，会产生 NaN 或复数。
-    我们限制底数为正，确保能够进行稳定的精度比对。
-    """
-    return torch.abs(torch.randn(shape, dtype=dtype, device=device)) + 0.5
-
-
-@pytest.mark.pow
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-@pytest.mark.parametrize("shape", SHAPES)
-def test_accuracy_pow_tensor(dtype, shape):
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-
-    # 底数必须为正数
-    x = _get_positive_tensor(shape, dtype, flag_dnn.device)
-    # 指数可以用普通随机数 (负指数即为取倒数)
-    y = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
-
-    ref_x = utils.to_reference(x, ref_kind="compute")
-    ref_y = utils.to_reference(y, ref_kind="compute")
-
-    ref_out = torch.pow(ref_x, ref_y)
-    with flag_dnn.use_dnn():
-        out = torch.pow(x, y)
-
-    utils.gems_assert_close(out, ref_out, dtype)
-
-
-@pytest.mark.pow
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-def test_accuracy_pow_empty_tensor(dtype):
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-
-    # 测试空张量 (shape 为 0)
-    x = torch.randn(0, dtype=dtype, device=flag_dnn.device)
-    y = torch.randn(0, dtype=dtype, device=flag_dnn.device)
-
-    ref_x = utils.to_reference(x, ref_kind="compute")
-    ref_y = utils.to_reference(y, ref_kind="compute")
-
-    ref_out = torch.pow(ref_x, ref_y)
-    with flag_dnn.use_dnn():
-        out = torch.pow(x, y)
-
-    assert out.shape == (0,)
-    assert out.dtype == dtype
-    assert out.device == x.device
-    utils.gems_assert_close(out, ref_out, dtype)
-
-
-@pytest.mark.pow
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-def test_accuracy_pow_scalar_exponent(dtype):
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-
-    # Tensor base, scalar exponent
-    x = _get_positive_tensor((100,), dtype, flag_dnn.device)
-    scalar_exp = 2.5
-
-    ref_x = utils.to_reference(x, ref_kind="compute")
-
-    ref_out = torch.pow(ref_x, scalar_exp)
-    with flag_dnn.use_dnn():
-        out = torch.pow(x, scalar_exp)
-
-    utils.gems_assert_close(out, ref_out, dtype)
-
-
-@pytest.mark.pow
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-def test_accuracy_pow_scalar_base(dtype):
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-
-    # Scalar base, tensor exponent
-    scalar_base = 3.14
-    y = torch.randn(100, dtype=dtype, device=flag_dnn.device)
-
-    ref_y = utils.to_reference(y, ref_kind="compute")
-
-    ref_out = torch.pow(scalar_base, ref_y)
-    with flag_dnn.use_dnn():
-        out = torch.pow(scalar_base, y)
-
-    utils.gems_assert_close(out, ref_out, dtype)
-
-
-@pytest.mark.pow
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-@pytest.mark.parametrize("input_shape, other_shape", BROADCAST_SHAPES)
-def test_accuracy_pow_broadcast(dtype, input_shape, other_shape):
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-
-    x = _get_positive_tensor(input_shape, dtype, flag_dnn.device)
-    y = torch.randn(other_shape, dtype=dtype, device=flag_dnn.device)
-
-    ref_x = utils.to_reference(x, ref_kind="compute")
-    ref_y = utils.to_reference(y, ref_kind="compute")
-
-    ref_out = torch.pow(ref_x, ref_y)
-    with flag_dnn.use_dnn():
-        out = torch.pow(x, y)
-
-    utils.gems_assert_close(out, ref_out, dtype)
-
-
-@pytest.mark.pow
-def test_accuracy_pow_integer_and_bool_dtype():
-    x_int = torch.tensor([2, 3, 4], dtype=torch.int32, device=flag_dnn.device)
-    x_bool = torch.tensor(
-        [True, False, True], dtype=torch.bool, device=flag_dnn.device
+def _cudnn_pow(x, y, cudnn_handle):
+    graph = cudnn_graph(x.dtype, cudnn_handle)
+    x_tensor = graph.tensor_like(x)
+    y_tensor = graph.tensor_like(y)
+    out_tensor = graph.pow(
+        input0=x_tensor,
+        input1=y_tensor,
+        compute_data_type=cudnn.data_type.FLOAT,
+        name="pow",
+    )
+    output_shape = torch.broadcast_shapes(tuple(x.shape), tuple(y.shape))
+    output_template = torch.empty(
+        output_shape,
+        device=x.device,
+        dtype=x.dtype,
+    )
+    return execute_cudnn_graph(
+        graph,
+        {x_tensor: x, y_tensor: y},
+        out_tensor,
+        output_template,
+        cudnn_handle,
+        "pow",
     )
 
-    ref_x_int = utils.to_reference(x_int, ref_kind="compute")
-    ref_x_bool = utils.to_reference(x_bool, ref_kind="compute")
 
-    ref_int = torch.pow(ref_x_int, 2.0)
-    ref_bool = torch.pow(ref_x_bool, 2)
-    with flag_dnn.use_dnn():
-        out_int = torch.pow(x_int, 2.0)
-        out_bool = torch.pow(x_bool, 2)
+def _run_flag_dnn_pow_graph(x, y):
+    @flag_dnn.graph
+    def flag_dnn_pow_graph(x, y):
+        return flag_dnn.pow(
+            input=x,
+            exponent=y,
+            compute_data_type="float32",
+            name="pow",
+        )
 
-    assert out_int.dtype == torch.float32
-    assert out_bool.dtype == torch.int64
-    utils.gems_assert_equal(out_int, ref_int)
-    utils.gems_assert_equal(out_bool, ref_bool)
+    compiled = flag_dnn.compile(
+        flag_dnn_pow_graph,
+        inputs=[
+            flag_dnn.TensorSpec.from_tensor(x, "x"),
+            flag_dnn.TensorSpec.from_tensor(y, "y"),
+        ],
+        options={"cache": None},
+    )
+    assert [node.op_type for node in compiled.graph.nodes] == ["pow"]
+    assert compiled.graph.nodes[0].attrs["compute_data_type"] == "float32"
+    assert compiled.graph.nodes[0].attrs["name"] == "pow"
+    return compiled.run(x.clone(), y.clone())
+
+
+@pytest.mark.pow
+@pytest.mark.graph
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
+@pytest.mark.parametrize("case", consts.POW_CASES)
+def test_pow(cudnn_handle, dtype, case):
+    torch.manual_seed(0)
+    x, y = _make_inputs(case, dtype)
+
+    cudnn_out = _cudnn_pow(x, y, cudnn_handle)
+    flag_dnn_out = _run_flag_dnn_pow_graph(x, y)
+
+    atol = 5e-2 if dtype == torch.bfloat16 else 2e-2
+    if "pow" == "pow" and dtype == torch.float32:
+        atol = 1e-4
+    utils.gems_assert_close(flag_dnn_out, cudnn_out, dtype, atol=atol)

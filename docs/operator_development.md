@@ -11,8 +11,8 @@
 | 3 | `src/flag_dnn/graph/registry/schemas/<family>.py` | 该算子的 `_normalize` + `_shape` + `_run`，并在 `register()` 加一行注册 | 需要被 `@flag_dnn.graph` capture 时 |
 | 4 | `src/flag_dnn/graph/prepared/<family>.py` | `@register_prepared_run_fn` 注册一个编译期 fast path | 可选，仅当 replay 是性能瓶颈 |
 | 5 | `src/flag_dnn/runtime/backend/_nvidia/tune_configs.yaml` | kernel 的 tune key | kernel 有可调 `BLOCK_*`/`num_warps` 等 meta 参数时 |
-| 6 | `tests_graph/test_<op>.py`、`tests_graph/consts.py` | cuDNN graph 对标测试 + shape 集合 | 必改 |
-| 7 | `benchmark_graph/test_<op>_perf.py`、`benchmark_graph/consts.py` | 必测性能 shape | 必改 |
+| 6 | `tests/test_<op>.py`、`tests/consts.py` | cuDNN graph 对标测试 + shape 集合 | 必改 |
+| 7 | `benchmark/test_<op>_perf.py`、`benchmark/consts.py` | 必测性能 shape | 必改 |
 
 ## 第 3 步：graph 算子定义（最常见的工作）
 
@@ -56,5 +56,5 @@ register_op_def(OpDef(
 
 ## 验证
 
-- 改动 registry 后先跑 `tests_graph/test_registry.py`（自检 schema 与 capture wrapper 一致）。
-- 完整复杂算子参考 SDPA：`ops/sdpa.py` + `schemas/matmul_attention.py` + `prepared/sdpa_forward.py` + `tests_graph/test_sdpa.py`。
+- 改动 registry 后先跑 `tests/test_registry.py`（自检 schema 与 capture wrapper 一致）。
+- 完整复杂算子参考 SDPA：`ops/sdpa.py` + `schemas/matmul_attention.py` + `prepared/sdpa_forward.py` + `tests/test_sdpa.py`。

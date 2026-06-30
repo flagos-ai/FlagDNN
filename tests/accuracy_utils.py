@@ -5,7 +5,7 @@ from typing import Literal, TypeAlias
 import numpy as np
 import torch
 import flag_dnn
-from .conftest import QUICK_MODE, TO_CPU
+from .conftest import QUICK_MODE
 
 
 fp64_is_supported = flag_dnn.runtime.device.support_fp64
@@ -268,7 +268,7 @@ COMPLEX_DTYPES = [torch.complex32, torch.complex64]
 SCALARS = [0.001, -0.999, 100.001, -111.999]
 STACK_DIM_LIST = [-2, -1, 0, 1]
 
-ARANGE_START = [0] if TO_CPU else [0, 1, 3]
+ARANGE_START = [0, 1, 3]
 
 
 def to_reference(inp, ref_kind: ReferenceKind = "compute"):
@@ -279,9 +279,6 @@ def to_reference(inp, ref_kind: ReferenceKind = "compute"):
         return inp
 
     ref_inp = inp
-
-    if TO_CPU:
-        ref_inp = ref_inp.to("cpu")
 
     if ref_kind is None:
         return ref_inp
@@ -316,28 +313,15 @@ def to_reference(inp, ref_kind: ReferenceKind = "compute"):
     raise ValueError(f"Unsupported ref_kind: {ref_kind}")
 
 
-def to_cpu(res, ref):
-    if (
-        TO_CPU
-        and isinstance(res, torch.Tensor)
-        and isinstance(ref, torch.Tensor)
-    ):
-        res = res.to("cpu")
-        assert ref.device == torch.device("cpu")
-    return res
-
-
 def gems_assert_close(
     res, ref, dtype, equal_nan=False, reduce_dim=1, atol=1e-4
 ):
-    res = to_cpu(res, ref)
     flag_dnn.testing.assert_close(
         res, ref, dtype, equal_nan=equal_nan, reduce_dim=reduce_dim, atol=atol
     )
 
 
 def gems_assert_equal(res, ref, equal_nan=False):
-    res = to_cpu(res, ref)
     flag_dnn.testing.assert_equal(res, ref, equal_nan=equal_nan)
 
 

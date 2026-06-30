@@ -1,89 +1,93 @@
-from typing import Generator
-
-import numpy as np
 import pytest
+from benchmark.base import (
+    CudnnCompareBenchmark,
+    cudnn_data_type,
+    get_cudnn,
+    skip_unsupported_cudnn_graph,
+)
 import torch
 
 import flag_dnn
-
-from benchmark.performance_utils import Benchmark
-from flag_dnn.utils import shape_utils
+from benchmark import consts
 
 
-def torch_exp(x):
-    return torch.exp(x)
+class ExpBenchmark(CudnnCompareBenchmark):
+    op_name = "exp"
+    shapes = consts.EXP_SHAPES
+    shape_ids_env = "FLAGDNN_CUDNN_EXP_PERF_SHAPE_IDS"
 
+    def make_inputs(self, shape, dtype):
+        x = consts.pointwise_randn(shape, dtype, flag_dnn.device)
+        return (x,)
 
-def gems_exp_wrapper(x):
-    return flag_dnn.ops.exp(x)
+    def build_cudnn_runner(self, inputs):
+        cudnn = get_cudnn()
+        (x,) = inputs
+        io_dtype = cudnn_data_type(x.dtype)
+        graph = cudnn.pygraph(
+            io_data_type=io_dtype,
+            intermediate_data_type=cudnn.data_type.FLOAT,
+            compute_data_type=cudnn.data_type.FLOAT,
+            handle=self.cudnn_handle,
+        )
 
+        x_tensor = graph.tensor_like(x)
+        y_tensor = graph.exp(
+            input=x_tensor,
+            compute_data_type=cudnn.data_type.FLOAT,
+            name="exp",
+        )
+        y_tensor.set_output(True).set_data_type(io_dtype)
 
-class ExpBenchmark(Benchmark):
+        try:
+            graph.build([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
+        except (cudnn.cudnnGraphNotSupportedError, RuntimeError) as exc:
+            skip_unsupported_cudnn_graph(exc, self.op_name)
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        y = torch.empty_like(x)
+        workspace = torch.empty(
+            graph.get_workspace_size(), device=x.device, dtype=torch.uint8
+        )
 
-    def set_more_metrics(self):
-        return ["gbps"]
+        def run():
+            graph.execute(
+                {x_tensor: x, y_tensor: y},
+                workspace,
+                handle=self.cudnn_handle,
+            )
+            return y
 
-    def set_more_shapes(self):
-        configs = [
-            (1,),
-            (16,),
-            (64,),
-            (127,),
-            (1023, 1025),
-            (7, 31, 109),
-            (33, 129, 257),
-            (1, 2048, 4096),
-            (8, 128, 12288),
-            (4, 4096, 4096),
-            (1, 3, 224, 224),
-            (32, 256, 56, 56),
-            (16, 1024, 14, 14),
-            (2, 16, 32, 64, 64),
-            (1024 * 256,),
-            (1024 * 1024 * 16,),
-            (8192, 8192),
-            (1024 * 1024 * 64,),
-            (2, 8192, 8192),
-        ]
-        self.shapes = [(shape,) for shape in configs]
-        return None
+        return run
 
-    def get_input_iter(self, cur_dtype) -> Generator:
-        MAX_TENSOR_BYTES = 8 * 1024**3
+    def build_flag_dnn_runner(self, inputs):
+        (x,) = inputs
 
-        for (shape_x,) in self.shapes:
-            element_size = torch.tensor([], dtype=cur_dtype).element_size()
-            total_bytes = np.prod(shape_x) * element_size * 2
+        @flag_dnn.graph
+        def flag_dnn_exp_graph(x):
+            return flag_dnn.exp(
+                x,
+                compute_data_type="float32",
+                name="exp",
+            )
 
-            if total_bytes > MAX_TENSOR_BYTES:
-                continue
+        compiled = flag_dnn.compile(
+            flag_dnn_exp_graph,
+            inputs=[flag_dnn.TensorSpec.from_tensor(x, "x")],
+            options=consts.compile_options(),
+        )
+        assert [node.op_type for node in compiled.graph.nodes] == ["exp"]
 
-            x = torch.randn(shape_x, dtype=cur_dtype, device=self.device)
-            if x.numel() == 0:
-                continue
-            yield (x,)
+        def run():
+            return compiled.run(x)
 
-    def get_gbps(self, args, latency):
-        x = args[0]
-        io_amount = shape_utils.size_in_bytes(x) * 2
-        return io_amount * 1e-9 / (latency * 1e-3)
+        return run
 
 
 @pytest.mark.exp
-@pytest.mark.parametrize(
-    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
-)
-def test_exp(dtype):
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-
-    bench = ExpBenchmark(
-        op_name="exp",
-        torch_op=torch_exp,
-        gems_op=gems_exp_wrapper,
-        dtypes=[dtype],
-    )
-    bench.run()
+@pytest.mark.graph
+@pytest.mark.perf
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", ExpBenchmark.dtypes)
+def test_exp(cudnn_handle, dtype):
+    torch.manual_seed(0)
+    ExpBenchmark(cudnn_handle).run(dtype)

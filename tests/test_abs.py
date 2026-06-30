@@ -1,51 +1,65 @@
 import pytest
+from tests.base import (
+    CUDNN_COMPARE_DTYPES,
+    cudnn,
+    cudnn_graph,
+    execute_cudnn_graph,
+)
 import torch
+
 import flag_dnn
-from . import accuracy_utils as utils
-from . import conftest as cfg
+from tests import accuracy_utils as utils
+from tests import consts
 
 
-if cfg.QUICK_MODE:
-    FLOAT_DTYPES = [torch.float32]
-    INT_DTYPES = [torch.int32]
-    BOOL_DTYPES = [torch.bool]
-else:
-    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
-    INT_DTYPES = utils.ALL_INT_DTYPES
-    BOOL_DTYPES = utils.BOOL_TYPES
+def _cudnn_abs(x, cudnn_handle):
+    graph = cudnn_graph(x.dtype, cudnn_handle)
+    x_tensor = graph.tensor_like(x)
+    y_tensor = graph.abs(
+        input=x_tensor,
+        compute_data_type=cudnn.data_type.FLOAT,
+        name="abs",
+    )
+    return execute_cudnn_graph(
+        graph,
+        {x_tensor: x},
+        y_tensor,
+        torch.empty_like(x),
+        cudnn_handle,
+        "abs",
+    )
 
 
-ABS_SHAPES = utils.POINTWISE_SHAPES
+def _run_flag_dnn_abs_graph(x):
+    @flag_dnn.graph
+    def flag_dnn_abs_graph(x):
+        return flag_dnn.abs(
+            x,
+            compute_data_type="float32",
+            name="abs",
+        )
+
+    compiled = flag_dnn.compile(
+        flag_dnn_abs_graph,
+        inputs=[flag_dnn.TensorSpec.from_tensor(x, "x")],
+        options={"cache": None},
+    )
+    assert [node.op_type for node in compiled.graph.nodes] == ["abs"]
+    assert compiled.graph.nodes[0].attrs["compute_data_type"] == "float32"
+    assert compiled.graph.nodes[0].attrs["name"] == "abs"
+    return compiled.run(x.clone())
 
 
 @pytest.mark.abs
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-@pytest.mark.parametrize("shape", ABS_SHAPES)
-def test_accuracy_abs(dtype, shape):
-    """最基础的全域测试"""
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
+@pytest.mark.graph
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
+@pytest.mark.parametrize("shape", consts.ABS_SHAPES)
+def test_abs(cudnn_handle, dtype, shape):
+    torch.manual_seed(0)
+    x = consts.pointwise_randn(shape, dtype, flag_dnn.device)
 
-    inp = torch.randn(shape, dtype=dtype, device=flag_dnn.device)
-    ref_inp = utils.to_reference(inp, ref_kind="compute")
+    cudnn_out = _cudnn_abs(x, cudnn_handle)
+    flag_dnn_out = _run_flag_dnn_abs_graph(x)
 
-    ref_out = torch.abs(ref_inp)
-    with flag_dnn.use_dnn():
-        res_out = torch.abs(inp)
-
-    utils.gems_assert_close(res_out, ref_out, dtype)
-
-
-@pytest.mark.abs
-@pytest.mark.parametrize("dtype", INT_DTYPES)
-@pytest.mark.parametrize("shape", ABS_SHAPES)
-def test_accuracy_abs_integer(dtype, shape):
-    inp = torch.randint(-9, 10, shape, dtype=dtype, device=flag_dnn.device)
-    ref_inp = utils.to_reference(inp, ref_kind="compute")
-
-    ref_out = torch.abs(ref_inp)
-    with flag_dnn.use_dnn():
-        res_out = torch.abs(inp)
-
-    assert res_out.dtype == ref_out.dtype
-    utils.gems_assert_equal(res_out, ref_out)
+    utils.gems_assert_equal(flag_dnn_out, cudnn_out)

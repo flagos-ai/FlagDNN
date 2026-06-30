@@ -1,62 +1,68 @@
 import pytest
+from tests.base import (
+    CUDNN_COMPARE_DTYPES,
+    cudnn,
+    cudnn_graph,
+    execute_cudnn_graph,
+)
 import torch
-import torch.nn.functional as F
+
 import flag_dnn
-from . import accuracy_utils as utils
-from . import conftest as cfg
+from tests import accuracy_utils as utils
+from tests import consts
 
 
-if cfg.QUICK_MODE:
-    FLOAT_DTYPES = [torch.float32]
-else:
-    FLOAT_DTYPES = utils.ALL_FLOAT_DTYPES
+def _cudnn_elu(x, cudnn_handle):
+    graph = cudnn_graph(x.dtype, cudnn_handle)
+    if not hasattr(graph, "elu"):
+        pytest.skip("cuDNN frontend does not expose elu")
+    x_tensor = graph.tensor_like(x)
+    y_tensor = graph.elu(
+        input=x_tensor,
+        compute_data_type=cudnn.data_type.FLOAT,
+        name="elu",
+    )
+    return execute_cudnn_graph(
+        graph,
+        {x_tensor: x},
+        y_tensor,
+        torch.empty_like(x),
+        cudnn_handle,
+        "elu",
+    )
 
 
-ELU_CASES = [
-    *[
-        (shape, 1.0, inplace)
-        for shape in [(0,), (0, 3), *utils.POINTWISE_SHAPES]
-        for inplace in [False, True]
-    ],
-    ((1024,), 0.5, False),
-    ((1024,), 0.5, True),
-    ((1024,), 2.0, False),
-    ((1024,), 2.0, True),
-    ((1, 128, 64, 64), 0.75, False),
-    ((1, 128, 64, 64), 0.75, True),
-]
+def _run_flag_dnn_elu_graph(x):
+    @flag_dnn.graph
+    def flag_dnn_elu_graph(x):
+        return flag_dnn.elu(
+            x,
+            compute_data_type="float32",
+            name="elu",
+        )
+
+    compiled = flag_dnn.compile(
+        flag_dnn_elu_graph,
+        inputs=[flag_dnn.TensorSpec.from_tensor(x, "x")],
+        options={"cache": None},
+    )
+    assert [node.op_type for node in compiled.graph.nodes] == ["elu"]
+    assert compiled.graph.nodes[0].attrs["compute_data_type"] == "float32"
+    assert compiled.graph.nodes[0].attrs["name"] == "elu"
+    return compiled.run(x.clone())
 
 
 @pytest.mark.elu
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-@pytest.mark.parametrize("shape, alpha, inplace", ELU_CASES)
-def test_accuracy_elu(dtype, shape, alpha, inplace):
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
+@pytest.mark.graph
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
+@pytest.mark.parametrize("shape", consts.ELU_SHAPES)
+def test_elu(cudnn_handle, dtype, shape):
+    torch.manual_seed(0)
+    x = consts.pointwise_randn(shape, dtype, flag_dnn.device)
 
-    x = torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 3.0
+    cudnn_out = _cudnn_elu(x, cudnn_handle)
+    flag_dnn_out = _run_flag_dnn_elu_graph(x)
 
-    x_ref = x.clone()
-    x_custom = x.clone()
-
-    ref_x = utils.to_reference(x_ref, ref_kind="compute")
-    out_ref = F.elu(ref_x, alpha=alpha, inplace=inplace)
-
-    with flag_dnn.use_dnn():
-        out_custom = F.elu(x_custom, alpha=alpha, inplace=inplace)
-
-    utils.gems_assert_close(out_custom, out_ref, dtype)
-
-    if inplace:
-        assert out_custom.data_ptr() == x_custom.data_ptr(), (
-            "Inplace flag is True, but output is not modifying "
-            "the input tensor directly."
-        )
-        utils.gems_assert_close(x_custom, out_ref, dtype)
-    else:
-        if x.numel() > 0:
-            assert out_custom.data_ptr() != x_custom.data_ptr(), (
-                "Inplace flag is False, but output is modifying "
-                "the input tensor memory."
-            )
-        torch.testing.assert_close(x_custom, x, rtol=0, atol=0)
+    atol = 5e-2 if dtype == torch.bfloat16 else 2e-2
+    utils.gems_assert_close(flag_dnn_out, cudnn_out, dtype, atol=atol)

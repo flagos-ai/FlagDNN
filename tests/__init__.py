@@ -1,1 +1,1 @@
-# Tests package
+"""cuDNN frontend functional comparison tests."""

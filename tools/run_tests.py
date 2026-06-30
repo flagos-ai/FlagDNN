@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Run FlagDNN operator tests from conf/operators.yaml.
+Run FlagDNN graph operator tests from conf/operators.yaml.
 
 The runner discovers operator ids from the inventory, checks which pytest marks
-exist in the eager and graph test directories, and then runs only the suites
-declared by each operator's labels.
+exist in the graph test directories, and then runs only the suites declared by
+operator labels.
 """
 
 from __future__ import annotations
@@ -60,24 +60,14 @@ if not USE_COLORS:
     RED = GREEN = YELLOW = CYAN = DIM = NC = ""
 
 SUITES = {
-    "accuracy": {
-        "label": "accuracy",
-        "directory": "tests",
-        "kind": "accuracy",
-    },
-    "performance": {
-        "label": "benchmark",
-        "directory": "benchmark",
-        "kind": "performance",
-    },
     "graph_accuracy": {
         "label": "graph_accuracy",
-        "directory": "tests_graph",
+        "directory": "tests",
         "kind": "accuracy",
     },
     "graph_performance": {
         "label": "graph_benchmark",
-        "directory": "benchmark_graph",
+        "directory": "benchmark",
         "kind": "graph_performance",
     },
 }
@@ -471,118 +461,6 @@ def parse_pytest_counts(
     return result
 
 
-def snapshot_accuracy_reports() -> dict[Path, int]:
-    report_dir = ROOT / "out_tests"
-    if not report_dir.exists():
-        return {}
-    snapshot = {}
-    for path in report_dir.glob("result_*.json"):
-        try:
-            snapshot[path] = path.stat().st_mtime_ns
-        except OSError:
-            continue
-    return snapshot
-
-
-def _report_matches_suite(entry: Any, op: str, suite: str) -> bool:
-    if not isinstance(entry, dict):
-        return False
-    marks = entry.get("opname", [])
-    if not isinstance(marks, list) or op not in marks:
-        return False
-    if suite == "graph_accuracy":
-        return "graph" in marks
-    return True
-
-
-def archive_accuracy_report(
-    op: str, suite: str, before: dict[Path, int], result_file: Path
-) -> bool:
-    report_dir = ROOT / "out_tests"
-    if not report_dir.exists():
-        return False
-
-    candidates = []
-    for path in report_dir.glob("result_*.json"):
-        try:
-            mtime_ns = path.stat().st_mtime_ns
-        except OSError:
-            continue
-        if path not in before or before[path] != mtime_ns:
-            candidates.append((mtime_ns, path))
-
-    for _, path in sorted(candidates, reverse=True):
-        try:
-            raw_data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError, ValueError):
-            continue
-        if not isinstance(raw_data, dict):
-            continue
-
-        data = {
-            nodeid: entry
-            for nodeid, entry in raw_data.items()
-            if _report_matches_suite(entry, op, suite)
-        }
-        if not data and raw_data:
-            continue
-
-        result_file.write_text(
-            json.dumps(data, indent=2, default=str), encoding="utf-8"
-        )
-        return True
-
-    return False
-
-
-def parse_perf_json(op: str, result_file: Path) -> dict[str, Any]:
-    try:
-        raw_data = json.loads(result_file.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError, ValueError) as exc:
-        return {"status": "Error", "reason": f"Invalid JSON: {exc}"}
-
-    data = raw_data.get(op, {})
-    if not data:
-        return {"status": "NotFound"}
-
-    result = data.get("result", "NotFound")
-    if result in {"failed", "skipped"}:
-        return {
-            "status": result.title(),
-            "reason": data.get("reason", "Unknown"),
-            "test_case": data.get("test_case", "Unknown"),
-        }
-
-    bench_res: dict[str, Any] = {}
-    for item in data.get("details", []):
-        dtype = DTYPE_MAP.get(str(item.get("dtype")), str(item.get("dtype")))
-        details: dict[str, Any] = {}
-        total_speedup = 0.0
-        count = 0
-        for record in item.get("result", []):
-            shape = str(record.get("shape_detail", "Unknown")).replace(" ", "")
-            speedup = record.get("speedup", 0.0)
-            details[shape] = {
-                "base": record.get("latency_base", 0.0),
-                "flag_dnn": record.get("latency", 0.0),
-                "speedup": speedup,
-            }
-            if isinstance(speedup, (int, float)):
-                total_speedup += float(speedup)
-                count += 1
-        bench_res[dtype] = {
-            "result": "OK" if details else "Unknown",
-            "details": details,
-            "speedup": total_speedup / count if count else 0.0,
-        }
-
-    return {
-        "status": str(result).title(),
-        "data": bench_res,
-        "test_case": data.get("test_case", "Unknown"),
-    }
-
-
 def parse_graph_perf_stdout(
     op: str, stdout: str, exit_code: int
 ) -> dict[str, Any]:
@@ -647,24 +525,14 @@ def suite_is_available(op: str, suite: str) -> bool:
     return op in MARKS_BY_SUITE.get(suite, set())
 
 
-def run_accuracy_suite(gpu_id: int, op: str, suite: str) -> dict[str, Any]:
+def run_graph_accuracy_suite(gpu_id: int, op: str) -> dict[str, Any]:
+    suite = "graph_accuracy"
     if not suite_is_available(op, suite):
         return {"status": "NotFound", "exit_code": 5, "duration": 0.0}
 
     env = get_env(str(gpu_id))
-    spec = SUITES[suite]
-    directory = ROOT / spec["directory"]
-    marker = op if suite == "accuracy" else f"{op} and graph"
-    op_dir = CFG.output_dir / op
-    ensure_dir(op_dir)
-    result_file = op_dir / f"{suite}_result.json"
-    if result_file.exists():
-        result_file.unlink()
-
-    before_reports = snapshot_accuracy_reports()
-    cmd = ["pytest", "-m", marker, "-q", "--tb=short"]
-    if suite == "accuracy" and op not in CFG.skip_cpu_tests:
-        cmd.extend(["--ref", "cpu"])
+    directory = ROOT / SUITES[suite]["directory"]
+    cmd = ["pytest", "-m", f"{op} and graph", "-q", "--tb=short"]
 
     start = time.time()
     run = run_cmd(op, suite, cmd, cwd=directory, env=env, timeout=CFG.timeout)
@@ -674,63 +542,7 @@ def run_accuracy_suite(gpu_id: int, op: str, suite: str) -> dict[str, Any]:
     )
     result["exit_code"] = run["exit_code"]
     result["duration"] = duration
-    if archive_accuracy_report(op, suite, before_reports, result_file):
-        result["data_file"] = str(result_file.relative_to(CFG.output_dir))
     return result
-
-
-def run_performance_suite(gpu_id: int, op: str) -> dict[str, Any]:
-    suite = "performance"
-    if not suite_is_available(op, suite):
-        return {
-            "status": "NotFound",
-            "exit_code": 5,
-            "duration": 0.0,
-            "data": {},
-        }
-
-    env = get_env(str(gpu_id))
-    benchmark_dir = ROOT / "benchmark"
-    op_dir = CFG.output_dir / op
-    ensure_dir(op_dir)
-    result_file = op_dir / "performance_result.json"
-    if result_file.exists():
-        result_file.unlink()
-
-    cmd = [
-        "pytest",
-        "-m",
-        op,
-        "-q",
-        "--level",
-        CFG.benchmark_level,
-        "--record",
-        "json",
-        "--output",
-        str(result_file),
-    ]
-
-    start = time.time()
-    run = run_cmd(
-        op, suite, cmd, cwd=benchmark_dir, env=env, timeout=CFG.timeout
-    )
-    duration = time.time() - start
-
-    record = {
-        "duration": duration,
-        "exit_code": run["exit_code"],
-        "data": {},
-    }
-    if run["exit_code"] == TIMEOUT:
-        record["status"] = "Timeout"
-        return record
-    if not result_file.exists():
-        record["status"] = "NotFound" if run["exit_code"] == 5 else "Error"
-        return record
-
-    record["data_file"] = str(result_file.relative_to(CFG.output_dir))
-    record.update(parse_perf_json(op, result_file))
-    return record
 
 
 def run_graph_performance_suite(gpu_id: int, op: str) -> dict[str, Any]:
@@ -744,7 +556,7 @@ def run_graph_performance_suite(gpu_id: int, op: str) -> dict[str, Any]:
         }
 
     env = get_env(str(gpu_id))
-    directory = ROOT / "benchmark_graph"
+    directory = ROOT / "benchmark"
     cmd = [
         "pytest",
         "-m",
@@ -764,10 +576,8 @@ def run_graph_performance_suite(gpu_id: int, op: str) -> dict[str, Any]:
 
 
 def run_suite(gpu_id: int, op: str, suite: str) -> dict[str, Any]:
-    if suite in {"accuracy", "graph_accuracy"}:
-        return run_accuracy_suite(gpu_id, op, suite)
-    if suite == "performance":
-        return run_performance_suite(gpu_id, op)
+    if suite == "graph_accuracy":
+        return run_graph_accuracy_suite(gpu_id, op)
     if suite == "graph_performance":
         return run_graph_performance_suite(gpu_id, op)
     return {"status": "Skipped", "duration": 0.0, "exit_code": 0}
@@ -957,10 +767,6 @@ def get_ops_to_test() -> list[str]:
     catalog = get_ops_from_inventory()
     CFG.catalog_by_id = {op["id"]: op for op in catalog if "id" in op}
 
-    CFG.skip_cpu_tests = [
-        op["id"] for op in catalog if "NoCPU" in op.get("labels", [])
-    ]
-
     if OPTS.ops:
         return [
             op.strip().lstrip("_") for op in OPTS.ops.split(",") if op.strip()
@@ -1043,14 +849,8 @@ def main() -> None:
         default="auto",
         help=(
             "comma-separated suites, 'all', or 'auto'. "
-            "Suites: accuracy,performance,graph_accuracy,graph_performance"
+            "Suites: graph_accuracy,graph_performance"
         ),
-    )
-    parser.add_argument(
-        "--benchmark-level",
-        default="core",
-        choices=["core", "comprehensive"],
-        help="benchmark level for eager performance tests",
     )
     parser.add_argument(
         "--timeout", type=int, default=600, help="per-suite timeout"
@@ -1085,7 +885,6 @@ def main() -> None:
 
     CFG.dump_output = OPTS.dump_output
     CFG.timeout = OPTS.timeout
-    CFG.benchmark_level = OPTS.benchmark_level
     output_dir = Path(OPTS.output_dir)
     if not output_dir.is_absolute():
         output_dir = ROOT / output_dir

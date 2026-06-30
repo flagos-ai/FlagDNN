@@ -1,94 +1,93 @@
-from typing import Generator
-
-import numpy as np
 import pytest
+from benchmark.base import (
+    CudnnCompareBenchmark,
+    cudnn_data_type,
+    get_cudnn,
+    skip_unsupported_cudnn_graph,
+)
 import torch
 
 import flag_dnn
-
-from benchmark.performance_utils import Benchmark
-from flag_dnn.utils import shape_utils
+from benchmark import consts
 
 
-def torch_log(x):
-    return torch.log(x)
+class LogBenchmark(CudnnCompareBenchmark):
+    op_name = "log"
+    shapes = consts.LOG_SHAPES
+    shape_ids_env = "FLAGDNN_CUDNN_LOG_PERF_SHAPE_IDS"
 
+    def make_inputs(self, shape, dtype):
+        x = consts.pointwise_positive(shape, dtype, flag_dnn.device)
+        return (x,)
 
-def gems_log_wrapper(x):
-    return flag_dnn.ops.log(x)
+    def build_cudnn_runner(self, inputs):
+        cudnn = get_cudnn()
+        (x,) = inputs
+        io_dtype = cudnn_data_type(x.dtype)
+        graph = cudnn.pygraph(
+            io_data_type=io_dtype,
+            intermediate_data_type=cudnn.data_type.FLOAT,
+            compute_data_type=cudnn.data_type.FLOAT,
+            handle=self.cudnn_handle,
+        )
 
+        x_tensor = graph.tensor_like(x)
+        y_tensor = graph.log(
+            input=x_tensor,
+            compute_data_type=cudnn.data_type.FLOAT,
+            name="log",
+        )
+        y_tensor.set_output(True).set_data_type(io_dtype)
 
-class LogBenchmark(Benchmark):
+        try:
+            graph.build([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
+        except (cudnn.cudnnGraphNotSupportedError, RuntimeError) as exc:
+            skip_unsupported_cudnn_graph(exc, self.op_name)
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        y = torch.empty_like(x)
+        workspace = torch.empty(
+            graph.get_workspace_size(), device=x.device, dtype=torch.uint8
+        )
 
-    def set_more_metrics(self):
-        return ["gbps"]
-
-    def set_more_shapes(self):
-        configs = [
-            (1,),
-            (16,),
-            (64,),
-            (127,),
-            (1023, 1025),
-            (7, 31, 109),
-            (33, 129, 257),
-            (1, 2048, 4096),
-            (8, 128, 12288),
-            (4, 4096, 4096),
-            (1, 3, 224, 224),
-            (32, 256, 56, 56),
-            (16, 1024, 14, 14),
-            (2, 16, 32, 64, 64),
-            (1024 * 256,),
-            (1024 * 1024 * 16,),
-            (8192, 8192),
-            (1024 * 1024 * 64,),
-            (2, 8192, 8192),
-        ]
-        self.shapes = [(shape,) for shape in configs]
-        return None
-
-    def get_input_iter(self, cur_dtype) -> Generator:
-        MAX_TENSOR_BYTES = 8 * 1024**3
-
-        for (shape_x,) in self.shapes:
-            element_size = torch.tensor([], dtype=cur_dtype).element_size()
-            total_bytes = np.prod(shape_x) * element_size * 2
-
-            if total_bytes > MAX_TENSOR_BYTES:
-                continue
-
-            x = (
-                torch.abs(
-                    torch.randn(shape_x, dtype=cur_dtype, device=self.device)
-                )
-                + 0.1
+        def run():
+            graph.execute(
+                {x_tensor: x, y_tensor: y},
+                workspace,
+                handle=self.cudnn_handle,
             )
-            if x.numel() == 0:
-                continue
-            yield (x,)
+            return y
 
-    def get_gbps(self, args, latency):
-        x = args[0]
-        io_amount = shape_utils.size_in_bytes(x) * 2
-        return io_amount * 1e-9 / (latency * 1e-3)
+        return run
+
+    def build_flag_dnn_runner(self, inputs):
+        (x,) = inputs
+
+        @flag_dnn.graph
+        def flag_dnn_log_graph(x):
+            return flag_dnn.log(
+                x,
+                compute_data_type="float32",
+                name="log",
+            )
+
+        compiled = flag_dnn.compile(
+            flag_dnn_log_graph,
+            inputs=[flag_dnn.TensorSpec.from_tensor(x, "x")],
+            options=consts.compile_options(),
+        )
+        assert [node.op_type for node in compiled.graph.nodes] == ["log"]
+
+        def run():
+            return compiled.run(x)
+
+        return run
 
 
 @pytest.mark.log
-@pytest.mark.parametrize(
-    "dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64]
-)
-def test_log(dtype):
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-
-    bench = LogBenchmark(
-        op_name="log",
-        torch_op=torch_log,
-        gems_op=gems_log_wrapper,
-        dtypes=[dtype],
-    )
-    bench.run()
+@pytest.mark.graph
+@pytest.mark.perf
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", LogBenchmark.dtypes)
+def test_log(cudnn_handle, dtype):
+    torch.manual_seed(0)
+    LogBenchmark(cudnn_handle).run(dtype)

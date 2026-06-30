@@ -1,27 +1,40 @@
-import os
 import glob
+import json
+import os
 import subprocess
 import time
-import json
 from datetime import datetime
 
 
-# ================= 配置区 =================
+# ================= Configuration =================
 
-# 目标算子列表 (白名单)
-# 如果列表为空 []，则默认执行目录下所有的 test_*.py
-# 如果填入算子名（如 "batch_norm", "relu"），则只执行这些算子对应的测试
+# Target operator whitelist.
+# If empty, all test_*.py files under TEST_DIR will be executed.
+# If populated, only files named test_<operator>.py will be executed.
 TARGET_OPERATORS: list[str] = []
 
-TEST_DIR = "tests"  # 测试文件所在目录
-LOG_DIR = "test_logs"  # 单个测试日志的存放目录
-REPORT_FILE = "test_summary.json"  # 最终汇总报告的文件名
+# Non-operator test files to always skip. These are framework / self-check
+# tests, not per-operator coverage, so the operator runner ignores them.
+# Use the test_<name>.py suffix (e.g. "prepared" -> test_prepared.py).
+# Entries here are skipped even if also listed in TARGET_OPERATORS.
+EXCLUDED_OPERATORS: list[str] = [
+    "prepared",  # test_prepared.py: prepared fast-path framework test
+    "registry",  # test_registry.py: registry / capture-wrapper self-check
+    "graph",  # test_graph.py: graph capture/compile core test
+    "partial_completion",  # test_partial_completion.py
+]
 
-# ==========================================
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+TEST_DIR = SCRIPT_DIR
+LOG_DIR = os.path.join(REPO_ROOT, "test_graph_logs")
+REPORT_FILE = os.path.join(REPO_ROOT, "test_graph_summary.json")
+
+# ================================================
 
 
 def get_operator_name(filename):
-    """从文件名中提取算子名，例如 test_batch_norm.py -> batch_norm"""
+    """Extract operator name, e.g. test_batch_norm.py -> batch_norm."""
     basename = os.path.basename(filename)
     if basename.startswith("test_") and basename.endswith(".py"):
         return basename[5:-3]
@@ -31,36 +44,52 @@ def get_operator_name(filename):
 def main():
     os.makedirs(LOG_DIR, exist_ok=True)
 
-    # 收集并过滤测试文件
     all_test_files = sorted(glob.glob(os.path.join(TEST_DIR, "test_*.py")))
     if not all_test_files:
-        print("未找到任何 test_*.py 文件。")
+        print("No test_*.py files found.")
         return
 
     test_files = []
     if TARGET_OPERATORS:
-        for f in all_test_files:
-            op_name = get_operator_name(f)
+        for file_path in all_test_files:
+            op_name = get_operator_name(file_path)
             if op_name in TARGET_OPERATORS:
-                test_files.append(f)
-        print(f"🔍 已启用算子过滤，目标算子数量: {len(TARGET_OPERATORS)}")
+                test_files.append(file_path)
+        print(
+            "Operator filter enabled, target operator count: "
+            f"{len(TARGET_OPERATORS)}"
+        )
     else:
         test_files = all_test_files
-        print("🔍 未设置过滤，将执行所有测试。")
+        print("No operator filter configured; running all tests.")
+
+    if EXCLUDED_OPERATORS:
+        excluded = set(EXCLUDED_OPERATORS)
+        kept = [
+            file_path
+            for file_path in test_files
+            if get_operator_name(file_path) not in excluded
+        ]
+        skipped = len(test_files) - len(kept)
+        if skipped:
+            print(
+                f"Excluding {skipped} non-operator test file(s): "
+                f"{', '.join(sorted(excluded))}"
+            )
+        test_files = kept
 
     if not test_files:
-        print(
-            "过滤后没有需要执行的测试文件，请检查 TARGET_OPERATORS 是否拼写正确。"
-        )
+        print("No test files matched TARGET_OPERATORS.")
         return
 
-    print(f"🚀 共发现 {len(test_files)} 个待测文件，开始提交 yhrun 任务...\n")
+    print(f"Found {len(test_files)} test files. Starting pytest runs...\n")
     print("-" * 60)
 
     summary = {
         "total": len(test_files),
         "passed": 0,
         "failed": 0,
+        "no_tests": 0,
         "errored_or_interrupted": 0,
         "details": [],
         "start_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -68,90 +97,80 @@ def main():
 
     start_time_total = time.time()
 
-    # 逐个执行测试
     for idx, file_path in enumerate(test_files, 1):
         file_name = os.path.basename(file_path)
         log_file = os.path.join(LOG_DIR, f"{file_name}.log")
 
         print(
-            f"[{idx}/{len(test_files)}] 正在测试: {file_name:<30}",
+            f"[{idx}/{len(test_files)}] Testing: {file_name:<30}",
             end="",
             flush=True,
         )
 
-        # 构建 yhrun 命令
         cmd = [
-            # "yhrun",
-            # "-p", "h100x",
-            # "-G", "1",
             "python3",
             "-m",
             "pytest",
             "-v",
             "-s",
-            "--ref=cpu",
             file_path,
         ]
 
         start_time = time.time()
-
-        # 启动子进程并捕获输出
         result = subprocess.run(cmd, capture_output=True, text=True)
         duration = time.time() - start_time
 
-        # 分析退出状态码 (Pytest return codes)
         if result.returncode == 0:
-            status = "✅ PASS"
+            status = "PASS"
             summary["passed"] += 1
         elif result.returncode == 1:
-            status = "❌ FAIL"
+            status = "FAIL"
             summary["failed"] += 1
         elif result.returncode == 5:
-            status = "⚠️ NO TESTS"
+            status = "NO TESTS"
+            summary["no_tests"] += 1
         else:
-            status = f"💥 ERROR (Code: {result.returncode})"
+            status = f"ERROR (Code: {result.returncode})"
             summary["errored_or_interrupted"] += 1
 
         print(f" -> {status} ({duration:.2f}s)")
 
-        # 将标准输出和错误写入独立的日志文件
-        with open(log_file, "w", encoding="utf-8") as f:
-            f.write(f"=== Command: {' '.join(cmd)} ===\n")
-            f.write(f"=== Status: {status} ===\n")
-            f.write(f"=== Duration: {duration:.2f}s ===\n\n")
-            f.write("--- STDOUT ---\n" + result.stdout + "\n")
+        with open(log_file, "w", encoding="utf-8") as file_obj:
+            file_obj.write(f"=== Command: {' '.join(cmd)} ===\n")
+            file_obj.write(f"=== Status: {status} ===\n")
+            file_obj.write(f"=== Duration: {duration:.2f}s ===\n\n")
+            file_obj.write("--- STDOUT ---\n" + result.stdout + "\n")
             if result.stderr:
-                f.write("--- STDERR ---\n" + result.stderr + "\n")
+                file_obj.write("--- STDERR ---\n" + result.stderr + "\n")
 
-        # 记录汇总信息
         summary["details"].append(
             {
                 "file": file_name,
-                "status": status.strip("✅❌⚠️💥 "),
+                "status": status,
                 "return_code": result.returncode,
                 "duration_seconds": round(duration, 2),
                 "log_path": log_file,
             }
         )
 
-    # 生成报告与控制台汇总
     summary["total_duration_seconds"] = round(
         time.time() - start_time_total, 2
     )
 
-    with open(REPORT_FILE, "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=4, ensure_ascii=False)
+    with open(REPORT_FILE, "w", encoding="utf-8") as file_obj:
+        json.dump(summary, file_obj, indent=4, ensure_ascii=False)
 
     print("-" * 60)
-    print("📊 任务执行完毕！")
+    print("Test run completed.")
     print(
-        f"总计: {summary['total']} | "
-        f"通过: {summary['passed']} | "
-        f"失败: {summary['failed']} | "
-        f"异常中断: {summary['errored_or_interrupted']}"
+        f"Total: {summary['total']} | "
+        f"Passed: {summary['passed']} | "
+        f"Failed: {summary['failed']} | "
+        f"No tests: {summary['no_tests']} | "
+        f"Errors/interrupted: {summary['errored_or_interrupted']}"
     )
-    print(f"总耗时: {summary['total_duration_seconds']} 秒")
-    print(f"详细日志已保存至 '{LOG_DIR}' 目录。")
+    print(f"Total duration: {summary['total_duration_seconds']} seconds")
+    print(f"Detailed logs saved under '{LOG_DIR}'.")
 
 
 if __name__ == "__main__":

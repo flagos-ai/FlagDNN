@@ -1,85 +1,66 @@
 import pytest
+from tests.base import (
+    CUDNN_COMPARE_DTYPES,
+    cudnn,
+    cudnn_graph,
+    execute_cudnn_graph,
+)
 import torch
+
 import flag_dnn
 from tests import accuracy_utils as utils
-
-SHAPES = list(utils.POINTWISE_SHAPES) + [
-    (32,),
-    (1024,),
-    (5333,),
-    (65536,),
-    (1024 * 1024,),
-]
-
-FLOAT_DTYPES = [torch.float32, torch.float16, torch.bfloat16]
+from tests import consts
 
 
-def _skip_fp64(dtype):
-    if dtype == torch.float64 and not flag_dnn.runtime.device.support_fp64:
-        pytest.skip("Device does not support float64")
-
-
-@pytest.mark.log
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-@pytest.mark.parametrize("shape", SHAPES)
-def test_accuracy_log(shape, dtype):
-    """正数输入（标准情况）"""
-    _skip_fp64(dtype)
-    x = (
-        torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device))
-        + 0.1
+def _cudnn_log(x, cudnn_handle):
+    graph = cudnn_graph(x.dtype, cudnn_handle)
+    x_tensor = graph.tensor_like(x)
+    y_tensor = graph.log(
+        input=x_tensor,
+        compute_data_type=cudnn.data_type.FLOAT,
+        name="log",
     )
-    ref_inp = utils.to_reference(x)
-    ref_out = torch.log(ref_inp)
-    with flag_dnn.use_dnn():
-        res_out = torch.log(x)
-    utils.gems_assert_close(res_out, ref_out, dtype)
-
-
-@pytest.mark.log
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-@pytest.mark.parametrize("shape", SHAPES)
-def test_accuracy_log_near_one(shape, dtype):
-    """近 1 的值（log ≈ 0，精度更敏感）"""
-    _skip_fp64(dtype)
-    x = torch.ones(shape, dtype=dtype, device=flag_dnn.device)
-    x = x + torch.randn(shape, dtype=dtype, device=flag_dnn.device) * 0.1
-    x = x.abs().clamp(min=0.5)
-    ref_inp = utils.to_reference(x)
-    ref_out = torch.log(ref_inp)
-    with flag_dnn.use_dnn():
-        res_out = torch.log(x)
-    utils.gems_assert_close(res_out, ref_out, dtype)
-
-
-@pytest.mark.log
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-@pytest.mark.parametrize("shape", SHAPES)
-def test_accuracy_log_large_values(shape, dtype):
-    """大正数"""
-    _skip_fp64(dtype)
-    x = (
-        torch.abs(torch.randn(shape, dtype=dtype, device=flag_dnn.device))
-        * 100.0
-        + 1.0
+    return execute_cudnn_graph(
+        graph,
+        {x_tensor: x},
+        y_tensor,
+        torch.empty_like(x),
+        cudnn_handle,
+        "log",
     )
-    ref_inp = utils.to_reference(x)
-    ref_out = torch.log(ref_inp)
-    with flag_dnn.use_dnn():
-        res_out = torch.log(x)
-    utils.gems_assert_close(res_out, ref_out, dtype)
+
+
+def _run_flag_dnn_log_graph(x):
+    @flag_dnn.graph
+    def flag_dnn_log_graph(x):
+        return flag_dnn.log(
+            x,
+            compute_data_type="float32",
+            name="log",
+        )
+
+    compiled = flag_dnn.compile(
+        flag_dnn_log_graph,
+        inputs=[flag_dnn.TensorSpec.from_tensor(x, "x")],
+        options={"cache": None},
+    )
+    assert [node.op_type for node in compiled.graph.nodes] == ["log"]
+    assert compiled.graph.nodes[0].attrs["compute_data_type"] == "float32"
+    assert compiled.graph.nodes[0].attrs["name"] == "log"
+    return compiled.run(x.clone())
 
 
 @pytest.mark.log
-@pytest.mark.parametrize("dtype", FLOAT_DTYPES)
-def test_accuracy_log_empty_tensor(dtype):
-    """边界：空张量"""
-    _skip_fp64(dtype)
-    x = torch.randn(0, dtype=dtype, device=flag_dnn.device)
-    ref_inp = utils.to_reference(x)
-    ref_out = torch.log(ref_inp)
-    with flag_dnn.use_dnn():
-        res_out = torch.log(x)
-    assert res_out.shape == (0,)
-    assert res_out.dtype == dtype
-    utils.gems_assert_close(res_out, ref_out, dtype)
+@pytest.mark.graph
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
+@pytest.mark.parametrize("shape", consts.LOG_SHAPES)
+def test_log(cudnn_handle, dtype, shape):
+    torch.manual_seed(0)
+    x = consts.pointwise_positive(shape, dtype, flag_dnn.device)
+
+    cudnn_out = _cudnn_log(x, cudnn_handle)
+    flag_dnn_out = _run_flag_dnn_log_graph(x)
+
+    atol = 5e-2 if dtype == torch.bfloat16 else 2e-2
+    utils.gems_assert_close(flag_dnn_out, cudnn_out, dtype, atol=atol)
