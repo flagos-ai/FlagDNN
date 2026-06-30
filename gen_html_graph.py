@@ -5,8 +5,8 @@ from collections import defaultdict
 from datetime import datetime
 
 # ============ 配置区 ============
-SUMMARY_FILE = "perf_graph_summary.json"
-PERF_FILE = "perf_graph_data.json"
+SUMMARY_FILE = "benchmark_summary.json"
+PERF_FILE = "benchmark_data.json"
 OUTPUT_HTML = "flagdnn_benchmark_report.html"
 # ================================
 
@@ -20,12 +20,12 @@ def load_json(filepath):
 
 def normalize_op_name_from_file(filename: str) -> str:
     """
-    从 perf_graph_summary.json 的 file 字段中提取算子名。
+    从 benchmark_summary.json 的 file 字段中提取算子名。
 
     例子：
     test_abs_perf.py -> abs
     test_adaptive_avg_pool1d_perf.py -> adaptive_avg_pool1d
-    perf_logs/test_abs_perf.py.log -> abs
+    benchmark_logs/test_abs_perf.py.log -> abs
     """
     if not filename:
         return ""
@@ -48,13 +48,13 @@ def normalize_op_name_from_file(filename: str) -> str:
 
 def normalize_op_name(op: str) -> str:
     """
-    兼容 perf_graph_data.json 中 operator 字段的不同写法。
+    兼容 benchmark_data.json 中 operator 字段的不同写法。
 
     支持：
     abs
     test_abs_perf.py
     benchmark/test_abs_perf.py
-    perf_logs/test_abs_perf.py.log
+    benchmark_logs/test_abs_perf.py.log
     """
     if not op:
         return ""
@@ -71,7 +71,7 @@ def get_first_existing(record, keys, default=None):
     """
     从多个可能的字段名中取第一个存在的值。
 
-    主要用于兼容 perf_graph_data.json 里的 dtype 字段名不固定的情况。
+    主要用于兼容 benchmark_data.json 里的 dtype 字段名不固定的情况。
     """
     for key in keys:
         value = record.get(key)
@@ -176,7 +176,7 @@ def main():
 
     perf_data = load_json(PERF_FILE) or []
 
-    # 1. 解析 perf_graph_summary.json
+    # 1. 解析 benchmark_summary.json
     correct_ops = {}
 
     for detail in summary_data.get("details", []):
@@ -197,9 +197,9 @@ def main():
         if status in {"SKIPPED/UNSUPPORTED", "SKIPPED", "UNSUPPORTED"}
     }
 
-    # 2. 解析 perf_graph_data.json
-    # 只统计 perf_graph_summary.json 里 PASS 的算子。
-    # 如果 perf_graph_summary.json 里 details 为空，则退化为统计 perf_graph_data.json 中所有算子。
+    # 2. 解析 benchmark_data.json
+    # 只统计 benchmark_summary.json 里 PASS 的算子。
+    # 如果 benchmark_summary.json 里 details 为空，则退化为统计 benchmark_data.json 中所有算子。
     avg_speedups, op_dtype_avg_details = compute_avg_speedups_by_op_dtype(
         perf_data,
         allowed_ops=passed_ops if passed_ops else None,

@@ -18,13 +18,13 @@ REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 
 # benchmark/run_all_tests_perf.py 只负责 benchmark 目录。
 TEST_DIR = SCRIPT_DIR
-LOG_DIR = os.path.join(REPO_ROOT, "perf_graph_logs")  # 单个测试日志的存放目录
+LOG_DIR = os.path.join(REPO_ROOT, "benchmark_logs")  # 单个测试日志的存放目录
 
 # 运行状态汇总，例如 total / passed / failed / details
-REPORT_FILE = os.path.join(REPO_ROOT, "perf_graph_summary.json")
+REPORT_FILE = os.path.join(REPO_ROOT, "benchmark_summary.json")
 
 # 核心性能数据，例如 operator / dtype / shape / speedup
-DATA_FILE = os.path.join(REPO_ROOT, "perf_graph_data.json")
+DATA_FILE = os.path.join(REPO_ROOT, "benchmark_data.json")
 
 # ==========================================
 

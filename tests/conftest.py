@@ -1,10 +1,21 @@
+import importlib
 import sys
 from pathlib import Path
 
 import pytest
-import torch
 
-import flag_dnn
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+try:
+    # Import cuDNN frontend before torch so it binds the toolchain libstdc++.
+    importlib.import_module("cudnn")
+except ImportError:
+    pass
+
+torch = importlib.import_module("torch")
+flag_dnn = importlib.import_module("flag_dnn")
 
 QUICK_MODE = False
 MODE_OPTION = (
@@ -12,10 +23,6 @@ MODE_OPTION = (
     if flag_dnn.vendor_name == "kunlunxin" and torch.__version__ < "2.5"
     else "--mode"
 )
-
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
 
 
 def _getoption(config, name, default=None):
@@ -30,7 +37,7 @@ def pytest_addoption(parser):
         parser.addoption(
             "--quick",
             action="store_true",
-            help="run graph tests on quick mode",
+            help="run tests on quick mode",
         )
     except ValueError:
         pass
@@ -42,7 +49,7 @@ def pytest_addoption(parser):
             default="normal",
             required=False,
             choices=["normal", "quick"],
-            help="run graph tests on normal or quick mode",
+            help="run tests on normal or quick mode",
         )
     except ValueError:
         pass

@@ -1,7 +1,9 @@
 import glob
 import json
 import os
+import re
 import subprocess
+import sys
 import time
 from datetime import datetime
 
@@ -27,8 +29,8 @@ EXCLUDED_OPERATORS: list[str] = [
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 TEST_DIR = SCRIPT_DIR
-LOG_DIR = os.path.join(REPO_ROOT, "test_graph_logs")
-REPORT_FILE = os.path.join(REPO_ROOT, "test_graph_summary.json")
+LOG_DIR = os.path.join(REPO_ROOT, "test_logs")
+REPORT_FILE = os.path.join(REPO_ROOT, "test_summary.json")
 
 # ================================================
 
@@ -39,6 +41,31 @@ def get_operator_name(filename):
     if basename.startswith("test_") and basename.endswith(".py"):
         return basename[5:-3]
     return basename
+
+
+def pytest_reported_skip(stdout, stderr):
+    output = f"{stdout}\n{stderr}"
+    return (
+        "SKIPPED [" in output
+        or re.search(r"\b\d+\s+skipped\b", output) is not None
+        or re.search(
+            r"collected\s+0\s+items\s+/\s+\d+\s+skipped",
+            output,
+        )
+        is not None
+    )
+
+
+def classify_pytest_result(return_code, stdout, stderr):
+    if return_code == 0:
+        return "PASS", "passed"
+    if return_code == 1:
+        return "FAIL", "failed"
+    if return_code == 5:
+        if pytest_reported_skip(stdout, stderr):
+            return "SKIPPED", "skipped"
+        return "NO TESTS", "no_tests"
+    return f"ERROR (Code: {return_code})", "errored_or_interrupted"
 
 
 def main():
@@ -89,6 +116,7 @@ def main():
         "total": len(test_files),
         "passed": 0,
         "failed": 0,
+        "skipped": 0,
         "no_tests": 0,
         "errored_or_interrupted": 0,
         "details": [],
@@ -108,11 +136,12 @@ def main():
         )
 
         cmd = [
-            "python3",
+            sys.executable,
             "-m",
             "pytest",
             "-v",
             "-s",
+            "-rs",
             file_path,
         ]
 
@@ -120,18 +149,12 @@ def main():
         result = subprocess.run(cmd, capture_output=True, text=True)
         duration = time.time() - start_time
 
-        if result.returncode == 0:
-            status = "PASS"
-            summary["passed"] += 1
-        elif result.returncode == 1:
-            status = "FAIL"
-            summary["failed"] += 1
-        elif result.returncode == 5:
-            status = "NO TESTS"
-            summary["no_tests"] += 1
-        else:
-            status = f"ERROR (Code: {result.returncode})"
-            summary["errored_or_interrupted"] += 1
+        status, summary_key = classify_pytest_result(
+            result.returncode,
+            result.stdout,
+            result.stderr,
+        )
+        summary[summary_key] += 1
 
         print(f" -> {status} ({duration:.2f}s)")
 
@@ -166,6 +189,7 @@ def main():
         f"Total: {summary['total']} | "
         f"Passed: {summary['passed']} | "
         f"Failed: {summary['failed']} | "
+        f"Skipped: {summary['skipped']} | "
         f"No tests: {summary['no_tests']} | "
         f"Errors/interrupted: {summary['errored_or_interrupted']}"
     )

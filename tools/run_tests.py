@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Run FlagDNN graph operator tests from conf/operators.yaml.
+Run FlagDNN operator tests from conf/operators.yaml.
 
 The runner discovers operator ids from the inventory, checks which pytest marks
-exist in the graph test directories, and then runs only the suites declared by
+exist in the test directories, and then runs only the suites declared by
 operator labels.
 """
 
@@ -462,12 +462,16 @@ def parse_pytest_counts(
 
 
 def parse_benchmark_stdout(
-    op: str, stdout: str, exit_code: int
+    op: str, stdout: str, stderr: str, exit_code: int
 ) -> dict[str, Any]:
+    pytest_counts = parse_pytest_counts(stdout, stderr, exit_code)
     if exit_code == TIMEOUT:
-        return {"status": "Timeout", "data": {}}
+        return {"status": "Timeout", "data": {}, "counts": pytest_counts}
     if exit_code == 5:
-        return {"status": "NotFound", "data": {}}
+        status = pytest_counts["status"]
+        if status == "Skipped":
+            return {"status": "Skipped", "data": {}, "counts": pytest_counts}
+        return {"status": "NotFound", "data": {}, "counts": pytest_counts}
 
     records: dict[str, Any] = {}
     current_dtype = "unknown"
@@ -487,7 +491,7 @@ def parse_benchmark_stdout(
             continue
         if not line.startswith("SUCCESS"):
             continue
-        parts = line.split()
+        parts = line.split(maxsplit=6)
         if len(parts) < 4 or current_op != op:
             continue
         try:
@@ -496,7 +500,7 @@ def parse_benchmark_stdout(
             speedup = float(parts[3])
         except ValueError:
             continue
-        shape = line[line.find(parts[-1]) :].strip() if len(parts) > 4 else ""
+        shape = parts[6].strip() if len(parts) > 6 else ""
         records.setdefault(current_dtype, {"details": {}, "speedups": []})
         records[current_dtype]["details"][shape] = {
             "base": base,
@@ -515,10 +519,16 @@ def parse_benchmark_stdout(
         }
 
     if exit_code != 0:
-        return {"status": "Failed", "data": data}
+        return {"status": "Failed", "data": data, "counts": pytest_counts}
     if not data:
-        return {"status": "Passed", "data": {}}
-    return {"status": "Passed", "data": data}
+        if pytest_counts["status"] in {"Skipped", "NotFound"}:
+            return {
+                "status": pytest_counts["status"],
+                "data": {},
+                "counts": pytest_counts,
+            }
+        return {"status": "Passed", "data": {}, "counts": pytest_counts}
+    return {"status": "Passed", "data": data, "counts": pytest_counts}
 
 
 def suite_is_available(op: str, suite: str) -> bool:
@@ -532,7 +542,16 @@ def run_accuracy_suite(gpu_id: int, op: str) -> dict[str, Any]:
 
     env = get_env(str(gpu_id))
     directory = ROOT / SUITES[suite]["directory"]
-    cmd = ["pytest", "-m", f"{op} and graph", "-q", "--tb=short"]
+    cmd = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "-m",
+        f"{op} and graph",
+        "-q",
+        "-rs",
+        "--tb=short",
+    ]
 
     start = time.time()
     run = run_cmd(op, suite, cmd, cwd=directory, env=env, timeout=CFG.timeout)
@@ -558,18 +577,23 @@ def run_benchmark_suite(gpu_id: int, op: str) -> dict[str, Any]:
     env = get_env(str(gpu_id))
     directory = ROOT / "benchmark"
     cmd = [
+        sys.executable,
+        "-m",
         "pytest",
         "-m",
         f"{op} and graph and perf",
         "-q",
         "-s",
+        "-rs",
         "--tb=short",
     ]
 
     start = time.time()
     run = run_cmd(op, suite, cmd, cwd=directory, env=env, timeout=CFG.timeout)
     duration = time.time() - start
-    record = parse_benchmark_stdout(op, run["stdout"], run["exit_code"])
+    record = parse_benchmark_stdout(
+        op, run["stdout"], run["stderr"], run["exit_code"]
+    )
     record["duration"] = duration
     record["exit_code"] = run["exit_code"]
     return record
