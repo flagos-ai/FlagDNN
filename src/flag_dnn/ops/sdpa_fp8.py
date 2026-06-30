@@ -1329,10 +1329,22 @@ def sdpa_fp8(
         )
 
         # TMA path needs a contiguous innermost dim and a 16B-aligned box.
-        # Its descriptor setup only amortizes for large KV work, so restrict it
-        # to long sequences (>=2048) or dense medium sequences (>=1024); short
-        # / medium-causal cases stay on the lower-overhead lean kernel.
-        tma_amortizes = skv >= 2048 or (skv >= 1024 and not pure_causal)
+        # Descriptor setup amortizes for long sequences and for 1k dense work.
+        # The 1k top-left causal stats case is also faster with TMA on Hopper.
+        # A verified 512 top-left causal no-stats D128 case uses TMA too.
+        tma_amortizes = (
+            skv >= 2048
+            or (skv >= 1024 and not pure_causal)
+            or (skv >= 1024 and pure_causal and stats is not None)
+            or (
+                skv == 512
+                and sq == skv
+                and pure_causal
+                and stats is None
+                and head_dim == 128
+                and v_dim == 128
+            )
+        )
         hkv = int(k.shape[1])
         hv = int(v.shape[1])
         q_per_k = heads // hkv

@@ -35,8 +35,14 @@ def _prepare_sdpa_fp8(
         _LOG2E,
         _TOP_LEFT,
         _UNBOUNDED_DIAG,
+        _ensure_triton_tma_allocator,
     )
-    from flag_dnn.ops.sdpa_fp8 import _sdpa_fp8_fwd_kernel
+    from flag_dnn.ops.sdpa_fp8 import (
+        _sdpa_fp8_fwd_fast_kernel,
+        _sdpa_fp8_fwd_gqa_causal_tma_kernel,
+        _sdpa_fp8_fwd_kernel,
+        _sdpa_fp8_fwd_tma_kernel,
+    )
 
     has_bias = bool(attrs.get("has_bias"))
     generate_stats = bool(attrs.get("generate_stats"))
@@ -110,25 +116,237 @@ def _prepare_sdpa_fp8(
     banded = left is not None or right is not None
     reverse_causal = alignment == _TOP_LEFT and left is None and right == 0
 
-    # Fast-path-eligible cases (dense / top-left causal, power-of-two head_dim,
-    # no bias) are handled by the lean eager kernel; defer to the eager run_fn
-    # so it dispatches there. Per-replay dispatch is negligible vs kernel time.
+    qk_scale = attn_scale * descale_q * descale_k * _LOG2E
+    sv_descale = descale_s * descale_v
+
     pure_causal = (
         banded and left is None and right == 0 and alignment == _TOP_LEFT
     )
     head_pow2 = head_dim >= 16 and (head_dim & (head_dim - 1)) == 0
     v_pow2 = v_dim >= 16 and (v_dim & (v_dim - 1)) == 0
-    if (
+    fast_ok = (
         not has_bias
         and head_dim == v_dim
         and head_pow2
         and v_pow2
         and (not banded or pure_causal)
-    ):
-        return None
+    )
+    if fast_ok:
+        fast_stats_stride = stats_stride if generate_stats else (0, 0, 0)
+        hkv = int(k_shape[1])
+        hv = int(v_shape[1])
+        q_per_k = heads // hkv
+        q_per_v = heads // hv
+        tma_amortizes = (
+            skv >= 2048
+            or (skv >= 1024 and not pure_causal)
+            or (skv >= 1024 and pure_causal and generate_stats)
+            or (
+                sq == skv
+                and not generate_stats
+                and head_dim == 128
+                and v_dim == 128
+                and (
+                    (skv == 512 and pure_causal)
+                    or (skv in (256, 512) and not banded)
+                )
+            )
+        )
+        tma_ok = (
+            tma_amortizes
+            and q_stride[3] == 1
+            and k_stride[3] == 1
+            and v_stride[3] == 1
+            and head_dim % 16 == 0
+            and v_dim % 16 == 0
+        )
+        gqa_causal_tma_ok = (
+            tma_ok
+            and pure_causal
+            and generate_stats
+            and sq == skv
+            and skv >= 1024
+            and hkv == hv
+            and heads > hkv
+            and q_per_k <= 8
+            and head_dim == 128
+            and v_dim == 128
+        )
 
-    qk_scale = attn_scale * descale_q * descale_k * _LOG2E
-    sv_descale = descale_s * descale_v
+        def make_fp8_fast_output(
+            inputs: Sequence[Any],
+        ) -> tuple[torch.Tensor, ...]:
+            q = inputs[0]
+            assert isinstance(q, torch.Tensor)
+            o = torch.empty(out_shape, dtype=out_dtype, device=q.device)
+            if generate_stats:
+                stats = torch.empty(
+                    stats_shape, dtype=torch.float32, device=q.device
+                )
+            else:
+                stats = o
+            amax_s = torch.zeros(
+                (1, 1, 1, 1), dtype=torch.float32, device=q.device
+            )
+            amax_o = torch.zeros(
+                (1, 1, 1, 1), dtype=torch.float32, device=q.device
+            )
+            return o, stats, amax_s, amax_o
+
+        def fp8_fast_runtime_args(
+            inputs: Sequence[Any], output: Any
+        ) -> tuple[Any, ...]:
+            return (
+                inputs[0],
+                inputs[1],
+                inputs[2],
+                output[0],
+                output[1],
+                output[2],
+                output[3],
+            )
+
+        def fp8_fast_result(output: Any) -> Any:
+            if generate_stats:
+                return output[0], output[1], output[2], output[3]
+            return output[0], output[2], output[3]
+
+        def fast_grid(meta: dict[str, Any]) -> tuple[int, int]:
+            return (triton.cdiv(sq, meta["BLOCK_M"]), batch * heads)
+
+        fast_tail = (
+            qk_scale,
+            scale_s,
+            sv_descale,
+            scale_o,
+            heads,
+            sq,
+            skv,
+            q_per_k,
+            q_per_v,
+            *q_stride,
+            *k_stride,
+            *v_stride,
+            *o_stride,
+            *fast_stats_stride,
+        )
+
+        def build_fast_cached_call(
+            constexprs: dict[str, Any],
+        ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+            block_m = int(constexprs["BLOCK_M"])
+            block_n = int(constexprs["BLOCK_N"])
+            static_grid = (triton.cdiv(sq, block_m), batch * heads, 1)
+            cached_args = fast_tail + (
+                head_dim,
+                v_dim,
+                block_m,
+                block_n,
+                head_dim,
+                v_dim,
+                pure_causal,
+                generate_stats,
+            )
+            return static_grid, cached_args
+
+        if gqa_causal_tma_ok:
+            gqa_tail = (
+                qk_scale,
+                scale_s,
+                sv_descale,
+                scale_o,
+                hkv,
+                sq,
+                skv,
+                q_per_k,
+                *q_stride,
+                *k_stride,
+                *v_stride,
+                *o_stride,
+                *fast_stats_stride,
+            )
+
+            def gqa_tma_grid(meta: dict[str, Any]) -> tuple[int, int, int]:
+                return (
+                    triton.cdiv(sq, meta["BLOCK_M"]),
+                    batch * hkv,
+                    triton.cdiv(q_per_k, meta["BLOCK_H"]),
+                )
+
+            def build_gqa_tma_cached_call(
+                constexprs: dict[str, Any],
+            ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+                block_m = int(constexprs["BLOCK_M"])
+                block_h = int(constexprs["BLOCK_H"])
+                block_n = int(constexprs["BLOCK_N"])
+                static_grid = (
+                    triton.cdiv(sq, block_m),
+                    batch * hkv,
+                    triton.cdiv(q_per_k, block_h),
+                )
+                cached_args = gqa_tail + (
+                    head_dim,
+                    v_dim,
+                    block_m,
+                    block_h,
+                    block_n,
+                    head_dim,
+                    v_dim,
+                    generate_stats,
+                )
+                return static_grid, cached_args
+
+            return make_single_kernel_run_fn(
+                PreparedSingleKernelRunSpec(
+                    kernel=PreparedSingleKernelSpec(
+                        kernel=_sdpa_fp8_fwd_gqa_causal_tma_kernel,
+                        grid=gqa_tma_grid,
+                        static_args=gqa_tail,
+                        constexpr_kwargs=dict(
+                            HEAD_DIM=head_dim,
+                            V_DIM=v_dim,
+                            BLOCK_D=head_dim,
+                            BLOCK_DV=v_dim,
+                            GENERATE_STATS=generate_stats,
+                        ),
+                        build_cached_call=build_gqa_tma_cached_call,
+                    ),
+                    input_checks=sdpa_input_checks,
+                    output_factory=make_fp8_fast_output,
+                    runtime_args=fp8_fast_runtime_args,
+                    result=fp8_fast_result,
+                    pre_launch=_ensure_triton_tma_allocator,
+                ),
+                default_run_fn,
+            )
+
+        fast_kernel = (
+            _sdpa_fp8_fwd_tma_kernel if tma_ok else _sdpa_fp8_fwd_fast_kernel
+        )
+        return make_single_kernel_run_fn(
+            PreparedSingleKernelRunSpec(
+                kernel=PreparedSingleKernelSpec(
+                    kernel=fast_kernel,
+                    grid=fast_grid,
+                    static_args=fast_tail,
+                    constexpr_kwargs=dict(
+                        HEAD_DIM=head_dim,
+                        V_DIM=v_dim,
+                        BLOCK_D=head_dim,
+                        BLOCK_DV=v_dim,
+                        CAUSAL=pure_causal,
+                        GENERATE_STATS=generate_stats,
+                    ),
+                    build_cached_call=build_fast_cached_call,
+                ),
+                input_checks=sdpa_input_checks,
+                output_factory=make_fp8_fast_output,
+                runtime_args=fp8_fast_runtime_args,
+                result=fp8_fast_result,
+                pre_launch=(_ensure_triton_tma_allocator if tma_ok else None),
+            ),
+            default_run_fn,
+        )
 
     if not generate_stats:
         stats_stride = (0, 0, 0)
