@@ -73,7 +73,7 @@ ops:
       - stable: 'graph'
   - id: gen_index
     description: |
-      Generates an index tensor for graph and eager kernels.
+      Generates an index tensor for graph kernels.
     for:
       - gen_index
     labels:
@@ -92,14 +92,12 @@ ops:
       - relu
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - NeuralNetwork
     stages:
-      - stable: 'eager'
       - stable: 'graph'
   - id: gelu
     description: |
@@ -108,14 +106,10 @@ ops:
       - gelu
     labels:
       - flag_dnn
-      - eager
       - graph
-      - accuracy
-      - benchmark
     kind:
       - NeuralNetwork
     stages:
-      - stable: 'eager'
       - alpha: 'graph'
   - id: gelu_approx_tanh
     description: |
@@ -124,12 +118,12 @@ ops:
       - gelu_approx_tanh
     labels:
       - flag_dnn
-      - eager
       - graph
+      - accuracy
+      - benchmark
     kind:
       - NeuralNetwork
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: silu
     description: |
@@ -138,12 +132,10 @@ ops:
       - silu
     labels:
       - flag_dnn
-      - eager
       - graph
     kind:
       - NeuralNetwork
     stages:
-      - stable: 'eager'
       - alpha: 'graph'
   - id: swish
     description: |
@@ -152,14 +144,12 @@ ops:
       - swish
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - NeuralNetwork
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: leaky_relu
     description: |
@@ -168,51 +158,13 @@ ops:
       - leaky_relu
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - NeuralNetwork
     stages:
-      - stable: 'eager'
       - stable: 'graph'
-  - id: prelu
-    description: |
-      Runs the FlagDNN `prelu` neural-network operator.
-    for:
-      - prelu
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: softmax
-    description: |
-      Runs the FlagDNN `softmax` neural-network operator.
-    for:
-      - softmax
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: batch_norm
-    description: |
-      Runs the FlagDNN `batch_norm` neural-network operator.
-    for:
-      - batch_norm
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
   - id: batchnorm
     description: |
       Runs the graph-oriented batch normalization operator.
@@ -225,7 +177,6 @@ ops:
     kind:
       - NeuralNetwork
     stages:
-      - beta: 'eager'
       - beta: 'graph'
   - id: batchnorm_inference
     description: |
@@ -234,14 +185,12 @@ ops:
       - batchnorm_inference
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - NeuralNetwork
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: layernorm
     description: |
@@ -255,32 +204,7 @@ ops:
     kind:
       - NeuralNetwork
     stages:
-      - stable: 'eager'
       - beta: 'graph'
-  - id: layer_norm
-    description: |
-      Runs the FlagDNN `layer_norm` neural-network operator.
-    for:
-      - layer_norm
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: rms_norm
-    description: |
-      Runs the FlagDNN `rms_norm` neural-network operator.
-    for:
-      - rms_norm
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
   - id: rmsnorm
     description: |
       Runs the graph-oriented RMS normalization operator.
@@ -293,68 +217,7 @@ ops:
     kind:
       - NeuralNetwork
     stages:
-      - stable: 'eager'
       - beta: 'graph'
-  - id: group_norm
-    description: |
-      Runs the FlagDNN `group_norm` neural-network operator.
-    for:
-      - group_norm
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: max_pool2d
-    description: |
-      Runs the FlagDNN `max_pool2d` neural-network operator.
-    for:
-      - max_pool2d
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: avg_pool2d
-    description: |
-      Runs the FlagDNN `avg_pool2d` neural-network operator.
-    for:
-      - avg_pool2d
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: adaptive_avg_pool2d
-    description: |
-      Runs the FlagDNN `adaptive_avg_pool2d` neural-network operator.
-    for:
-      - adaptive_avg_pool2d
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: adaptive_max_pool2d
-    description: |
-      Runs the FlagDNN `adaptive_max_pool2d` neural-network operator.
-    for:
-      - adaptive_max_pool2d
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
   - id: add
     description: |
       Computes the FlagDNN `add` elementwise binary operator.
@@ -362,14 +225,12 @@ ops:
       - add
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - stable: 'graph'
   - id: sub
     description: |
@@ -378,14 +239,12 @@ ops:
       - sub
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - stable: 'graph'
   - id: mul
     description: |
@@ -394,14 +253,12 @@ ops:
       - mul
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - stable: 'graph'
   - id: scale
     description: |
@@ -410,14 +267,12 @@ ops:
       - scale
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: div
     description: |
@@ -426,14 +281,12 @@ ops:
       - div
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - stable: 'graph'
   - id: pow
     description: |
@@ -442,14 +295,12 @@ ops:
       - pow
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - stable: 'graph'
   - id: mod
     description: |
@@ -472,14 +323,12 @@ ops:
       - max
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: min
     description: |
@@ -488,14 +337,12 @@ ops:
       - min
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: sqrt
     description: |
@@ -504,12 +351,10 @@ ops:
       - sqrt
     labels:
       - flag_dnn
-      - eager
       - graph
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - alpha: 'graph'
   - id: abs
     description: |
@@ -518,14 +363,12 @@ ops:
       - abs
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - stable: 'graph'
   - id: neg
     description: |
@@ -534,61 +377,11 @@ ops:
       - neg
     labels:
       - flag_dnn
-      - eager
       - graph
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - alpha: 'graph'
-  - id: clamp
-    description: |
-      Computes the FlagDNN `clamp` elementwise unary operator.
-    for:
-      - clamp
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Math
-    stages:
-      - stable: 'eager'
-  - id: sum
-    description: |
-      Runs the FlagDNN `sum` reduction or scan operator.
-    for:
-      - sum
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Reduction
-    stages:
-      - stable: 'eager'
-  - id: mean
-    description: |
-      Runs the FlagDNN `mean` reduction or scan operator.
-    for:
-      - mean
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Reduction
-    stages:
-      - stable: 'eager'
-  - id: prod
-    description: |
-      Runs the FlagDNN `prod` reduction or scan operator.
-    for:
-      - prod
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Reduction
-    stages:
-      - stable: 'eager'
   - id: reduction
     description: |
       Runs the FlagDNN `reduction` reduction or scan operator.
@@ -596,38 +389,12 @@ ops:
       - reduction
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
     kind:
       - Reduction
     stages:
-      - alpha: 'eager'
       - beta: 'graph'
-  - id: cumsum
-    description: |
-      Runs the FlagDNN `cumsum` reduction or scan operator.
-    for:
-      - cumsum
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Reduction
-    stages:
-      - stable: 'eager'
-  - id: cumprod
-    description: |
-      Runs the FlagDNN `cumprod` reduction or scan operator.
-    for:
-      - cumprod
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Reduction
-    stages:
-      - stable: 'eager'
   - id: eq
     description: |
       Computes the FlagDNN `eq` elementwise binary operator.
@@ -635,12 +402,10 @@ ops:
       - eq
     labels:
       - flag_dnn
-      - eager
       - graph
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - alpha: 'graph'
   - id: ne
     description: |
@@ -649,12 +414,10 @@ ops:
       - ne
     labels:
       - flag_dnn
-      - eager
       - graph
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - alpha: 'graph'
   - id: cmp_eq
     description: |
@@ -663,14 +426,12 @@ ops:
       - cmp_eq
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: cmp_neq
     description: |
@@ -679,14 +440,12 @@ ops:
       - cmp_neq
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: cmp_lt
     description: |
@@ -695,14 +454,12 @@ ops:
       - cmp_lt
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: cmp_le
     description: |
@@ -711,14 +468,12 @@ ops:
       - cmp_le
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: cmp_gt
     description: |
@@ -727,14 +482,12 @@ ops:
       - cmp_gt
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: cmp_ge
     description: |
@@ -743,171 +496,13 @@ ops:
       - cmp_ge
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
-  - id: max_pool1d
-    description: |
-      Runs the FlagDNN `max_pool1d` neural-network operator.
-    for:
-      - max_pool1d
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: max_pool3d
-    description: |
-      Runs the FlagDNN `max_pool3d` neural-network operator.
-    for:
-      - max_pool3d
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: avg_pool1d
-    description: |
-      Runs the FlagDNN `avg_pool1d` neural-network operator.
-    for:
-      - avg_pool1d
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: avg_pool3d
-    description: |
-      Runs the FlagDNN `avg_pool3d` neural-network operator.
-    for:
-      - avg_pool3d
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: adaptive_avg_pool1d
-    description: |
-      Runs the FlagDNN `adaptive_avg_pool1d` neural-network operator.
-    for:
-      - adaptive_avg_pool1d
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: adaptive_avg_pool3d
-    description: |
-      Runs the FlagDNN `adaptive_avg_pool3d` neural-network operator.
-    for:
-      - adaptive_avg_pool3d
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: adaptive_max_pool1d
-    description: |
-      Runs the FlagDNN `adaptive_max_pool1d` neural-network operator.
-    for:
-      - adaptive_max_pool1d
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: adaptive_max_pool3d
-    description: |
-      Runs the FlagDNN `adaptive_max_pool3d` neural-network operator.
-    for:
-      - adaptive_max_pool3d
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: threshold
-    description: |
-      Runs the FlagDNN `threshold` neural-network operator.
-    for:
-      - threshold
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: threshold_
-    description: |
-      Runs the FlagDNN `threshold_` neural-network operator.
-    for:
-      - threshold_
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: leaky_relu_
-    description: |
-      Runs the FlagDNN `leaky_relu_` neural-network operator.
-    for:
-      - leaky_relu_
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: hardtanh
-    description: |
-      Runs the FlagDNN `hardtanh` neural-network operator.
-    for:
-      - hardtanh
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: hardtanh_
-    description: |
-      Runs the FlagDNN `hardtanh_` neural-network operator.
-    for:
-      - hardtanh_
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
   - id: elu
     description: |
       Runs the FlagDNN `elu` neural-network operator.
@@ -915,63 +510,13 @@ ops:
       - elu
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - NeuralNetwork
     stages:
-      - stable: 'eager'
       - stable: 'graph'
-  - id: elu_
-    description: |
-      Runs the FlagDNN `elu_` neural-network operator.
-    for:
-      - elu_
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: rrelu
-    description: |
-      Runs the FlagDNN `rrelu` neural-network operator.
-    for:
-      - rrelu
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: rrelu_
-    description: |
-      Runs the FlagDNN `rrelu_` neural-network operator.
-    for:
-      - rrelu_
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: mish
-    description: |
-      Runs the FlagDNN `mish` neural-network operator.
-    for:
-      - mish
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
   - id: softplus
     description: |
       Runs the FlagDNN `softplus` neural-network operator.
@@ -979,63 +524,13 @@ ops:
       - softplus
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - NeuralNetwork
     stages:
-      - stable: 'eager'
       - stable: 'graph'
-  - id: softsign
-    description: |
-      Runs the FlagDNN `softsign` neural-network operator.
-    for:
-      - softsign
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: softshrink
-    description: |
-      Runs the FlagDNN `softshrink` neural-network operator.
-    for:
-      - softshrink
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: softmin
-    description: |
-      Runs the FlagDNN `softmin` neural-network operator.
-    for:
-      - softmin
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: mv
-    description: |
-      Runs the FlagDNN `mv` linear algebra operator.
-    for:
-      - mv
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - LinearAlg
-    stages:
-      - stable: 'eager'
   - id: mm
     description: |
       Runs the FlagDNN `mm` linear algebra operator.
@@ -1043,12 +538,10 @@ ops:
       - mm
     labels:
       - flag_dnn
-      - eager
       - graph
     kind:
       - LinearAlg
     stages:
-      - stable: 'eager'
       - alpha: 'graph'
   - id: matmul
     description: |
@@ -1057,14 +550,12 @@ ops:
       - matmul
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - LinearAlg
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: sdpa
     description: |
@@ -1096,30 +587,36 @@ ops:
       - Attention
     stages:
       - alpha: 'graph'
-  - id: dot
+  - id: sdpa_fp8
     description: |
-      Runs the FlagDNN `dot` linear algebra operator.
+      Runs FP8 scaled dot product attention through the graph executor.
     for:
-      - dot
+      - sdpa_fp8
     labels:
       - flag_dnn
-      - eager
-    kind:
-      - LinearAlg
-    stages:
-      - stable: 'eager'
-  - id: conv1d
-    description: |
-      Runs the FlagDNN `conv1d` neural-network operator.
-    for:
-      - conv1d
-    labels:
-      - flag_dnn
-      - eager
+      - graph
+      - accuracy
+      - benchmark
     kind:
       - NeuralNetwork
+      - Attention
     stages:
-      - stable: 'eager'
+      - alpha: 'graph'
+  - id: sdpa_fp8_backward
+    description: |
+      Computes FP8 scaled dot product attention backward through the graph executor.
+    for:
+      - sdpa_fp8_backward
+    labels:
+      - flag_dnn
+      - graph
+      - accuracy
+      - benchmark
+    kind:
+      - NeuralNetwork
+      - Attention
+    stages:
+      - alpha: 'graph'
   - id: conv2d
     description: |
       Runs the FlagDNN `conv2d` neural-network operator.
@@ -1127,25 +624,12 @@ ops:
       - conv2d
     labels:
       - flag_dnn
-      - eager
       - graph
+      - accuracy
     kind:
       - NeuralNetwork
     stages:
-      - stable: 'eager'
       - alpha: 'graph'
-  - id: conv3d
-    description: |
-      Runs the FlagDNN `conv3d` neural-network operator.
-    for:
-      - conv3d
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
   - id: conv_fprop
     description: |
       Runs the convolution forward-propagation operator.
@@ -1153,14 +637,12 @@ ops:
       - conv_fprop
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - NeuralNetwork
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: conv_dgrad
     description: |
@@ -1183,14 +665,12 @@ ops:
       - conv_wgrad
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - NeuralNetwork
     stages:
-      - alpha: 'eager'
       - alpha: 'graph'
   - id: causal_conv1d
     description: |
@@ -1199,74 +679,13 @@ ops:
       - causal_conv1d
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
+      - benchmark
     kind:
       - NeuralNetwork
     stages:
-      - alpha: 'eager'
       - beta: 'graph'
-  - id: hardswish
-    description: |
-      Runs the FlagDNN `hardswish` neural-network operator.
-    for:
-      - hardswish
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: relu6
-    description: |
-      Runs the FlagDNN `relu6` neural-network operator.
-    for:
-      - relu6
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: selu
-    description: |
-      Runs the FlagDNN `selu` neural-network operator.
-    for:
-      - selu
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: glu
-    description: |
-      Runs the FlagDNN `glu` neural-network operator.
-    for:
-      - glu
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: celu
-    description: |
-      Runs the FlagDNN `celu` neural-network operator.
-    for:
-      - celu
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
   - id: tanh
     description: |
       Runs the FlagDNN `tanh` neural-network operator.
@@ -1274,12 +693,10 @@ ops:
       - tanh
     labels:
       - flag_dnn
-      - eager
       - graph
     kind:
       - NeuralNetwork
     stages:
-      - stable: 'eager'
       - alpha: 'graph'
   - id: sigmoid
     description: |
@@ -1288,14 +705,12 @@ ops:
       - sigmoid
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - NeuralNetwork
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: sigmoid_backward
     description: |
@@ -1304,51 +719,13 @@ ops:
       - sigmoid_backward
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - NeuralNetwork
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
-  - id: logsigmoid
-    description: |
-      Runs the FlagDNN `logsigmoid` neural-network operator.
-    for:
-      - logsigmoid
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: isinf
-    description: |
-      Computes the FlagDNN `isinf` elementwise unary operator.
-    for:
-      - isinf
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Math
-    stages:
-      - stable: 'eager'
-  - id: isnan
-    description: |
-      Computes the FlagDNN `isnan` elementwise unary operator.
-    for:
-      - isnan
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Math
-    stages:
-      - stable: 'eager'
   - id: square
     description: |
       Computes the FlagDNN `square` elementwise unary operator.
@@ -1356,12 +733,10 @@ ops:
       - square
     labels:
       - flag_dnn
-      - eager
       - graph
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - alpha: 'graph'
   - id: add_square
     description: |
@@ -1370,7 +745,6 @@ ops:
       - add_square
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
@@ -1378,7 +752,6 @@ ops:
     kind:
       - Fused
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: rmsnorm_rht_amax
     description: |
@@ -1403,27 +776,13 @@ ops:
       - rsqrt
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - stable: 'graph'
-  - id: positive
-    description: |
-      Computes the FlagDNN `positive` elementwise unary operator.
-    for:
-      - positive
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Math
-    stages:
-      - stable: 'eager'
   - id: log
     description: |
       Computes the FlagDNN `log` elementwise unary operator.
@@ -1431,14 +790,12 @@ ops:
       - log
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - stable: 'graph'
   - id: exp
     description: |
@@ -1447,14 +804,12 @@ ops:
       - exp
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - stable: 'graph'
   - id: reciprocal
     description: |
@@ -1554,18 +909,6 @@ ops:
       - Math
     stages:
       - stable: 'graph'
-  - id: bitwise_not
-    description: |
-      Computes the FlagDNN `bitwise_not` elementwise unary operator.
-    for:
-      - bitwise_not
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Math
-    stages:
-      - stable: 'eager'
   - id: minimum
     description: |
       Computes the FlagDNN `minimum` elementwise binary operator.
@@ -1573,12 +916,10 @@ ops:
       - minimum
     labels:
       - flag_dnn
-      - eager
       - graph
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - alpha: 'graph'
   - id: maximum
     description: |
@@ -1587,49 +928,11 @@ ops:
       - maximum
     labels:
       - flag_dnn
-      - eager
       - graph
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - alpha: 'graph'
-  - id: bitwise_and
-    description: |
-      Computes the FlagDNN `bitwise_and` elementwise binary operator.
-    for:
-      - bitwise_and
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Math
-    stages:
-      - stable: 'eager'
-  - id: bitwise_or
-    description: |
-      Computes the FlagDNN `bitwise_or` elementwise binary operator.
-    for:
-      - bitwise_or
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Math
-    stages:
-      - stable: 'eager'
-  - id: bitwise_xor
-    description: |
-      Computes the FlagDNN `bitwise_xor` elementwise binary operator.
-    for:
-      - bitwise_xor
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Math
-    stages:
-      - stable: 'eager'
   - id: logical_and
     description: |
       Computes the FlagDNN `logical_and` elementwise binary operator.
@@ -1637,14 +940,12 @@ ops:
       - logical_and
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: logical_or
     description: |
@@ -1653,14 +954,12 @@ ops:
       - logical_or
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: logical_not
     description: |
@@ -1669,14 +968,12 @@ ops:
       - logical_not
     labels:
       - flag_dnn
-      - eager
       - graph
       - accuracy
       - benchmark
     kind:
       - Math
     stages:
-      - alpha: 'eager'
       - stable: 'graph'
   - id: binary_select
     description: |
@@ -1692,162 +989,6 @@ ops:
       - Tensor
     stages:
       - stable: 'graph'
-  - id: one_hot
-    description: |
-      Runs the FlagDNN `one_hot` tensor-shape operator.
-    for:
-      - one_hot
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Tensor
-    stages:
-      - stable: 'eager'
-  - id: kl_div
-    description: |
-      Runs the FlagDNN `kl_div` loss operator.
-    for:
-      - kl_div
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Loss
-    stages:
-      - stable: 'eager'
-  - id: mse_loss
-    description: |
-      Runs the FlagDNN `mse_loss` loss operator.
-    for:
-      - mse_loss
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Loss
-    stages:
-      - stable: 'eager'
-  - id: l1_loss
-    description: |
-      Runs the FlagDNN `l1_loss` loss operator.
-    for:
-      - l1_loss
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Loss
-    stages:
-      - stable: 'eager'
-  - id: log_softmax
-    description: |
-      Runs the FlagDNN `log_softmax` neural-network operator.
-    for:
-      - log_softmax
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: interpolate
-    description: |
-      Runs the FlagDNN `interpolate` neural-network operator.
-    for:
-      - interpolate
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'eager'
-  - id: any
-    description: |
-      Runs the FlagDNN `any` reduction or scan operator.
-    for:
-      - any
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Reduction
-    stages:
-      - stable: 'eager'
-  - id: all
-    description: |
-      Runs the FlagDNN `all` reduction or scan operator.
-    for:
-      - all
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Reduction
-    stages:
-      - stable: 'eager'
-  - id: fmin
-    description: |
-      Computes the FlagDNN `fmin` elementwise binary operator.
-    for:
-      - fmin
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Math
-    stages:
-      - stable: 'eager'
-  - id: fmax
-    description: |
-      Computes the FlagDNN `fmax` elementwise binary operator.
-    for:
-      - fmax
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Math
-    stages:
-      - stable: 'eager'
-  - id: embedding
-    description: |
-      Runs the FlagDNN `embedding` tensor-shape operator.
-    for:
-      - embedding
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Tensor
-    stages:
-      - stable: 'eager'
-  - id: cummin
-    description: |
-      Runs the FlagDNN `cummin` reduction or scan operator.
-    for:
-      - cummin
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Reduction
-    stages:
-      - stable: 'eager'
-  - id: cummax
-    description: |
-      Runs the FlagDNN `cummax` reduction or scan operator.
-    for:
-      - cummax
-    labels:
-      - flag_dnn
-      - eager
-    kind:
-      - Reduction
-    stages:
-      - stable: 'eager'
   - id: lt
     description: |
       Computes the FlagDNN `lt` elementwise binary operator.
@@ -1855,12 +996,10 @@ ops:
       - lt
     labels:
       - flag_dnn
-      - eager
       - graph
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - alpha: 'graph'
   - id: le
     description: |
@@ -1869,12 +1008,10 @@ ops:
       - le
     labels:
       - flag_dnn
-      - eager
       - graph
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - alpha: 'graph'
   - id: gt
     description: |
@@ -1883,12 +1020,10 @@ ops:
       - gt
     labels:
       - flag_dnn
-      - eager
       - graph
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - alpha: 'graph'
   - id: ge
     description: |
@@ -1897,10 +1032,8 @@ ops:
       - ge
     labels:
       - flag_dnn
-      - eager
       - graph
     kind:
       - Math
     stages:
-      - stable: 'eager'
       - alpha: 'graph'

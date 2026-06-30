@@ -54,7 +54,7 @@ def _run_flag_dnn_gelu_approx_tanh_graph(x):
     return compiled.run(x.clone())
 
 
-@pytest.mark.gelu
+@pytest.mark.gelu_approx_tanh
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)

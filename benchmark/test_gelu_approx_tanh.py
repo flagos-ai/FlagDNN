@@ -86,7 +86,7 @@ class GeluApproxTanhBenchmark(CudnnCompareBenchmark):
         return run
 
 
-@pytest.mark.gelu
+@pytest.mark.gelu_approx_tanh
 @pytest.mark.graph
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")

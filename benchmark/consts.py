@@ -335,11 +335,11 @@ def selected_shapes(shapes, env_name):
 
 
 def bench_warmup():
-    return int(os.getenv("FLAGDNN_CUDNN_PERF_WARMUP", "10"))
+    return int(os.getenv("FLAGDNN_CUDNN_PERF_WARMUP", "25"))
 
 
 def bench_repeat():
-    return int(os.getenv("FLAGDNN_CUDNN_PERF_REPEAT", "30"))
+    return int(os.getenv("FLAGDNN_CUDNN_PERF_REPEAT", "100"))
 
 
 def min_speedup():
