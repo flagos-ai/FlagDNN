@@ -68,7 +68,7 @@ def _sdpa_fp8_fwd_inner(
     BANDED: tl.constexpr,
     MASKED: tl.constexpr,
 ):
-    for start_n in range(lo, hi, BLOCK_N):
+    for start_n in tl.range(lo, hi, BLOCK_N):
         start_n = tl.multiple_of(start_n, BLOCK_N)
         offs_n = start_n + tl.arange(0, BLOCK_N)
 
@@ -120,9 +120,9 @@ def _sdpa_fp8_fwd_inner(
             m_safe = tl.where(m_new == float("-inf"), 0.0, m_new)
         else:
             m_safe = m_new
-        p = tl.exp2(score - m_safe[:, None])
-        alpha = tl.exp2(m_i - m_safe)
-        l_i = l_i * alpha + tl.sum(p, 1)
+        p = tl.math.exp2(score - m_safe[:, None])
+        alpha = tl.math.exp2(m_i - m_safe)
+        l_ij = tl.sum(p, 1)
         acc = acc * alpha[:, None]
 
         v_mask = None
@@ -148,7 +148,8 @@ def _sdpa_fp8_fwd_inner(
             )
         # P (fp32) -> P (fp8) using scale_s, then P (fp8) @ V (fp8) -> fp32.
         p_fp8 = (p * s_scale).to(v.dtype)
-        acc += tl.dot(p_fp8, v)
+        acc = tl.dot(p_fp8, v, acc)
+        l_i = l_i * alpha + l_ij
         m_i = m_new
     return acc, l_i, m_i
 
@@ -398,12 +399,12 @@ def _sdpa_fp8_fwd_kernel(
     if PADDED_DV:
         o_valid = o_valid & (offs_dv[None, :] < V_DIM)
     local_amax_o = tl.max(tl.where(o_valid, tl.abs(o_val), 0.0))
-    tl.atomic_max(amax_o_ptr, local_amax_o)
+    tl.atomic_max(amax_o_ptr, local_amax_o, sem="relaxed")
     # amax_s proxy: largest row-max score magnitude (cheap; derived from the
     # online-softmax running max instead of a per-block abs+reduction). Used
     # only as a delayed-scaling calibration hint, not asserted for equality.
     amax_s_val = tl.max(tl.where(mask_m, tl.abs(m_i), 0.0)) * _LN2_KERNEL
-    tl.atomic_max(amax_s_ptr, amax_s_val)
+    tl.atomic_max(amax_s_ptr, amax_s_val, sem="relaxed")
 
     o_base = o_ptr + off_b * stride_ob + off_h * stride_oh
     tl.store(
@@ -442,7 +443,7 @@ def _sdpa_fp8_fast_inner(
     CAUSAL_MASK: tl.constexpr,
     TAIL_MASK: tl.constexpr,
 ):
-    for start_n in range(lo, hi, BLOCK_N):
+    for start_n in tl.range(lo, hi, BLOCK_N):
         start_n = tl.multiple_of(start_n, BLOCK_N)
         offs_n = start_n + tl.arange(0, BLOCK_N)
         k = tl.load(
@@ -460,14 +461,15 @@ def _sdpa_fp8_fast_inner(
             m_safe = tl.where(m_new == float("-inf"), 0.0, m_new)
         else:
             m_safe = m_new
-        p = tl.exp2(score - m_safe[:, None])
-        alpha = tl.exp2(m_i - m_safe)
-        l_i = l_i * alpha + tl.sum(p, 1)
+        p = tl.math.exp2(score - m_safe[:, None])
+        alpha = tl.math.exp2(m_i - m_safe)
+        l_ij = tl.sum(p, 1)
         acc = acc * alpha[:, None]
         v = tl.load(
             v_base + offs_n[:, None] * stride_vn + offs_dv[None, :] * stride_vd
         )
-        acc += tl.dot((p * s_scale).to(v.dtype), v)
+        acc = tl.dot((p * s_scale).to(v.dtype), v, acc)
+        l_i = l_i * alpha + l_ij
         m_i = m_new
     return acc, l_i, m_i
 
@@ -677,9 +679,9 @@ def _sdpa_fp8_fwd_fast_kernel(
     l_safe = tl.maximum(l_i, 1.0)
     o_val = acc * (sv_descale / l_safe[:, None])
     local_amax_o = tl.max(tl.where(mask_m[:, None], tl.abs(o_val), 0.0))
-    tl.atomic_max(amax_o_ptr, local_amax_o)
+    tl.atomic_max(amax_o_ptr, local_amax_o, sem="relaxed")
     amax_s_val = tl.max(tl.where(mask_m, tl.abs(m_i), 0.0)) * _LN2_KERNEL
-    tl.atomic_max(amax_s_ptr, amax_s_val)
+    tl.atomic_max(amax_s_ptr, amax_s_val, sem="relaxed")
 
     o_base = o_ptr + off_b * stride_ob + off_h * stride_oh
     tl.store(
@@ -711,7 +713,7 @@ def _sdpa_fp8_tma_inner(
     CAUSAL_MASK: tl.constexpr,
     TAIL_MASK: tl.constexpr,
 ):
-    for start_n in range(lo, hi, BLOCK_N):
+    for start_n in tl.range(lo, hi, BLOCK_N, disable_licm=True):
         start_n = tl.multiple_of(start_n, BLOCK_N)
         start_n_i32 = start_n.to(tl.int32)  # type: ignore[attr-defined]
         offs_n = start_n_i32 + tl.arange(0, BLOCK_N)
@@ -729,12 +731,13 @@ def _sdpa_fp8_tma_inner(
             m_safe = tl.where(m_new == float("-inf"), 0.0, m_new)
         else:
             m_safe = m_new
-        p = tl.exp2(score - m_safe[:, None])
-        alpha = tl.exp2(m_i - m_safe)
-        l_i = l_i * alpha + tl.sum(p, 1)
+        p = tl.math.exp2(score - m_safe[:, None])
+        alpha = tl.math.exp2(m_i - m_safe)
+        l_ij = tl.sum(p, 1)
         acc = acc * alpha[:, None]
         v = v_desc.load([start_n_i32, 0])
-        acc += tl.dot((p * s_scale).to(v.dtype), v)
+        acc = tl.dot((p * s_scale).to(v.dtype), v, acc)
+        l_i = l_i * alpha + l_ij
         m_i = m_new
     return acc, l_i, m_i
 
@@ -930,9 +933,9 @@ def _sdpa_fp8_fwd_tma_kernel(
     l_safe = tl.maximum(l_i, 1.0)
     o_val = acc * (sv_descale / l_safe[:, None])
     local_amax_o = tl.max(tl.where(mask_m[:, None], tl.abs(o_val), 0.0))
-    tl.atomic_max(amax_o_ptr, local_amax_o)
+    tl.atomic_max(amax_o_ptr, local_amax_o, sem="relaxed")
     amax_s_val = tl.max(tl.where(mask_m, tl.abs(m_i), 0.0)) * _LN2_KERNEL
-    tl.atomic_max(amax_s_ptr, amax_s_val)
+    tl.atomic_max(amax_s_ptr, amax_s_val, sem="relaxed")
 
     o_base = o_ptr + off_b * stride_ob + off_h * stride_oh
     tl.store(
@@ -1097,9 +1100,9 @@ def _sdpa_fp8_fwd_gqa_causal_tma_kernel(
     l_safe = tl.maximum(l_i, 1.0)
     o_val = acc * (sv_descale / l_safe[:, None])
     local_amax_o = tl.max(tl.where(row_mask[:, None], tl.abs(o_val), 0.0))
-    tl.atomic_max(amax_o_ptr, local_amax_o)
+    tl.atomic_max(amax_o_ptr, local_amax_o, sem="relaxed")
     amax_s_val = tl.max(tl.where(row_mask, tl.abs(m_i), 0.0)) * _LN2_KERNEL
-    tl.atomic_max(amax_s_ptr, amax_s_val)
+    tl.atomic_max(amax_s_ptr, amax_s_val, sem="relaxed")
 
     tl.store(
         o_ptr
