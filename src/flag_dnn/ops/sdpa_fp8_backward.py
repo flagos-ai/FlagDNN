@@ -648,6 +648,292 @@ def _sdpa_fp8_bwd_gqa_reduce_kernel(
     tl.store(dv_out_ptrs, (dv_val * scale_dv).to(dv_ptr.dtype.element_ty))
 
 
+@libentry()
+@triton.jit
+def _sdpa_fp8_bwd_materialize_p_ds_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    o_ptr,
+    do_ptr,
+    stats_ptr,
+    p_ptr,
+    ds_ptr,
+    qk_scale,
+    ov_descale,
+    do_v_descale,
+    scale_s,
+    scale_dp,
+    attn_scale,
+    HQ: tl.constexpr,
+    SQ: tl.constexpr,
+    SKV: tl.constexpr,
+    Q_PER: tl.constexpr,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_dob: tl.constexpr,
+    stride_doh: tl.constexpr,
+    stride_dom: tl.constexpr,
+    stride_dod: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+    CAUSAL: tl.constexpr,
+):
+    pid_m = tle.program_id(0)
+    pid_bh = tle.program_id(1)
+    off_b = pid_bh // HQ
+    off_h = pid_bh - off_b * HQ
+    off_kh = off_h // Q_PER
+
+    start_m = pid_m * BLOCK_M
+    offs_m = tl.max_contiguous(start_m + tl.arange(0, BLOCK_M), BLOCK_M)
+    rel_m = tl.arange(0, BLOCK_M)
+    offs_n = tl.arange(0, BLOCK_N)
+    offs_d = tl.arange(0, BLOCK_D)
+
+    q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
+    k_base = k_ptr + off_b * stride_kb + off_kh * stride_kh
+    v_base = v_ptr + off_b * stride_vb + off_kh * stride_vh
+    o_base = o_ptr + off_b * stride_ob + off_h * stride_oh
+    do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
+    stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
+
+    q = tl.load(
+        q_base + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qd
+    )
+    o = tl.load(
+        o_base + offs_m[:, None] * stride_om + offs_d[None, :] * stride_od
+    ).to(tl.float32)
+    do = tl.load(
+        do_base + offs_m[:, None] * stride_dom + offs_d[None, :] * stride_dod
+    )
+    stats = tl.load(stats_base + offs_m * stride_sm).to(tl.float32)
+    row_delta = tl.sum(o * do.to(tl.float32), axis=1) * ov_descale
+
+    loop_skv = SKV
+    if CAUSAL:
+        loop_skv = tl.minimum(SKV, start_m + BLOCK_M)
+
+    p_base = p_ptr + pid_bh * SQ * SKV + start_m * SKV
+    ds_base = ds_ptr + pid_bh * SQ * SKV + start_m * SKV
+    for start_n in tl.range(0, loop_skv, BLOCK_N):
+        start_n = tl.multiple_of(start_n, BLOCK_N)
+        cols = start_n + offs_n
+        k = tl.load(
+            k_base + cols[:, None] * stride_kn + offs_d[None, :] * stride_kd
+        )
+        v = tl.load(
+            v_base + cols[:, None] * stride_vn + offs_d[None, :] * stride_vd
+        )
+        score = tl.dot(q, tl.trans(k)).to(tl.float32) * qk_scale
+        p = tl.exp2((score - stats[:, None]) * 1.4426950408889634)
+        if CAUSAL:
+            p = tl.where(cols[None, :] <= offs_m[:, None], p, 0.0)
+        dp = tl.dot(do, tl.trans(v)).to(tl.float32) * do_v_descale
+        ds = p * (dp - row_delta[:, None]) * attn_scale
+        tl.store(
+            p_base + rel_m[:, None] * SKV + cols[None, :],
+            (p * scale_s).to(p_ptr.dtype.element_ty),
+        )
+        tl.store(
+            ds_base + rel_m[:, None] * SKV + cols[None, :],
+            (ds * scale_dp).to(ds_ptr.dtype.element_ty),
+        )
+
+
+@libentry()
+@triton.jit
+def _sdpa_fp8_bwd_replay_dq_kernel(
+    ds_ptr,
+    k_ptr,
+    dq_ptr,
+    dq_descale,
+    scale_dq,
+    HQ: tl.constexpr,
+    SQ: tl.constexpr,
+    SKV: tl.constexpr,
+    Q_PER: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_dqb: tl.constexpr,
+    stride_dqh: tl.constexpr,
+    stride_dqm: tl.constexpr,
+    stride_dqd: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+    CAUSAL: tl.constexpr,
+):
+    pid_m = tle.program_id(0)
+    pid_bh = tle.program_id(1)
+    off_b = pid_bh // HQ
+    off_h = pid_bh - off_b * HQ
+    off_kh = off_h // Q_PER
+
+    start_m = pid_m * BLOCK_M
+    offs_m = tl.max_contiguous(start_m + tl.arange(0, BLOCK_M), BLOCK_M)
+    rel_m = tl.arange(0, BLOCK_M)
+    offs_n = tl.arange(0, BLOCK_N)
+    offs_d = tl.arange(0, BLOCK_D)
+
+    loop_skv = SKV
+    if CAUSAL:
+        loop_skv = tl.minimum(SKV, start_m + BLOCK_M)
+
+    k_base = k_ptr + off_b * stride_kb + off_kh * stride_kh
+    ds_base = ds_ptr + pid_bh * SQ * SKV + start_m * SKV
+    dq = tl.zeros((BLOCK_M, BLOCK_D), dtype=tl.float32)
+    for start_n in tl.range(0, loop_skv, BLOCK_N):
+        start_n = tl.multiple_of(start_n, BLOCK_N)
+        cols = start_n + offs_n
+        ds = tl.load(ds_base + rel_m[:, None] * SKV + cols[None, :])
+        k = tl.load(
+            k_base + cols[:, None] * stride_kn + offs_d[None, :] * stride_kd
+        )
+        dq += tl.dot(ds, k)
+
+    dq_val = dq * dq_descale
+    dq_out = (
+        dq_ptr
+        + off_b * stride_dqb
+        + off_h * stride_dqh
+        + offs_m[:, None] * stride_dqm
+        + offs_d[None, :] * stride_dqd
+    )
+    tl.store(dq_out, (dq_val * scale_dq).to(dq_ptr.dtype.element_ty))
+
+
+@libentry()
+@triton.jit
+def _sdpa_fp8_bwd_replay_dkdv_kernel(
+    p_ptr,
+    ds_ptr,
+    q_ptr,
+    do_ptr,
+    dk_ptr,
+    dv_ptr,
+    dk_descale,
+    dv_descale,
+    scale_dk,
+    scale_dv,
+    HQ: tl.constexpr,
+    HKV: tl.constexpr,
+    SQ: tl.constexpr,
+    SKV: tl.constexpr,
+    Q_PER: tl.constexpr,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_dob: tl.constexpr,
+    stride_doh: tl.constexpr,
+    stride_dom: tl.constexpr,
+    stride_dod: tl.constexpr,
+    stride_dkb: tl.constexpr,
+    stride_dkh: tl.constexpr,
+    stride_dkn: tl.constexpr,
+    stride_dkd: tl.constexpr,
+    stride_dvb: tl.constexpr,
+    stride_dvh: tl.constexpr,
+    stride_dvn: tl.constexpr,
+    stride_dvd: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+    CAUSAL: tl.constexpr,
+    REPLAY_DK: tl.constexpr,
+    REPLAY_DV: tl.constexpr,
+):
+    pid_n = tle.program_id(0)
+    pid_bh = tle.program_id(1)
+    off_b = pid_bh // HKV
+    off_kh = pid_bh - off_b * HKV
+
+    start_n = pid_n * BLOCK_N
+    offs_n = tl.max_contiguous(start_n + tl.arange(0, BLOCK_N), BLOCK_N)
+    offs_m = tl.arange(0, BLOCK_M)
+    offs_d = tl.arange(0, BLOCK_D)
+
+    if REPLAY_DK:
+        dk = tl.zeros((BLOCK_N, BLOCK_D), dtype=tl.float32)
+    if REPLAY_DV:
+        dv = tl.zeros((BLOCK_N, BLOCK_D), dtype=tl.float32)
+
+    for group_idx in tl.static_range(0, Q_PER):
+        off_h = off_kh * Q_PER + group_idx
+        q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
+        do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
+        cache_head = (off_b * HQ + off_h) * SQ * SKV
+        loop_start_m = 0
+        if CAUSAL:
+            loop_start_m = (start_n // BLOCK_M) * BLOCK_M
+        for start_m in tl.range(loop_start_m, SQ, BLOCK_M):
+            rows = start_m + offs_m
+            q = tl.load(
+                q_base
+                + rows[:, None] * stride_qm
+                + offs_d[None, :] * stride_qd
+            )
+            do = tl.load(
+                do_base
+                + rows[:, None] * stride_dom
+                + offs_d[None, :] * stride_dod
+            )
+            p = tl.load(
+                p_ptr + cache_head + rows[:, None] * SKV + offs_n[None, :]
+            )
+            ds = tl.load(
+                ds_ptr + cache_head + rows[:, None] * SKV + offs_n[None, :]
+            )
+            if REPLAY_DK:
+                dk += tl.dot(tl.trans(ds), q)
+            if REPLAY_DV:
+                dv += tl.dot(tl.trans(p), do)
+
+    if REPLAY_DK:
+        dk_val = dk * dk_descale
+    if REPLAY_DV:
+        dv_val = dv * dv_descale
+    dk_out = (
+        dk_ptr
+        + off_b * stride_dkb
+        + off_kh * stride_dkh
+        + offs_n[:, None] * stride_dkn
+        + offs_d[None, :] * stride_dkd
+    )
+    dv_out = (
+        dv_ptr
+        + off_b * stride_dvb
+        + off_kh * stride_dvh
+        + offs_n[:, None] * stride_dvn
+        + offs_d[None, :] * stride_dvd
+    )
+    if REPLAY_DK:
+        tl.store(dk_out, (dk_val * scale_dk).to(dk_ptr.dtype.element_ty))
+    if REPLAY_DV:
+        tl.store(dv_out, (dv_val * scale_dv).to(dv_ptr.dtype.element_ty))
+
+
 def _reject_unsupported(
     use_padding_mask: bool,
     seq_len_q,

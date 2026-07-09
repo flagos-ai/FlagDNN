@@ -13,6 +13,7 @@ for _module_name in (
     "sdpa_backward",
     "sdpa_forward",
     "sdpa_fp8_forward",
+    "sdpa_fp8_backward",
 ):
     import_module(f"{__package__}.{_module_name}")
 

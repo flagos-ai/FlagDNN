@@ -768,6 +768,165 @@ def _sdpa_fp8_tma_inner(
 
 @libentry()
 @triton.jit
+def _sdpa_fp8_fwd_dense_nostats_hostdesc_tma_kernel(
+    q_ptr,
+    k_desc,
+    v_desc,
+    o_ptr,
+    amax_s_ptr,
+    amax_o_ptr,
+    qk_scale: tl.constexpr,
+    s_scale: tl.constexpr,
+    sv_descale: tl.constexpr,
+    o_scale: tl.constexpr,
+    SQ: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    COMPUTE_AMAX: tl.constexpr,
+):
+    pid_m = tl.program_id(0)
+    pid_bh = tl.program_id(1)
+
+    start_m = pid_m * BLOCK_M
+    offs_m = tl.max_contiguous(start_m + tl.arange(0, BLOCK_M), BLOCK_M)
+    offs_d = tl.arange(0, 128)
+    head_offset = pid_bh * SQ * 128
+    q = tl.load(q_ptr + head_offset + offs_m[:, None] * 128 + offs_d[None, :])
+
+    acc = tl.zeros((BLOCK_M, 128), dtype=tl.float32)
+    l_i = tl.zeros((BLOCK_M,), dtype=tl.float32)
+    m_i = tl.full((BLOCK_M,), float("-inf"), dtype=tl.float32)
+    head_row = pid_bh * SQ
+
+    for start_n in tl.range(0, SQ, BLOCK_N, disable_licm=True):
+        start_n = tl.multiple_of(start_n, BLOCK_N)
+        start_n_i32 = start_n.to(tl.int32)  # type: ignore[attr-defined]
+        k = tl.trans(k_desc.load([head_row + start_n_i32, 0]))
+        score = tl.dot(q, k).to(tl.float32) * qk_scale
+        m_new = tl.maximum(m_i, tl.max(score, 1))
+        p = tl.math.exp2(score - m_new[:, None])
+        alpha = tl.math.exp2(m_i - m_new)
+        l_ij = tl.sum(p, 1)
+        acc = acc * alpha[:, None]
+        v = v_desc.load([head_row + start_n_i32, 0])
+        acc = tl.dot((p * s_scale).to(v.dtype), v, acc)
+        l_i = l_i * alpha + l_ij
+        m_i = m_new
+
+    o_val = acc * (sv_descale / l_i[:, None])
+    if COMPUTE_AMAX:
+        local_amax_o = tl.max(tl.abs(o_val))
+        tl.atomic_max(
+            amax_o_ptr.to(tl.pointer_type(tl.uint32)),
+            local_amax_o.to(tl.uint32, bitcast=True),
+            sem="relaxed",
+        )
+        local_amax_s = tl.max(tl.abs(m_i)) * _LN2_KERNEL
+        tl.atomic_max(
+            amax_s_ptr.to(tl.pointer_type(tl.uint32)),
+            local_amax_s.to(tl.uint32, bitcast=True),
+            sem="relaxed",
+        )
+
+    tl.store(
+        o_ptr + head_offset + offs_m[:, None] * 128 + offs_d[None, :],
+        (o_val * o_scale).to(o_ptr.dtype.element_ty),
+    )
+
+
+@libentry()
+@triton.jit
+def _sdpa_fp8_fwd_causal_nostats_hostdesc_tma_kernel(
+    q_ptr,
+    k_desc,
+    v_desc,
+    o_ptr,
+    amax_s_ptr,
+    amax_o_ptr,
+    qk_scale: tl.constexpr,
+    s_scale: tl.constexpr,
+    sv_descale: tl.constexpr,
+    o_scale: tl.constexpr,
+    SQ: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    COMPUTE_AMAX: tl.constexpr,
+):
+    raw_pid_m = tl.program_id(0)
+    pid_bh = tl.program_id(1)
+    pid_m = tl.cdiv(SQ, BLOCK_M) - 1 - raw_pid_m
+
+    start_m = pid_m * BLOCK_M
+    offs_m = tl.max_contiguous(start_m + tl.arange(0, BLOCK_M), BLOCK_M)
+    offs_d = tl.arange(0, 128)
+    head_offset = pid_bh * SQ * 128
+    q = tl.load(q_ptr + head_offset + offs_m[:, None] * 128 + offs_d[None, :])
+
+    acc = tl.zeros((BLOCK_M, 128), dtype=tl.float32)
+    l_i = tl.zeros((BLOCK_M,), dtype=tl.float32)
+    m_i = tl.full((BLOCK_M,), float("-inf"), dtype=tl.float32)
+    head_row = pid_bh * SQ
+    hi = start_m + BLOCK_M
+    full_hi = (start_m // BLOCK_N) * BLOCK_N
+
+    if 0 < full_hi:
+        for start_n in tl.range(0, full_hi, BLOCK_N, disable_licm=True):
+            start_n = tl.multiple_of(start_n, BLOCK_N)
+            start_n_i32 = start_n.to(tl.int32)  # type: ignore[attr-defined]
+            k = tl.trans(k_desc.load([head_row + start_n_i32, 0]))
+            score = tl.dot(q, k).to(tl.float32) * qk_scale
+            m_new = tl.maximum(m_i, tl.max(score, 1))
+            p = tl.math.exp2(score - m_new[:, None])
+            alpha = tl.math.exp2(m_i - m_new)
+            l_ij = tl.sum(p, 1)
+            acc = acc * alpha[:, None]
+            v = v_desc.load([head_row + start_n_i32, 0])
+            acc = tl.dot((p * s_scale).to(v.dtype), v, acc)
+            l_i = l_i * alpha + l_ij
+            m_i = m_new
+    if full_hi < hi:
+        for start_n in tl.range(full_hi, hi, BLOCK_N, disable_licm=True):
+            start_n = tl.multiple_of(start_n, BLOCK_N)
+            start_n_i32 = start_n.to(tl.int32)  # type: ignore[attr-defined]
+            offs_n = start_n_i32 + tl.arange(0, BLOCK_N)
+            k = tl.trans(k_desc.load([head_row + start_n_i32, 0]))
+            score = tl.dot(q, k).to(tl.float32) * qk_scale
+            score = tl.where(
+                offs_n[None, :] <= offs_m[:, None], score, float("-inf")
+            )
+            m_new = tl.maximum(m_i, tl.max(score, 1))
+            p = tl.math.exp2(score - m_new[:, None])
+            alpha = tl.math.exp2(m_i - m_new)
+            l_ij = tl.sum(p, 1)
+            acc = acc * alpha[:, None]
+            v = v_desc.load([head_row + start_n_i32, 0])
+            acc = tl.dot((p * s_scale).to(v.dtype), v, acc)
+            l_i = l_i * alpha + l_ij
+            m_i = m_new
+
+    o_val = acc * (sv_descale / l_i[:, None])
+    if COMPUTE_AMAX:
+        local_amax_o = tl.max(tl.abs(o_val))
+        tl.atomic_max(
+            amax_o_ptr.to(tl.pointer_type(tl.uint32)),
+            local_amax_o.to(tl.uint32, bitcast=True),
+            sem="relaxed",
+        )
+        local_amax_s = tl.max(tl.abs(m_i)) * _LN2_KERNEL
+        tl.atomic_max(
+            amax_s_ptr.to(tl.pointer_type(tl.uint32)),
+            local_amax_s.to(tl.uint32, bitcast=True),
+            sem="relaxed",
+        )
+
+    tl.store(
+        o_ptr + head_offset + offs_m[:, None] * 128 + offs_d[None, :],
+        (o_val * o_scale).to(o_ptr.dtype.element_ty),
+    )
+
+
+@libentry()
+@triton.jit
 def _sdpa_fp8_fwd_dense512_hostdesc_tma_kernel(
     q_ptr,
     k_desc,
@@ -1066,6 +1225,570 @@ def _sdpa_fp8_fwd_row1_causal_pcache_replay_kernel(
     out_scale = tl.load(final_l_ptr + pid_bh * 1024 + offs_m)
     tl.store(
         o_ptr + head_offset + offs_m[:, None] * 128 + offs_d[None, :],
+        (acc * out_scale[:, None]).to(o_ptr.dtype.element_ty),
+    )
+
+
+@libentry()
+@triton.jit
+def _sdpa_fp8_fwd_row2_causal_pcache_full_kernel(
+    q_ptr,
+    k_desc,
+    v_desc,
+    p_ptr,
+    alpha_ptr,
+    final_l_ptr,
+    o_ptr,
+    stats_ptr,
+    amax_s_ptr,
+    amax_o_ptr,
+    qk_scale: tl.constexpr,
+    s_scale: tl.constexpr,
+    sv_descale: tl.constexpr,
+    o_scale: tl.constexpr,
+):
+    raw_pid_m = tl.program_id(0)
+    pid_bh = tl.program_id(1)
+    pid_m = 31 - raw_pid_m
+    start_m = pid_m * 64
+    offs_m = tl.max_contiguous(start_m + tl.arange(0, 64), 64)
+    offs_d = tl.arange(0, 128)
+
+    head_offset = pid_bh * 262144
+    q = tl.load(q_ptr + head_offset + offs_m[:, None] * 128 + offs_d[None, :])
+
+    acc = tl.zeros((64, 128), dtype=tl.float32)
+    l_i = tl.zeros((64,), dtype=tl.float32)
+    m_i = tl.full((64,), float("-inf"), dtype=tl.float32)
+    head_row = pid_bh * 2048
+    p_base = p_ptr + pid_bh * 4194304
+    alpha_base = alpha_ptr + pid_bh * 65536
+
+    for start_n in tl.range(0, start_m, 64, disable_licm=True):
+        start_n = tl.multiple_of(start_n, 64)
+        start_n_i32 = start_n.to(tl.int32)  # type: ignore[attr-defined]
+        offs_n = start_n_i32 + tl.arange(0, 64)
+        k = tl.trans(k_desc.load([head_row + start_n_i32, 0]))
+        score = tl.dot(q, k).to(tl.float32) * qk_scale
+        m_new = tl.maximum(m_i, tl.max(score, 1))
+        p = tl.math.exp2(score - m_new[:, None])
+        alpha = tl.math.exp2(m_i - m_new)
+        p_fp8 = (p * s_scale).to(p_ptr.dtype.element_ty)
+        tl.store(p_base + offs_m[:, None] * 2048 + offs_n[None, :], p_fp8)
+        acc = acc * alpha[:, None]
+        v = v_desc.load([head_row + start_n_i32, 0])
+        acc = tl.dot(p_fp8, v, acc)
+        l_i = l_i * alpha + tl.sum(p, 1)
+        m_i = m_new
+        tl.store(alpha_base + (start_n_i32 // 64) * 2048 + offs_m, alpha)
+
+    for start_n in tl.range(start_m, start_m + 64, 64, disable_licm=True):
+        start_n = tl.multiple_of(start_n, 64)
+        start_n_i32 = start_n.to(tl.int32)  # type: ignore[attr-defined]
+        offs_n = start_n_i32 + tl.arange(0, 64)
+        k = tl.trans(k_desc.load([head_row + start_n_i32, 0]))
+        score = tl.dot(q, k).to(tl.float32) * qk_scale
+        score = tl.where(
+            offs_n[None, :] <= offs_m[:, None], score, float("-inf")
+        )
+        m_new = tl.maximum(m_i, tl.max(score, 1))
+        p = tl.math.exp2(score - m_new[:, None])
+        alpha = tl.math.exp2(m_i - m_new)
+        p_fp8 = (p * s_scale).to(p_ptr.dtype.element_ty)
+        tl.store(p_base + offs_m[:, None] * 2048 + offs_n[None, :], p_fp8)
+        acc = acc * alpha[:, None]
+        v = v_desc.load([head_row + start_n_i32, 0])
+        acc = tl.dot(p_fp8, v, acc)
+        l_i = l_i * alpha + tl.sum(p, 1)
+        m_i = m_new
+        tl.store(alpha_base + (start_n_i32 // 64) * 2048 + offs_m, alpha)
+
+    out_descale = sv_descale / l_i
+    o_unscaled = acc * out_descale[:, None]
+    local_amax_o = tl.max(tl.abs(o_unscaled))
+    tl.atomic_max(
+        amax_o_ptr.to(tl.pointer_type(tl.uint32)),
+        local_amax_o.to(tl.uint32, bitcast=True),
+        sem="relaxed",
+    )
+    local_amax_s = tl.max(tl.abs(m_i)) * _LN2_KERNEL
+    tl.atomic_max(
+        amax_s_ptr.to(tl.pointer_type(tl.uint32)),
+        local_amax_s.to(tl.uint32, bitcast=True),
+        sem="relaxed",
+    )
+    out_scale = out_descale * o_scale
+    tl.store(
+        o_ptr + head_offset + offs_m[:, None] * 128 + offs_d[None, :],
+        (acc * out_scale[:, None]).to(o_ptr.dtype.element_ty),
+    )
+    stats = (m_i + tl.log2(l_i)) * _LN2_KERNEL
+    tl.store(stats_ptr + pid_bh * 2048 + offs_m, stats)
+    tl.store(final_l_ptr + pid_bh * 2048 + offs_m, out_scale)
+
+
+@libentry()
+@triton.jit
+def _sdpa_fp8_fwd_row2_causal_pcache_prefix_kernel(
+    v_desc,
+    p_desc,
+    alpha_ptr,
+    prefix_ptr,
+):
+    pid_m = tl.program_id(0)
+    pid_bh = tl.program_id(1)
+    start_m = pid_m * 64
+    offs_r = tl.arange(0, 64)
+    offs_d = tl.arange(0, 128)
+
+    acc = tl.zeros((64, 128), dtype=tl.float32)
+    head_row = pid_bh * 2048
+    alpha_base = alpha_ptr + pid_bh * 65536
+    hi = tl.minimum(start_m + 64, 640)
+
+    for start_n in tl.range(0, hi, 64, num_stages=4):
+        start_n_i32 = start_n.to(tl.int32)  # type: ignore[attr-defined]
+        alpha = tl.load(
+            alpha_base + (start_n_i32 // 64) * 2048 + start_m + offs_r
+        )
+        acc = acc * alpha[:, None]
+        p = p_desc.load([pid_bh * 2048 + start_m, start_n_i32])
+        v = v_desc.load([head_row + start_n_i32, 0])
+        acc = tl.dot(p, v, acc)
+
+    tl.store(
+        prefix_ptr
+        + (pid_bh * 32 + pid_m) * 8192
+        + offs_r[:, None] * 128
+        + offs_d[None, :],
+        acc,
+    )
+
+
+@libentry()
+@triton.jit
+def _sdpa_fp8_fwd_row2_causal_pcache_prefix_replay_kernel(
+    v_desc,
+    p_desc,
+    alpha_ptr,
+    final_l_ptr,
+    prefix_ptr,
+    o_ptr,
+):
+    raw_pid_m = tl.program_id(0)
+    pid_bh = tl.program_id(1)
+    pid_m = raw_pid_m
+    start_m = pid_m * 64
+    offs_m = tl.max_contiguous(start_m + tl.arange(0, 64), 64)
+    offs_r = tl.arange(0, 64)
+    offs_d = tl.arange(0, 128)
+
+    head_offset = pid_bh * 262144
+    acc = tl.load(
+        prefix_ptr
+        + (pid_bh * 32 + pid_m) * 8192
+        + offs_r[:, None] * 128
+        + offs_d[None, :]
+    )
+    head_row = pid_bh * 2048
+    alpha_base = alpha_ptr + pid_bh * 65536
+
+    for start_n in tl.range(640, start_m + 64, 64, num_stages=4):
+        start_n_i32 = start_n.to(tl.int32)  # type: ignore[attr-defined]
+        alpha = tl.load(alpha_base + (start_n_i32 // 64) * 2048 + offs_m)
+        acc = acc * alpha[:, None]
+        p = p_desc.load([pid_bh * 2048 + start_m, start_n_i32])
+        v = v_desc.load([head_row + start_n_i32, 0])
+        acc = tl.dot(p, v, acc)
+
+    out_scale = tl.load(final_l_ptr + pid_bh * 2048 + offs_m)
+    tl.store(
+        o_ptr + head_offset + offs_m[:, None] * 128 + offs_d[None, :],
+        (acc * out_scale[:, None]).to(o_ptr.dtype.element_ty),
+    )
+
+
+@libentry()
+@triton.jit
+def _sdpa_fp8_fwd_mha_nostats_pcache_full_kernel(
+    q_ptr,
+    k_desc,
+    v_desc,
+    p_ptr,
+    alpha_ptr,
+    final_l_ptr,
+    o_ptr,
+    amax_s_ptr,
+    amax_o_ptr,
+    qk_scale: tl.constexpr,
+    s_scale: tl.constexpr,
+    sv_descale: tl.constexpr,
+    o_scale: tl.constexpr,
+    SQ: tl.constexpr,
+    CAUSAL: tl.constexpr,
+):
+    raw_pid_m = tl.program_id(0)
+    pid_bh = tl.program_id(1)
+    if CAUSAL:
+        pid_m = tl.cdiv(SQ, 64) - 1 - raw_pid_m
+    else:
+        pid_m = raw_pid_m
+    start_m = pid_m * 64
+    offs_m = tl.max_contiguous(start_m + tl.arange(0, 64), 64)
+    offs_d = tl.arange(0, 128)
+
+    head_offset = pid_bh * SQ * 128
+    q = tl.load(q_ptr + head_offset + offs_m[:, None] * 128 + offs_d[None, :])
+
+    acc = tl.zeros((64, 128), dtype=tl.float32)
+    l_i = tl.zeros((64,), dtype=tl.float32)
+    m_i = tl.full((64,), float("-inf"), dtype=tl.float32)
+    head_row = pid_bh * SQ
+    p_base = p_ptr + pid_bh * SQ * SQ
+    alpha_base = alpha_ptr + pid_bh * (SQ // 64) * SQ
+    full_hi = start_m if CAUSAL else SQ
+
+    for start_n in tl.range(0, full_hi, 64, disable_licm=True):
+        start_n = tl.multiple_of(start_n, 64)
+        start_n_i32 = start_n.to(tl.int32)  # type: ignore[attr-defined]
+        offs_n = start_n_i32 + tl.arange(0, 64)
+        k = tl.trans(k_desc.load([head_row + start_n_i32, 0]))
+        score = tl.dot(q, k).to(tl.float32) * qk_scale
+        m_new = tl.maximum(m_i, tl.max(score, 1))
+        p = tl.math.exp2(score - m_new[:, None])
+        alpha = tl.math.exp2(m_i - m_new)
+        p_fp8 = (p * s_scale).to(p_ptr.dtype.element_ty)
+        tl.store(p_base + offs_m[:, None] * SQ + offs_n[None, :], p_fp8)
+        acc = acc * alpha[:, None]
+        v = v_desc.load([head_row + start_n_i32, 0])
+        acc = tl.dot(p_fp8, v, acc)
+        l_i = l_i * alpha + tl.sum(p, 1)
+        m_i = m_new
+        tl.store(alpha_base + (start_n_i32 // 64) * SQ + offs_m, alpha)
+
+    if CAUSAL:
+        start_n_i32 = start_m
+        offs_n = start_n_i32 + tl.arange(0, 64)
+        k = tl.trans(k_desc.load([head_row + start_n_i32, 0]))
+        score = tl.dot(q, k).to(tl.float32) * qk_scale
+        score = tl.where(
+            offs_n[None, :] <= offs_m[:, None], score, float("-inf")
+        )
+        m_new = tl.maximum(m_i, tl.max(score, 1))
+        p = tl.math.exp2(score - m_new[:, None])
+        alpha = tl.math.exp2(m_i - m_new)
+        p_fp8 = (p * s_scale).to(p_ptr.dtype.element_ty)
+        tl.store(p_base + offs_m[:, None] * SQ + offs_n[None, :], p_fp8)
+        acc = acc * alpha[:, None]
+        v = v_desc.load([head_row + start_n_i32, 0])
+        acc = tl.dot(p_fp8, v, acc)
+        l_i = l_i * alpha + tl.sum(p, 1)
+        m_i = m_new
+        tl.store(alpha_base + pid_m * SQ + offs_m, alpha)
+    out_descale = sv_descale / l_i
+    o_unscaled = acc * out_descale[:, None]
+    local_amax_o = tl.max(tl.abs(o_unscaled))
+    tl.atomic_max(
+        amax_o_ptr.to(tl.pointer_type(tl.uint32)),
+        local_amax_o.to(tl.uint32, bitcast=True),
+        sem="relaxed",
+    )
+    local_amax_s = tl.max(tl.abs(m_i)) * _LN2_KERNEL
+    tl.atomic_max(
+        amax_s_ptr.to(tl.pointer_type(tl.uint32)),
+        local_amax_s.to(tl.uint32, bitcast=True),
+        sem="relaxed",
+    )
+    out_scale = out_descale * o_scale
+    tl.store(
+        o_ptr + head_offset + offs_m[:, None] * 128 + offs_d[None, :],
+        (acc * out_scale[:, None]).to(o_ptr.dtype.element_ty),
+    )
+    tl.store(final_l_ptr + pid_bh * SQ + offs_m, out_scale)
+
+
+@libentry()
+@triton.jit
+def _sdpa_fp8_fwd_mha_nostats_pcache_prefix_kernel(
+    v_desc,
+    p_desc,
+    alpha_ptr,
+    prefix_ptr,
+    SQ: tl.constexpr,
+    PREFIX_N: tl.constexpr,
+    CAUSAL: tl.constexpr,
+):
+    pid_m = tl.program_id(0)
+    pid_bh = tl.program_id(1)
+    start_m = pid_m * 64
+    offs_r = tl.arange(0, 64)
+    offs_d = tl.arange(0, 128)
+
+    acc = tl.zeros((64, 128), dtype=tl.float32)
+    head_row = pid_bh * SQ
+    alpha_base = alpha_ptr + pid_bh * (SQ // 64) * SQ
+    hi = tl.minimum(start_m + 64, PREFIX_N) if CAUSAL else PREFIX_N
+
+    for start_n in tl.range(0, hi, 64, num_stages=4):
+        start_n_i32 = start_n.to(tl.int32)  # type: ignore[attr-defined]
+        alpha = tl.load(
+            alpha_base + (start_n_i32 // 64) * SQ + start_m + offs_r
+        )
+        acc = acc * alpha[:, None]
+        p = p_desc.load([pid_bh * SQ + start_m, start_n_i32])
+        v = v_desc.load([head_row + start_n_i32, 0])
+        acc = tl.dot(p, v, acc)
+
+    tl.store(
+        prefix_ptr
+        + (pid_bh * (SQ // 64) + pid_m) * 8192
+        + offs_r[:, None] * 128
+        + offs_d[None, :],
+        acc,
+    )
+
+
+@libentry()
+@triton.jit
+def _sdpa_fp8_fwd_mha_nostats_pcache_prefix_replay_kernel(
+    v_desc,
+    p_desc,
+    alpha_ptr,
+    final_l_ptr,
+    prefix_ptr,
+    o_ptr,
+    SQ: tl.constexpr,
+    PREFIX_N: tl.constexpr,
+    CAUSAL: tl.constexpr,
+):
+    pid_m = tl.program_id(0)
+    pid_bh = tl.program_id(1)
+    start_m = pid_m * 64
+    offs_m = tl.max_contiguous(start_m + tl.arange(0, 64), 64)
+    offs_r = tl.arange(0, 64)
+    offs_d = tl.arange(0, 128)
+
+    acc = tl.load(
+        prefix_ptr
+        + (pid_bh * (SQ // 64) + pid_m) * 8192
+        + offs_r[:, None] * 128
+        + offs_d[None, :]
+    )
+    head_row = pid_bh * SQ
+    alpha_base = alpha_ptr + pid_bh * (SQ // 64) * SQ
+    hi = start_m + 64 if CAUSAL else SQ
+
+    for start_n in tl.range(PREFIX_N, hi, 64, num_stages=4):
+        start_n_i32 = start_n.to(tl.int32)  # type: ignore[attr-defined]
+        alpha = tl.load(alpha_base + (start_n_i32 // 64) * SQ + offs_m)
+        acc = acc * alpha[:, None]
+        p = p_desc.load([pid_bh * SQ + start_m, start_n_i32])
+        v = v_desc.load([head_row + start_n_i32, 0])
+        acc = tl.dot(p, v, acc)
+
+    out_scale = tl.load(final_l_ptr + pid_bh * SQ + offs_m)
+    tl.store(
+        o_ptr + pid_bh * SQ * 128 + offs_m[:, None] * 128 + offs_d[None, :],
+        (acc * out_scale[:, None]).to(o_ptr.dtype.element_ty),
+    )
+
+
+@libentry()
+@triton.jit
+def _sdpa_fp8_fwd_gqa_causal_pcache_full_kernel(
+    q_ptr,
+    k_desc,
+    v_desc,
+    p_ptr,
+    alpha_ptr,
+    final_l_ptr,
+    o_ptr,
+    stats_ptr,
+    amax_s_ptr,
+    amax_o_ptr,
+    qk_scale: tl.constexpr,
+    s_scale: tl.constexpr,
+    sv_descale: tl.constexpr,
+    o_scale: tl.constexpr,
+    SQ: tl.constexpr,
+    HQ: tl.constexpr,
+    HKV: tl.constexpr,
+    GROUP: tl.constexpr,
+):
+    raw_pid_m = tl.program_id(0)
+    pid_bh = tl.program_id(1)
+    pid_m = tl.cdiv(SQ, 64) - 1 - raw_pid_m
+    start_m = pid_m * 64
+    offs_m = tl.max_contiguous(start_m + tl.arange(0, 64), 64)
+    offs_d = tl.arange(0, 128)
+
+    off_b = pid_bh // HQ
+    off_h = pid_bh - off_b * HQ
+    off_kh = off_h // GROUP
+    q_head_offset = (off_b * HQ + off_h) * SQ * 128
+    kv_head_row = (off_b * HKV + off_kh) * SQ
+    q = tl.load(
+        q_ptr + q_head_offset + offs_m[:, None] * 128 + offs_d[None, :]
+    )
+
+    acc = tl.zeros((64, 128), dtype=tl.float32)
+    l_i = tl.zeros((64,), dtype=tl.float32)
+    m_i = tl.full((64,), float("-inf"), dtype=tl.float32)
+    p_base = p_ptr + pid_bh * SQ * SQ
+    alpha_base = alpha_ptr + pid_bh * (SQ // 64) * SQ
+
+    for start_n in tl.range(0, start_m, 64, disable_licm=True):
+        start_n = tl.multiple_of(start_n, 64)
+        start_n_i32 = start_n.to(tl.int32)  # type: ignore[attr-defined]
+        offs_n = start_n_i32 + tl.arange(0, 64)
+        k = tl.trans(k_desc.load([kv_head_row + start_n_i32, 0]))
+        score = tl.dot(q, k).to(tl.float32) * qk_scale
+        m_new = tl.maximum(m_i, tl.max(score, 1))
+        p = tl.math.exp2(score - m_new[:, None])
+        alpha = tl.math.exp2(m_i - m_new)
+        p_fp8 = (p * s_scale).to(p_ptr.dtype.element_ty)
+        tl.store(p_base + offs_m[:, None] * SQ + offs_n[None, :], p_fp8)
+        acc = acc * alpha[:, None]
+        v = v_desc.load([kv_head_row + start_n_i32, 0])
+        acc = tl.dot(p_fp8, v, acc)
+        l_i = l_i * alpha + tl.sum(p, 1)
+        m_i = m_new
+        tl.store(alpha_base + (start_n_i32 // 64) * SQ + offs_m, alpha)
+
+    start_n_i32 = start_m
+    offs_n = start_n_i32 + tl.arange(0, 64)
+    k = tl.trans(k_desc.load([kv_head_row + start_n_i32, 0]))
+    score = tl.dot(q, k).to(tl.float32) * qk_scale
+    score = tl.where(offs_n[None, :] <= offs_m[:, None], score, float("-inf"))
+    m_new = tl.maximum(m_i, tl.max(score, 1))
+    p = tl.math.exp2(score - m_new[:, None])
+    alpha = tl.math.exp2(m_i - m_new)
+    p_fp8 = (p * s_scale).to(p_ptr.dtype.element_ty)
+    tl.store(p_base + offs_m[:, None] * SQ + offs_n[None, :], p_fp8)
+    acc = acc * alpha[:, None]
+    v = v_desc.load([kv_head_row + start_n_i32, 0])
+    acc = tl.dot(p_fp8, v, acc)
+    l_i = l_i * alpha + tl.sum(p, 1)
+    m_i = m_new
+    tl.store(alpha_base + pid_m * SQ + offs_m, alpha)
+
+    out_descale = sv_descale / l_i
+    o_unscaled = acc * out_descale[:, None]
+    local_amax_o = tl.max(tl.abs(o_unscaled))
+    tl.atomic_max(
+        amax_o_ptr.to(tl.pointer_type(tl.uint32)),
+        local_amax_o.to(tl.uint32, bitcast=True),
+        sem="relaxed",
+    )
+    local_amax_s = tl.max(tl.abs(m_i)) * _LN2_KERNEL
+    tl.atomic_max(
+        amax_s_ptr.to(tl.pointer_type(tl.uint32)),
+        local_amax_s.to(tl.uint32, bitcast=True),
+        sem="relaxed",
+    )
+    out_scale = out_descale * o_scale
+    tl.store(
+        o_ptr + q_head_offset + offs_m[:, None] * 128 + offs_d[None, :],
+        (acc * out_scale[:, None]).to(o_ptr.dtype.element_ty),
+    )
+    stats = (m_i + tl.log2(l_i)) * _LN2_KERNEL
+    tl.store(stats_ptr + pid_bh * SQ + offs_m, stats)
+    tl.store(final_l_ptr + pid_bh * SQ + offs_m, out_scale)
+
+
+@libentry()
+@triton.jit
+def _sdpa_fp8_fwd_gqa_causal_pcache_prefix_kernel(
+    v_desc,
+    p_desc,
+    alpha_ptr,
+    prefix_ptr,
+    SQ: tl.constexpr,
+    HQ: tl.constexpr,
+    HKV: tl.constexpr,
+    GROUP: tl.constexpr,
+    PREFIX_N: tl.constexpr,
+):
+    pid_m = tl.program_id(0)
+    pid_bh = tl.program_id(1)
+    start_m = pid_m * 64
+    offs_r = tl.arange(0, 64)
+    offs_d = tl.arange(0, 128)
+
+    off_b = pid_bh // HQ
+    off_h = pid_bh - off_b * HQ
+    off_kh = off_h // GROUP
+    kv_head_row = (off_b * HKV + off_kh) * SQ
+    alpha_base = alpha_ptr + pid_bh * (SQ // 64) * SQ
+    acc = tl.zeros((64, 128), dtype=tl.float32)
+    hi = tl.minimum(start_m + 64, PREFIX_N)
+
+    for start_n in tl.range(0, hi, 64, num_stages=4):
+        start_n_i32 = start_n.to(tl.int32)  # type: ignore[attr-defined]
+        alpha = tl.load(
+            alpha_base + (start_n_i32 // 64) * SQ + start_m + offs_r
+        )
+        acc = acc * alpha[:, None]
+        p = p_desc.load([pid_bh * SQ + start_m, start_n_i32])
+        v = v_desc.load([kv_head_row + start_n_i32, 0])
+        acc = tl.dot(p, v, acc)
+
+    tl.store(
+        prefix_ptr
+        + (pid_bh * (SQ // 64) + pid_m) * 8192
+        + offs_r[:, None] * 128
+        + offs_d[None, :],
+        acc,
+    )
+
+
+@libentry()
+@triton.jit
+def _sdpa_fp8_fwd_gqa_causal_pcache_prefix_replay_kernel(
+    v_desc,
+    p_desc,
+    alpha_ptr,
+    final_l_ptr,
+    prefix_ptr,
+    o_ptr,
+    SQ: tl.constexpr,
+    HQ: tl.constexpr,
+    HKV: tl.constexpr,
+    GROUP: tl.constexpr,
+    PREFIX_N: tl.constexpr,
+):
+    pid_m = tl.program_id(0)
+    pid_bh = tl.program_id(1)
+    start_m = pid_m * 64
+    offs_m = tl.max_contiguous(start_m + tl.arange(0, 64), 64)
+    offs_r = tl.arange(0, 64)
+    offs_d = tl.arange(0, 128)
+
+    off_b = pid_bh // HQ
+    off_h = pid_bh - off_b * HQ
+    off_kh = off_h // GROUP
+    q_head_offset = (off_b * HQ + off_h) * SQ * 128
+    kv_head_row = (off_b * HKV + off_kh) * SQ
+    alpha_base = alpha_ptr + pid_bh * (SQ // 64) * SQ
+
+    acc = tl.load(
+        prefix_ptr
+        + (pid_bh * (SQ // 64) + pid_m) * 8192
+        + offs_r[:, None] * 128
+        + offs_d[None, :]
+    )
+
+    for start_n in tl.range(PREFIX_N, start_m + 64, 64, num_stages=4):
+        start_n_i32 = start_n.to(tl.int32)  # type: ignore[attr-defined]
+        alpha = tl.load(alpha_base + (start_n_i32 // 64) * SQ + offs_m)
+        acc = acc * alpha[:, None]
+        p = p_desc.load([pid_bh * SQ + start_m, start_n_i32])
+        v = v_desc.load([kv_head_row + start_n_i32, 0])
+        acc = tl.dot(p, v, acc)
+
+    out_scale = tl.load(final_l_ptr + pid_bh * SQ + offs_m)
+    tl.store(
+        o_ptr + q_head_offset + offs_m[:, None] * 128 + offs_d[None, :],
         (acc * out_scale[:, None]).to(o_ptr.dtype.element_ty),
     )
 

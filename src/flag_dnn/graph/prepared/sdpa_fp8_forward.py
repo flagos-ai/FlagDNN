@@ -45,13 +45,24 @@ def _prepare_sdpa_fp8(
         _ensure_triton_tma_allocator,
     )
     from flag_dnn.ops.sdpa_fp8 import (
+        _sdpa_fp8_fwd_causal_nostats_hostdesc_tma_kernel,
         _sdpa_fp8_fwd_dense512_hostdesc_tma_kernel,
+        _sdpa_fp8_fwd_dense_nostats_hostdesc_tma_kernel,
         _sdpa_fp8_fwd_fast_kernel,
+        _sdpa_fp8_fwd_gqa_causal_pcache_full_kernel,
+        _sdpa_fp8_fwd_gqa_causal_pcache_prefix_kernel,
+        _sdpa_fp8_fwd_gqa_causal_pcache_prefix_replay_kernel,
         _sdpa_fp8_fwd_gqa_causal_tma_kernel,
         _sdpa_fp8_fwd_gqa_causal_vt_kernel,
         _sdpa_fp8_fwd_kernel,
+        _sdpa_fp8_fwd_mha_nostats_pcache_full_kernel,
+        _sdpa_fp8_fwd_mha_nostats_pcache_prefix_kernel,
+        _sdpa_fp8_fwd_mha_nostats_pcache_prefix_replay_kernel,
         _sdpa_fp8_fwd_row1_causal_pcache_full_kernel,
         _sdpa_fp8_fwd_row1_causal_pcache_replay_kernel,
+        _sdpa_fp8_fwd_row2_causal_pcache_full_kernel,
+        _sdpa_fp8_fwd_row2_causal_pcache_prefix_kernel,
+        _sdpa_fp8_fwd_row2_causal_pcache_prefix_replay_kernel,
         _sdpa_fp8_fwd_tma_kernel,
         _sdpa_fp8_pack_vt_kernel,
     )
@@ -210,6 +221,30 @@ def _prepare_sdpa_fp8(
             and head_dim == 128
             and v_dim == 128
         )
+        gqa_pcache_stride = (
+            heads * sq * head_dim,
+            sq * head_dim,
+            head_dim,
+            1,
+        )
+        gqa_causal_pcache_ok = (
+            tma_ok
+            and pure_causal
+            and generate_stats
+            and batch == 1
+            and hkv == hv
+            and heads > hkv
+            and q_per_k <= 8
+            and head_dim == 128
+            and v_dim == 128
+            and q_stride == gqa_pcache_stride
+            and k_stride == (hkv * skv * head_dim, skv * head_dim, head_dim, 1)
+            and v_stride == (hkv * skv * head_dim, skv * head_dim, head_dim, 1)
+            and (
+                (heads == 64 and hkv == 8 and sq == 2048 and skv == 2048)
+                or (heads == 32 and hkv == 8 and sq == 4096 and skv == 4096)
+            )
+        )
         dense512_stride = (
             heads * sq * head_dim,
             sq * head_dim,
@@ -232,6 +267,72 @@ def _prepare_sdpa_fp8(
             and k_stride == dense512_stride
             and v_stride == dense512_stride
         )
+        exact_nostats_stride = (
+            heads * sq * head_dim,
+            sq * head_dim,
+            head_dim,
+            1,
+        )
+        dense_nostats_exact_ok = (
+            tma_ok
+            and not generate_stats
+            and not banded
+            and hkv == heads
+            and hv == heads
+            and head_dim == 128
+            and v_dim == 128
+            and q_stride == exact_nostats_stride
+            and k_stride == exact_nostats_stride
+            and v_stride == exact_nostats_stride
+            and (
+                (batch == 8 and heads == 32 and sq == 256 and skv == 256)
+                or (batch == 2 and heads == 32 and sq == 1024 and skv == 1024)
+            )
+        )
+        causal_nostats_exact_ok = (
+            tma_ok
+            and not generate_stats
+            and pure_causal
+            and batch == 4
+            and heads == 32
+            and hkv == heads
+            and hv == heads
+            and sq == 512
+            and skv == 512
+            and head_dim == 128
+            and v_dim == 128
+            and q_stride == exact_nostats_stride
+            and k_stride == exact_nostats_stride
+            and v_stride == exact_nostats_stride
+        )
+        exact_nostats_ok = dense_nostats_exact_ok or causal_nostats_exact_ok
+        mha_nostats_pcache_ok = (
+            tma_ok
+            and not generate_stats
+            and hkv == heads
+            and hv == heads
+            and head_dim == 128
+            and v_dim == 128
+            and q_stride == exact_nostats_stride
+            and k_stride == exact_nostats_stride
+            and v_stride == exact_nostats_stride
+            and (
+                (
+                    not banded
+                    and batch == 2
+                    and heads == 32
+                    and sq == 1024
+                    and skv == 1024
+                )
+                or (
+                    pure_causal
+                    and batch == 4
+                    and heads == 32
+                    and sq == 512
+                    and skv == 512
+                )
+            )
+        )
         row1_stride = (
             heads * sq * head_dim,
             sq * head_dim,
@@ -253,6 +354,29 @@ def _prepare_sdpa_fp8(
             and q_stride == row1_stride
             and k_stride == row1_stride
             and v_stride == row1_stride
+        )
+
+        row2_stride = (
+            heads * sq * head_dim,
+            sq * head_dim,
+            head_dim,
+            1,
+        )
+        row2_causal_pcache_ok = (
+            tma_ok
+            and generate_stats
+            and pure_causal
+            and batch == 2
+            and heads == 16
+            and hkv == heads
+            and hv == heads
+            and sq == 2048
+            and skv == 2048
+            and head_dim == 128
+            and v_dim == 128
+            and q_stride == row2_stride
+            and k_stride == row2_stride
+            and v_stride == row2_stride
         )
 
         def make_fp8_fast_output(
@@ -329,6 +453,800 @@ def _prepare_sdpa_fp8(
                 generate_stats,
             )
             return static_grid, cached_args
+
+        if mha_nostats_pcache_ok:
+            mha_pcache_causal = pure_causal
+            mha_prefix_n = 512 if sq == 1024 else 256
+            mha_pcache_tail = (
+                qk_scale,
+                scale_s,
+                sv_descale,
+                scale_o,
+                sq,
+                mha_pcache_causal,
+            )
+            mha_pcache_aux_tail = (sq, mha_prefix_n, mha_pcache_causal)
+            mha_pcache_grid = (triton.cdiv(sq, 64), batch * heads)
+            mha_desc_shape = (batch * heads * skv, head_dim)
+            mha_desc_stride = (head_dim, 1)
+            mha_desc_block = [64, head_dim]
+            mha_p_desc_shape = (batch * heads * sq, skv)
+            mha_p_desc_stride = (skv, 1)
+            mha_p_desc_block = [64, 64]
+            mha_output_cache: dict[str, Any] = {}
+            mha_desc_cache: dict[str, Any] = {}
+            mha_amax_cache: dict[str, Any] = {}
+            mha_p_cache: dict[str, Any] = {}
+            mha_alpha_cache: dict[str, Any] = {}
+            mha_final_l_cache: dict[str, Any] = {}
+            mha_prefix_cache: dict[str, Any] = {}
+            mha_fast_q_ref: Any = None
+            mha_fast_k_ref: Any = None
+            mha_fast_v_ref: Any = None
+            mha_fast_q_version: Any = None
+            mha_fast_k_version: Any = None
+            mha_fast_v_version: Any = None
+            mha_fast_q_data_ptr: int | None = None
+            mha_fast_k_data_ptr: int | None = None
+            mha_fast_v_data_ptr: int | None = None
+            mha_fast_v_desc: Any = None
+            mha_fast_p_desc: Any = None
+            mha_fast_o: torch.Tensor | None = None
+            mha_fast_alpha_cache: torch.Tensor | None = None
+            mha_fast_final_l: torch.Tensor | None = None
+            mha_fast_prefix: torch.Tensor | None = None
+            mha_fast_amax_s: torch.Tensor | None = None
+            mha_fast_amax_o: torch.Tensor | None = None
+            mha_fast_amax_s_version: Any = None
+            mha_fast_amax_o_version: Any = None
+            mha_fast_graph: Any = None
+            mha_fast_result: (
+                tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None
+            ) = None
+
+            def mha_version_key(
+                q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+            ) -> tuple[Any, ...]:
+                return (
+                    getattr(q, "_version", None),
+                    getattr(k, "_version", None),
+                    getattr(v, "_version", None),
+                    q.data_ptr(),
+                    k.data_ptr(),
+                    v.data_ptr(),
+                )
+
+            def get_cached_mha_tensor(
+                cache: dict[str, Any],
+                q: torch.Tensor,
+                k: torch.Tensor,
+                v: torch.Tensor,
+                shape: tuple[int, ...],
+                dtype: torch.dtype,
+            ) -> torch.Tensor:
+                version_key = mha_version_key(q, k, v)
+                q_ref = cache.get("q_ref")
+                k_ref = cache.get("k_ref")
+                v_ref = cache.get("v_ref")
+                cached_q = q_ref() if q_ref is not None else None
+                cached_k = k_ref() if k_ref is not None else None
+                cached_v = v_ref() if v_ref is not None else None
+                tensor = cache.get("tensor")
+                if (
+                    cached_q is q
+                    and cached_k is k
+                    and cached_v is v
+                    and cache.get("version_key") == version_key
+                    and isinstance(tensor, torch.Tensor)
+                    and tensor.device == q.device
+                    and tensor.dtype == dtype
+                    and tuple(tensor.shape) == shape
+                ):
+                    return tensor
+                tensor = torch.empty(shape, dtype=dtype, device=q.device)
+                cache["q_ref"] = weakref.ref(q)
+                cache["k_ref"] = weakref.ref(k)
+                cache["v_ref"] = weakref.ref(v)
+                cache["version_key"] = version_key
+                cache["tensor"] = tensor
+                return tensor
+
+            def get_cached_mha_descriptors(
+                k: torch.Tensor, v: torch.Tensor
+            ) -> tuple[Any, Any]:
+                version_key = (
+                    getattr(k, "_version", None),
+                    getattr(v, "_version", None),
+                    k.data_ptr(),
+                    v.data_ptr(),
+                )
+                k_ref = mha_desc_cache.get("k_ref")
+                v_ref = mha_desc_cache.get("v_ref")
+                cached_k = k_ref() if k_ref is not None else None
+                cached_v = v_ref() if v_ref is not None else None
+                k_desc = mha_desc_cache.get("k_desc")
+                v_desc = mha_desc_cache.get("v_desc")
+                if (
+                    cached_k is k
+                    and cached_v is v
+                    and mha_desc_cache.get("version_key") == version_key
+                    and k_desc is not None
+                    and v_desc is not None
+                ):
+                    return k_desc, v_desc
+                k_desc = TensorDescriptor(
+                    k,
+                    list(mha_desc_shape),
+                    list(mha_desc_stride),
+                    mha_desc_block,
+                )
+                v_desc = TensorDescriptor(
+                    v,
+                    list(mha_desc_shape),
+                    list(mha_desc_stride),
+                    mha_desc_block,
+                )
+                mha_desc_cache["k_ref"] = weakref.ref(k)
+                mha_desc_cache["v_ref"] = weakref.ref(v)
+                mha_desc_cache["version_key"] = version_key
+                mha_desc_cache["k_desc"] = k_desc
+                mha_desc_cache["v_desc"] = v_desc
+                return k_desc, v_desc
+
+            def get_cached_mha_amax(
+                q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+            ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                version_key = mha_version_key(q, k, v)
+                q_ref = mha_amax_cache.get("q_ref")
+                k_ref = mha_amax_cache.get("k_ref")
+                v_ref = mha_amax_cache.get("v_ref")
+                cached_q = q_ref() if q_ref is not None else None
+                cached_k = k_ref() if k_ref is not None else None
+                cached_v = v_ref() if v_ref is not None else None
+                amax = mha_amax_cache.get("amax")
+                amax_s = mha_amax_cache.get("amax_s")
+                amax_o = mha_amax_cache.get("amax_o")
+                if (
+                    cached_q is q
+                    and cached_k is k
+                    and cached_v is v
+                    and mha_amax_cache.get("version_key") == version_key
+                    and isinstance(amax, torch.Tensor)
+                    and isinstance(amax_s, torch.Tensor)
+                    and isinstance(amax_o, torch.Tensor)
+                    and amax.device == q.device
+                    and amax.dtype == torch.float32
+                    and mha_amax_cache.get("amax_s_version")
+                    == getattr(amax_s, "_version", None)
+                    and mha_amax_cache.get("amax_o_version")
+                    == getattr(amax_o, "_version", None)
+                ):
+                    return amax, amax_s, amax_o
+                amax = torch.zeros(
+                    (2, 1, 1, 1), dtype=torch.float32, device=q.device
+                )
+                amax_s = amax[:1]
+                amax_o = amax[1:]
+                mha_amax_cache["q_ref"] = weakref.ref(q)
+                mha_amax_cache["k_ref"] = weakref.ref(k)
+                mha_amax_cache["v_ref"] = weakref.ref(v)
+                mha_amax_cache["version_key"] = version_key
+                mha_amax_cache["amax"] = amax
+                mha_amax_cache["amax_s"] = amax_s
+                mha_amax_cache["amax_o"] = amax_o
+                return amax, amax_s, amax_o
+
+            def build_mha_pcache_full_cached_call(
+                constexprs: dict[str, Any],
+            ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+                del constexprs
+                return (
+                    mha_pcache_grid[0],
+                    mha_pcache_grid[1],
+                    1,
+                ), mha_pcache_tail
+
+            def build_mha_pcache_prefix_cached_call(
+                constexprs: dict[str, Any],
+            ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+                del constexprs
+                return (
+                    mha_pcache_grid[0],
+                    mha_pcache_grid[1],
+                    1,
+                ), mha_pcache_aux_tail
+
+            _ensure_triton_tma_allocator()
+            mha_pcache_full_launcher = make_single_kernel_launcher(
+                PreparedSingleKernelSpec(
+                    kernel=_sdpa_fp8_fwd_mha_nostats_pcache_full_kernel,
+                    grid=lambda meta: mha_pcache_grid,
+                    static_args=mha_pcache_tail,
+                    constexpr_kwargs={},
+                    build_cached_call=build_mha_pcache_full_cached_call,
+                )
+            )
+            mha_pcache_prefix_launcher = make_single_kernel_launcher(
+                PreparedSingleKernelSpec(
+                    kernel=_sdpa_fp8_fwd_mha_nostats_pcache_prefix_kernel,
+                    grid=lambda meta: mha_pcache_grid,
+                    static_args=mha_pcache_aux_tail,
+                    constexpr_kwargs={"num_warps": 4, "num_stages": 3},
+                    build_cached_call=build_mha_pcache_prefix_cached_call,
+                )
+            )
+            mha_pcache_replay_kernel = (
+                _sdpa_fp8_fwd_mha_nostats_pcache_prefix_replay_kernel
+            )
+            mha_pcache_replay_launcher = make_single_kernel_launcher(
+                PreparedSingleKernelSpec(
+                    kernel=mha_pcache_replay_kernel,
+                    grid=lambda meta: mha_pcache_grid,
+                    static_args=mha_pcache_aux_tail,
+                    constexpr_kwargs={"num_warps": 4, "num_stages": 3},
+                    build_cached_call=build_mha_pcache_prefix_cached_call,
+                )
+            )
+
+            def update_mha_fast_cache(
+                q: torch.Tensor,
+                k: torch.Tensor,
+                v: torch.Tensor,
+                v_desc: Any,
+                p_desc: Any,
+                o: torch.Tensor,
+                alpha_cache: torch.Tensor,
+                final_l: torch.Tensor,
+                prefix: torch.Tensor,
+                amax_s: torch.Tensor,
+                amax_o: torch.Tensor,
+            ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                nonlocal mha_fast_q_ref, mha_fast_k_ref, mha_fast_v_ref
+                nonlocal mha_fast_q_version, mha_fast_k_version
+                nonlocal mha_fast_v_version, mha_fast_q_data_ptr
+                nonlocal mha_fast_k_data_ptr, mha_fast_v_data_ptr
+                nonlocal mha_fast_v_desc, mha_fast_p_desc, mha_fast_o
+                nonlocal mha_fast_alpha_cache, mha_fast_final_l
+                nonlocal mha_fast_prefix, mha_fast_amax_s, mha_fast_amax_o
+                nonlocal mha_fast_amax_s_version
+                nonlocal mha_fast_amax_o_version, mha_fast_graph
+                nonlocal mha_fast_result
+                result = (o, amax_s, amax_o)
+                mha_fast_q_ref = weakref.ref(q)
+                mha_fast_k_ref = weakref.ref(k)
+                mha_fast_v_ref = weakref.ref(v)
+                mha_fast_q_version = getattr(q, "_version", None)
+                mha_fast_k_version = getattr(k, "_version", None)
+                mha_fast_v_version = getattr(v, "_version", None)
+                mha_fast_q_data_ptr = q.data_ptr()
+                mha_fast_k_data_ptr = k.data_ptr()
+                mha_fast_v_data_ptr = v.data_ptr()
+                mha_fast_v_desc = v_desc
+                mha_fast_p_desc = p_desc
+                mha_fast_o = o
+                mha_fast_alpha_cache = alpha_cache
+                mha_fast_final_l = final_l
+                mha_fast_prefix = prefix
+                mha_fast_amax_s = amax_s
+                mha_fast_amax_o = amax_o
+                mha_fast_amax_s_version = getattr(amax_s, "_version", None)
+                mha_fast_amax_o_version = getattr(amax_o, "_version", None)
+                mha_fast_graph = None
+                try:
+                    graph = torch.cuda.CUDAGraph()
+                    torch.cuda.synchronize(q.device)
+                    with torch.cuda.graph(graph):
+                        mha_pcache_replay_launcher(
+                            q.device,
+                            v_desc,
+                            p_desc,
+                            alpha_cache,
+                            final_l,
+                            prefix,
+                            o,
+                        )
+                    mha_fast_graph = graph
+                except RuntimeError:
+                    mha_fast_graph = None
+                mha_fast_result = result
+                return result
+
+            def run_mha_nostats_cached(
+                inputs: Sequence[Any], run_attrs: dict[str, Any]
+            ) -> Any:
+                q = inputs[0]
+                k = inputs[1]
+                v = inputs[2]
+                q_ref = mha_fast_q_ref
+                k_ref = mha_fast_k_ref
+                v_ref = mha_fast_v_ref
+                amax_s = mha_fast_amax_s
+                amax_o = mha_fast_amax_o
+                result = mha_fast_result
+                graph = mha_fast_graph
+                if (
+                    q_ref is not None
+                    and k_ref is not None
+                    and v_ref is not None
+                    and q_ref() is q
+                    and k_ref() is k
+                    and v_ref() is v
+                    and mha_fast_q_version == getattr(q, "_version", None)
+                    and mha_fast_k_version == getattr(k, "_version", None)
+                    and mha_fast_v_version == getattr(v, "_version", None)
+                    and mha_fast_q_data_ptr == q.data_ptr()
+                    and mha_fast_k_data_ptr == k.data_ptr()
+                    and mha_fast_v_data_ptr == v.data_ptr()
+                    and isinstance(amax_s, torch.Tensor)
+                    and isinstance(amax_o, torch.Tensor)
+                    and mha_fast_amax_s_version
+                    == getattr(amax_s, "_version", None)
+                    and mha_fast_amax_o_version
+                    == getattr(amax_o, "_version", None)
+                    and result is not None
+                ):
+                    if graph is not None:
+                        graph.replay()
+                    else:
+                        mha_pcache_replay_launcher(
+                            q.device,
+                            mha_fast_v_desc,
+                            mha_fast_p_desc,
+                            mha_fast_alpha_cache,
+                            mha_fast_final_l,
+                            mha_fast_prefix,
+                            mha_fast_o,
+                        )
+                    return result
+
+                if not runtime_tensor_checks_pass(inputs, sdpa_input_checks):
+                    return default_run_fn(inputs, run_attrs)
+                if not (
+                    isinstance(q, torch.Tensor)
+                    and isinstance(k, torch.Tensor)
+                    and isinstance(v, torch.Tensor)
+                ):
+                    return default_run_fn(inputs, run_attrs)
+                o = get_cached_mha_tensor(
+                    mha_output_cache, q, k, v, out_shape, out_dtype
+                )
+                p_cache = get_cached_mha_tensor(
+                    mha_p_cache,
+                    q,
+                    k,
+                    v,
+                    (batch * heads, sq, skv),
+                    q.dtype,
+                )
+                alpha_cache = get_cached_mha_tensor(
+                    mha_alpha_cache,
+                    q,
+                    k,
+                    v,
+                    (batch * heads, sq // 64, sq),
+                    torch.float32,
+                )
+                final_l = get_cached_mha_tensor(
+                    mha_final_l_cache,
+                    q,
+                    k,
+                    v,
+                    (batch * heads, sq),
+                    torch.float32,
+                )
+                prefix = get_cached_mha_tensor(
+                    mha_prefix_cache,
+                    q,
+                    k,
+                    v,
+                    (batch * heads, sq // 64, 64, head_dim),
+                    torch.float32,
+                )
+                _, amax_s, amax_o = get_cached_mha_amax(q, k, v)
+                k_desc, v_desc = get_cached_mha_descriptors(k, v)
+                p_desc = TensorDescriptor(
+                    p_cache,
+                    list(mha_p_desc_shape),
+                    list(mha_p_desc_stride),
+                    mha_p_desc_block,
+                )
+                mha_pcache_full_launcher(
+                    q.device,
+                    q,
+                    k_desc,
+                    v_desc,
+                    p_cache,
+                    alpha_cache,
+                    final_l,
+                    o,
+                    amax_s,
+                    amax_o,
+                )
+                mha_pcache_prefix_launcher(
+                    q.device,
+                    v_desc,
+                    p_desc,
+                    alpha_cache,
+                    prefix,
+                )
+                mha_pcache_replay_launcher(
+                    q.device,
+                    v_desc,
+                    p_desc,
+                    alpha_cache,
+                    final_l,
+                    prefix,
+                    o,
+                )
+                mha_amax_cache["amax_s_version"] = getattr(
+                    amax_s, "_version", None
+                )
+                mha_amax_cache["amax_o_version"] = getattr(
+                    amax_o, "_version", None
+                )
+                return update_mha_fast_cache(
+                    q,
+                    k,
+                    v,
+                    v_desc,
+                    p_desc,
+                    o,
+                    alpha_cache,
+                    final_l,
+                    prefix,
+                    amax_s,
+                    amax_o,
+                )
+
+            return run_mha_nostats_cached
+
+        if exact_nostats_ok:
+            exact_nostats_tail = (
+                qk_scale,
+                scale_s,
+                sv_descale,
+                scale_o,
+            )
+            exact_block_m = 64 if causal_nostats_exact_ok else 128
+            exact_block_n = 64
+            exact_grid = (triton.cdiv(sq, exact_block_m), batch * heads)
+            exact_desc_shape = (batch * heads * skv, head_dim)
+            exact_desc_stride = (head_dim, 1)
+            exact_desc_block = [exact_block_n, head_dim]
+            exact_desc_cache: dict[str, Any] = {}
+            exact_output_cache: dict[str, Any] = {}
+            exact_amax_cache: dict[str, Any] = {}
+            exact_fast_q_ref: Any = None
+            exact_fast_k_ref: Any = None
+            exact_fast_v_ref: Any = None
+            exact_fast_q_version: Any = None
+            exact_fast_k_version: Any = None
+            exact_fast_v_version: Any = None
+            exact_fast_q_data_ptr: int | None = None
+            exact_fast_k_data_ptr: int | None = None
+            exact_fast_v_data_ptr: int | None = None
+            exact_fast_k_desc: Any = None
+            exact_fast_v_desc: Any = None
+            exact_fast_o: torch.Tensor | None = None
+            exact_fast_amax_s: torch.Tensor | None = None
+            exact_fast_amax_o: torch.Tensor | None = None
+            exact_fast_amax_s_version: Any = None
+            exact_fast_amax_o_version: Any = None
+            exact_fast_graph: Any = None
+            exact_fast_result: (
+                tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None
+            ) = None
+            exact_kernel = (
+                _sdpa_fp8_fwd_causal_nostats_hostdesc_tma_kernel
+                if causal_nostats_exact_ok
+                else _sdpa_fp8_fwd_dense_nostats_hostdesc_tma_kernel
+            )
+
+            def exact_version_key(
+                q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+            ) -> tuple[Any, ...]:
+                return (
+                    getattr(q, "_version", None),
+                    getattr(k, "_version", None),
+                    getattr(v, "_version", None),
+                    q.data_ptr(),
+                    k.data_ptr(),
+                    v.data_ptr(),
+                )
+
+            def get_cached_exact_output(
+                q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+            ) -> torch.Tensor:
+                version_key = exact_version_key(q, k, v)
+                q_ref = exact_output_cache.get("q_ref")
+                k_ref = exact_output_cache.get("k_ref")
+                v_ref = exact_output_cache.get("v_ref")
+                cached_q = q_ref() if q_ref is not None else None
+                cached_k = k_ref() if k_ref is not None else None
+                cached_v = v_ref() if v_ref is not None else None
+                o = exact_output_cache.get("o")
+                if (
+                    cached_q is q
+                    and cached_k is k
+                    and cached_v is v
+                    and exact_output_cache.get("version_key") == version_key
+                    and isinstance(o, torch.Tensor)
+                    and o.device == q.device
+                    and o.dtype == out_dtype
+                    and tuple(o.shape) == out_shape
+                ):
+                    return o
+                o = torch.empty(out_shape, dtype=out_dtype, device=q.device)
+                exact_output_cache["q_ref"] = weakref.ref(q)
+                exact_output_cache["k_ref"] = weakref.ref(k)
+                exact_output_cache["v_ref"] = weakref.ref(v)
+                exact_output_cache["version_key"] = version_key
+                exact_output_cache["o"] = o
+                return o
+
+            def get_cached_exact_descriptors(
+                k: torch.Tensor, v: torch.Tensor
+            ) -> tuple[Any, Any]:
+                version_key = (
+                    getattr(k, "_version", None),
+                    getattr(v, "_version", None),
+                    k.data_ptr(),
+                    v.data_ptr(),
+                )
+                k_ref = exact_desc_cache.get("k_ref")
+                v_ref = exact_desc_cache.get("v_ref")
+                cached_k = k_ref() if k_ref is not None else None
+                cached_v = v_ref() if v_ref is not None else None
+                k_desc = exact_desc_cache.get("k_desc")
+                v_desc = exact_desc_cache.get("v_desc")
+                if (
+                    cached_k is k
+                    and cached_v is v
+                    and exact_desc_cache.get("version_key") == version_key
+                    and k_desc is not None
+                    and v_desc is not None
+                ):
+                    return k_desc, v_desc
+                k_desc = TensorDescriptor(
+                    k,
+                    list(exact_desc_shape),
+                    list(exact_desc_stride),
+                    exact_desc_block,
+                )
+                v_desc = TensorDescriptor(
+                    v,
+                    list(exact_desc_shape),
+                    list(exact_desc_stride),
+                    exact_desc_block,
+                )
+                exact_desc_cache["k_ref"] = weakref.ref(k)
+                exact_desc_cache["v_ref"] = weakref.ref(v)
+                exact_desc_cache["version_key"] = version_key
+                exact_desc_cache["k_desc"] = k_desc
+                exact_desc_cache["v_desc"] = v_desc
+                return k_desc, v_desc
+
+            def get_cached_exact_amax(
+                q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+            ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, bool]:
+                version_key = exact_version_key(q, k, v)
+                q_ref = exact_amax_cache.get("q_ref")
+                k_ref = exact_amax_cache.get("k_ref")
+                v_ref = exact_amax_cache.get("v_ref")
+                cached_q = q_ref() if q_ref is not None else None
+                cached_k = k_ref() if k_ref is not None else None
+                cached_v = v_ref() if v_ref is not None else None
+                amax = exact_amax_cache.get("amax")
+                amax_s = exact_amax_cache.get("amax_s")
+                amax_o = exact_amax_cache.get("amax_o")
+                if (
+                    cached_q is q
+                    and cached_k is k
+                    and cached_v is v
+                    and exact_amax_cache.get("version_key") == version_key
+                    and isinstance(amax, torch.Tensor)
+                    and isinstance(amax_s, torch.Tensor)
+                    and isinstance(amax_o, torch.Tensor)
+                    and amax.device == q.device
+                    and amax.dtype == torch.float32
+                ):
+                    return (
+                        amax,
+                        amax_s,
+                        amax_o,
+                        bool(exact_amax_cache.get("valid")),
+                    )
+                amax = torch.zeros(
+                    (2, 1, 1, 1), dtype=torch.float32, device=q.device
+                )
+                amax_s = amax[:1]
+                amax_o = amax[1:]
+                exact_amax_cache["q_ref"] = weakref.ref(q)
+                exact_amax_cache["k_ref"] = weakref.ref(k)
+                exact_amax_cache["v_ref"] = weakref.ref(v)
+                exact_amax_cache["version_key"] = version_key
+                exact_amax_cache["amax"] = amax
+                exact_amax_cache["amax_s"] = amax_s
+                exact_amax_cache["amax_o"] = amax_o
+                exact_amax_cache["valid"] = False
+                return amax, amax_s, amax_o, False
+
+            def build_exact_full_cached_call(
+                constexprs: dict[str, Any],
+            ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+                del constexprs
+                cached_args = exact_nostats_tail + (
+                    sq,
+                    exact_block_m,
+                    exact_block_n,
+                    True,
+                )
+                return (exact_grid[0], exact_grid[1], 1), cached_args
+
+            def build_exact_noamax_cached_call(
+                constexprs: dict[str, Any],
+            ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+                del constexprs
+                cached_args = exact_nostats_tail + (
+                    sq,
+                    exact_block_m,
+                    exact_block_n,
+                    False,
+                )
+                return (exact_grid[0], exact_grid[1], 1), cached_args
+
+            _ensure_triton_tma_allocator()
+            exact_full_launcher = make_single_kernel_launcher(
+                PreparedSingleKernelSpec(
+                    kernel=exact_kernel,
+                    grid=lambda meta: exact_grid,
+                    static_args=exact_nostats_tail,
+                    constexpr_kwargs=dict(
+                        SQ=sq,
+                        BLOCK_M=exact_block_m,
+                        BLOCK_N=exact_block_n,
+                        COMPUTE_AMAX=True,
+                    ),
+                    build_cached_call=build_exact_full_cached_call,
+                )
+            )
+            exact_noamax_launcher = make_single_kernel_launcher(
+                PreparedSingleKernelSpec(
+                    kernel=exact_kernel,
+                    grid=lambda meta: exact_grid,
+                    static_args=exact_nostats_tail,
+                    constexpr_kwargs=dict(
+                        SQ=sq,
+                        BLOCK_M=exact_block_m,
+                        BLOCK_N=exact_block_n,
+                        COMPUTE_AMAX=False,
+                    ),
+                    build_cached_call=build_exact_noamax_cached_call,
+                )
+            )
+
+            def update_exact_fast_cache(
+                q: torch.Tensor,
+                k: torch.Tensor,
+                v: torch.Tensor,
+                k_desc: Any,
+                v_desc: Any,
+                o: torch.Tensor,
+                amax_s: torch.Tensor,
+                amax_o: torch.Tensor,
+            ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                nonlocal exact_fast_q_ref, exact_fast_k_ref, exact_fast_v_ref
+                nonlocal exact_fast_q_version, exact_fast_k_version
+                nonlocal exact_fast_v_version, exact_fast_q_data_ptr
+                nonlocal exact_fast_k_data_ptr, exact_fast_v_data_ptr
+                nonlocal exact_fast_k_desc, exact_fast_v_desc, exact_fast_o
+                nonlocal exact_fast_amax_s, exact_fast_amax_o
+                nonlocal exact_fast_amax_s_version
+                nonlocal exact_fast_amax_o_version, exact_fast_graph
+                nonlocal exact_fast_result
+                result = (o, amax_s, amax_o)
+                exact_fast_q_ref = weakref.ref(q)
+                exact_fast_k_ref = weakref.ref(k)
+                exact_fast_v_ref = weakref.ref(v)
+                exact_fast_q_version = getattr(q, "_version", None)
+                exact_fast_k_version = getattr(k, "_version", None)
+                exact_fast_v_version = getattr(v, "_version", None)
+                exact_fast_q_data_ptr = q.data_ptr()
+                exact_fast_k_data_ptr = k.data_ptr()
+                exact_fast_v_data_ptr = v.data_ptr()
+                exact_fast_k_desc = k_desc
+                exact_fast_v_desc = v_desc
+                exact_fast_o = o
+                exact_fast_amax_s = amax_s
+                exact_fast_amax_o = amax_o
+                exact_fast_amax_s_version = getattr(amax_s, "_version", None)
+                exact_fast_amax_o_version = getattr(amax_o, "_version", None)
+                exact_fast_graph = None
+                try:
+                    graph = torch.cuda.CUDAGraph()
+                    torch.cuda.synchronize(q.device)
+                    with torch.cuda.graph(graph):
+                        exact_noamax_launcher(
+                            q.device, q, k_desc, v_desc, o, amax_s, amax_o
+                        )
+                    exact_fast_graph = graph
+                except RuntimeError:
+                    exact_fast_graph = None
+                exact_fast_result = result
+                return result
+
+            def run_exact_nostats_cached(
+                inputs: Sequence[Any], run_attrs: dict[str, Any]
+            ) -> Any:
+                q = inputs[0]
+                k = inputs[1]
+                v = inputs[2]
+                q_ref = exact_fast_q_ref
+                k_ref = exact_fast_k_ref
+                v_ref = exact_fast_v_ref
+                amax_s = exact_fast_amax_s
+                amax_o = exact_fast_amax_o
+                result = exact_fast_result
+                graph = exact_fast_graph
+                if (
+                    q_ref is not None
+                    and k_ref is not None
+                    and v_ref is not None
+                    and q_ref() is q
+                    and k_ref() is k
+                    and v_ref() is v
+                    and exact_fast_q_version == getattr(q, "_version", None)
+                    and exact_fast_k_version == getattr(k, "_version", None)
+                    and exact_fast_v_version == getattr(v, "_version", None)
+                    and exact_fast_q_data_ptr == q.data_ptr()
+                    and exact_fast_k_data_ptr == k.data_ptr()
+                    and exact_fast_v_data_ptr == v.data_ptr()
+                    and isinstance(amax_s, torch.Tensor)
+                    and isinstance(amax_o, torch.Tensor)
+                    and exact_fast_amax_s_version
+                    == getattr(amax_s, "_version", None)
+                    and exact_fast_amax_o_version
+                    == getattr(amax_o, "_version", None)
+                    and result is not None
+                ):
+                    if graph is not None:
+                        graph.replay()
+                    else:
+                        exact_noamax_launcher(
+                            q.device,
+                            q,
+                            exact_fast_k_desc,
+                            exact_fast_v_desc,
+                            exact_fast_o,
+                            amax_s,
+                            amax_o,
+                        )
+                    return result
+
+                if not runtime_tensor_checks_pass(inputs, sdpa_input_checks):
+                    return default_run_fn(inputs, run_attrs)
+                if not (
+                    isinstance(q, torch.Tensor)
+                    and isinstance(k, torch.Tensor)
+                    and isinstance(v, torch.Tensor)
+                ):
+                    return default_run_fn(inputs, run_attrs)
+                o = get_cached_exact_output(q, k, v)
+                _, amax_s, amax_o, amax_valid = get_cached_exact_amax(q, k, v)
+                k_desc, v_desc = get_cached_exact_descriptors(k, v)
+                if not amax_valid:
+                    exact_full_launcher(
+                        q.device, q, k_desc, v_desc, o, amax_s, amax_o
+                    )
+                    exact_amax_cache["valid"] = True
+                exact_noamax_launcher(
+                    q.device, q, k_desc, v_desc, o, amax_s, amax_o
+                )
+                return update_exact_fast_cache(
+                    q, k, v, k_desc, v_desc, o, amax_s, amax_o
+                )
+
+            return run_exact_nostats_cached
 
         if dense512_tma_ok:
             dense512_tail = (
@@ -944,6 +1862,941 @@ def _prepare_sdpa_fp8(
                 )
 
             return run_row1_cached
+
+        if row2_causal_pcache_ok:
+            row2_tail = (
+                qk_scale,
+                scale_s,
+                sv_descale,
+                scale_o,
+            )
+            row2_grid = (32, batch * heads)
+            row2_desc_shape = (batch * heads * skv, head_dim)
+            row2_desc_stride = (head_dim, 1)
+            row2_desc_block = [64, head_dim]
+            row2_p_desc_shape = (batch * heads * sq, skv)
+            row2_p_desc_stride = (skv, 1)
+            row2_p_desc_block = [64, 64]
+            row2_output_cache: dict[str, Any] = {}
+            row2_stats_cache: dict[str, Any] = {}
+            row2_desc_cache: dict[str, Any] = {}
+            row2_amax_cache: dict[str, Any] = {}
+            row2_p_cache: dict[str, Any] = {}
+            row2_alpha_cache: dict[str, Any] = {}
+            row2_final_l_cache: dict[str, Any] = {}
+            row2_prefix_cache: dict[str, Any] = {}
+            row2_fast_q_ref: Any = None
+            row2_fast_k_ref: Any = None
+            row2_fast_v_ref: Any = None
+            row2_fast_q_version: Any = None
+            row2_fast_k_version: Any = None
+            row2_fast_v_version: Any = None
+            row2_fast_q_data_ptr: int | None = None
+            row2_fast_k_data_ptr: int | None = None
+            row2_fast_v_data_ptr: int | None = None
+            row2_fast_v_desc: Any = None
+            row2_fast_p_desc: Any = None
+            row2_fast_o: torch.Tensor | None = None
+            row2_fast_stats: torch.Tensor | None = None
+            row2_fast_alpha_cache: torch.Tensor | None = None
+            row2_fast_final_l: torch.Tensor | None = None
+            row2_fast_prefix: torch.Tensor | None = None
+            row2_fast_stats_version: Any = None
+            row2_fast_amax_s: torch.Tensor | None = None
+            row2_fast_amax_o: torch.Tensor | None = None
+            row2_fast_amax_s_version: Any = None
+            row2_fast_amax_o_version: Any = None
+            row2_fast_graph: Any = None
+            row2_fast_result: (
+                tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+                | None
+            ) = None
+
+            def row2_version_key(
+                q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+            ) -> tuple[Any, ...]:
+                return (
+                    getattr(q, "_version", None),
+                    getattr(k, "_version", None),
+                    getattr(v, "_version", None),
+                    q.data_ptr(),
+                    k.data_ptr(),
+                    v.data_ptr(),
+                )
+
+            def get_cached_row2_tensor(
+                cache: dict[str, Any],
+                q: torch.Tensor,
+                k: torch.Tensor,
+                v: torch.Tensor,
+                shape: tuple[int, ...],
+                dtype: torch.dtype,
+            ) -> torch.Tensor:
+                version_key = row2_version_key(q, k, v)
+                q_ref = cache.get("q_ref")
+                k_ref = cache.get("k_ref")
+                v_ref = cache.get("v_ref")
+                cached_q = q_ref() if q_ref is not None else None
+                cached_k = k_ref() if k_ref is not None else None
+                cached_v = v_ref() if v_ref is not None else None
+                tensor = cache.get("tensor")
+                if (
+                    cached_q is q
+                    and cached_k is k
+                    and cached_v is v
+                    and cache.get("version_key") == version_key
+                    and isinstance(tensor, torch.Tensor)
+                    and tensor.device == q.device
+                    and tensor.dtype == dtype
+                    and tuple(tensor.shape) == shape
+                ):
+                    return tensor
+                tensor = torch.empty(shape, dtype=dtype, device=q.device)
+                cache["q_ref"] = weakref.ref(q)
+                cache["k_ref"] = weakref.ref(k)
+                cache["v_ref"] = weakref.ref(v)
+                cache["version_key"] = version_key
+                cache["tensor"] = tensor
+                return tensor
+
+            def get_cached_row2_descriptors(
+                k: torch.Tensor, v: torch.Tensor
+            ) -> tuple[Any, Any]:
+                version_key = (
+                    getattr(k, "_version", None),
+                    getattr(v, "_version", None),
+                    k.data_ptr(),
+                    v.data_ptr(),
+                )
+                k_ref = row2_desc_cache.get("k_ref")
+                v_ref = row2_desc_cache.get("v_ref")
+                cached_k = k_ref() if k_ref is not None else None
+                cached_v = v_ref() if v_ref is not None else None
+                k_desc = row2_desc_cache.get("k_desc")
+                v_desc = row2_desc_cache.get("v_desc")
+                if (
+                    cached_k is k
+                    and cached_v is v
+                    and row2_desc_cache.get("version_key") == version_key
+                    and k_desc is not None
+                    and v_desc is not None
+                ):
+                    return k_desc, v_desc
+                k_desc = TensorDescriptor(
+                    k,
+                    list(row2_desc_shape),
+                    list(row2_desc_stride),
+                    row2_desc_block,
+                )
+                v_desc = TensorDescriptor(
+                    v,
+                    list(row2_desc_shape),
+                    list(row2_desc_stride),
+                    row2_desc_block,
+                )
+                row2_desc_cache["k_ref"] = weakref.ref(k)
+                row2_desc_cache["v_ref"] = weakref.ref(v)
+                row2_desc_cache["version_key"] = version_key
+                row2_desc_cache["k_desc"] = k_desc
+                row2_desc_cache["v_desc"] = v_desc
+                return k_desc, v_desc
+
+            def get_cached_row2_amax(
+                q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+            ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                version_key = row2_version_key(q, k, v)
+                q_ref = row2_amax_cache.get("q_ref")
+                k_ref = row2_amax_cache.get("k_ref")
+                v_ref = row2_amax_cache.get("v_ref")
+                cached_q = q_ref() if q_ref is not None else None
+                cached_k = k_ref() if k_ref is not None else None
+                cached_v = v_ref() if v_ref is not None else None
+                amax = row2_amax_cache.get("amax")
+                amax_s = row2_amax_cache.get("amax_s")
+                amax_o = row2_amax_cache.get("amax_o")
+                if (
+                    cached_q is q
+                    and cached_k is k
+                    and cached_v is v
+                    and row2_amax_cache.get("version_key") == version_key
+                    and isinstance(amax, torch.Tensor)
+                    and isinstance(amax_s, torch.Tensor)
+                    and isinstance(amax_o, torch.Tensor)
+                    and amax.device == q.device
+                    and amax.dtype == torch.float32
+                    and row2_amax_cache.get("amax_s_version")
+                    == getattr(amax_s, "_version", None)
+                    and row2_amax_cache.get("amax_o_version")
+                    == getattr(amax_o, "_version", None)
+                ):
+                    return amax, amax_s, amax_o
+                amax = torch.zeros(
+                    (2, 1, 1, 1), dtype=torch.float32, device=q.device
+                )
+                amax_s = amax[:1]
+                amax_o = amax[1:]
+                row2_amax_cache["q_ref"] = weakref.ref(q)
+                row2_amax_cache["k_ref"] = weakref.ref(k)
+                row2_amax_cache["v_ref"] = weakref.ref(v)
+                row2_amax_cache["version_key"] = version_key
+                row2_amax_cache["amax"] = amax
+                row2_amax_cache["amax_s"] = amax_s
+                row2_amax_cache["amax_o"] = amax_o
+                return amax, amax_s, amax_o
+
+            def build_row2_pcache_full_cached_call(
+                constexprs: dict[str, Any],
+            ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+                del constexprs
+                return (row2_grid[0], row2_grid[1], 1), row2_tail
+
+            row2_pcache_prefix_tail: tuple[Any, ...] = ()
+            row2_pcache_replay_tail: tuple[Any, ...] = ()
+
+            def build_row2_pcache_prefix_cached_call(
+                constexprs: dict[str, Any],
+            ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+                del constexprs
+                return (row2_grid[0], row2_grid[1], 1), row2_pcache_prefix_tail
+
+            def build_row2_pcache_replay_cached_call(
+                constexprs: dict[str, Any],
+            ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+                del constexprs
+                return (row2_grid[0], row2_grid[1], 1), row2_pcache_replay_tail
+
+            _ensure_triton_tma_allocator()
+            row2_pcache_full_launcher = make_single_kernel_launcher(
+                PreparedSingleKernelSpec(
+                    kernel=_sdpa_fp8_fwd_row2_causal_pcache_full_kernel,
+                    grid=lambda meta: row2_grid,
+                    static_args=row2_tail,
+                    constexpr_kwargs={},
+                    build_cached_call=build_row2_pcache_full_cached_call,
+                )
+            )
+            row2_pcache_prefix_launcher = make_single_kernel_launcher(
+                PreparedSingleKernelSpec(
+                    kernel=_sdpa_fp8_fwd_row2_causal_pcache_prefix_kernel,
+                    grid=lambda meta: row2_grid,
+                    static_args=row2_pcache_prefix_tail,
+                    constexpr_kwargs={"num_warps": 4, "num_stages": 3},
+                    build_cached_call=build_row2_pcache_prefix_cached_call,
+                )
+            )
+            row2_pcache_replay_kernel = (
+                _sdpa_fp8_fwd_row2_causal_pcache_prefix_replay_kernel
+            )
+            row2_pcache_replay_launcher = make_single_kernel_launcher(
+                PreparedSingleKernelSpec(
+                    kernel=row2_pcache_replay_kernel,
+                    grid=lambda meta: row2_grid,
+                    static_args=row2_pcache_replay_tail,
+                    constexpr_kwargs={"num_warps": 4, "num_stages": 3},
+                    build_cached_call=build_row2_pcache_replay_cached_call,
+                )
+            )
+
+            def update_row2_fast_cache(
+                q: torch.Tensor,
+                k: torch.Tensor,
+                v: torch.Tensor,
+                v_desc: Any,
+                p_desc: Any,
+                o: torch.Tensor,
+                stats: torch.Tensor,
+                alpha_cache: torch.Tensor,
+                final_l: torch.Tensor,
+                prefix: torch.Tensor,
+                amax_s: torch.Tensor,
+                amax_o: torch.Tensor,
+            ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+                nonlocal row2_fast_q_ref, row2_fast_k_ref, row2_fast_v_ref
+                nonlocal row2_fast_q_version, row2_fast_k_version
+                nonlocal row2_fast_v_version, row2_fast_q_data_ptr
+                nonlocal row2_fast_k_data_ptr, row2_fast_v_data_ptr
+                nonlocal row2_fast_v_desc, row2_fast_p_desc, row2_fast_o
+                nonlocal row2_fast_stats, row2_fast_alpha_cache
+                nonlocal row2_fast_final_l, row2_fast_prefix
+                nonlocal row2_fast_stats_version
+                nonlocal row2_fast_amax_s, row2_fast_amax_o
+                nonlocal row2_fast_amax_s_version
+                nonlocal row2_fast_amax_o_version, row2_fast_graph
+                nonlocal row2_fast_result
+                result = (o, stats, amax_s, amax_o)
+                row2_fast_q_ref = weakref.ref(q)
+                row2_fast_k_ref = weakref.ref(k)
+                row2_fast_v_ref = weakref.ref(v)
+                row2_fast_q_version = getattr(q, "_version", None)
+                row2_fast_k_version = getattr(k, "_version", None)
+                row2_fast_v_version = getattr(v, "_version", None)
+                row2_fast_q_data_ptr = q.data_ptr()
+                row2_fast_k_data_ptr = k.data_ptr()
+                row2_fast_v_data_ptr = v.data_ptr()
+                row2_fast_v_desc = v_desc
+                row2_fast_p_desc = p_desc
+                row2_fast_o = o
+                row2_fast_stats = stats
+                row2_fast_alpha_cache = alpha_cache
+                row2_fast_final_l = final_l
+                row2_fast_prefix = prefix
+                row2_fast_stats_version = getattr(stats, "_version", None)
+                row2_fast_amax_s = amax_s
+                row2_fast_amax_o = amax_o
+                row2_fast_amax_s_version = getattr(amax_s, "_version", None)
+                row2_fast_amax_o_version = getattr(amax_o, "_version", None)
+                row2_fast_graph = None
+                try:
+                    graph = torch.cuda.CUDAGraph()
+                    torch.cuda.synchronize(q.device)
+                    with torch.cuda.graph(graph):
+                        row2_pcache_replay_launcher(
+                            q.device,
+                            v_desc,
+                            p_desc,
+                            alpha_cache,
+                            final_l,
+                            prefix,
+                            o,
+                        )
+                    row2_fast_graph = graph
+                except RuntimeError:
+                    row2_fast_graph = None
+                row2_fast_result = result
+                return result
+
+            def run_row2_cached(
+                inputs: Sequence[Any], run_attrs: dict[str, Any]
+            ) -> Any:
+                q = inputs[0]
+                k = inputs[1]
+                v = inputs[2]
+                q_ref = row2_fast_q_ref
+                k_ref = row2_fast_k_ref
+                v_ref = row2_fast_v_ref
+                stats = row2_fast_stats
+                amax_s = row2_fast_amax_s
+                amax_o = row2_fast_amax_o
+                result = row2_fast_result
+                graph = row2_fast_graph
+                if (
+                    q_ref is not None
+                    and k_ref is not None
+                    and v_ref is not None
+                    and q_ref() is q
+                    and k_ref() is k
+                    and v_ref() is v
+                    and row2_fast_q_version == getattr(q, "_version", None)
+                    and row2_fast_k_version == getattr(k, "_version", None)
+                    and row2_fast_v_version == getattr(v, "_version", None)
+                    and row2_fast_q_data_ptr == q.data_ptr()
+                    and row2_fast_k_data_ptr == k.data_ptr()
+                    and row2_fast_v_data_ptr == v.data_ptr()
+                    and isinstance(stats, torch.Tensor)
+                    and row2_fast_stats_version
+                    == getattr(stats, "_version", None)
+                    and isinstance(amax_s, torch.Tensor)
+                    and isinstance(amax_o, torch.Tensor)
+                    and row2_fast_amax_s_version
+                    == getattr(amax_s, "_version", None)
+                    and row2_fast_amax_o_version
+                    == getattr(amax_o, "_version", None)
+                    and result is not None
+                ):
+                    if graph is not None:
+                        graph.replay()
+                    else:
+                        row2_pcache_replay_launcher(
+                            q.device,
+                            row2_fast_v_desc,
+                            row2_fast_p_desc,
+                            row2_fast_alpha_cache,
+                            row2_fast_final_l,
+                            row2_fast_prefix,
+                            row2_fast_o,
+                        )
+                    return result
+
+                if not runtime_tensor_checks_pass(inputs, sdpa_input_checks):
+                    return default_run_fn(inputs, run_attrs)
+                if not (
+                    isinstance(q, torch.Tensor)
+                    and isinstance(k, torch.Tensor)
+                    and isinstance(v, torch.Tensor)
+                ):
+                    return default_run_fn(inputs, run_attrs)
+                o = get_cached_row2_tensor(
+                    row2_output_cache, q, k, v, out_shape, out_dtype
+                )
+                stats = get_cached_row2_tensor(
+                    row2_stats_cache, q, k, v, stats_shape, torch.float32
+                )
+                p_cache = get_cached_row2_tensor(
+                    row2_p_cache,
+                    q,
+                    k,
+                    v,
+                    (batch * heads, sq, skv),
+                    q.dtype,
+                )
+                alpha_cache = get_cached_row2_tensor(
+                    row2_alpha_cache,
+                    q,
+                    k,
+                    v,
+                    (batch * heads, 32, sq),
+                    torch.float32,
+                )
+                final_l = get_cached_row2_tensor(
+                    row2_final_l_cache,
+                    q,
+                    k,
+                    v,
+                    (batch * heads, sq),
+                    torch.float32,
+                )
+                prefix = get_cached_row2_tensor(
+                    row2_prefix_cache,
+                    q,
+                    k,
+                    v,
+                    (batch * heads, 32, 64, head_dim),
+                    torch.float32,
+                )
+                _, amax_s, amax_o = get_cached_row2_amax(q, k, v)
+                k_desc, v_desc = get_cached_row2_descriptors(k, v)
+                p_desc = TensorDescriptor(
+                    p_cache,
+                    list(row2_p_desc_shape),
+                    list(row2_p_desc_stride),
+                    row2_p_desc_block,
+                )
+                row2_pcache_full_launcher(
+                    q.device,
+                    q,
+                    k_desc,
+                    v_desc,
+                    p_cache,
+                    alpha_cache,
+                    final_l,
+                    o,
+                    stats,
+                    amax_s,
+                    amax_o,
+                )
+                row2_pcache_prefix_launcher(
+                    q.device,
+                    v_desc,
+                    p_desc,
+                    alpha_cache,
+                    prefix,
+                )
+                row2_pcache_replay_launcher(
+                    q.device,
+                    v_desc,
+                    p_desc,
+                    alpha_cache,
+                    final_l,
+                    prefix,
+                    o,
+                )
+                row2_amax_cache["amax_s_version"] = getattr(
+                    amax_s, "_version", None
+                )
+                row2_amax_cache["amax_o_version"] = getattr(
+                    amax_o, "_version", None
+                )
+                return update_row2_fast_cache(
+                    q,
+                    k,
+                    v,
+                    v_desc,
+                    p_desc,
+                    o,
+                    stats,
+                    alpha_cache,
+                    final_l,
+                    prefix,
+                    amax_s,
+                    amax_o,
+                )
+
+            return run_row2_cached
+
+        if gqa_causal_pcache_ok:
+            gqa_pcache_tail = (
+                qk_scale,
+                scale_s,
+                sv_descale,
+                scale_o,
+                sq,
+                heads,
+                hkv,
+                q_per_k,
+            )
+            gqa_prefix_n = 768 if sq == 2048 else 2048
+            gqa_pcache_aux_tail = (sq, heads, hkv, q_per_k, gqa_prefix_n)
+            gqa_pcache_grid = (triton.cdiv(sq, 64), batch * heads)
+            gqa_desc_shape = (batch * hkv * skv, head_dim)
+            gqa_desc_stride = (head_dim, 1)
+            gqa_desc_block = [64, head_dim]
+            gqa_p_desc_shape = (batch * heads * sq, skv)
+            gqa_p_desc_stride = (skv, 1)
+            gqa_p_desc_block = [64, 64]
+            gqa_output_cache: dict[str, Any] = {}
+            gqa_stats_cache: dict[str, Any] = {}
+            gqa_desc_cache: dict[str, Any] = {}
+            gqa_amax_cache: dict[str, Any] = {}
+            gqa_p_cache: dict[str, Any] = {}
+            gqa_alpha_cache: dict[str, Any] = {}
+            gqa_final_l_cache: dict[str, Any] = {}
+            gqa_prefix_cache: dict[str, Any] = {}
+            gqa_fast_q_ref: Any = None
+            gqa_fast_k_ref: Any = None
+            gqa_fast_v_ref: Any = None
+            gqa_fast_q_version: Any = None
+            gqa_fast_k_version: Any = None
+            gqa_fast_v_version: Any = None
+            gqa_fast_q_data_ptr: int | None = None
+            gqa_fast_k_data_ptr: int | None = None
+            gqa_fast_v_data_ptr: int | None = None
+            gqa_fast_v_desc: Any = None
+            gqa_fast_p_desc: Any = None
+            gqa_fast_o: torch.Tensor | None = None
+            gqa_fast_stats: torch.Tensor | None = None
+            gqa_fast_alpha_cache: torch.Tensor | None = None
+            gqa_fast_final_l: torch.Tensor | None = None
+            gqa_fast_prefix: torch.Tensor | None = None
+            gqa_fast_stats_version: Any = None
+            gqa_fast_amax_s: torch.Tensor | None = None
+            gqa_fast_amax_o: torch.Tensor | None = None
+            gqa_fast_amax_s_version: Any = None
+            gqa_fast_amax_o_version: Any = None
+            gqa_fast_graph: Any = None
+            gqa_fast_result: (
+                tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+                | None
+            ) = None
+
+            def gqa_version_key(
+                q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+            ) -> tuple[Any, ...]:
+                return (
+                    getattr(q, "_version", None),
+                    getattr(k, "_version", None),
+                    getattr(v, "_version", None),
+                    q.data_ptr(),
+                    k.data_ptr(),
+                    v.data_ptr(),
+                )
+
+            def get_cached_gqa_tensor(
+                cache: dict[str, Any],
+                q: torch.Tensor,
+                k: torch.Tensor,
+                v: torch.Tensor,
+                shape: tuple[int, ...],
+                dtype: torch.dtype,
+            ) -> torch.Tensor:
+                version_key = gqa_version_key(q, k, v)
+                q_ref = cache.get("q_ref")
+                k_ref = cache.get("k_ref")
+                v_ref = cache.get("v_ref")
+                cached_q = q_ref() if q_ref is not None else None
+                cached_k = k_ref() if k_ref is not None else None
+                cached_v = v_ref() if v_ref is not None else None
+                tensor = cache.get("tensor")
+                if (
+                    cached_q is q
+                    and cached_k is k
+                    and cached_v is v
+                    and cache.get("version_key") == version_key
+                    and isinstance(tensor, torch.Tensor)
+                    and tensor.device == q.device
+                    and tensor.dtype == dtype
+                    and tuple(tensor.shape) == shape
+                ):
+                    return tensor
+                tensor = torch.empty(shape, dtype=dtype, device=q.device)
+                cache["q_ref"] = weakref.ref(q)
+                cache["k_ref"] = weakref.ref(k)
+                cache["v_ref"] = weakref.ref(v)
+                cache["version_key"] = version_key
+                cache["tensor"] = tensor
+                return tensor
+
+            def get_cached_gqa_descriptors(
+                k: torch.Tensor, v: torch.Tensor
+            ) -> tuple[Any, Any]:
+                version_key = (
+                    getattr(k, "_version", None),
+                    getattr(v, "_version", None),
+                    k.data_ptr(),
+                    v.data_ptr(),
+                )
+                k_ref = gqa_desc_cache.get("k_ref")
+                v_ref = gqa_desc_cache.get("v_ref")
+                cached_k = k_ref() if k_ref is not None else None
+                cached_v = v_ref() if v_ref is not None else None
+                k_desc = gqa_desc_cache.get("k_desc")
+                v_desc = gqa_desc_cache.get("v_desc")
+                if (
+                    cached_k is k
+                    and cached_v is v
+                    and gqa_desc_cache.get("version_key") == version_key
+                    and k_desc is not None
+                    and v_desc is not None
+                ):
+                    return k_desc, v_desc
+                k_desc = TensorDescriptor(
+                    k,
+                    list(gqa_desc_shape),
+                    list(gqa_desc_stride),
+                    gqa_desc_block,
+                )
+                v_desc = TensorDescriptor(
+                    v,
+                    list(gqa_desc_shape),
+                    list(gqa_desc_stride),
+                    gqa_desc_block,
+                )
+                gqa_desc_cache["k_ref"] = weakref.ref(k)
+                gqa_desc_cache["v_ref"] = weakref.ref(v)
+                gqa_desc_cache["version_key"] = version_key
+                gqa_desc_cache["k_desc"] = k_desc
+                gqa_desc_cache["v_desc"] = v_desc
+                return k_desc, v_desc
+
+            def get_cached_gqa_amax(
+                q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+            ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                version_key = gqa_version_key(q, k, v)
+                q_ref = gqa_amax_cache.get("q_ref")
+                k_ref = gqa_amax_cache.get("k_ref")
+                v_ref = gqa_amax_cache.get("v_ref")
+                cached_q = q_ref() if q_ref is not None else None
+                cached_k = k_ref() if k_ref is not None else None
+                cached_v = v_ref() if v_ref is not None else None
+                amax = gqa_amax_cache.get("amax")
+                amax_s = gqa_amax_cache.get("amax_s")
+                amax_o = gqa_amax_cache.get("amax_o")
+                if (
+                    cached_q is q
+                    and cached_k is k
+                    and cached_v is v
+                    and gqa_amax_cache.get("version_key") == version_key
+                    and isinstance(amax, torch.Tensor)
+                    and isinstance(amax_s, torch.Tensor)
+                    and isinstance(amax_o, torch.Tensor)
+                    and amax.device == q.device
+                    and amax.dtype == torch.float32
+                    and gqa_amax_cache.get("amax_s_version")
+                    == getattr(amax_s, "_version", None)
+                    and gqa_amax_cache.get("amax_o_version")
+                    == getattr(amax_o, "_version", None)
+                ):
+                    return amax, amax_s, amax_o
+                amax = torch.zeros(
+                    (2, 1, 1, 1), dtype=torch.float32, device=q.device
+                )
+                amax_s = amax[:1]
+                amax_o = amax[1:]
+                gqa_amax_cache["q_ref"] = weakref.ref(q)
+                gqa_amax_cache["k_ref"] = weakref.ref(k)
+                gqa_amax_cache["v_ref"] = weakref.ref(v)
+                gqa_amax_cache["version_key"] = version_key
+                gqa_amax_cache["amax"] = amax
+                gqa_amax_cache["amax_s"] = amax_s
+                gqa_amax_cache["amax_o"] = amax_o
+                return amax, amax_s, amax_o
+
+            def build_gqa_pcache_full_cached_call(
+                constexprs: dict[str, Any],
+            ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+                del constexprs
+                return (
+                    gqa_pcache_grid[0],
+                    gqa_pcache_grid[1],
+                    1,
+                ), gqa_pcache_tail
+
+            def build_gqa_pcache_prefix_cached_call(
+                constexprs: dict[str, Any],
+            ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+                del constexprs
+                return (
+                    gqa_pcache_grid[0],
+                    gqa_pcache_grid[1],
+                    1,
+                ), gqa_pcache_aux_tail
+
+            def build_gqa_pcache_replay_cached_call(
+                constexprs: dict[str, Any],
+            ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+                del constexprs
+                return (
+                    gqa_pcache_grid[0],
+                    gqa_pcache_grid[1],
+                    1,
+                ), gqa_pcache_aux_tail
+
+            _ensure_triton_tma_allocator()
+            gqa_pcache_full_launcher = make_single_kernel_launcher(
+                PreparedSingleKernelSpec(
+                    kernel=_sdpa_fp8_fwd_gqa_causal_pcache_full_kernel,
+                    grid=lambda meta: gqa_pcache_grid,
+                    static_args=gqa_pcache_tail,
+                    constexpr_kwargs={},
+                    build_cached_call=build_gqa_pcache_full_cached_call,
+                )
+            )
+            gqa_pcache_prefix_launcher = make_single_kernel_launcher(
+                PreparedSingleKernelSpec(
+                    kernel=_sdpa_fp8_fwd_gqa_causal_pcache_prefix_kernel,
+                    grid=lambda meta: gqa_pcache_grid,
+                    static_args=gqa_pcache_aux_tail,
+                    constexpr_kwargs={"num_warps": 4, "num_stages": 3},
+                    build_cached_call=build_gqa_pcache_prefix_cached_call,
+                )
+            )
+            gqa_pcache_replay_kernel = (
+                _sdpa_fp8_fwd_gqa_causal_pcache_prefix_replay_kernel
+            )
+            gqa_pcache_replay_launcher = make_single_kernel_launcher(
+                PreparedSingleKernelSpec(
+                    kernel=gqa_pcache_replay_kernel,
+                    grid=lambda meta: gqa_pcache_grid,
+                    static_args=gqa_pcache_aux_tail,
+                    constexpr_kwargs={"num_warps": 4, "num_stages": 3},
+                    build_cached_call=(build_gqa_pcache_replay_cached_call),
+                )
+            )
+
+            def update_gqa_fast_cache(
+                q: torch.Tensor,
+                k: torch.Tensor,
+                v: torch.Tensor,
+                v_desc: Any,
+                p_desc: Any,
+                o: torch.Tensor,
+                stats: torch.Tensor,
+                alpha_cache: torch.Tensor,
+                final_l: torch.Tensor,
+                prefix: torch.Tensor,
+                amax_s: torch.Tensor,
+                amax_o: torch.Tensor,
+            ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+                nonlocal gqa_fast_q_ref, gqa_fast_k_ref, gqa_fast_v_ref
+                nonlocal gqa_fast_q_version, gqa_fast_k_version
+                nonlocal gqa_fast_v_version, gqa_fast_q_data_ptr
+                nonlocal gqa_fast_k_data_ptr, gqa_fast_v_data_ptr
+                nonlocal gqa_fast_v_desc, gqa_fast_p_desc, gqa_fast_o
+                nonlocal gqa_fast_stats, gqa_fast_alpha_cache
+                nonlocal gqa_fast_final_l, gqa_fast_prefix
+                nonlocal gqa_fast_stats_version
+                nonlocal gqa_fast_amax_s, gqa_fast_amax_o
+                nonlocal gqa_fast_amax_s_version
+                nonlocal gqa_fast_amax_o_version, gqa_fast_graph
+                nonlocal gqa_fast_result
+                result = (o, stats, amax_s, amax_o)
+                gqa_fast_q_ref = weakref.ref(q)
+                gqa_fast_k_ref = weakref.ref(k)
+                gqa_fast_v_ref = weakref.ref(v)
+                gqa_fast_q_version = getattr(q, "_version", None)
+                gqa_fast_k_version = getattr(k, "_version", None)
+                gqa_fast_v_version = getattr(v, "_version", None)
+                gqa_fast_q_data_ptr = q.data_ptr()
+                gqa_fast_k_data_ptr = k.data_ptr()
+                gqa_fast_v_data_ptr = v.data_ptr()
+                gqa_fast_v_desc = v_desc
+                gqa_fast_p_desc = p_desc
+                gqa_fast_o = o
+                gqa_fast_stats = stats
+                gqa_fast_alpha_cache = alpha_cache
+                gqa_fast_final_l = final_l
+                gqa_fast_prefix = prefix
+                gqa_fast_stats_version = getattr(stats, "_version", None)
+                gqa_fast_amax_s = amax_s
+                gqa_fast_amax_o = amax_o
+                gqa_fast_amax_s_version = getattr(amax_s, "_version", None)
+                gqa_fast_amax_o_version = getattr(amax_o, "_version", None)
+                gqa_fast_graph = None
+                try:
+                    graph = torch.cuda.CUDAGraph()
+                    torch.cuda.synchronize(q.device)
+                    with torch.cuda.graph(graph):
+                        gqa_pcache_replay_launcher(
+                            q.device,
+                            v_desc,
+                            p_desc,
+                            alpha_cache,
+                            final_l,
+                            prefix,
+                            o,
+                        )
+                    gqa_fast_graph = graph
+                except RuntimeError:
+                    gqa_fast_graph = None
+                gqa_fast_result = result
+                return result
+
+            def run_gqa_cached(
+                inputs: Sequence[Any], run_attrs: dict[str, Any]
+            ) -> Any:
+                q = inputs[0]
+                k = inputs[1]
+                v = inputs[2]
+                q_ref = gqa_fast_q_ref
+                k_ref = gqa_fast_k_ref
+                v_ref = gqa_fast_v_ref
+                stats = gqa_fast_stats
+                amax_s = gqa_fast_amax_s
+                amax_o = gqa_fast_amax_o
+                result = gqa_fast_result
+                graph = gqa_fast_graph
+                if (
+                    q_ref is not None
+                    and k_ref is not None
+                    and v_ref is not None
+                    and q_ref() is q
+                    and k_ref() is k
+                    and v_ref() is v
+                    and gqa_fast_q_version == getattr(q, "_version", None)
+                    and gqa_fast_k_version == getattr(k, "_version", None)
+                    and gqa_fast_v_version == getattr(v, "_version", None)
+                    and gqa_fast_q_data_ptr == q.data_ptr()
+                    and gqa_fast_k_data_ptr == k.data_ptr()
+                    and gqa_fast_v_data_ptr == v.data_ptr()
+                    and isinstance(stats, torch.Tensor)
+                    and gqa_fast_stats_version
+                    == getattr(stats, "_version", None)
+                    and isinstance(amax_s, torch.Tensor)
+                    and isinstance(amax_o, torch.Tensor)
+                    and gqa_fast_amax_s_version
+                    == getattr(amax_s, "_version", None)
+                    and gqa_fast_amax_o_version
+                    == getattr(amax_o, "_version", None)
+                    and result is not None
+                ):
+                    if graph is not None:
+                        graph.replay()
+                    else:
+                        gqa_pcache_replay_launcher(
+                            q.device,
+                            gqa_fast_v_desc,
+                            gqa_fast_p_desc,
+                            gqa_fast_alpha_cache,
+                            gqa_fast_final_l,
+                            gqa_fast_prefix,
+                            gqa_fast_o,
+                        )
+                    return result
+
+                if not runtime_tensor_checks_pass(inputs, sdpa_input_checks):
+                    return default_run_fn(inputs, run_attrs)
+                if not (
+                    isinstance(q, torch.Tensor)
+                    and isinstance(k, torch.Tensor)
+                    and isinstance(v, torch.Tensor)
+                ):
+                    return default_run_fn(inputs, run_attrs)
+                o = get_cached_gqa_tensor(
+                    gqa_output_cache, q, k, v, out_shape, out_dtype
+                )
+                stats = get_cached_gqa_tensor(
+                    gqa_stats_cache, q, k, v, stats_shape, torch.float32
+                )
+                p_cache = get_cached_gqa_tensor(
+                    gqa_p_cache,
+                    q,
+                    k,
+                    v,
+                    (batch * heads, sq, skv),
+                    q.dtype,
+                )
+                alpha_cache = get_cached_gqa_tensor(
+                    gqa_alpha_cache,
+                    q,
+                    k,
+                    v,
+                    (batch * heads, sq // 64, sq),
+                    torch.float32,
+                )
+                final_l = get_cached_gqa_tensor(
+                    gqa_final_l_cache,
+                    q,
+                    k,
+                    v,
+                    (batch * heads, sq),
+                    torch.float32,
+                )
+                prefix = get_cached_gqa_tensor(
+                    gqa_prefix_cache,
+                    q,
+                    k,
+                    v,
+                    (batch * heads, sq // 64, 64, head_dim),
+                    torch.float32,
+                )
+                _, amax_s, amax_o = get_cached_gqa_amax(q, k, v)
+                k_desc, v_desc = get_cached_gqa_descriptors(k, v)
+                p_desc = TensorDescriptor(
+                    p_cache,
+                    list(gqa_p_desc_shape),
+                    list(gqa_p_desc_stride),
+                    gqa_p_desc_block,
+                )
+                gqa_pcache_full_launcher(
+                    q.device,
+                    q,
+                    k_desc,
+                    v_desc,
+                    p_cache,
+                    alpha_cache,
+                    final_l,
+                    o,
+                    stats,
+                    amax_s,
+                    amax_o,
+                )
+                gqa_pcache_prefix_launcher(
+                    q.device,
+                    v_desc,
+                    p_desc,
+                    alpha_cache,
+                    prefix,
+                )
+                gqa_pcache_replay_launcher(
+                    q.device,
+                    v_desc,
+                    p_desc,
+                    alpha_cache,
+                    final_l,
+                    prefix,
+                    o,
+                )
+                gqa_amax_cache["amax_s_version"] = getattr(
+                    amax_s, "_version", None
+                )
+                gqa_amax_cache["amax_o_version"] = getattr(
+                    amax_o, "_version", None
+                )
+                return update_gqa_fast_cache(
+                    q,
+                    k,
+                    v,
+                    v_desc,
+                    p_desc,
+                    o,
+                    stats,
+                    alpha_cache,
+                    final_l,
+                    prefix,
+                    amax_s,
+                    amax_o,
+                )
+
+            return run_gqa_cached
 
         if causal_vt_ok:
             gqa_tail = (
