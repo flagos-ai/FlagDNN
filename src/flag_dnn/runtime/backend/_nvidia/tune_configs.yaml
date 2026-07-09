@@ -233,6 +233,30 @@ sdpa_fp8_gqa_causal_tma:
       - 3
       - 4
 
+sdpa_fp8_gqa_causal_vt:
+  # Prepacked-VT fp8 SDPA forward for long causal D128 MHA/GQA rows.
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_H: block_h
+        BLOCK_N: block_n
+      num_warps: warps
+      num_stages: stages
+    block_m:
+      - 16
+      - 64
+    block_h:
+      - 1
+      - 4
+    block_n:
+      - 64
+      - 128
+    warps:
+      - 4
+    stages:
+      - 3
+
 sdpa_fp8_fast:
   # Lean fp8 SDPA forward (constexpr strides, dense / top-left causal, no bias)
   # for power-of-two head_dim. Keep a narrow grid, but include block_n=256 and
