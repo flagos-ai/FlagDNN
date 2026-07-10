@@ -20,7 +20,13 @@ from flag_dnn.graph.prepared.common import (
 from flag_dnn.graph.tensor import TensorSpec, torch_dtype
 
 
-_FAST_DTYPES = {"float16", "bfloat16", "float32"}
+_FAST_DTYPES = {
+    "float16",
+    "bfloat16",
+    "float32",
+    "float8_e4m3fn",
+    "float8_e5m2",
+}
 
 
 @register_prepared_run_fn("matmul")
@@ -29,7 +35,6 @@ def _prepare_matmul(
     input_specs: Sequence[TensorSpec],
     default_run_fn: RunFn,
 ) -> Optional[RunFn]:
-    del attrs
     if len(input_specs) != 2:
         return None
     if not all(_is_runtime_device_spec(spec) for spec in input_specs):
@@ -62,9 +67,21 @@ def _prepare_matmul(
     if checks is None:
         return None
 
-    from flag_dnn.ops.matmul import _batched_matmul_3d_out
+    from flag_dnn.ops.matmul import (
+        _batched_matmul_3d_out,
+        _resolve_matmul_compute_mode,
+        _resolve_matmul_out_dtype,
+    )
 
-    dtype = torch_dtype(a_spec.dtype)
+    input_dtype = torch_dtype(a_spec.dtype)
+    out_dtype_attr = attrs.get("out_dtype")
+    requested_out_dtype = (
+        torch_dtype(out_dtype_attr) if out_dtype_attr is not None else None
+    )
+    out_dtype = _resolve_matmul_out_dtype(input_dtype, requested_out_dtype)
+    compute_mode = _resolve_matmul_compute_mode(
+        input_dtype, attrs.get("compute_data_type")
+    )
     output_shape = (a_shape[0], a_shape[1], b_shape[2])
     output_cache: PreparedTensorCache = {}
 
@@ -79,7 +96,7 @@ def _prepare_matmul(
         key = (
             a.device.type,
             a.device.index,
-            dtype,
+            out_dtype,
             output_shape,
         )
         output = get_cached_empty_tensor(
@@ -87,8 +104,8 @@ def _prepare_matmul(
             key,
             output_shape,
             device=a.device,
-            dtype=dtype,
+            dtype=out_dtype,
         )
-        return _batched_matmul_3d_out(a, b, output)
+        return _batched_matmul_3d_out(a, b, output, compute_mode=compute_mode)
 
     return run

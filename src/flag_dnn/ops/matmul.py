@@ -12,6 +12,78 @@ from flag_dnn.utils.device_info import get_device_info
 _MATMUL_CONFIGS = runtime.get_tuned_config("matmul")
 _MATMUL_PERSISTENT_CONFIGS = runtime.get_tuned_config("matmul_persistent")
 
+_FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
+_MATMUL_TRITON_DTYPES = (
+    torch.float16,
+    torch.bfloat16,
+    torch.float32,
+    *_FP8_DTYPES,
+)
+_MATMUL_OUT_DTYPES = _MATMUL_TRITON_DTYPES
+_MATMUL_OUT_DTYPE_ALIASES = {
+    "float16": torch.float16,
+    "half": torch.float16,
+    "fp16": torch.float16,
+    "bfloat16": torch.bfloat16,
+    "bf16": torch.bfloat16,
+    "float32": torch.float32,
+    "float": torch.float32,
+    "fp32": torch.float32,
+    "float8_e4m3fn": torch.float8_e4m3fn,
+    "fp8_e4m3": torch.float8_e4m3fn,
+    "e4m3": torch.float8_e4m3fn,
+    "float8_e5m2": torch.float8_e5m2,
+    "fp8_e5m2": torch.float8_e5m2,
+    "e5m2": torch.float8_e5m2,
+}
+
+
+def _resolve_matmul_compute_mode(
+    input_dtype: torch.dtype, compute_data_type
+) -> str:
+    if compute_data_type is None or compute_data_type is torch.float32:
+        return "ieee" if input_dtype == torch.float32 else "float32"
+
+    key = str(compute_data_type).lower().replace("torch.", "")
+    if key in {"float", "float32", "fp32"}:
+        return "ieee" if input_dtype == torch.float32 else "float32"
+    if key == "tf32" and input_dtype == torch.float32:
+        return "tf32"
+    if key == "fast_float_for_fp8" and input_dtype in _FP8_DTYPES:
+        return "fast_float_for_fp8"
+    raise RuntimeError(
+        f"unsupported matmul compute_data_type={compute_data_type!r} "
+        f"for input dtype={input_dtype}"
+    )
+
+
+def _resolve_matmul_out_dtype(
+    input_dtype: torch.dtype, out_dtype
+) -> torch.dtype:
+    if out_dtype is None:
+        return input_dtype
+    if out_dtype in _MATMUL_OUT_DTYPES:
+        return out_dtype
+    if isinstance(out_dtype, str):
+        key = out_dtype.lower().replace("torch.", "")
+        resolved = _MATMUL_OUT_DTYPE_ALIASES.get(key)
+        if resolved is not None:
+            return resolved
+    raise RuntimeError(
+        "matmul out_dtype must be fp16, bf16, fp32, fp8_e4m3, or "
+        f"fp8_e5m2, got {out_dtype!r}"
+    )
+
+
+@triton.jit
+def _round_fp32_to_tf32(x):
+    bits = x.to(tl.uint32, bitcast=True)
+    rounded = bits + 0xFFF + ((bits >> 13) & 1)
+    rounded &= 0xFFFFE000
+    is_special = (bits & 0x7F800000) == 0x7F800000
+    rounded = tl.where(is_special, bits, rounded)
+    return rounded.to(tl.float32, bitcast=True)
+
 
 @libentry()
 @libtuner(
@@ -33,6 +105,7 @@ def _batched_matmul_kernel(
     BLOCK_N: tl.constexpr,
     BLOCK_K: tl.constexpr,
     GROUP_M: tl.constexpr,
+    ROUND_F32_TO_TF32: tl.constexpr,
 ):
     pid = tl.program_id(0)
     bid = tl.program_id(1)
@@ -91,7 +164,12 @@ def _batched_matmul_kernel(
                 boundary_check=(0, 1),
                 padding_option="zero",
             )
-        acc += tl.dot(a, b)
+        if ROUND_F32_TO_TF32:
+            a = _round_fp32_to_tf32(a)
+            b = _round_fp32_to_tf32(b)
+            acc += tl.dot(a, b, input_precision="tf32")
+        else:
+            acc += tl.dot(a, b)
         a_block = tl.advance(a_block, (0, BLOCK_K))
         b_block = tl.advance(b_block, (BLOCK_K, 0))
 
@@ -274,7 +352,11 @@ def _batched_matmul_persistent_kernel(
 
 
 def _batched_matmul_3d_out(
-    A: torch.Tensor, B: torch.Tensor, C: torch.Tensor
+    A: torch.Tensor,
+    B: torch.Tensor,
+    C: torch.Tensor,
+    *,
+    compute_mode: str | None = None,
 ) -> torch.Tensor:
     if not A.is_contiguous() or not B.is_contiguous():
         raise NotImplementedError(
@@ -294,6 +376,10 @@ def _batched_matmul_3d_out(
             "expected mat1 and mat2 to have the same dtype, but got: "
             f"{A.dtype} != {B.dtype}"
         )
+    if A.dtype not in _MATMUL_TRITON_DTYPES:
+        raise NotImplementedError(
+            f"flag_dnn batched matmul does not support dtype={A.dtype}"
+        )
     batch, m, k = A.shape
     b_batch, b_k, n = B.shape
     if batch != b_batch or k != b_k:
@@ -303,12 +389,15 @@ def _batched_matmul_3d_out(
     expected = (batch, m, n)
     if (
         tuple(C.shape) != expected
-        or C.dtype != A.dtype
+        or C.dtype not in _MATMUL_OUT_DTYPES
         or C.device != A.device
     ):
         raise RuntimeError("matmul output buffer shape/dtype/device mismatch")
     if C.numel() == 0:
         return C
+
+    if compute_mode is None:
+        compute_mode = "ieee" if A.dtype == torch.float32 else "float32"
 
     def grid(meta):
         return (
@@ -319,7 +408,7 @@ def _batched_matmul_3d_out(
     exact_projection = batch == 16 and m == 2048 and n == 2048 and k == 512
 
     with torch_device_fn.device(A.device):
-        if A.dtype == torch.float32:
+        if A.dtype == torch.float32 and compute_mode == "ieee":
             block_m = 16 if m <= 16 else 32
             block_n = 32 if n <= 32 else 64
             block_k = 32 if k <= 64 else 64
@@ -341,7 +430,12 @@ def _batched_matmul_3d_out(
                 num_warps=4,
                 num_stages=3,
             )
-        elif exact_projection and A.dtype in (torch.float16, torch.bfloat16):
+        elif (
+            exact_projection
+            and A.dtype in (torch.float16, torch.bfloat16)
+            and C.dtype == A.dtype
+            and compute_mode == "float32"
+        ):
             fixed_grid = (triton.cdiv(m, 128) * triton.cdiv(n, 256), batch)
             _batched_matmul_kernel.fn.fn[fixed_grid](
                 A,
@@ -354,11 +448,14 @@ def _batched_matmul_3d_out(
                 BLOCK_N=256,
                 BLOCK_K=64,
                 GROUP_M=16,
+                ROUND_F32_TO_TF32=False,
                 num_warps=8,
                 num_stages=4,
             )
         elif (
             A.dtype in (torch.float16, torch.bfloat16)
+            and C.dtype == A.dtype
+            and compute_mode == "float32"
             and m == 512
             and n == 512
             and k == 512
@@ -391,18 +488,28 @@ def _batched_matmul_3d_out(
                 m,
                 n,
                 k,
+                ROUND_F32_TO_TF32=(
+                    A.dtype == torch.float32 and compute_mode == "tf32"
+                ),
             )
     return C
 
 
-def _batched_matmul_3d(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+def _batched_matmul_3d(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    *,
+    out_dtype: torch.dtype | None = None,
+    compute_mode: str | None = None,
+) -> torch.Tensor:
     batch, m, _ = A.shape
     n = int(B.shape[2])
-    C = torch.empty((batch, m, n), device=A.device, dtype=A.dtype)
-    return _batched_matmul_3d_out(A, B, C)
+    result_dtype = A.dtype if out_dtype is None else out_dtype
+    C = torch.empty((batch, m, n), device=A.device, dtype=result_dtype)
+    return _batched_matmul_3d_out(A, B, C, compute_mode=compute_mode)
 
 
-_BATCHED_TRITON_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
+_BATCHED_TRITON_DTYPES = _MATMUL_TRITON_DTYPES
 
 
 def _prod(shape: tuple[int, ...]) -> int:
@@ -470,11 +577,16 @@ def _as_batched_contiguous(
 
 
 def _batched_matmul_broadcast(
-    A: torch.Tensor, B: torch.Tensor
+    A: torch.Tensor,
+    B: torch.Tensor,
+    *,
+    out_dtype: torch.dtype,
+    compute_mode: str,
 ) -> torch.Tensor:
     if A.dtype not in _BATCHED_TRITON_DTYPES:
         raise NotImplementedError(
-            "flag_dnn batched matmul supports fp16, bf16, and fp32 inputs"
+            "flag_dnn batched matmul supports fp16, bf16, fp32, "
+            "fp8_e4m3, and fp8_e5m2 inputs"
         )
 
     batch_shape = _broadcast_batch_shape(A, B)
@@ -482,7 +594,12 @@ def _batched_matmul_broadcast(
     n = int(B.shape[-1])
     A3 = _as_batched_contiguous(A, batch_shape)
     B3 = _as_batched_contiguous(B, batch_shape)
-    C3 = _batched_matmul_3d(A3, B3)
+    C3 = _batched_matmul_3d(
+        A3,
+        B3,
+        out_dtype=out_dtype,
+        compute_mode=compute_mode,
+    )
     return C3.reshape(batch_shape + (m, n))
 
 
@@ -491,14 +608,47 @@ def matmul(
     B: torch.Tensor,
     *,
     compute_data_type=None,
+    out_dtype=None,
     padding: float = 0.0,
     name: str = "",
 ) -> torch.Tensor:
-    del compute_data_type, padding, name
+    del padding, name
     _check_matmul_inputs(A, B)
 
+    if A.dtype not in _MATMUL_TRITON_DTYPES:
+        if out_dtype is not None:
+            raise RuntimeError(
+                f"matmul out_dtype is unsupported for input dtype={A.dtype}"
+            )
+        if A.dim() == 2 and B.dim() == 2:
+            return mm(A, B)
+        return _batched_matmul_broadcast(
+            A,
+            B,
+            out_dtype=A.dtype,
+            compute_mode="float32",
+        )
+
+    compute_mode = _resolve_matmul_compute_mode(A.dtype, compute_data_type)
+    result_dtype = _resolve_matmul_out_dtype(A.dtype, out_dtype)
+
     if A.dim() == 2 and B.dim() == 2:
-        return mm(A, B)
+        if (
+            compute_mode != "tf32"
+            and A.dtype in (torch.float16, torch.bfloat16, torch.float32)
+            and result_dtype in (A.dtype, torch.float32)
+            and not (A.dtype == torch.float32 and result_dtype != A.dtype)
+        ):
+            mm_out_dtype = result_dtype if result_dtype != A.dtype else None
+            return mm(A, B, out_dtype=mm_out_dtype)
+        A3 = A.contiguous().reshape(1, A.shape[0], A.shape[1])
+        B3 = B.contiguous().reshape(1, B.shape[0], B.shape[1])
+        return _batched_matmul_3d(
+            A3,
+            B3,
+            out_dtype=result_dtype,
+            compute_mode=compute_mode,
+        ).reshape(A.shape[0], B.shape[1])
 
     if (
         A.dim() == 3
@@ -507,6 +657,16 @@ def matmul(
         and A.is_contiguous()
         and B.is_contiguous()
     ):
-        return _batched_matmul_3d(A, B)
+        return _batched_matmul_3d(
+            A,
+            B,
+            out_dtype=result_dtype,
+            compute_mode=compute_mode,
+        )
 
-    return _batched_matmul_broadcast(A, B)
+    return _batched_matmul_broadcast(
+        A,
+        B,
+        out_dtype=result_dtype,
+        compute_mode=compute_mode,
+    )

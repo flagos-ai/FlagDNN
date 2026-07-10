@@ -28,12 +28,17 @@ def _matmul_shape(
     batch_shape = torch.broadcast_shapes(
         tuple(a.shape[:-2]), tuple(b.shape[:-2])
     )
-    out_dtype = attrs.get("out_dtype") or canonical_dtype(
-        torch.result_type(
-            torch.empty((), dtype=torch_dtype(a.dtype)),
-            torch.empty((), dtype=torch_dtype(b.dtype)),
-        )
-    )
+    out_dtype = attrs.get("out_dtype")
+    if out_dtype is None:
+        if a.dtype == b.dtype:
+            out_dtype = a.dtype
+        else:
+            out_dtype = canonical_dtype(
+                torch.result_type(
+                    torch.empty((), dtype=torch_dtype(a.dtype)),
+                    torch.empty((), dtype=torch_dtype(b.dtype)),
+                )
+            )
     return [
         TensorSpec(
             name="",
@@ -277,8 +282,11 @@ def _normalize_matmul(
         b = _pop_operand(params, ("B", "b", "other", "mat2"))
     if b is None:
         raise TypeError("matmul missing B tensor")
+    out_dtype = params.pop("out_dtype", None)
     attrs = {
-        "out_dtype": None,
+        "out_dtype": (
+            canonical_dtype(out_dtype) if out_dtype is not None else None
+        ),
         "compute_data_type": params.pop("compute_data_type", None),
         "padding": params.pop("padding", 0.0),
         "name": params.pop("name", ""),
@@ -657,10 +665,12 @@ def _run_mm(flag_ops: Any) -> Any:
 def _run_matmul(flag_ops: Any) -> Any:
     def run(inputs: list[Any], attrs: dict[str, Any]) -> torch.Tensor:
         _require_runtime_backend(inputs, "matmul")
+        out_dtype = attrs.get("out_dtype")
         return flag_ops.matmul(
             inputs[0],
             inputs[1],
             compute_data_type=attrs.get("compute_data_type"),
+            out_dtype=torch_dtype(out_dtype) if out_dtype else None,
             padding=float(attrs.get("padding", 0.0)),
             name=attrs.get("name", ""),
         )

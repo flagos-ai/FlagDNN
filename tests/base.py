@@ -27,6 +27,10 @@ def cudnn_data_type(dtype):
         return cudnn.data_type.BFLOAT16
     if dtype == torch.float32:
         return cudnn.data_type.FLOAT
+    if dtype == torch.float8_e4m3fn:
+        return cudnn.data_type.FP8_E4M3
+    if dtype == torch.float8_e5m2:
+        return cudnn.data_type.FP8_E5M2
     if dtype == torch.float64:
         return cudnn.data_type.DOUBLE
     if dtype == torch.bool:

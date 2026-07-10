@@ -4059,6 +4059,7 @@ def conv2d(
                 BLOCK_N=block_n,
                 BLOCK_K=128,
                 GROUP_M=8,
+                ROUND_F32_TO_TF32=False,
                 num_warps=4,
                 num_stages=3,
             )
