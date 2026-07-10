@@ -2400,7 +2400,7 @@ def _sdpa_bwd_mloop_causal_d128_kernel(
     stats_log2 = stats * 1.4426950408889634
     dq = tl.zeros((BLOCK_M, BLOCK_D), dtype=tl.float32)
 
-    for start_n in tl.range(0, start_m + BLOCK_M, BLOCK_N):
+    for start_n in tl.range(0, start_m + BLOCK_M, BLOCK_N, disable_licm=True):
         cols = start_n + cols_base
         k_tile = tl.load(
             k_base + cols[:, None] * stride_kn + offs_d[None, :] * stride_kd,

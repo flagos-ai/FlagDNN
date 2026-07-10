@@ -25,6 +25,12 @@ SDPA_BACKWARD_MASKED_CASES = (
 )
 
 
+SDPA_BACKWARD_LONG_CAUSAL_D128_CASES = (
+    (2, 16, 16, 2048, 2048, 128),
+    (1, 32, 8, 4096, 4096, 128),
+)
+
+
 def _cudnn_alignment(diagonal_alignment):
     if diagonal_alignment == "BOTTOM_RIGHT":
         return cudnn.diagonal_alignment.BOTTOM_RIGHT
@@ -368,6 +374,29 @@ def test_sdpa_backward_causal(cudnn_handle, dtype, shape):
         q, k, v, o, dO, stats, right_bound=0
     )
     _assert_grads_close(flag_out, cudnn_out, dtype)
+
+
+@pytest.mark.sdpa_backward
+@pytest.mark.graph
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16))
+@pytest.mark.parametrize(
+    "shape",
+    SDPA_BACKWARD_LONG_CAUSAL_D128_CASES,
+    ids=("mha_b2_h16_s2048", "gqa_b1_h32_hkv8_s4096"),
+)
+def test_sdpa_backward_long_causal_d128(cudnn_handle, dtype, shape):
+    torch.manual_seed(23)
+    q, k, v = _make_qkv(shape, dtype)
+    dO = torch.randn_like(q)
+    o, stats = _cudnn_sdpa_forward(q, k, v, cudnn_handle, right_bound=0)
+    expected = _cudnn_sdpa_backward(
+        q, k, v, o, dO, stats, cudnn_handle, right_bound=0
+    )
+    actual = _run_flag_dnn_sdpa_backward_graph(
+        q, k, v, o, dO, stats, right_bound=0
+    )
+    _assert_grads_close(actual, expected, dtype)
 
 
 @pytest.mark.sdpa_backward
