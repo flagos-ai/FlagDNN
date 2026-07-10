@@ -9,6 +9,7 @@ bin-release/
 __pycache__/
 .vscode/
 .worktrees/
+.superpowers/
 
 # Python venv directory
 .venv
