@@ -235,3 +235,40 @@ def test_conv_fprop_flag_dnn(
 
     atol = 2e-2 if dtype == torch.float16 else 5e-2
     utils.gems_assert_close(flag_dnn_out, cudnn_out, dtype, atol=atol)
+
+
+@pytest.mark.graph
+@pytest.mark.conv_fprop
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
+def test_conv_fprop_nchw_im2col_matmul_dispatch(cudnn_handle, dtype):
+    torch.manual_seed(0)
+    device = flag_dnn.device
+    x = torch.randint(-2, 3, (1, 128, 40, 40), device=device).to(dtype)
+    weight = torch.randint(-2, 3, (256, 128, 3, 3), device=device).to(dtype)
+    stride = (2, 2)
+    padding = (1, 1)
+    dilation = (1, 1)
+
+    cudnn_out = _cudnn_conv_fprop(
+        x,
+        weight,
+        stride,
+        padding,
+        None,
+        None,
+        dilation,
+        cudnn_handle,
+    )
+    flag_dnn_out = _run_flag_dnn_conv_fprop_graph(
+        x,
+        weight,
+        stride,
+        padding,
+        None,
+        None,
+        dilation,
+    )
+
+    atol = 2e-2 if dtype == torch.float16 else 5e-2
+    utils.gems_assert_close(flag_dnn_out, cudnn_out, dtype, atol=atol)

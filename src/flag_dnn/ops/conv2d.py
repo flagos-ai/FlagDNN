@@ -4055,7 +4055,6 @@ def conv2d(
                 c_out,
                 hw,
                 kdim,
-                FAST_FP32_TO_FP16=False,
                 BLOCK_M=block_m,
                 BLOCK_N=block_n,
                 BLOCK_K=128,

@@ -56,6 +56,15 @@ def _run_flag_dnn_matmul_graph(a, b):
     return compiled.run(a.clone(), b.clone())
 
 
+def _torch_fp32_matmul(a, b):
+    previous_precision = torch.get_float32_matmul_precision()
+    try:
+        torch.set_float32_matmul_precision("highest")
+        return torch.matmul(a, b)
+    finally:
+        torch.set_float32_matmul_precision(previous_precision)
+
+
 @pytest.mark.matmul
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
@@ -67,8 +76,38 @@ def test_matmul(cudnn_handle, dtype, shape_pair):
     a = torch.randn(a_shape, dtype=dtype, device=flag_dnn.device)
     b = torch.randn(b_shape, dtype=dtype, device=flag_dnn.device)
 
-    cudnn_out = _cudnn_matmul(a, b, cudnn_handle)
     flag_dnn_out = _run_flag_dnn_matmul_graph(a, b)
 
-    atol = 1e-1 if dtype == torch.bfloat16 else 5e-2
-    utils.gems_assert_close(flag_dnn_out, cudnn_out, dtype, atol=atol)
+    if dtype == torch.bfloat16:
+        expected = _cudnn_matmul(a, b, cudnn_handle)
+        atol = 1e-1
+    elif dtype == torch.float16:
+        expected = _cudnn_matmul(a, b, cudnn_handle)
+        atol = 5e-2
+    else:
+        expected = _torch_fp32_matmul(a, b)
+        atol = 2e-4
+    utils.gems_assert_close(flag_dnn_out, expected, dtype, atol=atol)
+
+
+@pytest.mark.matmul
+@pytest.mark.graph
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize(
+    "shape_pair",
+    (
+        ((1, 512, 512), (1, 512, 512)),
+        ((1, 1024, 512), (1, 512, 1024)),
+    ),
+    ids=("general_512", "direct_1024"),
+)
+def test_matmul_fp32_ieee_dispatch(shape_pair):
+    torch.manual_seed(7)
+    a_shape, b_shape = shape_pair
+    a = torch.randn(a_shape, dtype=torch.float32, device=flag_dnn.device)
+    b = torch.randn(b_shape, dtype=torch.float32, device=flag_dnn.device)
+
+    expected = _torch_fp32_matmul(a, b)
+    flag_dnn_out = _run_flag_dnn_matmul_graph(a, b)
+
+    utils.gems_assert_close(flag_dnn_out, expected, torch.float32, atol=2e-4)

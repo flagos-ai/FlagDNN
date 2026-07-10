@@ -10,7 +10,6 @@ from flag_dnn.utils.device_info import get_device_info
 
 
 _MATMUL_CONFIGS = runtime.get_tuned_config("matmul")
-_MATMUL_FP32_DIRECT_CONFIGS = runtime.get_tuned_config("matmul_fp32_direct")
 _MATMUL_PERSISTENT_CONFIGS = runtime.get_tuned_config("matmul_persistent")
 
 
@@ -30,7 +29,6 @@ def _batched_matmul_kernel(
     M: tl.constexpr,
     N: tl.constexpr,
     K: tl.constexpr,
-    FAST_FP32_TO_FP16: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLOCK_K: tl.constexpr,
@@ -93,10 +91,7 @@ def _batched_matmul_kernel(
                 boundary_check=(0, 1),
                 padding_option="zero",
             )
-        if FAST_FP32_TO_FP16:
-            a = a.to(tl.float16)
-            b = b.to(tl.float16)
-        acc += tl.dot(a, b, input_precision="tf32")
+        acc += tl.dot(a, b)
         a_block = tl.advance(a_block, (0, BLOCK_K))
         b_block = tl.advance(b_block, (BLOCK_K, 0))
 
@@ -115,16 +110,8 @@ def _batched_matmul_kernel(
         tl.store(c_block, c, boundary_check=(0, 1))
 
 
-@libentry()
-@libtuner(
-    configs=_MATMUL_FP32_DIRECT_CONFIGS,
-    key=["M", "N", "K"],
-    strategy=["align32", "align32", "align32"],
-    warmup=5,
-    rep=10,
-)
 @triton.jit
-def _batched_matmul_fp32_direct_kernel(
+def _batched_matmul_fp32_ieee_kernel(
     a_ptr,
     b_ptr,
     c_ptr,
@@ -179,11 +166,7 @@ def _batched_matmul_fp32_direct_kernel(
                 mask=(offs_k[:, None] < K) & (offs_n[None, :] < N),
                 other=0.0,
             )
-        acc += tl.dot(
-            a.to(tl.float16),
-            b.to(tl.float16),
-            input_precision="tf32",
-        )
+        acc += tl.dot(a, b, input_precision="ieee")
         a_ptrs += BLOCK_K
         b_ptrs += BLOCK_K * N
         offs_k += BLOCK_K
@@ -336,7 +319,29 @@ def _batched_matmul_3d_out(
     exact_projection = batch == 16 and m == 2048 and n == 2048 and k == 512
 
     with torch_device_fn.device(A.device):
-        if exact_projection and A.dtype in (torch.float16, torch.bfloat16):
+        if A.dtype == torch.float32:
+            block_m = 16 if m <= 16 else 32
+            block_n = 32 if n <= 32 else 64
+            block_k = 32 if k <= 64 else 64
+            ieee_grid = (
+                triton.cdiv(m, block_m) * triton.cdiv(n, block_n),
+                batch,
+            )
+            _batched_matmul_fp32_ieee_kernel[ieee_grid](
+                A,
+                B,
+                C,
+                m,
+                n,
+                k,
+                BLOCK_M=block_m,
+                BLOCK_N=block_n,
+                BLOCK_K=block_k,
+                GROUP_M=1,
+                num_warps=4,
+                num_stages=3,
+            )
+        elif exact_projection and A.dtype in (torch.float16, torch.bfloat16):
             fixed_grid = (triton.cdiv(m, 128) * triton.cdiv(n, 256), batch)
             _batched_matmul_kernel.fn.fn[fixed_grid](
                 A,
@@ -345,30 +350,12 @@ def _batched_matmul_3d_out(
                 m,
                 n,
                 k,
-                False,
                 BLOCK_M=128,
                 BLOCK_N=256,
                 BLOCK_K=64,
                 GROUP_M=16,
                 num_warps=8,
                 num_stages=4,
-            )
-        elif exact_projection and A.dtype == torch.float32:
-            fixed_grid = (triton.cdiv(m, 256) * triton.cdiv(n, 128), batch)
-            _batched_matmul_kernel.fn.fn[fixed_grid](
-                A,
-                B,
-                C,
-                m,
-                n,
-                k,
-                True,
-                BLOCK_M=256,
-                BLOCK_N=128,
-                BLOCK_K=64,
-                GROUP_M=1,
-                num_warps=16,
-                num_stages=3,
             )
         elif (
             A.dtype in (torch.float16, torch.bfloat16)
@@ -396,15 +383,6 @@ def _batched_matmul_3d_out(
                 batch,
                 num_sms,
             )
-        elif A.dtype == torch.float32 and m >= 1024 and n >= 1024 and k >= 512:
-            _batched_matmul_fp32_direct_kernel[grid](
-                A,
-                B,
-                C,
-                m,
-                n,
-                k,
-            )
         else:
             _batched_matmul_kernel[grid](
                 A,
@@ -413,12 +391,6 @@ def _batched_matmul_3d_out(
                 m,
                 n,
                 k,
-                FAST_FP32_TO_FP16=(
-                    A.dtype == torch.float32
-                    and m >= 512
-                    and n >= 512
-                    and k >= 512
-                ),
             )
     return C
 
