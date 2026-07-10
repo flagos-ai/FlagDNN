@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       vendor:
-        description: 'GEMS_VENDOR value (e.g. iluvatar, ascend, moore)'
+        description: 'DNN_VENDOR value (e.g. nvidia, iluvatar)'
         required: true
         type: string
       runner_label:
@@ -17,11 +17,17 @@ on:
         type: string
         default: ''
       test_script:
-        description: 'Path to test script under tools/'
-        required: true
+        description: 'Path to test script under tools/ (leave empty to use tools/run_tests.sh)'
+        required: false
         type: string
+        default: ''
       changed_files:
         description: 'List of changed files in a PR'
+        required: false
+        type: string
+        default: ''
+      pr_id:
+        description: 'ID of the PR'
         required: false
         type: string
         default: ''
@@ -35,15 +41,42 @@ jobs:
         ${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v6
+      - id: checkout-attempt-1
+        uses: actions/checkout@v4
+        continue-on-error: true
+
+      - id: sleep-1
+        if: steps.checkout-attempt-1.outcome == 'failure'
+        shell: bash
+        run: sleep 30s
+
+      - id: checkout-attempt-2
+        if: steps.checkout-attempt-1.outcome == 'failure'
+        uses: actions/checkout@v4
+        continue-on-error: true
+
+      - id: sleep-2
+        if: steps.checkout-attempt-2.outcome == 'failure'
+        shell: bash
+        run: sleep 30s
+
+      - id: checkout-attempt-3
+        if: steps.checkout-attempt-2.outcome == 'failure'
+        uses: actions/checkout@v4
+
       - name: Check GPU availability
         if: ${{ inputs.gpu_check_script != '' }}
         shell: bash
         run: |
           bash ${{ inputs.gpu_check_script }}
+
       - name: Run backend tests
         env:
           CHANGED_FILES: ${{ inputs.changed_files }}
         shell: bash
         run: |
-          bash ${{ inputs.test_script }} ${{ inputs.vendor }}
+          TEST_SCRIPT="${{ inputs.test_script }}"
+          if [ -z "$TEST_SCRIPT" ]; then
+            TEST_SCRIPT="tools/run_tests.sh"
+          fi
+          bash "$TEST_SCRIPT" ${{ inputs.vendor }} ${{ inputs.pr_id }}

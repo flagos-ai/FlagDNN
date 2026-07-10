@@ -1,20 +1,80 @@
 name: CI Auto Test
 
-# 触发条件：向 main 分支 push 代码，或者提 PR 时触发
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "master" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "master" ]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  workflow_dispatch:
 
 jobs:
+  preprocess:
+    runs-on: ubuntu-latest
+    outputs:
+      changed_files: ${{ steps.changed-files.outputs.all_changed_files }}
+      pr_id: ${{ steps.get-pr-id.outputs.PR_ID }}
+      labels: ${{ fromJSON(steps.get-labels.outputs.result) }}
+    steps:
+      - id: changed-files
+        uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96  # v47.0.6
+
+      - uses: actions/checkout@v4
+
+      - id: wait-for-triage
+        if: github.event_name == 'pull_request'
+        uses: ArcticLampyrid/action-wait-for-workflow@v1
+        with:
+          workflow: .github/workflows/triage.yaml
+        continue-on-error: true
+
+      - id: get-pr-id
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            PR_ID=${{ github.event.pull_request.number }}
+          elif [ "${{ github.event_name }}" == "push" ]; then
+            PR_NUMBER=$(git log -1 --pretty=format:'%s' | grep -oE '#[0-9]+' | grep -oE '[0-9]+' || true)
+            PR_ID=${PR_NUMBER}
+          fi
+          echo "PR_ID=${PR_ID}" >> "$GITHUB_OUTPUT"
+          echo "PR_ID: ${PR_ID}"
+
+      - id: get-labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const isPullRequest = context.eventName === 'pull_request';
+            if (!isPullRequest) {
+              return "[]";
+            }
+
+            const prNumber = context.payload.pull_request.number;
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+
+            const labelNames = labels.map(label => label.name);
+            console.log('Labels:', labelNames);
+            return JSON.stringify(labelNames);
+
   test-nvidia:
+    needs: preprocess
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      contains(needs.preprocess.outputs.labels, 'tests') ||
+      contains(needs.preprocess.outputs.labels, 'ops') ||
+      contains(needs.preprocess.outputs.labels, 'core') ||
+      contains(needs.preprocess.outputs.labels, 'benchmark') ||
+      contains(needs.preprocess.outputs.labels, 'vendor/NVIDIA')
     uses: ./.github/workflows/backend-test.yaml
     with:
       vendor: 'nvidia'
-      # label 必须与配置的自托管服务器标签一致！
-      runner_label: 'self-hosted-nvidia'
-      # GPU 检查脚本路径
+      runner_label: 'h100'
       gpu_check_script: 'tools/check_nvidia_gpu.sh'
-      # 实际测试脚本路径
       test_script: 'tools/run_tests.sh'
+      pr_id: ${{ needs.preprocess.outputs.pr_id }}
+      changed_files: ${{ join(needs.preprocess.outputs.changed_files, ' ') }}
