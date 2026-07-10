@@ -32,6 +32,7 @@ def _prepare_sdpa(
     import math
 
     import triton
+    from triton.tools.tensor_descriptor import TensorDescriptor
 
     from flag_dnn.ops.sdpa import (
         _BOTTOM_RIGHT,
@@ -44,6 +45,7 @@ def _prepare_sdpa(
         _sdpa_fwd_gqa_causal_desc_kernel,
         _sdpa_fwd_gqa_causal_kernel,
         _sdpa_fwd_mha_causal_desc_kernel,
+        _sdpa_fwd_mha_causal_hostdesc_kernel,
         _sdpa_fwd_kernel,
     )
 
@@ -469,6 +471,113 @@ def _prepare_sdpa(
         and v_stride[3] == 1
     )
     if use_mha_causal_desc:
+        use_mha_hostdesc = (
+            batch == 2
+            and heads == 16
+            and k_shape[1] == 16
+            and sq == 2048
+            and skv == 2048
+            and q_stride == (heads * sq * head_dim, sq * head_dim, head_dim, 1)
+            and k_stride
+            == (
+                k_shape[1] * skv * head_dim,
+                skv * head_dim,
+                head_dim,
+                1,
+            )
+            and v_stride == (v_shape[1] * skv * v_dim, skv * v_dim, v_dim, 1)
+        )
+        if use_mha_hostdesc:
+            descriptor_key = None
+            descriptor = None
+            descriptor_shape = (batch * k_shape[1] * skv, head_dim)
+            descriptor_stride = (head_dim, 1)
+            descriptor_block = [64, head_dim]
+
+            def get_k_descriptor(k: torch.Tensor):
+                nonlocal descriptor_key, descriptor
+                key = (
+                    k.data_ptr(),
+                    tuple(k.shape),
+                    tuple(k.stride()),
+                    k.dtype,
+                    k.device.type,
+                    k.device.index,
+                )
+                if descriptor is None or descriptor_key != key:
+                    descriptor = TensorDescriptor(
+                        k,
+                        list(descriptor_shape),
+                        list(descriptor_stride),
+                        descriptor_block,
+                    )
+                    descriptor_key = key
+                return descriptor
+
+            def hostdesc_runtime_args(inputs, output):
+                return (
+                    inputs[0],
+                    get_k_descriptor(inputs[1]),
+                    inputs[2],
+                    output[0],
+                    output[1],
+                )
+
+            mha_host_tail = (
+                attn_scale * _LOG2E,
+                heads,
+                sq,
+                skv,
+                *q_stride,
+                *v_stride,
+                *o_stride,
+                *stats_stride,
+            )
+            mha_host_constexpr = {
+                "HEAD_DIM": head_dim,
+                "V_DIM": v_dim,
+                "ELEM_SIZE": out_dtype.itemsize,
+                "BLOCK_D": head_dim,
+                "BLOCK_DV": v_dim,
+            }
+
+            def mha_host_grid(meta):
+                return (batch_heads, triton.cdiv(sq, meta["BLOCK_M"]))
+
+            def build_mha_host_cached_call(meta):
+                block_m = int(meta["BLOCK_M"])
+                block_n = int(meta["BLOCK_N"])
+                return (
+                    batch_heads,
+                    triton.cdiv(sq, block_m),
+                    1,
+                ), mha_host_tail + (
+                    head_dim,
+                    v_dim,
+                    out_dtype.itemsize,
+                    block_m,
+                    block_n,
+                    head_dim,
+                    v_dim,
+                )
+
+            return make_single_kernel_run_fn(
+                PreparedSingleKernelRunSpec(
+                    kernel=PreparedSingleKernelSpec(
+                        kernel=_sdpa_fwd_mha_causal_hostdesc_kernel,
+                        grid=mha_host_grid,
+                        static_args=mha_host_tail,
+                        constexpr_kwargs=mha_host_constexpr,
+                        build_cached_call=build_mha_host_cached_call,
+                    ),
+                    input_checks=qkv_input_checks,
+                    output_factory=make_stats_output,
+                    runtime_args=hostdesc_runtime_args,
+                    pre_launch=_ensure_triton_tma_allocator,
+                ),
+                default_run_fn,
+            )
+
         mha_desc_constexpr = dict(
             HEAD_DIM=head_dim,
             V_DIM=v_dim,

@@ -377,6 +377,19 @@ sdpa_gqa_causal_desc:
       - 4
     stages:
       - 3
+sdpa_mha_causal_hostdesc:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M: block_m
+        BLOCK_N: block_n
+      num_warps: warps
+      num_stages: stages
+    block_m: [64]
+    block_n: [64]
+    warps: [4]
+    stages: [3]
+
 sdpa_decode:
   # Split-KV flash-decoding partial kernel (seq_q == 1).
   - gen: true

@@ -11,7 +11,6 @@ from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
 
-
 logger = logging.getLogger(__name__)
 
 _SUPPORTED_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
@@ -630,6 +629,166 @@ def _sdpa_fwd_gqa_causal_kdesc_inner(
         acc += tl.dot(p.to(v.dtype), v)
         m_i = m_new
     return acc, l_i, m_i
+
+
+@triton.jit
+def _sdpa_fwd_causal_host_kdesc_inner(
+    acc,
+    l_i,
+    m_i,
+    q,
+    k_desc,
+    k_row,
+    v_base,
+    qk_scale: tl.constexpr,
+    offs_m,
+    offs_dv,
+    lo,
+    hi,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    MASKED: tl.constexpr,
+):
+    for start_n in range(lo, hi, BLOCK_N):
+        start_n = tl.multiple_of(start_n, BLOCK_N)
+        start_n_i32 = start_n.to(tl.int32)  # type: ignore[attr-defined]
+        offs_n = start_n_i32 + tl.arange(0, BLOCK_N)
+        k = tl.trans(k_desc.load([k_row + start_n_i32, 0]))
+        score = tl.dot(q, k).to(tl.float32) * qk_scale
+        if MASKED:
+            score = tl.where(
+                offs_n[None, :] <= offs_m[:, None],
+                score,
+                float("-inf"),
+            )
+        m_new = tl.maximum(m_i, tl.max(score, 1))
+        p = tl.exp2(score - m_new[:, None])
+        alpha = tl.exp2(m_i - m_new)
+        l_i = l_i * alpha + tl.sum(p, 1)
+        acc = acc * alpha[:, None]
+        v = tl.load(
+            v_base + offs_n[:, None] * stride_vn + offs_dv[None, :] * stride_vd
+        )
+        acc += tl.dot(p.to(v.dtype), v)
+        m_i = m_new
+    return acc, l_i, m_i
+
+
+@libentry()
+@libtuner(
+    configs=runtime.get_tuned_config("sdpa_mha_causal_hostdesc"),
+    key=["SQ", "SKV", "HEAD_DIM", "V_DIM", "ELEM_SIZE"],
+    strategy=["log", "log", "default", "default", "default"],
+    warmup=5,
+    rep=10,
+)
+@triton.jit
+def _sdpa_fwd_mha_causal_hostdesc_kernel(
+    q_ptr,
+    k_desc,
+    v_ptr,
+    o_ptr,
+    stats_ptr,
+    qk_scale: tl.constexpr,
+    HQ: tl.constexpr,
+    SQ: tl.constexpr,
+    SKV: tl.constexpr,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
+    HEAD_DIM: tl.constexpr,
+    V_DIM: tl.constexpr,
+    ELEM_SIZE: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+    BLOCK_DV: tl.constexpr,
+):
+    pid_bh = tl.program_id(0)
+    raw_pid_m = tl.program_id(1)
+    pid_m = tl.cdiv(SQ, BLOCK_M) - 1 - raw_pid_m
+    off_b = pid_bh // HQ
+    off_h = pid_bh % HQ
+    start_m = pid_m * BLOCK_M
+    offs_m = tl.max_contiguous(start_m + tl.arange(0, BLOCK_M), BLOCK_M)
+    offs_d = tl.arange(0, BLOCK_D)
+    offs_dv = tl.arange(0, BLOCK_DV)
+    q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
+    v_base = v_ptr + off_b * stride_vb + off_h * stride_vh
+    q = tl.load(
+        q_base + offs_m[:, None] * stride_qm + offs_d[None, :] * stride_qd
+    )
+    acc = tl.zeros((BLOCK_M, BLOCK_DV), dtype=tl.float32)
+    l_i = tl.zeros((BLOCK_M,), dtype=tl.float32)
+    m_i = tl.full((BLOCK_M,), float("-inf"), dtype=tl.float32)
+    hi = start_m + BLOCK_M
+    full_hi = tl.minimum((start_m // BLOCK_N) * BLOCK_N, hi)
+    k_row = pid_bh * SKV
+    if 0 < full_hi:
+        acc, l_i, m_i = _sdpa_fwd_causal_host_kdesc_inner(
+            acc,
+            l_i,
+            m_i,
+            q,
+            k_desc,
+            k_row,
+            v_base,
+            qk_scale,
+            offs_m,
+            offs_dv,
+            0,
+            full_hi,
+            stride_vn,
+            stride_vd,
+            BLOCK_N=BLOCK_N,
+            MASKED=False,
+        )
+    if full_hi < hi:
+        acc, l_i, m_i = _sdpa_fwd_causal_host_kdesc_inner(
+            acc,
+            l_i,
+            m_i,
+            q,
+            k_desc,
+            k_row,
+            v_base,
+            qk_scale,
+            offs_m,
+            offs_dv,
+            full_hi,
+            hi,
+            stride_vn,
+            stride_vd,
+            BLOCK_N=BLOCK_N,
+            MASKED=True,
+        )
+    l_safe = tl.where(l_i == 0.0, 1.0, l_i)
+    acc = acc / l_safe[:, None]
+    tl.store(
+        o_ptr
+        + off_b * stride_ob
+        + off_h * stride_oh
+        + offs_m[:, None] * stride_om
+        + offs_dv[None, :] * stride_od,
+        acc.to(o_ptr.dtype.element_ty),
+    )
+    tl.store(
+        stats_ptr + off_b * stride_sb + off_h * stride_sh + offs_m * stride_sm,
+        m_i / _LOG2E_KERNEL + tl.log(l_safe),
+    )
 
 
 @libentry()

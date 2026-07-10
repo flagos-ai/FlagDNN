@@ -229,6 +229,72 @@ def test_sdpa_gqa_causal_d128_low_precision(cudnn_handle, dtype):
 @pytest.mark.sdpa
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16))
+def test_sdpa_long_causal_host_k_descriptor_rebinds_storage(
+    cudnn_handle, monkeypatch, dtype
+):
+    from triton.tools import tensor_descriptor as descriptor_module
+
+    real_descriptor = descriptor_module.TensorDescriptor
+    descriptor_ptrs = []
+
+    def recording_descriptor(base, desc_shape, strides, block_shape):
+        descriptor_ptrs.append(base.data_ptr())
+        return real_descriptor(base, desc_shape, strides, block_shape)
+
+    monkeypatch.setattr(
+        descriptor_module, "TensorDescriptor", recording_descriptor
+    )
+    torch.manual_seed(17)
+    shape = (2, 16, 16, 2048, 2048, 128)
+    q_a, k_a, v_a = _make_qkv(shape, dtype)
+
+    @flag_dnn.graph
+    def fn(q, k, v):
+        return flag_dnn.sdpa(
+            q,
+            k,
+            v,
+            diagonal_band_right_bound=0,
+            generate_stats=True,
+            name="sdpa",
+        )
+
+    compiled = flag_dnn.compile(
+        fn,
+        inputs=[
+            flag_dnn.TensorSpec.from_tensor(q_a, "q"),
+            flag_dnn.TensorSpec.from_tensor(k_a, "k"),
+            flag_dnn.TensorSpec.from_tensor(v_a, "v"),
+        ],
+        options={"cache": None},
+    )
+
+    def check(q, k, v):
+        expected = _cudnn_sdpa(
+            q, k, v, cudnn_handle, right_bound=0, generate_stats=True
+        )
+        actual = compiled.run(q, k, v)
+        _assert_sdpa_close(actual, expected, dtype)
+        return actual
+
+    out_a = check(q_a, k_a, v_a)
+    q_b, k_b, v_b = _make_qkv(shape, dtype)
+    out_b = check(q_b, k_b, v_b)
+    assert descriptor_ptrs == [k_a.data_ptr(), k_b.data_ptr()]
+    assert out_a[0].data_ptr() != out_b[0].data_ptr()
+
+    q_b.normal_()
+    k_b.normal_()
+    v_b.normal_()
+    out_c = check(q_b, k_b, v_b)
+    assert descriptor_ptrs == [k_a.data_ptr(), k_b.data_ptr()]
+    assert out_b[0].data_ptr() != out_c[0].data_ptr()
+
+
+@pytest.mark.sdpa
+@pytest.mark.graph
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("shape", consts.SDPA_MASKED_CASES)
 def test_sdpa_causal(cudnn_handle, dtype, shape):
