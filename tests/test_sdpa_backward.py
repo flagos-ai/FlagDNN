@@ -504,8 +504,8 @@ def test_sdpa_backward_long_causal_d128(cudnn_handle, dtype, shape):
 @pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16))
 @pytest.mark.parametrize(
     "shape",
-    SDPA_BACKWARD_LONG_CAUSAL_D128_CASES[:1],
-    ids=("mha_b2_h16_s2048",),
+    SDPA_BACKWARD_LONG_CAUSAL_D128_CASES,
+    ids=("mha_b2_h16_s2048", "gqa_b1_h32_hkv8_s4096"),
 )
 def test_sdpa_backward_long_causal_rebinds_storage(cudnn_handle, dtype, shape):
     torch.manual_seed(29)
