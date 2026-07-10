@@ -613,6 +613,24 @@ sdpa_backward_mloop_causal_d128:
       - 4
     stages:
       - 2
+sdpa_backward_owner_mha_causal_d128:
+  - gen: true
+    param_map:
+      META:
+        BLOCK_M_DKDV: block_m_dkdv
+        BLOCK_N_DKDV: block_n_dkdv
+        BLOCK_M_DQ: block_m_dq
+        BLOCK_N_DQ: block_n_dq
+        BLOCK_D: block_d
+      num_warps: warps
+      num_stages: stages
+    block_m_dkdv: [64]
+    block_n_dkdv: [64]
+    block_m_dq: [64]
+    block_n_dq: [64]
+    block_d: [128]
+    warps: [4]
+    stages: [2]
 sdpa_backward_decode_d128:
   # SQ=1 non-GQA D128 backward: dK/dV direct store and dQ atomic accumulation.
   - gen: true

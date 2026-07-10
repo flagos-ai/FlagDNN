@@ -19,6 +19,55 @@ from flag_dnn.graph.tensor import TensorSpec, torch_dtype
 # SDPA backward prepared paths
 
 
+def _is_owner_compute_causal_d128(
+    q_shape,
+    k_shape,
+    v_shape,
+    o_shape,
+    do_shape,
+    stats_shape,
+    q_stride,
+    k_stride,
+    v_stride,
+    o_stride,
+    do_stride,
+    stats_stride,
+    out_dtype,
+    *,
+    causal_top_left,
+):
+    if not causal_top_left or out_dtype not in (
+        torch.float16,
+        torch.bfloat16,
+    ):
+        return False
+    exact_shapes = {
+        (
+            (2, 16, 2048, 128),
+            (2, 16, 2048, 128),
+        ),
+    }
+    if (q_shape, k_shape) not in exact_shapes:
+        return False
+    if v_shape != k_shape or o_shape != q_shape or do_shape != q_shape:
+        return False
+    if stats_shape != (*q_shape[:3], 1):
+        return False
+
+    def bhsd_stride(shape):
+        _, heads, seq, dim = shape
+        return (heads * seq * dim, seq * dim, dim, 1)
+
+    return (
+        q_stride == bhsd_stride(q_shape)
+        and k_stride == bhsd_stride(k_shape)
+        and v_stride == bhsd_stride(v_shape)
+        and o_stride == bhsd_stride(o_shape)
+        and do_stride == bhsd_stride(do_shape)
+        and stats_stride == (q_shape[1] * q_shape[2], q_shape[2], 1, 1)
+    )
+
+
 @register_prepared_run_fn("sdpa_backward")
 def _prepare_sdpa_backward(
     attrs: dict[str, Any],
@@ -39,11 +88,13 @@ def _prepare_sdpa_backward(
         _sdpa_bwd_fused_atomic_gqa_causal_kernel,
         _sdpa_bwd_fused_atomic_gqa_causal_tri_kernel,
         _sdpa_bwd_fused_atomic_kernel,
+        _sdpa_bwd_delta_kernel,
         _sdpa_bwd_decode_dkdv_dq_atomic_kernel,
         _sdpa_bwd_dense_mloop_kernel,
         _sdpa_bwd_gqa_dkdv_atomic_causal_d128_kernel,
         _sdpa_bwd_gqa_dq_store_delta_causal_d128_kernel,
         _sdpa_bwd_mloop_causal_d128_kernel,
+        _sdpa_bwd_owner_causal_d128_kernel,
         _single_tuned_config_kwargs,
         _zero_two_contiguous_kernel,
         _zero_three_and_delta_kernel,
@@ -120,6 +171,24 @@ def _prepare_sdpa_backward(
     causal_top_left = (
         alignment == _TOP_LEFT and left is None and right == 0 and sq == skv
     )
+    owner_kind: Optional[str] = None
+    if _is_owner_compute_causal_d128(
+        q_shape,
+        k_shape,
+        v_shape,
+        o_shape,
+        do_shape,
+        stats_shape,
+        q_stride,
+        k_stride,
+        v_stride,
+        o_stride,
+        do_stride,
+        stats_stride,
+        out_dtype,
+        causal_top_left=causal_top_left,
+    ):
+        owner_kind = "mha"
     if banded and not causal_top_left:
         return None
     use_fused_gqa = (
@@ -171,6 +240,11 @@ def _prepare_sdpa_backward(
         "sdpa_backward_gqa_dq_delta_d128"
     )
     decode_config = _single_tuned_config_kwargs("sdpa_backward_decode_d128")
+    owner_config = None
+    if owner_kind is not None:
+        owner_config = _single_tuned_config_kwargs(
+            "sdpa_backward_owner_mha_causal_d128"
+        )
     dense_mloop_config = _single_tuned_config_kwargs(
         "sdpa_backward_dense_mloop_d128"
         if head_dim > 64
@@ -461,7 +535,12 @@ def _prepare_sdpa_backward(
             v_shape, v_stride, dtype=out_dtype, device=q.device
         )
         delta = None
-        if use_delta_fused or use_exact_delta or use_gqa_split_causal:
+        if (
+            owner_kind is not None
+            or use_delta_fused
+            or use_exact_delta
+            or use_gqa_split_causal
+        ):
             delta = torch.empty(
                 (batch, heads, sq), dtype=torch.float32, device=q.device
             )
@@ -469,6 +548,111 @@ def _prepare_sdpa_backward(
 
     def bwd_result(context: Any) -> tuple[Any, Any, Any]:
         return context[0], context[1], context[2]
+
+    if owner_kind is not None:
+        assert owner_config is not None
+        num_n_blocks = triton.cdiv(skv, owner_config["BLOCK_N_DKDV"])
+        num_m_blocks = triton.cdiv(sq, owner_config["BLOCK_M_DQ"])
+        owner_grid = (
+            num_n_blocks + q_per_k * num_m_blocks,
+            batch,
+            kv_heads,
+        )
+        delta_grid = (
+            triton.cdiv(sq, 64),
+            batch * heads,
+            1,
+        )
+        delta_tail = (
+            heads,
+            sq,
+            *o_stride,
+            *do_stride,
+            *delta_stride,
+            128,
+            64,
+            128,
+        )
+        owner_tail = (
+            attn_scale,
+            heads,
+            q_per_k,
+            sq,
+            *q_stride,
+            *k_stride,
+            *v_stride,
+            *do_stride,
+            stats_stride[0],
+            stats_stride[1],
+            stats_stride[2],
+            *delta_stride,
+            *q_stride,
+            *k_stride,
+            *v_stride,
+            num_n_blocks,
+            num_m_blocks,
+            owner_config["BLOCK_M_DKDV"],
+            owner_config["BLOCK_N_DKDV"],
+            owner_config["BLOCK_M_DQ"],
+            owner_config["BLOCK_N_DQ"],
+            owner_config["BLOCK_D"],
+        )
+
+        def owner_delta_runtime_args(
+            inputs: Sequence[Any], context: Any
+        ) -> tuple[Any, ...]:
+            delta = context[3]
+            assert isinstance(delta, torch.Tensor)
+            return inputs[3], inputs[4], delta
+
+        def owner_runtime_args(
+            inputs: Sequence[Any], context: Any
+        ) -> tuple[Any, ...]:
+            delta = context[3]
+            assert isinstance(delta, torch.Tensor)
+            return (
+                inputs[0],
+                inputs[1],
+                inputs[2],
+                inputs[4],
+                inputs[5],
+                delta,
+                context[0],
+                context[1],
+                context[2],
+            )
+
+        delta_step = PreparedPipelineStepSpec(
+            kernel=_sdpa_bwd_delta_kernel,
+            grid=delta_grid,
+            runtime_args=owner_delta_runtime_args,
+            static_args=delta_tail[:-3],
+            constexpr_kwargs={
+                "V_DIM": 128,
+                "BLOCK_M": 64,
+                "BLOCK_DV": 128,
+                "num_warps": 4,
+                "num_stages": 2,
+            },
+            build_cached_call=make_static_cached_call(delta_grid, delta_tail),
+        )
+        owner_step = PreparedPipelineStepSpec(
+            kernel=_sdpa_bwd_owner_causal_d128_kernel,
+            grid=owner_grid,
+            runtime_args=owner_runtime_args,
+            static_args=owner_tail[:-5],
+            constexpr_kwargs=owner_config,
+            build_cached_call=make_static_cached_call(owner_grid, owner_tail),
+        )
+        return make_kernel_pipeline_run_fn(
+            PreparedKernelPipelineSpec(
+                steps=(delta_step, owner_step),
+                input_checks=bwd_input_checks,
+                context_factory=make_bwd_context,
+                result=bwd_result,
+            ),
+            default_run_fn,
+        )
 
     zero_step_grid: tuple[int, int, int]
     zero_static_args: tuple[Any, ...]

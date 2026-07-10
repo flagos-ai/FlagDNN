@@ -41,7 +41,7 @@ def _sdpa_bwd_delta_kernel(
     do_ptr,
     delta_ptr,
     HQ: tl.constexpr,
-    SQ,
+    SQ: tl.constexpr,
     stride_ob: tl.constexpr,
     stride_oh: tl.constexpr,
     stride_om: tl.constexpr,
@@ -57,8 +57,8 @@ def _sdpa_bwd_delta_kernel(
     BLOCK_M: tl.constexpr,
     BLOCK_DV: tl.constexpr,
 ):
-    pid_m = tle.program_id(0)
-    pid_bh = tle.program_id(1)
+    pid_m = tl.program_id(0)
+    pid_bh = tl.program_id(1)
     off_b = pid_bh // HQ
     off_h = pid_bh % HQ
 
@@ -90,6 +90,222 @@ def _sdpa_bwd_delta_kernel(
         delta,
         mask=offs_m < SQ,
     )
+
+
+@triton.jit
+def _sdpa_bwd_owner_causal_d128_kernel(
+    q_ptr,
+    k_ptr,
+    v_ptr,
+    do_ptr,
+    stats_ptr,
+    delta_ptr,
+    dq_ptr,
+    dk_ptr,
+    dv_ptr,
+    attn_scale,
+    HQ: tl.constexpr,
+    Q_PER: tl.constexpr,
+    SQ: tl.constexpr,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_dob: tl.constexpr,
+    stride_doh: tl.constexpr,
+    stride_dom: tl.constexpr,
+    stride_dod: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
+    stride_delta_b: tl.constexpr,
+    stride_delta_h: tl.constexpr,
+    stride_delta_m: tl.constexpr,
+    stride_dqb: tl.constexpr,
+    stride_dqh: tl.constexpr,
+    stride_dqm: tl.constexpr,
+    stride_dqd: tl.constexpr,
+    stride_dkb: tl.constexpr,
+    stride_dkh: tl.constexpr,
+    stride_dkn: tl.constexpr,
+    stride_dkd: tl.constexpr,
+    stride_dvb: tl.constexpr,
+    stride_dvh: tl.constexpr,
+    stride_dvn: tl.constexpr,
+    stride_dvd: tl.constexpr,
+    NUM_N_BLOCKS: tl.constexpr,
+    NUM_M_BLOCKS: tl.constexpr,
+    BLOCK_M_DKDV: tl.constexpr,
+    BLOCK_N_DKDV: tl.constexpr,
+    BLOCK_M_DQ: tl.constexpr,
+    BLOCK_N_DQ: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+):
+    tl.static_assert(BLOCK_M_DKDV == BLOCK_N_DKDV)
+    tl.static_assert(BLOCK_M_DQ == BLOCK_N_DQ)
+    pid = tl.program_id(0)
+    off_b = tl.program_id(1)
+    off_kh = tl.program_id(2)
+    offs_d = tl.arange(0, BLOCK_D)
+
+    if pid < NUM_N_BLOCKS:
+        start_n = pid * BLOCK_N_DKDV
+        cols = start_n + tl.arange(0, BLOCK_N_DKDV)
+        k_base = k_ptr + off_b * stride_kb + off_kh * stride_kh
+        v_base = v_ptr + off_b * stride_vb + off_kh * stride_vh
+        k_tile = tl.load(
+            k_base + cols[:, None] * stride_kn + offs_d[None, :] * stride_kd,
+            eviction_policy="evict_last",
+        )
+        v_tile = tl.load(
+            v_base + cols[:, None] * stride_vn + offs_d[None, :] * stride_vd,
+            eviction_policy="evict_last",
+        )
+        dk = tl.zeros((BLOCK_N_DKDV, BLOCK_D), dtype=tl.float32)
+        dv = tl.zeros((BLOCK_N_DKDV, BLOCK_D), dtype=tl.float32)
+        rows_base = tl.arange(0, BLOCK_M_DKDV)
+        for off_g in range(0, Q_PER):
+            off_h = off_kh * Q_PER + off_g
+            q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
+            do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
+            stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
+            delta_base = (
+                delta_ptr + off_b * stride_delta_b + off_h * stride_delta_h
+            )
+            for start_m in tl.range(start_n, SQ, BLOCK_M_DKDV):
+                rows = start_m + rows_base
+                q_tile = tl.load(
+                    q_base
+                    + rows[:, None] * stride_qm
+                    + offs_d[None, :] * stride_qd,
+                    eviction_policy="evict_last",
+                )
+                do_tile = tl.load(
+                    do_base
+                    + rows[:, None] * stride_dom
+                    + offs_d[None, :] * stride_dod,
+                    eviction_policy="evict_last",
+                )
+                stats = tl.load(
+                    stats_base + rows * stride_sm,
+                    eviction_policy="evict_last",
+                ).to(tl.float32)
+                delta = tl.load(
+                    delta_base + rows * stride_delta_m,
+                    eviction_policy="evict_last",
+                ).to(tl.float32)
+                score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * (
+                    attn_scale * 1.4426950408889634
+                )
+                if start_m == start_n:
+                    valid = cols[None, :] <= rows[:, None]
+                    p = tl.where(
+                        valid,
+                        tl.exp2(score - stats[:, None] * 1.4426950408889634),
+                        0.0,
+                    )
+                else:
+                    p = tl.exp2(score - stats[:, None] * 1.4426950408889634)
+                dp = tl.dot(do_tile, tl.trans(v_tile)).to(tl.float32)
+                ds = p * (dp - delta[:, None])
+                dk += tl.dot(tl.trans(ds).to(q_tile.dtype), q_tile)
+                dv += tl.dot(tl.trans(p).to(do_tile.dtype), do_tile)
+        tl.store(
+            dk_ptr
+            + off_b * stride_dkb
+            + off_kh * stride_dkh
+            + cols[:, None] * stride_dkn
+            + offs_d[None, :] * stride_dkd,
+            (dk * attn_scale).to(dk_ptr.dtype.element_ty),
+        )
+        tl.store(
+            dv_ptr
+            + off_b * stride_dvb
+            + off_kh * stride_dvh
+            + cols[:, None] * stride_dvn
+            + offs_d[None, :] * stride_dvd,
+            dv.to(dv_ptr.dtype.element_ty),
+        )
+    else:
+        query_pid = pid - NUM_N_BLOCKS
+        off_g = query_pid // NUM_M_BLOCKS
+        pid_m = query_pid % NUM_M_BLOCKS
+        off_h = off_kh * Q_PER + off_g
+        start_m = pid_m * BLOCK_M_DQ
+        rows = start_m + tl.arange(0, BLOCK_M_DQ)
+        q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
+        k_base = k_ptr + off_b * stride_kb + off_kh * stride_kh
+        v_base = v_ptr + off_b * stride_vb + off_kh * stride_vh
+        do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
+        stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
+        delta_base = (
+            delta_ptr + off_b * stride_delta_b + off_h * stride_delta_h
+        )
+        q_tile = tl.load(
+            q_base + rows[:, None] * stride_qm + offs_d[None, :] * stride_qd,
+            eviction_policy="evict_last",
+        )
+        do_tile = tl.load(
+            do_base
+            + rows[:, None] * stride_dom
+            + offs_d[None, :] * stride_dod,
+            eviction_policy="evict_last",
+        )
+        stats = tl.load(
+            stats_base + rows * stride_sm,
+            eviction_policy="evict_last",
+        ).to(tl.float32)
+        delta = tl.load(
+            delta_base + rows * stride_delta_m,
+            eviction_policy="evict_last",
+        ).to(tl.float32)
+        dq = tl.zeros((BLOCK_M_DQ, BLOCK_D), dtype=tl.float32)
+        cols_base = tl.arange(0, BLOCK_N_DQ)
+        for start_n in tl.range(0, start_m + BLOCK_M_DQ, BLOCK_N_DQ):
+            cols = start_n + cols_base
+            k_tile = tl.load(
+                k_base
+                + cols[:, None] * stride_kn
+                + offs_d[None, :] * stride_kd,
+                eviction_policy="evict_last",
+            )
+            v_tile = tl.load(
+                v_base
+                + cols[:, None] * stride_vn
+                + offs_d[None, :] * stride_vd,
+                eviction_policy="evict_last",
+            )
+            score = tl.dot(q_tile, tl.trans(k_tile)).to(tl.float32) * (
+                attn_scale * 1.4426950408889634
+            )
+            if start_n + BLOCK_N_DQ <= start_m:
+                p = tl.exp2(score - stats[:, None] * 1.4426950408889634)
+            else:
+                valid = cols[None, :] <= rows[:, None]
+                p = tl.where(
+                    valid,
+                    tl.exp2(score - stats[:, None] * 1.4426950408889634),
+                    0.0,
+                )
+            dp = tl.dot(do_tile, tl.trans(v_tile)).to(tl.float32)
+            ds = p * (dp - delta[:, None])
+            dq += tl.dot(ds.to(k_tile.dtype), k_tile)
+        tl.store(
+            dq_ptr
+            + off_b * stride_dqb
+            + off_h * stride_dqh
+            + rows[:, None] * stride_dqm
+            + offs_d[None, :] * stride_dqd,
+            (dq * attn_scale).to(dq_ptr.dtype.element_ty),
+        )
 
 
 @triton.jit

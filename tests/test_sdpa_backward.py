@@ -11,7 +11,6 @@ import torch
 
 import flag_dnn
 
-
 SDPA_BACKWARD_CASES = (
     (1, 2, 2, 32, 32, 32),
     (2, 4, 4, 48, 40, 64),
@@ -29,6 +28,73 @@ SDPA_BACKWARD_LONG_CAUSAL_D128_CASES = (
     (2, 16, 16, 2048, 2048, 128),
     (1, 32, 8, 4096, 4096, 128),
 )
+
+
+def test_owner_compute_causal_d128_eligibility():
+    from flag_dnn.graph.prepared.sdpa_backward import (
+        _is_owner_compute_causal_d128,
+    )
+
+    def contiguous(b, h, s, d):
+        return (h * s * d, s * d, d, 1)
+
+    def stats_stride(h, s):
+        return (h * s, s, 1, 1)
+
+    for shape in SDPA_BACKWARD_LONG_CAUSAL_D128_CASES:
+        b, hq, hkv, sq, skv, d = shape
+        q_shape = (b, hq, sq, d)
+        kv_shape = (b, hkv, skv, d)
+        s_shape = (b, hq, sq, 1)
+        owner_eligible = _is_owner_compute_causal_d128(
+            q_shape,
+            kv_shape,
+            kv_shape,
+            q_shape,
+            q_shape,
+            s_shape,
+            contiguous(*q_shape),
+            contiguous(*kv_shape),
+            contiguous(*kv_shape),
+            contiguous(*q_shape),
+            contiguous(*q_shape),
+            stats_stride(hq, sq),
+            torch.float16,
+            causal_top_left=True,
+        )
+        assert owner_eligible == (hq == hkv)
+        assert not _is_owner_compute_causal_d128(
+            q_shape,
+            kv_shape,
+            kv_shape,
+            q_shape,
+            q_shape,
+            s_shape,
+            contiguous(*q_shape),
+            contiguous(*kv_shape),
+            contiguous(*kv_shape),
+            contiguous(*q_shape),
+            contiguous(*q_shape),
+            stats_stride(hq, sq),
+            torch.float32,
+            causal_top_left=True,
+        )
+        assert not _is_owner_compute_causal_d128(
+            q_shape,
+            kv_shape,
+            kv_shape,
+            q_shape,
+            q_shape,
+            s_shape,
+            contiguous(*q_shape),
+            contiguous(*kv_shape),
+            contiguous(*kv_shape),
+            contiguous(*q_shape),
+            contiguous(*q_shape),
+            stats_stride(hq, sq),
+            torch.float16,
+            causal_top_left=False,
+        )
 
 
 def _cudnn_alignment(diagonal_alignment):
@@ -318,6 +384,39 @@ def _run_flag_dnn_sdpa_backward_graph(
     return compiled.run(*run_args)
 
 
+def _compile_flag_dnn_sdpa_backward_graph(
+    q, k, v, o, dO, stats, *, right_bound
+):
+    @flag_dnn.graph
+    def fn(q, k, v, o, dO, stats):
+        return flag_dnn.sdpa_backward(
+            q,
+            k,
+            v,
+            o,
+            dO,
+            stats,
+            diagonal_alignment="TOP_LEFT",
+            diagonal_band_right_bound=right_bound,
+            name="sdpa_backward",
+        )
+
+    compiled = flag_dnn.compile(
+        fn,
+        inputs=[
+            flag_dnn.TensorSpec.from_tensor(q, "q"),
+            flag_dnn.TensorSpec.from_tensor(k, "k"),
+            flag_dnn.TensorSpec.from_tensor(v, "v"),
+            flag_dnn.TensorSpec.from_tensor(o, "o"),
+            flag_dnn.TensorSpec.from_tensor(dO, "dO"),
+            flag_dnn.TensorSpec.from_tensor(stats, "stats"),
+        ],
+        options={"cache": None},
+    )
+    assert [node.op_type for node in compiled.graph.nodes] == ["sdpa_backward"]
+    return compiled
+
+
 def _grad_tol(dtype):
     if dtype == torch.bfloat16:
         return 8e-2, 3e-2
@@ -397,6 +496,60 @@ def test_sdpa_backward_long_causal_d128(cudnn_handle, dtype, shape):
         q, k, v, o, dO, stats, right_bound=0
     )
     _assert_grads_close(actual, expected, dtype)
+
+
+@pytest.mark.sdpa_backward
+@pytest.mark.graph
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16))
+@pytest.mark.parametrize(
+    "shape",
+    SDPA_BACKWARD_LONG_CAUSAL_D128_CASES[:1],
+    ids=("mha_b2_h16_s2048",),
+)
+def test_sdpa_backward_long_causal_rebinds_storage(cudnn_handle, dtype, shape):
+    torch.manual_seed(29)
+    q_a, k_a, v_a = _make_qkv(shape, dtype)
+    dO_a = torch.randn_like(q_a)
+    o_a, stats_a = _cudnn_sdpa_forward(
+        q_a, k_a, v_a, cudnn_handle, right_bound=0
+    )
+    compiled = _compile_flag_dnn_sdpa_backward_graph(
+        q_a, k_a, v_a, o_a, dO_a, stats_a, right_bound=0
+    )
+
+    def check(q, k, v, o, dO, stats):
+        expected = _cudnn_sdpa_backward(
+            q, k, v, o, dO, stats, cudnn_handle, right_bound=0
+        )
+        actual = compiled.run(q, k, v, o, dO, stats)
+        _assert_grads_close(actual, expected, dtype)
+        return actual
+
+    grads_a = check(q_a, k_a, v_a, o_a, dO_a, stats_a)
+    q_b, k_b, v_b = _make_qkv(shape, dtype)
+    dO_b = torch.randn_like(q_b)
+    o_b, stats_b = _cudnn_sdpa_forward(
+        q_b, k_b, v_b, cudnn_handle, right_bound=0
+    )
+    grads_b = check(q_b, k_b, v_b, o_b, dO_b, stats_b)
+    assert all(
+        left.data_ptr() != right.data_ptr()
+        for left, right in zip(grads_a, grads_b)
+    )
+
+    q_b.normal_()
+    k_b.normal_()
+    v_b.normal_()
+    dO_b.normal_()
+    o_c, stats_c = _cudnn_sdpa_forward(
+        q_b, k_b, v_b, cudnn_handle, right_bound=0
+    )
+    grads_c = check(q_b, k_b, v_b, o_c, dO_b, stats_c)
+    assert all(
+        left.data_ptr() != right.data_ptr()
+        for left, right in zip(grads_b, grads_c)
+    )
 
 
 @pytest.mark.sdpa_backward
