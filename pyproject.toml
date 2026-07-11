@@ -32,7 +32,8 @@ test = [
     "pytest>=7.1.0",
     "numpy>=1.26",
     "scipy>=1.14",
-    "cupy-cuda12x",
+    "coverage",
+    "nvidia-cudnn-frontend",
 ]
 
 [project.urls]
