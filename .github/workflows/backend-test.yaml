@@ -70,7 +70,7 @@ jobs:
           RUNNER_LABEL: ${{ inputs.runner_label }}
         run: |
           source tools/set-env.sh ${{ inputs.vendor }}
-          source tools/setup_vendor.sh ${{ inputs.vendor }}
+          ./setup.sh ${{ inputs.vendor }}
 
       - name: Check GPU availability
         if: ${{ inputs.gpu_check_script != '' }}
@@ -84,6 +84,8 @@ jobs:
           CHANGED_FILES: ${{ inputs.changed_files }}
         shell: bash
         run: |
+          source .venv/bin/activate
+          source tools/set-env.sh ${{ inputs.vendor }}
           bash ${{ inputs.test_script }} ${{ inputs.vendor }} ${{ inputs.pr_id }}
 
       - name: Run backend tests
@@ -92,5 +94,6 @@ jobs:
         env:
           CHANGED_FILES: ${{ inputs.changed_files }}
         run: |
+          source .venv/bin/activate
           source tools/set-env.sh ${{ inputs.vendor }}
           tools/run_op.sh ${{ inputs.pr_id }}
