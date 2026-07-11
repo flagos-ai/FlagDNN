@@ -17,7 +17,7 @@ on:
         type: string
         default: ''
       test_script:
-        description: 'Path to test script under tools/ (leave empty to use tools/run_tests.sh)'
+        description: 'Path to test script under tools/ (leave empty to use tools/run_op.sh)'
         required: false
         type: string
         default: ''
@@ -64,19 +64,33 @@ jobs:
         if: steps.checkout-attempt-2.outcome == 'failure'
         uses: actions/checkout@v4
 
+      - name: Setup FlagDNN
+        shell: bash
+        env:
+          RUNNER_LABEL: ${{ inputs.runner_label }}
+        run: |
+          source tools/set-env.sh ${{ inputs.vendor }}
+          source tools/setup_vendor.sh ${{ inputs.vendor }}
+
       - name: Check GPU availability
         if: ${{ inputs.gpu_check_script != '' }}
         shell: bash
         run: |
           bash ${{ inputs.gpu_check_script }}
 
-      - name: Run backend tests
+      - name: Run backend tests (custom script)
+        if: ${{ inputs.test_script != '' }}
         env:
           CHANGED_FILES: ${{ inputs.changed_files }}
         shell: bash
         run: |
-          TEST_SCRIPT="${{ inputs.test_script }}"
-          if [ -z "$TEST_SCRIPT" ]; then
-            TEST_SCRIPT="tools/run_tests.sh"
-          fi
-          bash "$TEST_SCRIPT" ${{ inputs.vendor }} ${{ inputs.pr_id }}
+          bash ${{ inputs.test_script }} ${{ inputs.vendor }} ${{ inputs.pr_id }}
+
+      - name: Run backend tests
+        if: ${{ inputs.test_script == '' }}
+        shell: bash
+        env:
+          CHANGED_FILES: ${{ inputs.changed_files }}
+        run: |
+          source tools/set-env.sh ${{ inputs.vendor }}
+          tools/run_op.sh ${{ inputs.pr_id }}
