@@ -11,6 +11,7 @@ import flag_dnn
 from tests import consts
 from tests import accuracy_utils as utils
 
+
 def _cudnn_add(x, y, cudnn_handle):
     graph = cudnn_graph(x.dtype, cudnn_handle)
     x_tensor = graph.tensor_like(x)
