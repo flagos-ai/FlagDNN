@@ -29,9 +29,10 @@ echo "Installing FlagDNN for ${VENDOR} ..."
 case $VENDOR in
   nvidia)
     # Install PyTorch with CUDA support
-    uv pip install --index ${FLAGOS_PYPI} \
+    uv pip install \
         "torch==2.9.1+cu128" \
-        "torchvision==0.24.1+cu128"
+        "torchvision==0.24.1+cu128" \
+        --index-url https://download.pytorch.org/whl/cu128
     # Install FlagDNN in editable mode
     uv pip install -e .
     uv pip install ".[test]"
