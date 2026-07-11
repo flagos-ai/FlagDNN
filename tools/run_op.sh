@@ -89,8 +89,7 @@ for item in "${TEST_CASES[@]}"; do
   fi
 done
 
-# Run quick-cpu test if necessary, 
-# remove cpu
+# Run quick-cpu test if necessary, remove cpu
 for item in "${TEST_CASES_CPU[@]}"; do
   echo "Running quick-cpu mode unit tests for ${item}"
   if ! coverage run -m pytest -s ${EXTRA_OPTS} ${item} --quick; then
