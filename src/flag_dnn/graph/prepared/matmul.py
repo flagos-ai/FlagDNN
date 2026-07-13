@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 import torch
 
+from flag_dnn.runtime import torch_device_fn
 from flag_dnn.graph.prepared import (
     PreparedTensorCache,
     RunFn,
@@ -18,6 +19,7 @@ from flag_dnn.graph.prepared.common import (
     _static_shape,
 )
 from flag_dnn.graph.tensor import TensorSpec, torch_dtype
+from flag_dnn.utils.device_info import get_device_capability_for
 
 
 _FAST_DTYPES = {
@@ -72,6 +74,11 @@ def _prepare_matmul(
         _resolve_matmul_compute_mode,
         _resolve_matmul_out_dtype,
     )
+    from flag_dnn.ops.matmul_sm90 import (
+        Sm90MatmulKey,
+        prepare_sm90_matmul_if_supported,
+        select_sm90_matmul_config,
+    )
 
     input_dtype = torch_dtype(a_spec.dtype)
     out_dtype_attr = attrs.get("out_dtype")
@@ -84,8 +91,28 @@ def _prepare_matmul(
     )
     output_shape = (a_shape[0], a_shape[1], b_shape[2])
     output_cache: PreparedTensorCache = {}
+    sm90_key = Sm90MatmulKey(
+        a_shape[0],
+        a_shape[1],
+        b_shape[2],
+        a_shape[2],
+        input_dtype,
+        out_dtype,
+        compute_mode,
+    )
+    prepare_sm90 = select_sm90_matmul_config((9, 0), sm90_key) is not None
+    cached_a: Optional[torch.Tensor] = None
+    cached_b: Optional[torch.Tensor] = None
+    cached_output: Optional[torch.Tensor] = None
+    cached_a_data_ptr: Optional[int] = None
+    cached_b_data_ptr: Optional[int] = None
+    cached_output_data_ptr: Optional[int] = None
+    cached_sm90_runner: Optional[Callable[[], torch.Tensor]] = None
 
     def run(inputs: Sequence[Any], _attrs: dict[str, Any]) -> Any:
+        nonlocal cached_a, cached_b, cached_output, cached_sm90_runner
+        nonlocal cached_a_data_ptr, cached_b_data_ptr
+        nonlocal cached_output_data_ptr
         _require_runtime_backend(inputs, "matmul")
         if not runtime_tensor_checks_pass(inputs, checks):
             return default_run_fn(inputs, _attrs)
@@ -106,6 +133,34 @@ def _prepare_matmul(
             device=a.device,
             dtype=out_dtype,
         )
+        if prepare_sm90:
+            a_data_ptr = a.data_ptr()
+            b_data_ptr = b.data_ptr()
+            output_data_ptr = output.data_ptr()
+            if (
+                a is not cached_a
+                or b is not cached_b
+                or output is not cached_output
+                or a_data_ptr != cached_a_data_ptr
+                or b_data_ptr != cached_b_data_ptr
+                or output_data_ptr != cached_output_data_ptr
+            ):
+                with torch_device_fn.device(a.device):
+                    cached_sm90_runner = prepare_sm90_matmul_if_supported(
+                        a,
+                        b,
+                        output,
+                        compute_mode=compute_mode,
+                        capability=get_device_capability_for(a.device),
+                    )
+                cached_a = a
+                cached_b = b
+                cached_output = output
+                cached_a_data_ptr = a_data_ptr
+                cached_b_data_ptr = b_data_ptr
+                cached_output_data_ptr = output_data_ptr
+            if cached_sm90_runner is not None:
+                return cached_sm90_runner()
         return _batched_matmul_3d_out(a, b, output, compute_mode=compute_mode)
 
     return run

@@ -4,9 +4,13 @@ import triton.language as tl
 
 from flag_dnn import runtime
 from flag_dnn.ops.mm import mm
+from flag_dnn.ops.matmul_sm90 import launch_sm90_matmul_if_supported
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
-from flag_dnn.utils.device_info import get_device_info
+from flag_dnn.utils.device_info import (
+    get_device_capability_for,
+    get_device_info,
+)
 
 
 _MATMUL_CONFIGS = runtime.get_tuned_config("matmul")
@@ -406,9 +410,40 @@ def _batched_matmul_3d_out(
         )
 
     exact_projection = batch == 16 and m == 2048 and n == 2048 and k == 512
+    exact_long_k = batch == 32 and m == 1024 and n == 1024 and k == 4096
 
     with torch_device_fn.device(A.device):
-        if A.dtype == torch.float32 and compute_mode == "ieee":
+        if launch_sm90_matmul_if_supported(
+            A,
+            B,
+            C,
+            compute_mode=compute_mode,
+            capability=get_device_capability_for(A.device),
+        ):
+            return C
+        if (
+            exact_long_k
+            and A.dtype in (torch.float16, torch.bfloat16)
+            and C.dtype == A.dtype
+            and compute_mode == "float32"
+        ):
+            fixed_grid = (triton.cdiv(m, 128) * triton.cdiv(n, 256), batch)
+            _batched_matmul_kernel.fn.fn[fixed_grid](
+                A,
+                B,
+                C,
+                m,
+                n,
+                k,
+                BLOCK_M=128,
+                BLOCK_N=256,
+                BLOCK_K=64,
+                GROUP_M=4,
+                ROUND_F32_TO_TF32=False,
+                num_warps=8,
+                num_stages=3,
+            )
+        elif A.dtype == torch.float32 and compute_mode == "ieee":
             block_m = 16 if m <= 16 else 32
             block_n = 32 if n <= 32 else 64
             block_k = 32 if k <= 64 else 64

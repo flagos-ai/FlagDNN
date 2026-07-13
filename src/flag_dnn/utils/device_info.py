@@ -1,6 +1,7 @@
 import warnings
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Any
 
 from flag_dnn.runtime import torch_device_fn
 
@@ -65,6 +66,25 @@ def get_device_capability() -> tuple[int, int]:
         return (0, 0)
 
 
+@lru_cache(maxsize=None)
+def get_device_capability_for(device: Any) -> tuple[int, int]:
+    """Return capability cached by explicit device.
+
+    This avoids using metadata cached for a different current device.
+    """
+    try:
+        result = torch_device_fn.get_device_capability(device)
+        if result is not None:
+            return result
+    except Exception:
+        pass
+    warnings.warn(
+        "[device_info] Failed to get capability for "
+        f"device={device}, fallback to (0, 0)."
+    )
+    return (0, 0)
+
+
 @lru_cache(maxsize=1)
 def get_device_info() -> DeviceInfo:
     props = get_device_properties()
@@ -107,3 +127,25 @@ def get_l2_cache_size() -> int:
 
 def get_sm_count() -> int:
     return get_device_info().sm_count
+
+
+@lru_cache(maxsize=None)
+def get_sm_count_for(device: Any) -> int:
+    """Return SM count cached by explicit device.
+
+    This avoids using metadata cached for a different current device.
+    """
+    try:
+        props = torch_device_fn.get_device_properties(device)
+        sm_count = getattr(props, "multi_processor_count", None) or getattr(
+            props, "multiProcessorCount", None
+        )
+        if sm_count is not None:
+            return int(sm_count)
+    except Exception:
+        pass
+    warnings.warn(
+        "[device_info] Failed to get sm_count for "
+        f"device={device}, fallback to 108."
+    )
+    return 108

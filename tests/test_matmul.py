@@ -1,3 +1,6 @@
+from contextlib import nullcontext
+from types import SimpleNamespace
+
 import pytest
 from tests.base import (
     CUDNN_COMPARE_DTYPES,
@@ -157,6 +160,308 @@ def _run_flag_dnn_matmul_graph(
         a, b, out_dtype=out_dtype, compute_mode=compute_mode
     )
     return compiled.run(a.clone(), b.clone())
+
+
+def test_matmul_sm90_selector_requires_hopper_and_validated_key(monkeypatch):
+    import flag_dnn.ops.matmul_sm90 as sm90
+
+    key = sm90.Sm90MatmulKey(
+        16,
+        2048,
+        2048,
+        512,
+        torch.float16,
+        torch.float16,
+        "float32",
+    )
+    config = sm90.Sm90MatmulConfig("lowp", 128, 256, 64, 3, 8, 1, 168, False)
+    monkeypatch.setitem(sm90._VALIDATED_CONFIGS, key, config)
+    assert sm90.select_sm90_matmul_config((8, 0), key) is None
+    assert sm90.select_sm90_matmul_config((9, 0), key) == config
+    assert sm90.select_sm90_matmul_config((10, 0), key) is None
+    assert (
+        sm90.select_sm90_matmul_config(
+            (9, 0),
+            sm90.Sm90MatmulKey(
+                16,
+                2048,
+                2048,
+                512,
+                torch.float16,
+                torch.float16,
+                "ieee",
+            ),
+        )
+        is None
+    )
+
+
+def test_matmul_sm90_id7_uses_exact_serial_kernel():
+    from flag_dnn.ops import matmul_sm90, matmul_sm90_gluon
+
+    config = matmul_sm90.Sm90MatmulConfig(
+        "lowp", 128, 256, 64, 3, 8, 2, 168, False
+    )
+
+    for dtype in (torch.float16, torch.bfloat16):
+        key = matmul_sm90.Sm90MatmulKey(
+            32, 1024, 1024, 4096, dtype, dtype, "float32"
+        )
+        assert matmul_sm90.select_sm90_matmul_config((9, 0), key) == config
+
+    assert matmul_sm90_gluon._uses_id7_serial_kernel(
+        32, 1024, 1024, 4096, config
+    )
+    assert not matmul_sm90_gluon._uses_id7_serial_kernel(
+        16, 1024, 1024, 4096, config
+    )
+    assert not matmul_sm90_gluon._uses_id7_serial_kernel(
+        32,
+        1024,
+        1024,
+        4096,
+        matmul_sm90.Sm90MatmulConfig("lowp", 128, 256, 64, 3, 8, 2, 168, True),
+    )
+
+
+@pytest.mark.parametrize("warp_specialized", (False, True))
+def test_prepared_sm90_runner_uses_input_device_context(
+    monkeypatch, warp_specialized
+):
+    from flag_dnn.ops import matmul_sm90_gluon
+    from flag_dnn.ops.matmul_sm90 import Sm90MatmulConfig
+
+    input_device = torch.device("cpu")
+    other_device = torch.device("meta")
+    current_device = [other_device]
+    context_devices = []
+    launch_devices = []
+
+    class DeviceContext:
+        def __init__(self, device):
+            self.device = device
+            self.previous = None
+
+        def __enter__(self):
+            self.previous = current_device[0]
+            current_device[0] = self.device
+            context_devices.append(self.device)
+
+        def __exit__(self, *args):
+            current_device[0] = self.previous
+
+    class DeviceFn:
+        @staticmethod
+        def device(device):
+            return DeviceContext(device)
+
+    class FakeDescriptor:
+        @staticmethod
+        def from_tensor(*args):
+            return object()
+
+    class FakeCompiledKernel:
+        def __getitem__(self, grid):
+            def cached_launch(*args):
+                launch_devices.append(current_device[0])
+
+            return cached_launch
+
+    class FakeKernel:
+        def __getitem__(self, grid):
+            def first_launch(*args, **kwargs):
+                launch_devices.append(current_device[0])
+                return FakeCompiledKernel()
+
+            return first_launch
+
+    layout = SimpleNamespace(get_default_for=lambda shape, dtype: object())
+    fake_gl = SimpleNamespace(float16=object(), NVMMASharedLayout=layout)
+    monkeypatch.setattr(matmul_sm90_gluon, "torch_device_fn", DeviceFn())
+    monkeypatch.setattr(matmul_sm90_gluon, "TensorDescriptor", FakeDescriptor)
+    monkeypatch.setattr(matmul_sm90_gluon, "gl", fake_gl)
+    monkeypatch.setattr(
+        matmul_sm90_gluon,
+        "_validate_inputs",
+        lambda a, b, c, config: (1, 1, 1, 1),
+    )
+    monkeypatch.setattr(
+        matmul_sm90_gluon,
+        "get_sm_count_for",
+        lambda device: 1,
+    )
+    kernel_name = (
+        "_matmul_sm90_ws_kernel" if warp_specialized else "_matmul_sm90_kernel"
+    )
+    monkeypatch.setattr(matmul_sm90_gluon, kernel_name, FakeKernel())
+
+    a = torch.empty((1, 1, 1), dtype=torch.float16)
+    b = torch.empty((1, 1, 1), dtype=torch.float16)
+    c = torch.empty((1, 1, 1), dtype=torch.float16)
+    config = Sm90MatmulConfig("lowp", 1, 1, 1, 2, 4, 1, 168, warp_specialized)
+    runner = matmul_sm90_gluon.prepare_sm90_matmul(a, b, c, config=config)
+
+    assert runner() is c
+    assert current_device[0] == other_device
+    assert runner() is c
+
+    assert current_device[0] == other_device
+    assert context_devices == [input_device, input_device]
+    assert launch_devices == [input_device, input_device]
+
+
+def test_matmul_selected_sm90_failure_is_not_silently_fallback(monkeypatch):
+    import importlib
+
+    matmul_module = importlib.import_module("flag_dnn.ops.matmul")
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("selected SM90 kernel failed")
+
+    monkeypatch.setattr(matmul_module, "launch_sm90_matmul_if_supported", fail)
+    a = torch.randn((1, 32, 32), device=flag_dnn.device, dtype=torch.float16)
+    b = torch.randn((1, 32, 32), device=flag_dnn.device, dtype=torch.float16)
+    with pytest.raises(RuntimeError, match="selected SM90 kernel failed"):
+        _run_flag_dnn_matmul_graph(a, b)
+
+
+def test_matmul_id7_uses_fixed_stage3_config(monkeypatch):
+    import importlib
+
+    matmul_module = importlib.import_module("flag_dnn.ops.matmul")
+    calls = []
+
+    class FakeKernel:
+        def __init__(self):
+            self.fn = self
+
+        def __getitem__(self, grid):
+            def launch(*args, **kwargs):
+                calls.append((grid, args, kwargs))
+
+            return launch
+
+    monkeypatch.setattr(matmul_module, "_batched_matmul_kernel", FakeKernel())
+    monkeypatch.setattr(
+        matmul_module,
+        "launch_sm90_matmul_if_supported",
+        lambda *args, **kwargs: False,
+    )
+    monkeypatch.setattr(
+        matmul_module, "get_device_capability_for", lambda device: (0, 0)
+    )
+    monkeypatch.setattr(
+        matmul_module.torch_device_fn,
+        "device",
+        lambda device: nullcontext(),
+    )
+    a = torch.empty((32, 1024, 4096), device="meta", dtype=torch.float16)
+    b = torch.empty((32, 4096, 1024), device="meta", dtype=torch.float16)
+    c = torch.empty((32, 1024, 1024), device="meta", dtype=torch.float16)
+
+    actual = matmul_module._batched_matmul_3d_out(
+        a, b, c, compute_mode="float32"
+    )
+
+    assert actual is c
+    assert len(calls) == 1
+    grid, args, kwargs = calls[0]
+    assert grid == (32, 32)
+    assert args[0:3] == (a, b, c)
+    assert kwargs == {
+        "BLOCK_M": 128,
+        "BLOCK_N": 256,
+        "BLOCK_K": 64,
+        "GROUP_M": 4,
+        "ROUND_F32_TO_TF32": False,
+        "num_warps": 8,
+        "num_stages": 3,
+    }
+
+
+@pytest.mark.matmul
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or torch.cuda.get_device_capability()[0] != 9,
+    reason="Hopper is required",
+)
+@pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16))
+def test_matmul_sm90_gluon_lowp_direct(cudnn_handle, dtype):
+    from flag_dnn.ops.matmul_sm90 import Sm90MatmulConfig
+    from flag_dnn.ops.matmul_sm90_gluon import run_sm90_matmul
+
+    torch.manual_seed(0)
+    a = torch.randn((2, 128, 64), device=flag_dnn.device, dtype=dtype)
+    b = torch.randn((2, 64, 256), device=flag_dnn.device, dtype=dtype)
+    c = torch.empty((2, 128, 256), device=flag_dnn.device, dtype=dtype)
+    config = Sm90MatmulConfig("lowp", 128, 256, 64, 3, 8, 1, 168, False)
+
+    actual = run_sm90_matmul(a, b, c, config=config)
+    expected = _cudnn_matmul(a, b, cudnn_handle)
+
+    assert actual is c
+    atol = 1e-1 if dtype == torch.bfloat16 else 5e-2
+    utils.gems_assert_close(actual, expected, dtype, atol=atol)
+
+
+@pytest.mark.matmul
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or torch.cuda.get_device_capability()[0] != 9,
+    reason="Hopper is required",
+)
+@pytest.mark.parametrize("dtype", _FP8_DTYPES)
+def test_matmul_sm90_gluon_fp8_direct(cudnn_handle, dtype):
+    from flag_dnn.ops.matmul_sm90 import Sm90MatmulConfig
+    from flag_dnn.ops.matmul_sm90_gluon import run_sm90_matmul
+
+    torch.manual_seed(0)
+    a = torch.randn((2, 128, 64), device=flag_dnn.device).mul_(0.25).to(dtype)
+    b = torch.randn((2, 64, 256), device=flag_dnn.device).mul_(0.25).to(dtype)
+    c = torch.empty((2, 128, 256), device=flag_dnn.device)
+    config = Sm90MatmulConfig("fp8", 128, 64, 64, 3, 8, 1, 168, False)
+
+    actual = run_sm90_matmul(a, b, c, config=config)
+    expected = _cudnn_matmul(
+        a,
+        b,
+        cudnn_handle,
+        out_dtype=torch.float32,
+        compute_mode="fast_float_for_fp8",
+    )
+
+    assert actual is c
+    torch.testing.assert_close(actual, expected, atol=5e-4, rtol=0)
+
+
+@pytest.mark.matmul
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or torch.cuda.get_device_capability()[0] != 9,
+    reason="Hopper is required",
+)
+@pytest.mark.parametrize("dtype", _FP8_DTYPES)
+def test_matmul_sm90_gluon_fp8_warp_specialized_direct(cudnn_handle, dtype):
+    from flag_dnn.ops.matmul_sm90 import Sm90MatmulConfig
+    from flag_dnn.ops.matmul_sm90_gluon import run_sm90_matmul
+
+    torch.manual_seed(0)
+    a = torch.randn((2, 128, 64), device=flag_dnn.device).mul_(0.25).to(dtype)
+    b = torch.randn((2, 64, 256), device=flag_dnn.device).mul_(0.25).to(dtype)
+    c = torch.empty((2, 128, 256), device=flag_dnn.device)
+    config = Sm90MatmulConfig("fp8", 128, 128, 64, 3, 8, 1, 160, True)
+
+    actual = run_sm90_matmul(a, b, c, config=config)
+    expected = _cudnn_matmul(
+        a,
+        b,
+        cudnn_handle,
+        out_dtype=torch.float32,
+        compute_mode="fast_float_for_fp8",
+    )
+
+    assert actual is c
+    torch.testing.assert_close(actual, expected, atol=5e-4, rtol=0)
 
 
 def _torch_fp32_matmul(a, b):
