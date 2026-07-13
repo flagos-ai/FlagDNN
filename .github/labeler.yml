@@ -1,0 +1,49 @@
+# Auto-label PRs based on changed files.
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file: "tests/**"
+
+ops:
+  - changed-files:
+      - any-glob-to-any-file: "src/flag_dnn/ops/**"
+
+vendor/NVIDIA:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/flag_dnn/runtime/backend/_nvidia/**"
+          - "tools/check_nvidia_gpu.sh"
+
+vendor/ILUVATAR:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/flag_dnn/runtime/backend/_iluvatar/**"
+
+ci/cd:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**"
+          - "tools/**"
+
+benchmark:
+  - changed-files:
+      - any-glob-to-any-file: "benchmark/**"
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "*.md"
+          - "docs/**"
+          - "LICENSE"
+          - "README*"
+
+core:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "pyproject.toml"
+          - "pytest.ini"
+          - "conf/**"
+          - "src/flag_dnn/graph/**"
+          - "src/flag_dnn/runtime/**"
+          - "src/flag_dnn/testing/**"
+          - "src/flag_dnn/utils/**"
