@@ -125,11 +125,46 @@ class TritonCudaBackend(GraphBackend):
         return super().candidates_for_node(node, graph, input_specs)
 
 
+class TritonAscendBackend(GraphBackend):
+    name = "triton_ascend"
+
+    def is_available(self) -> bool:
+        npu = getattr(torch, "npu", None)
+        if npu is None:
+            return False
+        is_available = getattr(npu, "is_available", None)
+        if not callable(is_available):
+            return False
+        try:
+            return bool(is_available())
+        except Exception:
+            return False
+
+    def capability(self) -> BackendCapability:
+        return BackendCapability(
+            name=self.name,
+            notes=("FlagDNN Triton kernels compiled by FlagTree for Ascend",),
+        )
+
+    def supports(self, graph: Graph, input_specs: list[TensorSpec]) -> bool:
+        if not self.is_available() or not input_specs:
+            return False
+        return all(
+            spec.device is None
+            or spec.device == "npu"
+            or str(spec.device).startswith("npu:")
+            for spec in input_specs
+        )
+
+
 class AutoBackend(GraphBackend):
     name = "auto"
 
     def __init__(self) -> None:
-        self.backends: tuple[GraphBackend, ...] = (TritonCudaBackend(),)
+        self.backends: tuple[GraphBackend, ...] = (
+            TritonCudaBackend(),
+            TritonAscendBackend(),
+        )
 
     def is_available(self) -> bool:
         return any(backend.is_available() for backend in self.backends)
@@ -164,6 +199,8 @@ def resolve_backend(name: str) -> GraphBackend:
         return AutoBackend()
     if name in ("triton_cuda", "cuda", "triton"):
         return TritonCudaBackend()
+    if name in ("triton_ascend", "ascend", "npu"):
+        return TritonAscendBackend()
     if name == "torch":
         raise ValueError("FlagDNN graph no longer supports torch fallback")
     raise ValueError(f"unsupported FlagDNN graph backend: {name}")

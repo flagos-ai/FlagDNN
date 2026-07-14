@@ -1,0 +1,98 @@
+binary:
+  - META:
+      BLOCK_SIZE: 256
+    num_warps: 4
+    num_stages: 1
+reduction:
+  - META:
+      BLOCK_M: 8
+      BLOCK_N: 128
+    num_warps: 4
+    num_stages: 1
+abs:
+  - META:
+      BLOCK_SIZE: 256
+    num_warps: 4
+    num_stages: 1
+neg:
+  - META:
+      BLOCK_SIZE: 256
+    num_warps: 4
+    num_stages: 1
+sqrt:
+  - META:
+      BLOCK_SIZE: 256
+    num_warps: 4
+    num_stages: 1
+add_square:
+  - META:
+      BLOCK_SIZE: 256
+      TILES_PER_PROGRAM: 1
+    num_warps: 4
+    num_stages: 1
+unary:
+  - META:
+      BLOCK_SIZE: 256
+      TILES_PER_PROGRAM: 1
+    num_warps: 4
+    num_stages: 1
+pow:
+  - META:
+      BLOCK_SIZE: 256
+    num_warps: 4
+    num_stages: 1
+tanh:
+  - META:
+      BLOCK_SIZE: 256
+    num_warps: 4
+    num_stages: 1
+sigmoid:
+  - META:
+      BLOCK_SIZE: 256
+    num_warps: 4
+    num_stages: 1
+sigmoid_backward:
+  - META:
+      BLOCK_SIZE: 256
+    num_warps: 4
+    num_stages: 1
+relu:
+  - META:
+      BLOCK_SIZE: 256
+    num_warps: 4
+    num_stages: 1
+leaky_relu:
+  - META:
+      BLOCK_SIZE: 256
+    num_warps: 4
+    num_stages: 1
+elu:
+  - META:
+      BLOCK_SIZE: 256
+    num_warps: 4
+    num_stages: 1
+gelu:
+  - META:
+      BLOCK_SIZE: 256
+    num_warps: 4
+    num_stages: 1
+silu:
+  - META:
+      BLOCK_SIZE: 256
+    num_warps: 4
+    num_stages: 1
+softplus:
+  - META:
+      BLOCK_SIZE: 256
+    num_warps: 4
+    num_stages: 1
+layer_norm:
+  - META:
+      BLOCK_SIZE: 256
+    num_warps: 4
+    num_stages: 1
+rms_norm:
+  - META:
+      BLOCK_SIZE: 256
+    num_warps: 4
+    num_stages: 1

@@ -19,7 +19,16 @@ logger = logging.getLogger(__name__)
 
 
 _SIGMOID_CONFIGS = runtime.get_tuned_config("sigmoid")
-_PORTABLE_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
+_SIGMOID_FP64_CONFIGS = runtime.get_tuned_config("sigmoid")
+
+# Triton's exp import path differs across versions.
+if tuple(map(int, triton.__version__.split(".")[:2])) >= (3, 0):
+    try:
+        from triton.language.extra.libdevice import exp as triton_exp
+    except ModuleNotFoundError:
+        from triton.language.extra.cuda.libdevice import exp as triton_exp
+else:
+    from triton.language.math import exp as triton_exp
 
 
 @libentry()
@@ -47,6 +56,31 @@ def sigmoid_kernel(
     tl.store(y_ptr + offsets, y.to(y_ptr.dtype.element_ty), mask=mask)
 
 
+@libentry()
+@libtuner(
+    configs=_SIGMOID_FP64_CONFIGS,
+    key=["n_elements"],
+    strategy=["align32"],
+    warmup=5,
+    rep=10,
+)
+@triton.jit
+def sigmoid_fp64_kernel(
+    x_ptr,
+    y_ptr,
+    n_elements,
+    BLOCK_SIZE: tl.constexpr,
+):
+    pid = tle.program_id(0)
+    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < n_elements
+
+    x = tl.load(x_ptr + offsets, mask=mask, other=0).to(tl.float64)
+    y = 1.0 / (1.0 + triton_exp(-x))
+
+    tl.store(y_ptr + offsets, y, mask=mask)
+
+
 def sigmoid(
     input: torch.Tensor,
     *,
@@ -57,15 +91,18 @@ def sigmoid(
     del compute_data_type, name
     logger.debug("FLAG_DNN SIGMOID")
 
-    if input.dtype not in _PORTABLE_DTYPES:
+    if input.dtype not in (
+        torch.float16,
+        torch.bfloat16,
+        torch.float32,
+        torch.float64,
+    ):
         raise NotImplementedError(
-            f"flag_dnn sigmoid does not support dtype={input.dtype} "
-            f"on device={runtime.device.name}"
+            f"flag_dnn sigmoid does not support dtype={input.dtype}"
         )
-    if input.device.type != runtime.device.name:
-        raise RuntimeError(
-            f"flag_dnn sigmoid expected a {runtime.device.name} tensor, "
-            f"got device={input.device}"
+    if not input.is_cuda:
+        raise NotImplementedError(
+            "flag_dnn sigmoid Triton implementation requires CUDA input"
         )
     if not is_dense_flat_tensor(input):
         raise NotImplementedError(
@@ -105,6 +142,9 @@ def sigmoid(
         return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
     with torch_device_fn.device(input.device):
-        sigmoid_kernel[grid](input, out, n_elements)
+        if input.dtype == torch.float64:
+            sigmoid_fp64_kernel[grid](input, out, n_elements)
+        else:
+            sigmoid_kernel[grid](input, out, n_elements)
 
     return out

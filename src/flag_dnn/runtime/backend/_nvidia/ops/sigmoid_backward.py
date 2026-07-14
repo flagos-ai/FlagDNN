@@ -20,7 +20,15 @@ logger = logging.getLogger(__name__)
 
 
 _SIGMOID_BACKWARD_CONFIGS = runtime.get_tuned_config("sigmoid_backward")
-_PORTABLE_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
+_SIGMOID_BACKWARD_FP64_CONFIGS = runtime.get_tuned_config("sigmoid_backward")
+
+if tuple(map(int, triton.__version__.split(".")[:2])) >= (3, 0):
+    try:
+        from triton.language.extra.libdevice import exp as triton_exp
+    except ModuleNotFoundError:
+        from triton.language.extra.cuda.libdevice import exp as triton_exp
+else:
+    from triton.language.math import exp as triton_exp
 
 
 @libentry()
@@ -51,6 +59,34 @@ def sigmoid_backward_kernel(
     tl.store(out_ptr + offsets, dx.to(out_ptr.dtype.element_ty), mask=mask)
 
 
+@libentry()
+@libtuner(
+    configs=_SIGMOID_BACKWARD_FP64_CONFIGS,
+    key=["n_elements"],
+    strategy=["align32"],
+    warmup=5,
+    rep=10,
+)
+@triton.jit
+def sigmoid_backward_fp64_kernel(
+    loss_ptr,
+    input_ptr,
+    out_ptr,
+    n_elements,
+    BLOCK_SIZE: tl.constexpr,
+):
+    pid = tle.program_id(0)
+    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < n_elements
+
+    loss = tl.load(loss_ptr + offsets, mask=mask, other=0).to(tl.float64)
+    x = tl.load(input_ptr + offsets, mask=mask, other=0).to(tl.float64)
+    y = 1.0 / (1.0 + triton_exp(-x))
+    dx = loss * y * (1.0 - y)
+
+    tl.store(out_ptr + offsets, dx.to(out_ptr.dtype.element_ty), mask=mask)
+
+
 def sigmoid_backward(
     loss: torch.Tensor,
     input: torch.Tensor,
@@ -62,25 +98,30 @@ def sigmoid_backward(
     del compute_data_type, name
     logger.debug("FLAG_DNN SIGMOID_BACKWARD")
 
-    if loss.dtype not in _PORTABLE_DTYPES:
+    if loss.dtype not in (
+        torch.float16,
+        torch.bfloat16,
+        torch.float32,
+        torch.float64,
+    ):
         raise NotImplementedError(
             "flag_dnn sigmoid_backward does not support "
-            f"loss dtype={loss.dtype} on device={runtime.device.name}"
+            f"loss dtype={loss.dtype}"
         )
-    if input.dtype not in _PORTABLE_DTYPES:
+    if input.dtype not in (
+        torch.float16,
+        torch.bfloat16,
+        torch.float32,
+        torch.float64,
+    ):
         raise NotImplementedError(
             "flag_dnn sigmoid_backward does not support input "
-            f"dtype={input.dtype} on device={runtime.device.name}"
+            f"dtype={input.dtype}"
         )
-    if loss.device.type != runtime.device.name:
-        raise RuntimeError(
-            "flag_dnn sigmoid_backward expected loss on "
-            f"{runtime.device.name}, got device={loss.device}"
-        )
-    if input.device.type != runtime.device.name:
-        raise RuntimeError(
-            "flag_dnn sigmoid_backward expected input on "
-            f"{runtime.device.name}, got device={input.device}"
+    if not loss.is_cuda or not input.is_cuda:
+        raise NotImplementedError(
+            "flag_dnn sigmoid_backward Triton implementation requires CUDA "
+            "inputs"
         )
     if loss.device != input.device:
         raise RuntimeError(
@@ -113,6 +154,9 @@ def sigmoid_backward(
         return (triton.cdiv(n_elements, meta["BLOCK_SIZE"]),)
 
     with torch_device_fn.device(input.device):
-        sigmoid_backward_kernel[grid](loss, input, out, n_elements)
+        if loss.dtype == torch.float64 or input.dtype == torch.float64:
+            sigmoid_backward_fp64_kernel[grid](loss, input, out, n_elements)
+        else:
+            sigmoid_backward_kernel[grid](loss, input, out, n_elements)
 
     return out

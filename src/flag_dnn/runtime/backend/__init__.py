@@ -149,7 +149,9 @@ def import_vendor_extra_lib(vendor_name=None):
         return
     global ops_module, fused_module
     try:
-        ops_module = importlib.import_module(f"_{vendor_name}.ops")
+        ops_module = importlib.import_module(
+            f"{__name__}._{vendor_name}.ops"
+        )
     except ModuleNotFoundError:
         print(
             f"[Note] No specialized common operators"
@@ -161,7 +163,9 @@ def import_vendor_extra_lib(vendor_name=None):
         raise RuntimeError(f"Import vendor extra lib failed: {e}")
 
     try:
-        fused_module = importlib.import_module(f"_{vendor_name}.fused")
+        fused_module = importlib.import_module(
+            f"{__name__}._{vendor_name}.fused"
+        )
     except ModuleNotFoundError:
         print(
             f"[Note] No specialized fused operators"
@@ -237,10 +241,7 @@ fn = torch.{device_name}
 
 def get_vendor_module(vendor_name, query=False):
     def get_module(vendor_name):
-        current_file_path = os.path.abspath(__file__)
-        current_dir_path = os.path.dirname(current_file_path)
-        sys.path.append(current_dir_path)
-        return importlib.import_module(vendor_name)
+        return importlib.import_module(f"{__name__}.{vendor_name}")
 
     if query:
         # Provide the user the requested instance
@@ -298,11 +299,11 @@ def get_heuristic_config(vendor_name=None):
     global heuristic_config_module
     try:
         heuristic_config_module = importlib.import_module(
-            f"_{vendor_name}.heuristics_config_utils"
+            f"{__name__}._{vendor_name}.heuristics_config_utils"
         )
     except:  # noqa E722
         heuristic_config_module = importlib.import_module(
-            "_nvidia.heuristics_config_utils"
+            f"{__name__}._nvidia.heuristics_config_utils"
         )
     if hasattr(heuristic_config_module, "HEURISTICS_CONFIGS"):
         return heuristic_config_module.HEURISTICS_CONFIGS

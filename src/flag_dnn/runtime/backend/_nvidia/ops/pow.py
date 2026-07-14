@@ -4,6 +4,7 @@ from typing import Union, Optional
 import torch
 import triton
 import triton.language as tl
+from triton.language.extra.cuda import libdevice
 
 # if error try :
 # res = tl.math.exp(y_f32 * tl.math.log(x_f32))
@@ -12,7 +13,6 @@ from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
-from flag_dnn.utils.triton_lang_helper import tl_extra_shim as libdevice
 from flag_dnn.ops.binary import (
     can_use_flat_output,
     collapse_dims,
@@ -30,21 +30,6 @@ from flag_dnn.utils.type_utils import (
 
 
 logger = logging.getLogger(__name__)
-
-_PORTABLE_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
-
-
-def _validate_portable_tensor(tensor, argument):
-    if tensor.dtype not in _PORTABLE_DTYPES:
-        raise NotImplementedError(
-            f"flag_dnn pow does not support {argument} dtype={tensor.dtype} "
-            f"on device={runtime.device.name}"
-        )
-    if tensor.device.type != runtime.device.name:
-        raise RuntimeError(
-            f"flag_dnn pow expected {argument} on {runtime.device.name}, "
-            f"got device={tensor.device}"
-        )
 
 
 @libentry()
@@ -73,7 +58,9 @@ def pow_tensor_kernel(
     # 向上转型到 float32，防止底层 libdevice 找不到 fp16/bf16 的 pow 签名
     x_f32 = x.to(tl.float32)
     y_f32 = y.to(tl.float32)
-    res = libdevice.pow(x_f32, y_f32)
+    # res = libdevice.pow(x_f32, y_f32)
+    log2_x = tl.math.log2(x_f32)
+    res = tl.math.exp2(y_f32 * log2_x)
 
     # 写回时向下转型回目标数据类型
     tl.store(out_ptr + offsets, res.to(out_ptr.dtype.element_ty), mask=mask)
@@ -237,16 +224,6 @@ def pow(
 
     input_is_tensor = isinstance(input, torch.Tensor)
     exp_is_tensor = isinstance(exponent, torch.Tensor)
-
-    if input_is_tensor:
-        _validate_portable_tensor(input, "input")
-    if exp_is_tensor:
-        _validate_portable_tensor(exponent, "exponent")
-    if input_is_tensor and exp_is_tensor and input.device != exponent.device:
-        raise RuntimeError(
-            "flag_dnn pow expected input and exponent on the same device, "
-            f"got {input.device} and {exponent.device}"
-        )
 
     if input_is_tensor and not is_dense_flat_tensor(input):
         raise NotImplementedError(

@@ -1,3 +1,11 @@
+reduction:
+  # The generic module is imported before NVIDIA backend overrides are applied.
+  # NVIDIA execution still uses the six configs in _nvidia/ops/reduction.py.
+  - META:
+      BLOCK_M: 8
+      BLOCK_N: 128
+    num_warps: 4
+    num_stages: 1
 scal:
   - gen: true
     param_map:

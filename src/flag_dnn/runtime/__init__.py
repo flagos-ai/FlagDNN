@@ -1,4 +1,4 @@
-from . import backend, common, error
+from . import backend, error
 from .backend.device import DeviceDetector
 from .configloader import ConfigLoader
 
@@ -34,12 +34,11 @@ def replace_customized_ops(_globals):
     backend_customization_operators = backend.get_current_device_extend_op(
         device.vendor_name
     )
-    if device.vendor != common.vendors.NVIDIA:
-        try:
-            for fn_name, fn in backend_customization_operators:
-                _globals[fn_name] = fn
-        except RuntimeError as e:
-            error.customized_op_replace_error(e)
+    try:
+        for fn_name, fn in backend_customization_operators:
+            _globals[fn_name] = fn
+    except RuntimeError as e:
+        error.customized_op_replace_error(e)
     if arch_specialization_operators:
         try:
             for fn_name, fn in arch_specialization_operators:

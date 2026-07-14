@@ -12,6 +12,7 @@ from flag_dnn.graph.backend import (
     BackendCapability,
     GraphBackend,
     KernelCandidate,
+    TritonAscendBackend,
     TritonCudaBackend,
     resolve_backend,
 )
@@ -65,6 +66,7 @@ __all__ = [
     "PlanCacheKey",
     "TensorAllocation",
     "TensorSpec",
+    "TritonAscendBackend",
     "TritonCudaBackend",
     "compile",
     "current_capture",

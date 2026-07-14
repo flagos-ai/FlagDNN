@@ -36,7 +36,7 @@ from flag_dnn.utils.models import PersistantModel, SQLPersistantModel
 
 logger = logging.getLogger(__name__)
 
-DEVICE_COUNT = runtime.device.device_count
+DEVICE_COUNT = max(int(runtime.device.device_count or 0), 1)
 
 version = triton.__version__.split(".")
 major_version, minor_version = eval(version[0]), eval(version[1])
@@ -184,24 +184,25 @@ class LibCache(object):
         self.global_cache: Dict = {}
         self.volumn: Dict = {}
         if db_url is None:
-            try:
-                device_name: str = torch_device_fn.get_device_name().replace(
-                    " ", "_"
-                )
-            except AttributeError:
-                device_name: str = (  # type: ignore[no-redef]
-                    vendor_module.vendor_info.device_name
-                )
             vname = vendor_module.vendor_info.vendor_name
-            cache_file_name: str = (
-                f"TunedConfig_{device_name}"
-                f"_triton_{major_version}"
-                f"_{minor_version}.db"
-                if vname == "nvidia"
-                else f"TunedConfig_{vname}"
-                f"_triton_{major_version}"
-                f"_{minor_version}.db"
-            )
+            if vname == "nvidia":
+                try:
+                    device_name = torch_device_fn.get_device_name().replace(
+                        " ", "_"
+                    )
+                except (AttributeError, RuntimeError, TypeError):
+                    device_name = vendor_module.vendor_info.device_name
+                cache_file_name = (
+                    f"TunedConfig_{device_name}"
+                    f"_triton_{major_version}"
+                    f"_{minor_version}.db"
+                )
+            else:
+                cache_file_name = (
+                    f"TunedConfig_{vname}"
+                    f"_triton_{major_version}"
+                    f"_{minor_version}.db"
+                )
             cache_path: Path = config_cache_dir() / cache_file_name
             self.db_url: str = f"sqlite:///{cache_path}"
         else:

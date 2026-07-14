@@ -4,11 +4,11 @@ from typing import Optional
 import torch
 import triton
 import triton.language as tl
+from triton.language.extra.cuda import libdevice
 
 from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
-from flag_dnn.utils.triton_lang_helper import tl_extra_shim as libdevice
 from flag_dnn.utils import triton_lang_extension as tle
 
 logger = logging.getLogger(__name__)
