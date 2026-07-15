@@ -95,9 +95,7 @@ def test_ascend_simple_pointwise(config_key, op_name):
 def test_ascend_add_square():
     left_cpu = torch.linspace(-2.0, 2.0, 1024, dtype=torch.float32)
     right_cpu = torch.linspace(0.1, 1.1, 1024, dtype=torch.float32)
-    actual = flag_dnn.add_square(
-        left_cpu.to("npu:0"), right_cpu.to("npu:0")
-    )
+    actual = flag_dnn.add_square(left_cpu.to("npu:0"), right_cpu.to("npu:0"))
     _assert_result("add_square", actual, left_cpu + right_cpu.square())
 
 
@@ -123,9 +121,7 @@ def test_ascend_rms_norm():
     input_cpu = torch.randn((8, 64), generator=generator)
     weight_cpu = torch.randn((64,), generator=generator)
     input_npu = input_cpu.to("npu:0")
-    actual = flag_dnn.rms_norm(
-        input_npu, (64,), weight_cpu.to("npu:0")
-    )
+    actual = flag_dnn.rms_norm(input_npu, (64,), weight_cpu.to("npu:0"))
     expected = (
         input_cpu
         * torch.rsqrt(input_cpu.square().mean(-1, keepdim=True) + 1e-5)

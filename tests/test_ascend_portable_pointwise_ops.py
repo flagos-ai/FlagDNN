@@ -60,9 +60,7 @@ def test_ascend_tan_graph():
 
     @flag_dnn.graph
     def tan_graph(x):
-        return flag_dnn.tan(
-            x, compute_data_type="float32", name="tan"
-        )
+        return flag_dnn.tan(x, compute_data_type="float32", name="tan")
 
     compiled = flag_dnn.compile(
         tan_graph,
@@ -185,9 +183,7 @@ def test_ascend_sigmoid_graph():
 
     @flag_dnn.graph
     def sigmoid_graph(x):
-        return flag_dnn.sigmoid(
-            x, compute_data_type="float32", name="sigmoid"
-        )
+        return flag_dnn.sigmoid(x, compute_data_type="float32", name="sigmoid")
 
     compiled = flag_dnn.compile(
         sigmoid_graph,

@@ -32,10 +32,7 @@ def _reduction_2d_kernel(
     elif OP == "MUL" or OP == "MUL_NO_ZEROS":
         acc = tl.full((BLOCK_M,), 1.0, dtype=tl.float32)
     elif OP == "AMAX" or (
-        OP == "ADD"
-        or OP == "AVG"
-        or OP == "NORM1"
-        or OP == "NORM2"
+        OP == "ADD" or OP == "AVG" or OP == "NORM1" or OP == "NORM2"
     ):
         acc = tl.zeros((BLOCK_M,), dtype=tl.float32)
     else:
@@ -50,12 +47,7 @@ def _reduction_2d_kernel(
             + n_offsets[None, :] * stride_xn
         )
         mask = m_mask[:, None] & n_mask[None, :]
-        if (
-            OP == "ADD"
-            or OP == "AVG"
-            or OP == "NORM1"
-            or OP == "NORM2"
-        ):
+        if OP == "ADD" or OP == "AVG" or OP == "NORM1" or OP == "NORM2":
             vals = tl.load(ptrs, mask=mask, other=0.0).to(tl.float32)
             if OP == "NORM1":
                 vals = tl.abs(vals)
@@ -68,9 +60,7 @@ def _reduction_2d_kernel(
                 vals = tl.where(vals == 0.0, 1.0, vals)
             products = tl.cumprod(vals, axis=1)
             last = tl.arange(0, BLOCK_N) == (BLOCK_N - 1)
-            chunk = tl.sum(
-                tl.where(last[None, :], products, 0.0), axis=1
-            )
+            chunk = tl.sum(tl.where(last[None, :], products, 0.0), axis=1)
             acc *= chunk
         elif OP == "MIN":
             vals = tl.load(ptrs, mask=mask, other=float("inf"))
@@ -118,10 +108,7 @@ def _reduction_3d_kernel(
     elif OP == "MUL" or OP == "MUL_NO_ZEROS":
         acc = tl.full((BLOCK_M,), 1.0, dtype=tl.float32)
     elif OP == "AMAX" or (
-        OP == "ADD"
-        or OP == "AVG"
-        or OP == "NORM1"
-        or OP == "NORM2"
+        OP == "ADD" or OP == "AVG" or OP == "NORM1" or OP == "NORM2"
     ):
         acc = tl.zeros((BLOCK_M,), dtype=tl.float32)
     else:
@@ -132,12 +119,7 @@ def _reduction_3d_kernel(
         n_mask = n_offsets < N
         ptrs = base_ptrs[:, None] + n_offsets[None, :] * stride_xr
         mask = m_mask[:, None] & n_mask[None, :]
-        if (
-            OP == "ADD"
-            or OP == "AVG"
-            or OP == "NORM1"
-            or OP == "NORM2"
-        ):
+        if OP == "ADD" or OP == "AVG" or OP == "NORM1" or OP == "NORM2":
             vals = tl.load(ptrs, mask=mask, other=0.0).to(tl.float32)
             if OP == "NORM1":
                 vals = tl.abs(vals)
@@ -150,9 +132,7 @@ def _reduction_3d_kernel(
                 vals = tl.where(vals == 0.0, 1.0, vals)
             products = tl.cumprod(vals, axis=1)
             last = tl.arange(0, BLOCK_N) == (BLOCK_N - 1)
-            chunk = tl.sum(
-                tl.where(last[None, :], products, 0.0), axis=1
-            )
+            chunk = tl.sum(tl.where(last[None, :], products, 0.0), axis=1)
             acc *= chunk
         elif OP == "MIN":
             vals = tl.load(ptrs, mask=mask, other=float("inf"))
@@ -253,9 +233,7 @@ def _empty_reduction_result(
 ) -> torch.Tensor | None:
     out_shape = _out_shape(input, dims, keepdim)
     if _shape_numel(out_shape) == 0:
-        return torch.empty(
-            out_shape, dtype=target_dtype, device=input.device
-        )
+        return torch.empty(out_shape, dtype=target_dtype, device=input.device)
 
     reduced_extent = 1
     for axis in dims:

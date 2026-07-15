@@ -242,7 +242,11 @@ def pow(
         _validate_portable_tensor(input, "input")
     if exp_is_tensor:
         _validate_portable_tensor(exponent, "exponent")
-    if input_is_tensor and exp_is_tensor and input.device != exponent.device:
+    if (
+        isinstance(input, torch.Tensor)
+        and isinstance(exponent, torch.Tensor)
+        and input.device != exponent.device
+    ):
         raise RuntimeError(
             "flag_dnn pow expected input and exponent on the same device, "
             f"got {input.device} and {exponent.device}"

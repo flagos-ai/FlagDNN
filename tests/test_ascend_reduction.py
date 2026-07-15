@@ -110,9 +110,7 @@ def test_ascend_reduction_sum_and_norm_modes(dtype, mode):
         dim=(1, 2),
         keepdim=True,
     )
-    expected = _reference_reduction(
-        input_cpu, mode, dim=(1, 2), keepdim=True
-    )
+    expected = _reference_reduction(input_cpu, mode, dim=(1, 2), keepdim=True)
     _assert_close(actual, expected, dtype)
 
 
@@ -130,18 +128,14 @@ def test_ascend_reduction_product_modes(dtype, mode):
         dim=(1, 2),
         keepdim=True,
     )
-    expected = _reference_reduction(
-        input_cpu, mode, dim=(1, 2), keepdim=True
-    )
+    expected = _reference_reduction(input_cpu, mode, dim=(1, 2), keepdim=True)
     _assert_close(actual, expected, dtype)
 
 
 def test_ascend_reduction_product_zero_semantics_differ():
     input_cpu = torch.tensor([[0.0, 2.0, 3.0]], dtype=torch.float32)
     input_npu = input_cpu.to("npu:0")
-    product = flag_dnn.reduction(
-        input_npu, "MUL", dim=1, keepdim=False
-    )
+    product = flag_dnn.reduction(input_npu, "MUL", dim=1, keepdim=False)
     no_zeros = flag_dnn.reduction(
         input_npu, "MUL_NO_ZEROS", dim=1, keepdim=False
     )
@@ -159,9 +153,7 @@ def test_ascend_reduction_extrema_modes(dtype, mode):
         dim=(1, 2),
         keepdim=True,
     )
-    expected = _reference_reduction(
-        input_cpu, mode, dim=(1, 2), keepdim=True
-    )
+    expected = _reference_reduction(input_cpu, mode, dim=(1, 2), keepdim=True)
     _assert_close(actual, expected, dtype)
 
 
@@ -202,8 +194,8 @@ def test_ascend_reduction_keepdim_for_all_dtypes(dtype, keepdim):
 
 
 def test_ascend_reduction_empty_dimension_list_is_identity():
-    input_cpu = torch.linspace(-1.0, 1.0, 24).reshape(2, 3, 4).to(
-        torch.float16
+    input_cpu = (
+        torch.linspace(-1.0, 1.0, 24).reshape(2, 3, 4).to(torch.float16)
     )
     input_npu = input_cpu.to("npu:0")
     actual = flag_dnn.reduction(input_npu, "ADD", dim=[])
@@ -212,8 +204,8 @@ def test_ascend_reduction_empty_dimension_list_is_identity():
 
 
 def test_ascend_reduction_explicit_output_dtype():
-    input_cpu = torch.linspace(-1.0, 1.0, 120).reshape(2, 3, 4, 5).to(
-        torch.float16
+    input_cpu = (
+        torch.linspace(-1.0, 1.0, 120).reshape(2, 3, 4, 5).to(torch.float16)
     )
     actual = flag_dnn.reduction(
         input_cpu.to("npu:0"),
@@ -253,9 +245,7 @@ def test_ascend_reduction_accepts_int_dimensions(dim):
     actual = flag_dnn.reduction(
         input_cpu.to("npu:0"), "MAX", dim=dim, keepdim=True
     )
-    expected = _reference_reduction(
-        input_cpu, "MAX", dim, keepdim=True
-    )
+    expected = _reference_reduction(input_cpu, "MAX", dim, keepdim=True)
     _assert_close(actual, expected, torch.float32)
 
 
@@ -268,9 +258,7 @@ def test_ascend_reduction_rejects_fp64_before_launch():
 def test_ascend_reduction_rejects_fp64_output_before_launch():
     input_npu = torch.ones((2, 4), device="npu:0")
     with pytest.raises(NotImplementedError, match="float64"):
-        flag_dnn.reduction(
-            input_npu, "MAX", dim=(1,), dtype=torch.float64
-        )
+        flag_dnn.reduction(input_npu, "MAX", dim=(1,), dtype=torch.float64)
 
 
 def test_ascend_reduction_rejects_cpu_before_launch():
@@ -301,14 +289,10 @@ def test_ascend_reduction_empty_reduced_extent(mode):
     input_npu = torch.empty((2, 0, 3), device="npu:0")
     if mode in _EMPTY_EXTREMA:
         with pytest.raises(RuntimeError, match="empty"):
-            flag_dnn.reduction(
-                input_npu, mode, dim=1, keepdim=True
-            )
+            flag_dnn.reduction(input_npu, mode, dim=1, keepdim=True)
         return
 
-    actual = flag_dnn.reduction(
-        input_npu, mode, dim=1, keepdim=True
-    )
+    actual = flag_dnn.reduction(input_npu, mode, dim=1, keepdim=True)
     expected = torch.full(
         (2, 1, 3), _EMPTY_IDENTITIES[mode], dtype=torch.float32
     )
@@ -318,9 +302,7 @@ def test_ascend_reduction_empty_reduced_extent(mode):
 @pytest.mark.parametrize("mode", MODES)
 def test_ascend_reduction_empty_non_reduced_axis(mode):
     input_npu = torch.empty((0, 3), device="npu:0")
-    actual = flag_dnn.reduction(
-        input_npu, mode, dim=1, keepdim=False
-    )
+    actual = flag_dnn.reduction(input_npu, mode, dim=1, keepdim=False)
     expected = torch.empty((0,), dtype=torch.float32)
     _assert_close(actual, expected, torch.float32)
 
@@ -352,7 +334,5 @@ def test_ascend_reduction_graph(mode):
     )
     assert [node.op_type for node in compiled.graph.nodes] == ["reduction"]
     actual = compiled.run(input_npu.clone())
-    expected = _reference_reduction(
-        input_cpu, mode, dim=(1, 2), keepdim=True
-    )
+    expected = _reference_reduction(input_cpu, mode, dim=(1, 2), keepdim=True)
     _assert_close(actual, expected, torch.float32)

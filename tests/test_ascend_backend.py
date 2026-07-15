@@ -2,6 +2,7 @@ import pytest
 import torch
 
 import flag_dnn
+from flag_dnn.graph import graph as graph_decorator
 from flag_dnn.graph.backend import TritonAscendBackend
 from flag_dnn.runtime.backend import vendor_module
 
@@ -46,12 +47,8 @@ def test_ascend_backend_aliases() -> None:
 def test_ascend_backend_rejects_non_npu_specs(monkeypatch) -> None:
     monkeypatch.setattr(torch.npu, "is_available", lambda: True)
     backend = TritonAscendBackend()
-    npu_spec = flag_dnn.TensorSpec(
-        "x", (16,), "float32", device="npu:0"
-    )
-    cpu_spec = flag_dnn.TensorSpec(
-        "x", (16,), "float32", device="cpu"
-    )
+    npu_spec = flag_dnn.TensorSpec("x", (16,), "float32", device="npu:0")
+    cpu_spec = flag_dnn.TensorSpec("x", (16,), "float32", device="cpu")
 
     assert backend.supports(flag_dnn.Graph(), [npu_spec])
     assert not backend.supports(flag_dnn.Graph(), [cpu_spec])
@@ -60,7 +57,7 @@ def test_ascend_backend_rejects_non_npu_specs(monkeypatch) -> None:
 def test_graph_add_selects_ascend_candidate(monkeypatch) -> None:
     monkeypatch.setattr(torch.npu, "is_available", lambda: True)
 
-    @flag_dnn.graph
+    @graph_decorator
     def add_graph(lhs, rhs):
         return flag_dnn.add(
             lhs,

@@ -149,9 +149,7 @@ def import_vendor_extra_lib(vendor_name=None):
         return
     global ops_module, fused_module
     try:
-        ops_module = importlib.import_module(
-            f"{__name__}._{vendor_name}.ops"
-        )
+        ops_module = importlib.import_module(f"{__name__}._{vendor_name}.ops")
     except ModuleNotFoundError:
         print(
             f"[Note] No specialized common operators"
