@@ -1,49 +1,26 @@
-import pytest
-from tests.base import (
-    CUDNN_COMPARE_DTYPES,
-    cudnn,
-    cudnn_graph,
-    execute_cudnn_graph,
-)
 import torch
+import pytest
 
 import flag_dnn
-from tests import consts
 from tests import accuracy_utils as utils
+from tests import consts
+from tests.oracles import get_add_test_cases
 
 
-def _cudnn_add(x, y, cudnn_handle):
-    graph = cudnn_graph(x.dtype, cudnn_handle)
-    x_tensor = graph.tensor_like(x)
-    y_tensor = graph.tensor_like(y)
-    out_tensor = graph.add(
-        a=x_tensor,
-        b=y_tensor,
-        compute_data_type=cudnn.data_type.FLOAT,
-        name="add",
+def _make_input(shape, dtype):
+    cpu = consts.pointwise_layout(
+        torch.randn(shape, device="cpu", dtype=dtype)
     )
-    output_shape = torch.broadcast_shapes(tuple(x.shape), tuple(y.shape))
-    output_template = torch.empty(
-        output_shape,
-        device=x.device,
-        dtype=x.dtype,
-    )
-    return execute_cudnn_graph(
-        graph,
-        {x_tensor: x, y_tensor: y},
-        out_tensor,
-        output_template,
-        cudnn_handle,
-        "add",
-    )
+    return cpu.to(flag_dnn.device)
 
 
-def _run_flag_dnn_add_graph(x, y):
+def _run_flag_dnn_add_graph(x, y, alpha=1):
     @flag_dnn.graph
     def flag_dnn_add_graph(x, y):
         return flag_dnn.add(
             x,
             y,
+            alpha=alpha,
             compute_data_type="float32",
             name="add",
         )
@@ -57,24 +34,57 @@ def _run_flag_dnn_add_graph(x, y):
         options={"cache": None},
     )
     assert [node.op_type for node in compiled.graph.nodes] == ["add"]
-    assert compiled.graph.nodes[0].attrs["compute_data_type"] == "float32"
-    assert compiled.graph.nodes[0].attrs["name"] == "add"
-    return compiled.run(x.clone(), y.clone())
+    attrs = compiled.graph.nodes[0].attrs
+    assert attrs["alpha"] == alpha
+    assert attrs["compute_data_type"] == "float32"
+    assert attrs["name"] == "add"
+    return compiled.run(x, y)
+
+
+def _assert_add_matches_oracle(dnn_oracle, dtype, x_shape, y_shape, alpha):
+    torch.manual_seed(0)
+    x = _make_input(x_shape, dtype)
+    y = _make_input(y_shape, dtype)
+    assert dnn_oracle.supports_dtype(dtype)
+
+    expected = dnn_oracle.add(x, y, alpha=alpha)
+    actual = _run_flag_dnn_add_graph(x, y, alpha=alpha)
+    dnn_oracle.synchronize()
+
+    output_shape = torch.broadcast_shapes(tuple(x.shape), tuple(y.shape))
+    assert tuple(expected.shape) == output_shape
+    assert tuple(actual.shape) == output_shape
+    assert expected.dtype == actual.dtype == dtype
+    assert expected.device == actual.device == x.device
+
+    atol = 5e-2 if dtype == torch.bfloat16 else 2e-2
+    utils.gems_assert_close(actual, expected, dtype, atol=atol)
 
 
 @pytest.mark.add
 @pytest.mark.graph
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-@pytest.mark.parametrize("dtype", CUDNN_COMPARE_DTYPES)
-@pytest.mark.parametrize("case", consts.ADD_CASES)
-def test_add(cudnn_handle, dtype, case):
-    torch.manual_seed(0)
+@pytest.mark.parametrize("dtype", consts.DNN_COMPARE_DTYPES)
+@pytest.mark.parametrize("case", get_add_test_cases())
+def test_add(dnn_oracle, dtype, case):
     x_shape, y_shape = case
-    x = consts.pointwise_randn(x_shape, dtype, flag_dnn.device)
-    y = consts.pointwise_randn(y_shape, dtype, flag_dnn.device)
+    _assert_add_matches_oracle(
+        dnn_oracle,
+        dtype,
+        x_shape,
+        y_shape,
+        alpha=1,
+    )
 
-    cudnn_out = _cudnn_add(x, y, cudnn_handle)
-    flag_dnn_out = _run_flag_dnn_add_graph(x, y)
 
-    atol = 5e-2 if dtype == torch.bfloat16 else 2e-2
-    utils.gems_assert_close(flag_dnn_out, cudnn_out, dtype, atol=atol)
+@pytest.mark.add
+@pytest.mark.graph
+@pytest.mark.parametrize("dtype", consts.DNN_COMPARE_DTYPES)
+@pytest.mark.parametrize("alpha", (0.5, -2.0))
+def test_add_alpha(dnn_oracle, dtype, alpha):
+    _assert_add_matches_oracle(
+        dnn_oracle,
+        dtype,
+        (2, 4, 8),
+        (2, 4, 8),
+        alpha=alpha,
+    )

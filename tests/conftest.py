@@ -83,3 +83,18 @@ def cudnn_handle():
         yield handle
     finally:
         cudnn.destroy_handle(handle)
+
+
+@pytest.fixture(scope="module")
+def dnn_oracle():
+    from tests.oracles import OracleNotImplementedError, create_oracle
+
+    try:
+        oracle = create_oracle()
+    except OracleNotImplementedError as exc:
+        pytest.skip(str(exc))
+
+    try:
+        yield oracle
+    finally:
+        oracle.close()

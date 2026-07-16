@@ -66,6 +66,7 @@ def execute_cudnn_graph(
     output_template,
     cudnn_handle,
     op_name,
+    skip_unsupported=True,
 ):
     output_value.set_output(True).set_data_type(
         cudnn_data_type(output_template.dtype)
@@ -73,7 +74,9 @@ def execute_cudnn_graph(
     try:
         graph.build([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
     except (cudnn.cudnnGraphNotSupportedError, RuntimeError) as exc:
-        skip_unsupported_cudnn_graph(exc, op_name)
+        if skip_unsupported:
+            skip_unsupported_cudnn_graph(exc, op_name)
+        raise
 
     output = torch.empty_strided(
         tuple(output_value.get_dim()),

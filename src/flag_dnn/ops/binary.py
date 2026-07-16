@@ -50,7 +50,12 @@ def can_use_flat_output(output: torch.Tensor, source: torch.Tensor) -> bool:
 def empty_like_preserve_dense_layout(
     source: torch.Tensor, dtype: torch.dtype
 ) -> torch.Tensor:
-    return torch.empty_like(source, dtype=dtype)
+    return torch.empty_strided(
+        source.shape,
+        source.stride(),
+        device=source.device,
+        dtype=dtype,
+    )
 
 
 # 维度坍缩：合并连续维度，丢弃 size=1 的维度，将任意 N 维化简为最小维度
