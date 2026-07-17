@@ -4,6 +4,7 @@ from typing import Any, Optional, Sequence
 
 import torch
 
+from flag_dnn import runtime
 from flag_dnn.graph.device import is_runtime_device_tensor
 from flag_dnn.graph.prepared import (
     PreparedSingleKernelRunSpec,
@@ -249,21 +250,98 @@ def _prepare_dense_tensor_binary(
             output_cache[key] = output
         return output
 
-    def runtime_args(
+    def default_runtime_args(
         inputs: Sequence[Any], output: torch.Tensor
     ) -> tuple[Any, ...]:
+        if runtime.device.vendor_name == "ascend" and kernel_op_type == "add":
+            return (inputs[0], inputs[1], output, alpha)
         return (inputs[0], inputs[1], output, n_elements, alpha)
 
-    def grid(meta: dict[str, Any]) -> tuple[int, ...]:
-        block_size = int(meta["BLOCK_SIZE"])
-        return ((n_elements + block_size - 1) // block_size,)
+    runtime_args = default_runtime_args
+    kernel = binary_tensor_kernel
+    constexpr_kwargs: dict[str, Any] = {
+        "ROUND_MODE": 0,
+        "OP_TYPE": kernel_op_type,
+    }
 
-    def build_cached_call(
-        constexprs: dict[str, Any]
-    ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
-        block_size = int(constexprs["BLOCK_SIZE"])
-        static_grid = ((n_elements + block_size - 1) // block_size, 1, 1)
-        return static_grid, (0, kernel_op_type, block_size)
+    if runtime.device.vendor_name == "ascend" and kernel_op_type == "add":
+        from flag_dnn.runtime.backend._ascend.ops.binary import (
+            add_tensor_aligned_core_loop_kernel,
+            add_tensor_core_loop_kernel,
+            can_use_aligned_core_loop,
+            get_add_block_size,
+            make_core_loop_grid,
+        )
+
+        block_size = get_add_block_size(
+            n_elements, left_spec.dtype, left_spec.device
+        )
+        grid = make_core_loop_grid(n_elements, left_spec.device)
+        alpha_is_one = alpha == 1.0
+        if alpha_is_one and can_use_aligned_core_loop(n_elements, block_size):
+            kernel = add_tensor_aligned_core_loop_kernel
+            program_count = grid({"BLOCK_SIZE": block_size})[0]
+            blocks_per_program = n_elements // block_size // program_count
+            constexpr_kwargs = {
+                "BLOCKS_PER_PROGRAM": blocks_per_program,
+                "BLOCK_SIZE": block_size,
+                "num_warps": 4,
+                "num_stages": 1,
+            }
+
+            def aligned_runtime_args(
+                inputs: Sequence[Any], output: torch.Tensor
+            ) -> tuple[Any, ...]:
+                return (inputs[0], inputs[1], output)
+
+            runtime_args = aligned_runtime_args
+
+            def build_cached_call(
+                constexprs: dict[str, Any]
+            ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+                static_grid = (*grid({"BLOCK_SIZE": block_size}), 1, 1)
+                return static_grid, (blocks_per_program, block_size)
+
+        else:
+            kernel = add_tensor_core_loop_kernel
+            constexpr_kwargs = {
+                "N_ELEMENTS": n_elements,
+                "ALPHA_IS_ONE": alpha_is_one,
+                "ALIGNED_BLOCKS": (
+                    n_elements >= 262144 and n_elements % block_size == 0
+                ),
+                "BLOCK_SIZE": block_size,
+                "num_warps": 4,
+                "num_stages": 1,
+            }
+
+            def build_cached_call(
+                constexprs: dict[str, Any]
+            ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+                static_grid = (*grid({"BLOCK_SIZE": block_size}), 1, 1)
+                return static_grid, (
+                    n_elements,
+                    alpha_is_one,
+                    n_elements >= 262144 and n_elements % block_size == 0,
+                    block_size,
+                )
+
+    else:
+
+        def grid(meta: dict[str, Any]) -> tuple[int, ...]:
+            block_size = int(meta["BLOCK_SIZE"])
+            return ((n_elements + block_size - 1) // block_size,)
+
+        def build_cached_call(
+            constexprs: dict[str, Any]
+        ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+            block_size = int(constexprs["BLOCK_SIZE"])
+            static_grid = (
+                (n_elements + block_size - 1) // block_size,
+                1,
+                1,
+            )
+            return static_grid, (0, kernel_op_type, block_size)
 
     def extra_check(inputs: Sequence[Any]) -> bool:
         left, right = inputs
@@ -278,16 +356,17 @@ def _prepare_dense_tensor_binary(
     return make_single_kernel_run_fn(
         PreparedSingleKernelRunSpec(
             kernel=PreparedSingleKernelSpec(
-                kernel=binary_tensor_kernel,
+                kernel=kernel,
                 grid=grid,
                 static_args=(),
-                constexpr_kwargs={"ROUND_MODE": 0, "OP_TYPE": kernel_op_type},
+                constexpr_kwargs=constexpr_kwargs,
                 build_cached_call=build_cached_call,
             ),
             input_checks=input_checks,
             output_factory=output_factory,
             runtime_args=runtime_args,
             extra_check=extra_check,
+            validate_inputs=bool(attrs.get("_validate_inputs", True)),
         ),
         default_run_fn,
     )

@@ -141,6 +141,7 @@ class PreparedSingleKernelRunSpec:
     extra_check: Optional[RuntimeGuard] = None
     pre_launch: Optional[PreLaunchHook] = None
     device_input_index: int = 0
+    validate_inputs: bool = True
 
 
 @dataclass(frozen=True)
@@ -312,6 +313,48 @@ def make_single_kernel_run_fn(
     extra_check = spec.extra_check
     pre_launch = spec.pre_launch
     device_input_index = spec.device_input_index
+    validate_inputs = spec.validate_inputs
+
+    def bind(
+        inputs: Sequence[Any], run_attrs: dict[str, Any]
+    ) -> Callable[[], Any]:
+        if validate_inputs:
+            if not runtime_tensor_checks_pass(inputs, input_checks):
+                return lambda: default_run_fn(inputs, run_attrs)
+            if extra_check is not None and not extra_check(inputs):
+                return lambda: default_run_fn(inputs, run_attrs)
+        device_source = inputs[device_input_index]
+        if not isinstance(device_source, torch.Tensor):
+            return lambda: default_run_fn(inputs, run_attrs)
+        output = output_factory(inputs)
+        call_args = runtime_args(inputs, output)
+
+        def run_bound() -> Any:
+            if pre_launch is not None:
+                pre_launch()
+            launch(device_source.device, *call_args)
+            return result(output)
+
+        return run_bound
+
+    if not validate_inputs:
+        cached_output: Any = None
+
+        def run_unchecked(
+            inputs: Sequence[Any], _run_attrs: dict[str, Any]
+        ) -> Any:
+            nonlocal cached_output
+            if cached_output is None:
+                cached_output = output_factory(inputs)
+            device_source = inputs[device_input_index]
+            launch(
+                device_source.device,
+                *runtime_args(inputs, cached_output),
+            )
+            return result(cached_output)
+
+        setattr(run_unchecked, "bind", bind)
+        return run_unchecked
 
     def run(inputs: Sequence[Any], run_attrs: dict[str, Any]) -> Any:
         if not runtime_tensor_checks_pass(inputs, input_checks):
@@ -327,6 +370,7 @@ def make_single_kernel_run_fn(
         launch(device_source.device, *runtime_args(inputs, output))
         return result(output)
 
+    setattr(run, "bind", bind)
     return run
 
 

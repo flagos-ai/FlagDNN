@@ -1,3 +1,5 @@
+"""Ascend backend integration and configuration regression tests."""
+
 import pytest
 import torch
 
@@ -5,6 +7,7 @@ import flag_dnn
 from flag_dnn.graph import graph as graph_decorator
 from flag_dnn.graph.backend import TritonAscendBackend
 from flag_dnn.runtime.backend import vendor_module
+from flag_dnn.runtime.backend._ascend.ops import binary as ascend_binary
 
 
 pytestmark = pytest.mark.skipif(
@@ -95,3 +98,72 @@ def test_ascend_simple_tune_config(op_name, expected_meta) -> None:
     assert config.num_warps == 4
     assert config.num_stages == 1
     assert config.num_ctas == 1
+
+
+def test_ascend_add_block_size_uses_per_core_workload(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ascend_binary,
+        "_get_device_properties",
+        lambda device_index: {"num_aicore": 20, "num_vectorcore": 40},
+    )
+    ascend_binary.get_vector_core_count.cache_clear()
+
+    try:
+        assert (
+            ascend_binary.get_add_block_size(1024, torch.float16, "npu:0")
+            == 1024
+        )
+        assert (
+            ascend_binary.get_add_block_size(4096, torch.float32, "npu:0")
+            == 2048
+        )
+        assert (
+            ascend_binary.get_add_block_size(176_085, torch.bfloat16, "npu:0")
+            == 8192
+        )
+        assert (
+            ascend_binary.get_add_block_size(395_523, torch.float16, "npu:0")
+            == 16384
+        )
+        assert (
+            ascend_binary.get_add_block_size(395_523, torch.float32, "npu:0")
+            == 4096
+        )
+    finally:
+        ascend_binary.get_vector_core_count.cache_clear()
+
+
+def test_ascend_core_loop_grid_is_capped_by_vector_cores(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ascend_binary,
+        "_get_device_properties",
+        lambda device_index: {"num_aicore": 24, "num_vectorcore": 48},
+    )
+    ascend_binary.get_vector_core_count.cache_clear()
+
+    try:
+        grid = ascend_binary.make_core_loop_grid(1_048_576, "npu:0")
+
+        assert grid({"BLOCK_SIZE": 256}) == (32,)
+        assert grid({"BLOCK_SIZE": 8192}) == (32,)
+
+        small_grid = ascend_binary.make_core_loop_grid(1024, "npu:0")
+        assert small_grid({"BLOCK_SIZE": 1024}) == (1,)
+    finally:
+        ascend_binary.get_vector_core_count.cache_clear()
+
+
+def test_ascend_vector_core_count_falls_back_to_two_per_ai_core(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        ascend_binary,
+        "_get_device_properties",
+        lambda device_index: {"num_aicore": 24},
+    )
+    ascend_binary.get_vector_core_count.cache_clear()
+
+    try:
+        assert ascend_binary.get_vector_core_count(0) == 48
+    finally:
+        ascend_binary.get_vector_core_count.cache_clear()

@@ -1,9 +1,11 @@
+"""Build-system regression tests for the Ascend DNN reference provider."""
+
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from tests.oracles import build
+from devtools.dnn_reference.providers.ascend import build
 
 
 def _make_layout(root: Path, prefix: str = "") -> build.CannLayout:

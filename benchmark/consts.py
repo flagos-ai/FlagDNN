@@ -230,8 +230,9 @@ SDPA_BACKWARD_SHAPES = (
 
 
 def pointwise_layout(tensor):
-    # 4D logical NCHW shapes use channels-last strides to match cuDNN NHWC.
-    if tensor.dim() == 4:
+    # cuDNN pointwise benchmarks use NHWC-compatible channels-last strides.
+    # Ascend currently supports only the native contiguous conversion here.
+    if tensor.dim() == 4 and tensor.device.type == "cuda":
         return tensor.contiguous(memory_format=torch.channels_last)
     return tensor
 
@@ -325,8 +326,13 @@ CONV_DGRAD_SHAPES = tuple(
 CONV_WGRAD_SHAPES = CONV_DGRAD_SHAPES
 
 
-def selected_shapes(shapes, env_name):
+def selected_shapes(shapes, env_name, legacy_env_names=()):
     only = os.getenv(env_name)
+    if not only:
+        for legacy_env_name in legacy_env_names:
+            only = os.getenv(legacy_env_name)
+            if only:
+                break
     if not only:
         return shapes
     selected = {int(item) for item in only.split(",") if item.strip()}
@@ -334,17 +340,32 @@ def selected_shapes(shapes, env_name):
 
 
 def bench_warmup():
-    return int(os.getenv("FLAGDNN_CUDNN_PERF_WARMUP", "25"))
+    return int(
+        os.getenv(
+            "FLAGDNN_PERF_WARMUP",
+            os.getenv("FLAGDNN_CUDNN_PERF_WARMUP", "25"),
+        )
+    )
 
 
 def bench_repeat():
-    return int(os.getenv("FLAGDNN_CUDNN_PERF_REPEAT", "100"))
+    return int(
+        os.getenv(
+            "FLAGDNN_PERF_REPEAT",
+            os.getenv("FLAGDNN_CUDNN_PERF_REPEAT", "100"),
+        )
+    )
 
 
 def min_speedup():
     # Default to report-only mode. Set this env var, e.g. to 0.9,
     # when graph performance should be used as a hard gate.
-    return float(os.getenv("FLAGDNN_CUDNN_PERF_MIN_SPEEDUP", "0"))
+    return float(
+        os.getenv(
+            "FLAGDNN_PERF_MIN_SPEEDUP",
+            os.getenv("FLAGDNN_CUDNN_PERF_MIN_SPEEDUP", "0"),
+        )
+    )
 
 
 def compile_options():

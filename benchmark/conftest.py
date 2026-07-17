@@ -29,3 +29,19 @@ def cudnn_handle():
         yield handle
     finally:
         cudnn.destroy_handle(handle)
+
+
+@pytest.fixture()
+def dnn_baseline():
+    from benchmark.baselines import create_baseline
+    from devtools.dnn_reference import DnnProviderNotImplementedError
+
+    try:
+        baseline = create_baseline()
+    except DnnProviderNotImplementedError as exc:
+        pytest.skip(str(exc))
+
+    try:
+        yield baseline
+    finally:
+        baseline.close()

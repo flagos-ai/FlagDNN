@@ -1,3 +1,5 @@
+"""Cross-platform layout regression tests for the abs operator."""
+
 import importlib
 from typing import Any
 

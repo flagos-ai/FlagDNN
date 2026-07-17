@@ -1,8 +1,14 @@
 from pathlib import Path
 
 
-NVIDIA_ORACLE = Path(__file__).parent / "oracles" / "nvidia.py"
-TEST_BASE = Path(__file__).parent / "base.py"
+NVIDIA_ORACLE = (
+    Path(__file__).parents[1]
+    / "devtools"
+    / "dnn_reference"
+    / "providers"
+    / "nvidia.py"
+)
+TEST_BASE = Path(__file__).parents[1] / "tests" / "base.py"
 
 
 def _oracle_method_source(name):

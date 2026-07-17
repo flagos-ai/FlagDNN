@@ -1,22 +1,19 @@
 import math
 
 import pytest
-from benchmark.base import (
-    CudnnCompareBenchmark,
-    cudnn_data_type,
-    get_cudnn,
-    skip_unsupported_cudnn_graph,
-)
+from benchmark.base import DnnCompareBenchmark
 import torch
 
 import flag_dnn
 from benchmark import consts
 
 
-class AddBenchmark(CudnnCompareBenchmark):
+class AddBenchmark(DnnCompareBenchmark):
     op_name = "add"
+    enforce_min_speedup = True
     shapes = consts.ADD_SHAPES
-    shape_ids_env = "FLAGDNN_CUDNN_ADD_PERF_SHAPE_IDS"
+    shape_ids_env = "FLAGDNN_ADD_PERF_SHAPE_IDS"
+    legacy_shape_ids_env = "FLAGDNN_CUDNN_ADD_PERF_SHAPE_IDS"
 
     def make_inputs(self, case, dtype):
         self.case = case
@@ -25,47 +22,9 @@ class AddBenchmark(CudnnCompareBenchmark):
         y = consts.pointwise_randn(y_shape, dtype, flag_dnn.device)
         return x, y
 
-    def build_cudnn_runner(self, inputs):
-        cudnn = get_cudnn()
+    def build_baseline_runner(self, inputs):
         x, y = inputs
-        io_dtype = cudnn_data_type(x.dtype)
-        graph = cudnn.pygraph(
-            io_data_type=io_dtype,
-            intermediate_data_type=cudnn.data_type.FLOAT,
-            compute_data_type=cudnn.data_type.FLOAT,
-            handle=self.cudnn_handle,
-        )
-
-        x_tensor = graph.tensor_like(x)
-        y_tensor = graph.tensor_like(y)
-        out_tensor = graph.add(
-            a=x_tensor,
-            b=y_tensor,
-            compute_data_type=cudnn.data_type.FLOAT,
-            name="add",
-        )
-        out_tensor.set_output(True).set_data_type(io_dtype)
-
-        try:
-            graph.build([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
-        except (cudnn.cudnnGraphNotSupportedError, RuntimeError) as exc:
-            skip_unsupported_cudnn_graph(exc, self.op_name)
-
-        out_shape = torch.broadcast_shapes(tuple(x.shape), tuple(y.shape))
-        out = torch.empty(out_shape, device=x.device, dtype=x.dtype)
-        workspace = torch.empty(
-            graph.get_workspace_size(), device=x.device, dtype=torch.uint8
-        )
-
-        def run():
-            graph.execute(
-                {x_tensor: x, y_tensor: y, out_tensor: out},
-                workspace,
-                handle=self.cudnn_handle,
-            )
-            return out
-
-        return run
+        return self.baseline.prepare_add(x, y, alpha=1)
 
     def build_flag_dnn_runner(self, inputs):
         x, y = inputs
@@ -88,11 +47,7 @@ class AddBenchmark(CudnnCompareBenchmark):
             options=consts.compile_options(),
         )
         assert [node.op_type for node in compiled.graph.nodes] == ["add"]
-
-        def run():
-            return compiled.run(x, y)
-
-        return run
+        return compiled.bind(x, y)
 
     def transfer_bytes(self, inputs):
         x, y = inputs
@@ -107,8 +62,7 @@ class AddBenchmark(CudnnCompareBenchmark):
 @pytest.mark.add
 @pytest.mark.graph
 @pytest.mark.perf
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", AddBenchmark.dtypes)
-def test_add(cudnn_handle, dtype):
+def test_add(dnn_baseline, dtype):
     torch.manual_seed(0)
-    AddBenchmark(cudnn_handle).run(dtype)
+    AddBenchmark(dnn_baseline).run(dtype)

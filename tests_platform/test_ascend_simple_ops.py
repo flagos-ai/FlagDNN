@@ -1,8 +1,11 @@
 import pytest
 import torch
-import torch_npu  # noqa: F401 -- registers torch.npu
 
 import flag_dnn
+
+torch_npu = pytest.importorskip(
+    "torch_npu", reason="Ascend simple-operator tests require torch_npu"
+)
 
 
 _ASCEND_AVAILABLE = (

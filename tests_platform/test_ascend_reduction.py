@@ -1,8 +1,11 @@
 import pytest
 import torch
-import torch_npu  # noqa: F401 -- registers torch.npu
 
 import flag_dnn
+
+torch_npu = pytest.importorskip(
+    "torch_npu", reason="Ascend reduction tests require torch_npu"
+)
 
 
 DTYPES = (torch.float16, torch.bfloat16, torch.float32)

@@ -64,6 +64,28 @@ class _SingleStepFastPath:
             return tuple(result)
         return result
 
+    def bind(self, inputs: tuple[Any, ...]) -> Callable[[], Any]:
+        if self.passthrough_inputs:
+            step_inputs = inputs
+        elif self.input_indices is not None:
+            step_inputs = tuple(inputs[index] for index in self.input_indices)
+        else:
+            step_inputs = tuple(
+                source.resolve(inputs) for source in self.input_sources
+            )
+        binder = getattr(self.step.run_fn, "bind", None)
+        if binder is None:
+            return lambda: self.run(inputs)
+        bound = binder(step_inputs, self.step.attrs)
+        if not self.tuple_outputs:
+            return bound
+
+        def run_tuple() -> Any:
+            result = bound()
+            return result if isinstance(result, tuple) else tuple(result)
+
+        return run_tuple
+
 
 @dataclass(frozen=True)
 class _PreparedPlan:
@@ -150,6 +172,9 @@ def _prepare_plan(plan: ExecutionPlan, output_structure: Any) -> _PreparedPlan:
     steps = []
     for step in plan.steps:
         attrs = dict(step.attrs)
+        attrs["_validate_inputs"] = bool(
+            plan.debug_info.get("validate_inputs", True)
+        )
         default_run_fn = cast(RunFn, get_op_schema(step.op_type).run_fn)
         input_specs = tuple(
             plan.graph.values[value_id].spec for value_id in step.inputs

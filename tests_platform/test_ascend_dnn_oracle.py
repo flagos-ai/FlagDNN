@@ -10,16 +10,30 @@ from typing import TypedDict
 import pytest
 import torch
 
-from tests.oracles import ascend
+from devtools.dnn_reference.providers.ascend import provider as ascend
 
 
-CPP_ROOT = Path(__file__).parent / "oracles" / "csrc" / "ascend"
+CPP_ROOT = (
+    Path(__file__).parents[1]
+    / "devtools"
+    / "dnn_reference"
+    / "providers"
+    / "ascend"
+    / "csrc"
+)
 COMMON_HEADER = CPP_ROOT / "common" / "oracle_common.h"
 COMMON_SOURCE = CPP_ROOT / "common" / "oracle_common.cpp"
 ADD_SOURCE = CPP_ROOT / "ops" / "add.cpp"
 ABS_SOURCE = CPP_ROOT / "ops" / "abs.cpp"
 NATIVE_SOURCES = (COMMON_SOURCE, ADD_SOURCE, ABS_SOURCE)
-FAKE_CANN_ROOT = CPP_ROOT / "fake_cann"
+FAKE_CANN_ROOT = (
+    Path(__file__).parents[1]
+    / "tests"
+    / "oracles"
+    / "csrc"
+    / "ascend"
+    / "fake_cann"
+)
 _CANN_DEPENDENCY = re.compile(
     r"(?:/(?:ascend|cann)(?:/|$)|lib(?:ascend|acl|opapi|hccl|ge|runtime|"
     r"nnop|profapi|graph|metadef|register|opp|lowering|platform))",
@@ -203,6 +217,35 @@ def fake_aclnn_library(tmp_path_factory: pytest.TempPathFactory):
         ctypes.c_size_t,
     ]
     library.flagdnn_test_aclnn_add.restype = ctypes.c_int
+    library.flagdnn_aclnn_add_create.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.c_uint64,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.c_uint64,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.c_uint64,
+        ctypes.c_int32,
+        ctypes.c_double,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_char),
+        ctypes.c_size_t,
+    ]
+    library.flagdnn_aclnn_add_create.restype = ctypes.c_int
+    for name in ("flagdnn_aclnn_add_run", "flagdnn_aclnn_add_destroy"):
+        function = getattr(library, name)
+        function.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_char),
+            ctypes.c_size_t,
+        ]
+        function.restype = ctypes.c_int
     library.flagdnn_test_aclnn_abs.argtypes = [
         ctypes.c_void_p,
         ctypes.POINTER(ctypes.c_int64),
@@ -255,6 +298,68 @@ def _call_fake_wrapper(library: ctypes.CDLL) -> tuple[int, str]:
         len(error),
     )
     return status, error.value.decode()
+
+
+def _create_fake_prepared_add(
+    library: ctypes.CDLL,
+) -> tuple[int, str, ctypes.c_void_p]:
+    shape = (ctypes.c_int64 * 1)(1)
+    strides = (ctypes.c_int64 * 1)(1)
+    error = ctypes.create_string_buffer(1024)
+    handle = ctypes.c_void_p()
+    status = library.flagdnn_aclnn_add_create(
+        ctypes.c_void_p(0x1010),
+        shape,
+        strides,
+        1,
+        ctypes.c_void_p(0x2020),
+        shape,
+        strides,
+        1,
+        ctypes.c_void_p(0x3030),
+        shape,
+        strides,
+        1,
+        2,
+        1.0,
+        ctypes.c_void_p(0x4040),
+        ctypes.byref(handle),
+        error,
+        len(error),
+    )
+    return status, error.value.decode(), handle
+
+
+def test_fake_cann_prepared_add_separates_setup_run_and_cleanup(
+    fake_aclnn_library,
+):
+    library = fake_aclnn_library
+    library.fake_cann_reset()
+
+    status, detail, handle = _create_fake_prepared_add(library)
+
+    assert status == 0, detail
+    assert handle.value is not None
+    assert library.fake_cann_count(b"get_workspace") == 1
+    assert library.fake_cann_count(b"set_repeatable") == 1
+    assert library.fake_cann_count(b"malloc") == 1
+    assert library.fake_cann_count(b"add") == 0
+    assert library.fake_cann_count(b"synchronize") == 0
+
+    for _ in range(2):
+        error = ctypes.create_string_buffer(1024)
+        status = library.flagdnn_aclnn_add_run(handle, error, len(error))
+        assert status == 0, error.value.decode()
+
+    assert library.fake_cann_count(b"add") == 2
+    assert library.fake_cann_count(b"synchronize") == 0
+
+    error = ctypes.create_string_buffer(1024)
+    status = library.flagdnn_aclnn_add_destroy(handle, error, len(error))
+    assert status == 0, error.value.decode()
+    assert library.fake_cann_count(b"synchronize") == 1
+    assert library.fake_cann_executor_destroy_count() == 1
+    assert library.fake_cann_count(b"free") == 1
 
 
 def _call_fake_abs_wrapper(
@@ -1031,7 +1136,10 @@ def test_aclnn_wrapper_makes_executor_repeatable_before_execution():
 
 
 def test_aclnn_wrapper_checks_each_created_resource_immediately():
-    source = ADD_SOURCE.read_text(encoding="utf-8")
+    source = _function_body(
+        ADD_SOURCE.read_text(encoding="utf-8"),
+        "flagdnn_test_aclnn_add",
+    )
     tensor_calls = _call_positions(source, "aclCreateTensor")
     scalar_call = _first_call_position(source, "aclCreateScalar")
     workspace_call = _first_call_position(source, "aclnnAddGetWorkspaceSize")
@@ -1126,9 +1234,15 @@ class _FakeCFunction:
 
 def test_ascend_oracle_configure_library_uses_exact_c_abi_signatures():
     add_function = _FakeCFunction()
+    create_function = _FakeCFunction()
+    run_function = _FakeCFunction()
+    destroy_function = _FakeCFunction()
     abs_function = _FakeCFunction()
     library = SimpleNamespace(
         flagdnn_test_aclnn_add=add_function,
+        flagdnn_aclnn_add_create=create_function,
+        flagdnn_aclnn_add_run=run_function,
+        flagdnn_aclnn_add_destroy=destroy_function,
         flagdnn_test_aclnn_abs=abs_function,
     )
 
@@ -1154,6 +1268,34 @@ def test_ascend_oracle_configure_library_uses_exact_c_abi_signatures():
     ]
     assert add_function.restype is ctypes.c_int
     assert len(add_function.argtypes) == 17
+    assert create_function.argtypes == [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.c_uint64,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.c_uint64,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.c_uint64,
+        ctypes.c_int32,
+        ctypes.c_double,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_char),
+        ctypes.c_size_t,
+    ]
+    assert create_function.restype is ctypes.c_int
+    for function in (run_function, destroy_function):
+        assert function.argtypes == [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_char),
+            ctypes.c_size_t,
+        ]
+        assert function.restype is ctypes.c_int
     assert abs_function.argtypes == [
         ctypes.c_void_p,
         ctypes.POINTER(ctypes.c_int64),
