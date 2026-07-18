@@ -23,7 +23,6 @@ from flag_dnn.graph.backend import TritonAscendBackend
 from flag_dnn.runtime.backend import vendor_module
 from flag_dnn.runtime.backend._ascend.ops import binary as ascend_binary
 
-
 pytestmark = pytest.mark.skipif(
     flag_dnn.vendor_name != "ascend",
     reason="Ascend backend tests require an Ascend runtime",

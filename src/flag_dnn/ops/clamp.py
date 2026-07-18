@@ -26,7 +26,6 @@ from flag_dnn.utils import triton_lang_extension as tle
 from flag_dnn.ops.binary import collapse_dims, pad_to_max_dims
 from flag_dnn.utils.type_utils import is_bool_dtype, is_python_bool
 
-
 logger = logging.getLogger(__name__)
 
 

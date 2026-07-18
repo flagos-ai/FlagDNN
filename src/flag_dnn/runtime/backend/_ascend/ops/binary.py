@@ -24,7 +24,6 @@ import triton.runtime.driver as driver
 from flag_dnn.utils import triton_lang_extension as tle
 from flag_dnn.utils.libentry import libentry
 
-
 Grid = Callable[[dict[str, Any]], tuple[int, ...]]
 
 

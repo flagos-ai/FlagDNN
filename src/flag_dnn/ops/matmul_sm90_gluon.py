@@ -32,7 +32,6 @@ from triton.language.core import _aggregate as aggregate
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils.device_info import get_sm_count_for
 
-
 if TYPE_CHECKING:
     from flag_dnn.ops.matmul_sm90 import Sm90MatmulConfig
 

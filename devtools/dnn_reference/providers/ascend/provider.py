@@ -24,7 +24,6 @@ import torch
 
 from .build import build_aclnn_oracle, find_cann_layout
 
-
 _DTYPE_CODES = {
     torch.float16: 0,
     torch.bfloat16: 1,

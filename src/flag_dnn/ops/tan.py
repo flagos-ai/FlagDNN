@@ -19,7 +19,6 @@ import torch
 from flag_dnn import runtime
 from flag_dnn.ops.unary import unary
 
-
 _PORTABLE_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
 
 

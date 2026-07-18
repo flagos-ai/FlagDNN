@@ -14,7 +14,6 @@
 
 from pathlib import Path
 
-
 NVIDIA_ORACLE = (
     Path(__file__).parents[1]
     / "devtools"

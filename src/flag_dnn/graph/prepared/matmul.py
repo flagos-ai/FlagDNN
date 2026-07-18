@@ -35,7 +35,6 @@ from flag_dnn.graph.prepared.common import (
 from flag_dnn.graph.tensor import TensorSpec, torch_dtype
 from flag_dnn.utils.device_info import get_device_capability_for
 
-
 _FAST_DTYPES = {
     "float16",
     "bfloat16",

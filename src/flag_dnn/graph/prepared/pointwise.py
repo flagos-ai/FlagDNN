@@ -311,7 +311,7 @@ def _prepare_dense_tensor_binary(
             runtime_args = aligned_runtime_args
 
             def build_cached_call(
-                constexprs: dict[str, Any]
+                constexprs: dict[str, Any],
             ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
                 static_grid = (*grid({"BLOCK_SIZE": block_size}), 1, 1)
                 return static_grid, (blocks_per_program, block_size)
@@ -330,7 +330,7 @@ def _prepare_dense_tensor_binary(
             }
 
             def build_cached_call(
-                constexprs: dict[str, Any]
+                constexprs: dict[str, Any],
             ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
                 static_grid = (*grid({"BLOCK_SIZE": block_size}), 1, 1)
                 return static_grid, (
@@ -347,7 +347,7 @@ def _prepare_dense_tensor_binary(
             return ((n_elements + block_size - 1) // block_size,)
 
         def build_cached_call(
-            constexprs: dict[str, Any]
+            constexprs: dict[str, Any],
         ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
             block_size = int(constexprs["BLOCK_SIZE"])
             static_grid = (
@@ -459,7 +459,7 @@ def _prepare_binary_select_pointwise(
         return ((n_elements + block_size - 1) // block_size,)
 
     def build_cached_call(
-        constexprs: dict[str, Any]
+        constexprs: dict[str, Any],
     ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
         block_size = int(constexprs["BLOCK_SIZE"])
         static_grid = ((n_elements + block_size - 1) // block_size, 1, 1)
@@ -564,7 +564,7 @@ def _prepare_dense_tensor_pow(
         return ((n_elements + block_size - 1) // block_size,)
 
     def build_cached_call(
-        constexprs: dict[str, Any]
+        constexprs: dict[str, Any],
     ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
         block_size = int(constexprs["BLOCK_SIZE"])
         static_grid = ((n_elements + block_size - 1) // block_size, 1, 1)
@@ -671,7 +671,7 @@ def _prepare_add_square_pointwise(
         return ((n_elements + block_size * tiles - 1) // (block_size * tiles),)
 
     def build_cached_call(
-        constexprs: dict[str, Any]
+        constexprs: dict[str, Any],
     ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
         block_size = int(constexprs["BLOCK_SIZE"])
         tiles = int(constexprs["TILES_PER_PROGRAM"])

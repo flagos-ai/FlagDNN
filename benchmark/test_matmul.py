@@ -26,7 +26,6 @@ import torch
 import flag_dnn
 from benchmark import consts
 
-
 _FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
 _MATMUL_MODES = (
     ("fp16", torch.float16, "float32", torch.float16),

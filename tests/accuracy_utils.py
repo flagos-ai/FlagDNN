@@ -21,7 +21,6 @@ import torch
 import flag_dnn
 from .conftest import QUICK_MODE
 
-
 fp64_is_supported = flag_dnn.runtime.device.support_fp64
 bf16_is_supported = flag_dnn.runtime.device.support_bf16
 int64_is_supported = flag_dnn.runtime.device.support_int64

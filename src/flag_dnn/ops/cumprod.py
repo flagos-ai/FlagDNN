@@ -23,7 +23,6 @@ from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import triton_lang_extension as tle
 from flag_dnn.utils.type_utils import is_integral_dtype
 
-
 logger = logging.getLogger(__name__)
 
 

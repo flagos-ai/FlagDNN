@@ -25,7 +25,6 @@ from flag_dnn.ops.matmul import _batched_matmul_kernel
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 
-
 # Tuning spaces.
 _CONV2D_SPATIAL_CONFIGS = runtime.get_tuned_config("conv2d_spatial")
 _CONV2D_SPATIAL_NCHW_PACKED_CONFIGS = runtime.get_tuned_config(

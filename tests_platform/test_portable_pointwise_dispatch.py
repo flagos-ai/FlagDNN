@@ -27,7 +27,6 @@ import flag_dnn
 from flag_dnn import runtime
 from flag_dnn.runtime import common
 
-
 POINTWISE_NAMES = (
     "pow",
     "tan",

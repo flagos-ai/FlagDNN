@@ -42,7 +42,6 @@ from flag_dnn.utils.type_utils import (
     is_python_int,
 )
 
-
 logger = logging.getLogger(__name__)
 
 

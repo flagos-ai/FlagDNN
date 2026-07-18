@@ -24,7 +24,6 @@ import torch
 import flag_dnn
 from tests import consts
 
-
 _FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
 _FP8_BWD_CASES = consts.SDPA_FP8_CASES[:4] + (consts.SDPA_FP8_CASES[5],)
 

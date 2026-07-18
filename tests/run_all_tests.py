@@ -21,7 +21,6 @@ import sys
 import time
 from datetime import datetime
 
-
 # ================= Configuration =================
 
 # Target operator whitelist.

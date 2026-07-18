@@ -29,7 +29,6 @@ from flag_dnn.ops.binary import (
     has_same_dense_flat_layout,
 )
 
-
 logger = logging.getLogger(__name__)
 
 

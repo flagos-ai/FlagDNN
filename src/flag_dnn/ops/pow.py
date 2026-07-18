@@ -42,7 +42,6 @@ from flag_dnn.utils.type_utils import (
     is_python_int,
 )
 
-
 logger = logging.getLogger(__name__)
 
 _PORTABLE_DTYPES = (torch.float16, torch.bfloat16, torch.float32)

@@ -26,7 +26,6 @@ from flag_dnn.utils.device_info import (
     get_device_info,
 )
 
-
 _MATMUL_CONFIGS = runtime.get_tuned_config("matmul")
 _MATMUL_PERSISTENT_CONFIGS = runtime.get_tuned_config("matmul_persistent")
 

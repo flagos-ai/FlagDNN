@@ -19,7 +19,6 @@ from .sigmoid_backward import sigmoid_backward
 from .tan import tan
 from .tanh import tanh
 
-
 __all__ = (
     "pow",
     "tan",

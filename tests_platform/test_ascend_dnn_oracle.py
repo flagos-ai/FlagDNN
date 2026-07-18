@@ -26,7 +26,6 @@ import torch
 
 from devtools.dnn_reference.providers.ascend import provider as ascend
 
-
 CPP_ROOT = (
     Path(__file__).parents[1]
     / "devtools"

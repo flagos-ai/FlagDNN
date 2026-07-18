@@ -24,7 +24,6 @@ from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
 from flag_dnn.utils.triton_lang_helper import tl_extra_shim as libdevice
 
-
 logger = logging.getLogger(__name__)
 
 

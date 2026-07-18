@@ -25,7 +25,6 @@ from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
 from flag_dnn.utils.type_utils import is_bool_dtype
 
-
 logger = logging.getLogger(__name__)
 
 

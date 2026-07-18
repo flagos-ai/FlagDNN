@@ -28,7 +28,6 @@ import flag_dnn
 from tests import accuracy_utils as utils
 from tests import consts
 
-
 _FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
 _MATMUL_DTYPES = (
     torch.float16,

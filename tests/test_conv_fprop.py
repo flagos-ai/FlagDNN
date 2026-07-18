@@ -28,7 +28,6 @@ import torch
 import flag_dnn
 from tests import accuracy_utils as utils
 
-
 CONV_FPROP_CASES = (
     # 1D fprop cases.
     ((2, 4, 16), (6, 4, 3), 1, 1, None, None, 1),

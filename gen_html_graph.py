@@ -47,15 +47,15 @@ def normalize_op_name_from_file(filename: str) -> str:
     base = os.path.basename(str(filename))
 
     if base.endswith(".log"):
-        base = base[:-len(".log")]
+        base = base[: -len(".log")]
 
     if base.startswith("test_"):
-        base = base[len("test_"):]
+        base = base[len("test_") :]
 
     if base.endswith("_perf.py"):
-        base = base[:-len("_perf.py")]
+        base = base[: -len("_perf.py")]
     elif base.endswith(".py"):
-        base = base[:-len(".py")]
+        base = base[: -len(".py")]
 
     return base
 
@@ -201,13 +201,11 @@ def main():
         if op_name:
             correct_ops[op_name] = status
 
-    passed_ops = {
-        op for op, status in correct_ops.items()
-        if status == "PASS"
-    }
+    passed_ops = {op for op, status in correct_ops.items() if status == "PASS"}
 
     skipped_ops = {
-        op for op, status in correct_ops.items()
+        op
+        for op, status in correct_ops.items()
         if status in {"SKIPPED/UNSUPPORTED", "SKIPPED", "UNSUPPORTED"}
     }
 
@@ -231,7 +229,11 @@ def main():
     failed_ops = failed_count + errored_count
 
     # 精度 PASS 且有性能结果
-    pass_and_perf = len(passed_ops & set(avg_speedups.keys())) if passed_ops else len(avg_speedups)
+    pass_and_perf = (
+        len(passed_ops & set(avg_speedups.keys()))
+        if passed_ops
+        else len(avg_speedups)
+    )
 
     # 精度 PASS 但是没有性能结果
     no_perf = max(0, passed_count - pass_and_perf)
@@ -264,19 +266,25 @@ def main():
         reverse=True,
     )
 
-    low_ops_tr = "".join(
-        [
-            f'<tr><td>{k}</td><td><span class="badge badge-danger">{v:.4f}</span></td></tr>'
-            for k, v in sorted_low
-        ]
-    ) or '<tr><td colspan="2">暂无</td></tr>'
+    low_ops_tr = (
+        "".join(
+            [
+                f'<tr><td>{k}</td><td><span class="badge badge-danger">{v:.4f}</span></td></tr>'
+                for k, v in sorted_low
+            ]
+        )
+        or '<tr><td colspan="2">暂无</td></tr>'
+    )
 
-    high_ops_tr = "".join(
-        [
-            f'<tr><td>{k}</td><td><span class="badge badge-success">{v:.4f}</span></td></tr>'
-            for k, v in sorted_high
-        ]
-    ) or '<tr><td colspan="2">暂无</td></tr>'
+    high_ops_tr = (
+        "".join(
+            [
+                f'<tr><td>{k}</td><td><span class="badge badge-success">{v:.4f}</span></td></tr>'
+                for k, v in sorted_high
+            ]
+        )
+        or '<tr><td colspan="2">暂无</td></tr>'
+    )
 
     prio_1 = (
         "<br>".join(
@@ -307,10 +315,7 @@ def main():
     )
 
     start_time_str = (
-        str(start_time_str)
-        .replace(" ", "_")
-        .replace(":", "")
-        .replace("-", "")
+        str(start_time_str).replace(" ", "_").replace(":", "").replace("-", "")
     )
 
     # ==========================================
@@ -650,12 +655,16 @@ def main():
     # 7. 替换变量
     html_content = html_template.replace("__START_TIME__", start_time_str)
     html_content = html_content.replace("__TOTAL_OPS__", str(total_ops))
-    html_content = html_content.replace("__PASS_AND_PERF__", str(pass_and_perf))
+    html_content = html_content.replace(
+        "__PASS_AND_PERF__", str(pass_and_perf)
+    )
     html_content = html_content.replace(
         "__SKIPPED_UNSUPPORTED__",
         str(skipped_count),
     )
-    html_content = html_content.replace("__FAIL_CORRECTNESS__", str(failed_ops))
+    html_content = html_content.replace(
+        "__FAIL_CORRECTNESS__", str(failed_ops)
+    )
     html_content = html_content.replace(
         "__FAIL_CLASS__",
         "danger" if failed_ops > 0 else "success",

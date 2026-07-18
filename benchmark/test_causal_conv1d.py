@@ -19,7 +19,6 @@ import flag_dnn
 from benchmark import consts
 from benchmark.base import CudnnCompareBenchmark, get_cudnn
 
-
 _DTYPE_TO_CUDNN_INT = {
     torch.float32: 0,
     torch.float16: 2,

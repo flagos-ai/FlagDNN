@@ -30,7 +30,6 @@ from flag_dnn.ops.binary import (
     is_dense_flat_tensor,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
