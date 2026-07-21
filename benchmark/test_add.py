@@ -24,7 +24,6 @@ from benchmark import consts
 
 class AddBenchmark(DnnCompareBenchmark):
     op_name = "add"
-    enforce_min_speedup = True
     shapes = consts.ADD_SHAPES
     shape_ids_env = "FLAGDNN_ADD_PERF_SHAPE_IDS"
     legacy_shape_ids_env = "FLAGDNN_CUDNN_ADD_PERF_SHAPE_IDS"
@@ -38,7 +37,7 @@ class AddBenchmark(DnnCompareBenchmark):
 
     def build_baseline_runner(self, inputs):
         x, y = inputs
-        return self.baseline.prepare_add(x, y, alpha=1)
+        return self.baseline.prepare("add", x, y, alpha=1)
 
     def build_flag_dnn_runner(self, inputs):
         x, y = inputs

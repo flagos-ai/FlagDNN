@@ -49,15 +49,19 @@ POINTWISE_UNARY_SHAPES = (
 )
 
 ABS_SHAPES = POINTWISE_UNARY_SHAPES
+NEG_SHAPES = POINTWISE_UNARY_SHAPES
+SQRT_SHAPES = POINTWISE_UNARY_SHAPES
 EXP_SHAPES = POINTWISE_UNARY_SHAPES
 LOG_SHAPES = POINTWISE_UNARY_SHAPES
 RSQRT_SHAPES = POINTWISE_UNARY_SHAPES
 SIGMOID_SHAPES = POINTWISE_UNARY_SHAPES
+TANH_SHAPES = POINTWISE_UNARY_SHAPES
 RELU_SHAPES = POINTWISE_UNARY_SHAPES
 SWISH_SHAPES = POINTWISE_UNARY_SHAPES
 LEAKY_RELU_SHAPES = POINTWISE_UNARY_SHAPES
 ELU_SHAPES = POINTWISE_UNARY_SHAPES
 SOFTPLUS_SHAPES = POINTWISE_UNARY_SHAPES
+GELU_SHAPES = POINTWISE_UNARY_SHAPES
 GELU_APPROX_TANH_SHAPES = POINTWISE_UNARY_SHAPES
 RECIPROCAL_SHAPES = (
     POINTWISE_UNARY_SHAPES[0],
@@ -371,20 +375,20 @@ def bench_repeat():
     )
 
 
-def min_speedup():
-    # Default to report-only mode. Set this env var, e.g. to 0.9,
-    # when graph performance should be used as a hard gate.
-    return float(
-        os.getenv(
-            "FLAGDNN_PERF_MIN_SPEEDUP",
-            os.getenv("FLAGDNN_CUDNN_PERF_MIN_SPEEDUP", "0"),
-        )
-    )
-
-
 def compile_options():
     return {"cache": None, "validate_inputs": False}
 
+
+NORM_SHAPES = (
+    (1, 128, 768),
+    (8, 128, 1024),
+    (4, 256, 2048),
+    (2, 512, 4096),
+    (3, 257, 513),
+)
+
+LAYERNORM_SHAPES = NORM_SHAPES
+RMSNORM_SHAPES = NORM_SHAPES
 
 BATCHNORM_INFERENCE_SHAPES = (
     (8, 32, 32, 32),  # launch-sensitive small/medium activation
@@ -396,6 +400,8 @@ BATCHNORM_INFERENCE_SHAPES = (
     (8, 512, 7, 7),  # high-channel small spatial
     (32, 1024, 1, 1),  # per-channel 1x1 normalization
 )
+
+BATCHNORM_SHAPES = BATCHNORM_INFERENCE_SHAPES
 
 REDUCTION_SHAPES = (
     ((8, 8, 32, 32), 1, "ADD"),

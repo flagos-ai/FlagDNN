@@ -15,223 +15,23 @@
 # This file mirrors the FlagGems operator metadata format.
 # Entries are derived from FlagDNN public ops and graph test metadata.
 ops:
-  - id: identity
-    description: |
-      Returns the input tensor unchanged through the FlagDNN path.
-    for:
-      - identity
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Tensor
-    stages:
-      - stable: 'graph'
-  - id: reshape
-    description: |
-      Returns a tensor with the requested shape.
-    for:
-      - reshape
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Tensor
-    stages:
-      - stable: 'graph'
-  - id: transpose
-    description: |
-      Permutes tensor dimensions according to the requested order.
-    for:
-      - transpose
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Tensor
-    stages:
-      - stable: 'graph'
-  - id: slice
-    description: |
-      Extracts a strided slice from the input tensor.
-    for:
-      - slice
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Tensor
-    stages:
-      - stable: 'graph'
-  - id: concatenate
-    description: |
-      Concatenates input tensors along a selected dimension.
-    for:
-      - concatenate
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Tensor
-    stages:
-      - stable: 'graph'
-  - id: gen_index
-    description: |
-      Generates an index tensor for graph kernels.
-    for:
-      - gen_index
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Tensor
-    stages:
-      - stable: 'graph'
-  - id: relu
-    description: |
-      Runs the FlagDNN `relu` neural-network operator.
-    for:
-      - relu
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'graph'
-  - id: gelu
-    description: |
-      Runs the FlagDNN `gelu` neural-network operator.
-    for:
-      - gelu
-    labels:
-      - flag_dnn
-      - graph
-    kind:
-      - NeuralNetwork
-    stages:
-      - alpha: 'graph'
-  - id: gelu_approx_tanh
-    description: |
-      Computes GELU using the tanh approximation.
-    for:
-      - gelu_approx_tanh
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'graph'
-  - id: silu
-    description: |
-      Runs the FlagDNN `silu` neural-network operator.
-    for:
-      - silu
-    labels:
-      - flag_dnn
-      - graph
-    kind:
-      - NeuralNetwork
-    stages:
-      - alpha: 'graph'
-  - id: swish
-    description: |
-      Runs the FlagDNN `swish` neural-network operator.
-    for:
-      - swish
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'graph'
-  - id: leaky_relu
-    description: |
-      Runs the FlagDNN `leaky_relu` neural-network operator.
-    for:
-      - leaky_relu
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'graph'
-  - id: batchnorm
-    description: |
-      Runs the graph-oriented batch normalization operator.
-    for:
-      - batchnorm
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-    kind:
-      - NeuralNetwork
-    stages:
-      - beta: 'graph'
-  - id: batchnorm_inference
-    description: |
-      Runs batch normalization in inference mode.
-    for:
-      - batchnorm_inference
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'graph'
-  - id: layernorm
-    description: |
-      Runs the graph-oriented layer normalization operator.
-    for:
-      - layernorm
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-    kind:
-      - NeuralNetwork
-    stages:
-      - beta: 'graph'
-  - id: rmsnorm
-    description: |
-      Runs the graph-oriented RMS normalization operator.
-    for:
-      - rmsnorm
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-    kind:
-      - NeuralNetwork
-    stages:
-      - beta: 'graph'
+  # Temporary test subset: only the ten uncommented operators are active.
+
+#   - id: abs
+#     description: |
+#       Computes the FlagDNN `abs` elementwise unary operator.
+#     for:
+#       - abs
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
   - id: add
     description: |
       Computes the FlagDNN `add` elementwise binary operator.
@@ -246,512 +46,7 @@ ops:
       - Math
     stages:
       - stable: 'graph'
-  - id: sub
-    description: |
-      Computes the FlagDNN `sub` elementwise binary operator.
-    for:
-      - sub
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: mul
-    description: |
-      Computes the FlagDNN `mul` elementwise binary operator.
-    for:
-      - mul
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: scale
-    description: |
-      Multiplies the input tensor by a scalar or tensor scale value.
-    for:
-      - scale
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: div
-    description: |
-      Computes the FlagDNN `div` elementwise binary operator.
-    for:
-      - div
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: pow
-    description: |
-      Computes the FlagDNN `pow` elementwise binary operator.
-    for:
-      - pow
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: mod
-    description: |
-      Computes the FlagDNN `mod` elementwise binary operator in graph mode.
-    for:
-      - mod
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: max
-    description: |
-      Computes the FlagDNN `max` elementwise binary operator.
-    for:
-      - max
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: min
-    description: |
-      Computes the FlagDNN `min` elementwise binary operator.
-    for:
-      - min
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: sqrt
-    description: |
-      Computes the FlagDNN `sqrt` elementwise unary operator.
-    for:
-      - sqrt
-    labels:
-      - flag_dnn
-      - graph
-    kind:
-      - Math
-    stages:
-      - alpha: 'graph'
-  - id: abs
-    description: |
-      Computes the FlagDNN `abs` elementwise unary operator.
-    for:
-      - abs
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: neg
-    description: |
-      Computes the FlagDNN `neg` elementwise unary operator.
-    for:
-      - neg
-    labels:
-      - flag_dnn
-      - graph
-    kind:
-      - Math
-    stages:
-      - alpha: 'graph'
-  - id: reduction
-    description: |
-      Runs the FlagDNN `reduction` reduction or scan operator.
-    for:
-      - reduction
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-    kind:
-      - Reduction
-    stages:
-      - beta: 'graph'
-  - id: eq
-    description: |
-      Computes the FlagDNN `eq` elementwise binary operator.
-    for:
-      - eq
-    labels:
-      - flag_dnn
-      - graph
-    kind:
-      - Math
-    stages:
-      - alpha: 'graph'
-  - id: ne
-    description: |
-      Computes the FlagDNN `ne` elementwise binary operator.
-    for:
-      - ne
-    labels:
-      - flag_dnn
-      - graph
-    kind:
-      - Math
-    stages:
-      - alpha: 'graph'
-  - id: cmp_eq
-    description: |
-      Computes the FlagDNN `cmp_eq` elementwise binary operator.
-    for:
-      - cmp_eq
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: cmp_neq
-    description: |
-      Computes the FlagDNN `cmp_neq` elementwise binary operator.
-    for:
-      - cmp_neq
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: cmp_lt
-    description: |
-      Computes the FlagDNN `cmp_lt` elementwise binary operator.
-    for:
-      - cmp_lt
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: cmp_le
-    description: |
-      Computes the FlagDNN `cmp_le` elementwise binary operator.
-    for:
-      - cmp_le
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: cmp_gt
-    description: |
-      Computes the FlagDNN `cmp_gt` elementwise binary operator.
-    for:
-      - cmp_gt
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: cmp_ge
-    description: |
-      Computes the FlagDNN `cmp_ge` elementwise binary operator.
-    for:
-      - cmp_ge
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: elu
-    description: |
-      Runs the FlagDNN `elu` neural-network operator.
-    for:
-      - elu
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'graph'
-  - id: softplus
-    description: |
-      Runs the FlagDNN `softplus` neural-network operator.
-    for:
-      - softplus
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'graph'
-  - id: mm
-    description: |
-      Runs the FlagDNN `mm` linear algebra operator.
-    for:
-      - mm
-    labels:
-      - flag_dnn
-      - graph
-    kind:
-      - LinearAlg
-    stages:
-      - alpha: 'graph'
-  - id: matmul
-    description: |
-      Runs the FlagDNN `matmul` linear algebra operator.
-    for:
-      - matmul
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - LinearAlg
-    stages:
-      - stable: 'graph'
-  - id: sdpa
-    description: |
-      Runs scaled dot product attention through the graph executor.
-    for:
-      - sdpa
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-      - Attention
-    stages:
-      - alpha: 'graph'
-  - id: sdpa_backward
-    description: |
-      Computes scaled dot product attention backward through the graph executor.
-    for:
-      - sdpa_backward
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-      - Attention
-    stages:
-      - alpha: 'graph'
-  - id: sdpa_fp8
-    description: |
-      Runs FP8 scaled dot product attention through the graph executor.
-    for:
-      - sdpa_fp8
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-      - Attention
-    stages:
-      - alpha: 'graph'
-  - id: sdpa_fp8_backward
-    description: |
-      Computes FP8 scaled dot product attention backward through the graph executor.
-    for:
-      - sdpa_fp8_backward
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-      - Attention
-    stages:
-      - alpha: 'graph'
-  - id: conv2d
-    description: |
-      Runs the FlagDNN `conv2d` neural-network operator.
-    for:
-      - conv2d
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-    kind:
-      - NeuralNetwork
-    stages:
-      - alpha: 'graph'
-  - id: conv_fprop
-    description: |
-      Runs the convolution forward-propagation operator.
-    for:
-      - conv_fprop
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'graph'
-  - id: conv_dgrad
-    description: |
-      Runs the convolution data-gradient operator.
-    for:
-      - conv_dgrad
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-    stages:
-      - alpha: 'graph'
-  - id: conv_wgrad
-    description: |
-      Runs the convolution weight-gradient operator.
-    for:
-      - conv_wgrad
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-    stages:
-      - alpha: 'graph'
-  - id: causal_conv1d
-    description: |
-      Runs causal one-dimensional convolution.
-    for:
-      - causal_conv1d
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-    stages:
-      - beta: 'graph'
-  - id: tanh
-    description: |
-      Runs the FlagDNN `tanh` neural-network operator.
-    for:
-      - tanh
-    labels:
-      - flag_dnn
-      - graph
-    kind:
-      - NeuralNetwork
-    stages:
-      - alpha: 'graph'
-  - id: sigmoid
-    description: |
-      Runs the FlagDNN `sigmoid` neural-network operator.
-    for:
-      - sigmoid
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'graph'
-  - id: sigmoid_backward
-    description: |
-      Computes the backward gradient for sigmoid.
-    for:
-      - sigmoid_backward
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - NeuralNetwork
-    stages:
-      - stable: 'graph'
-  - id: square
-    description: |
-      Computes the FlagDNN `square` elementwise unary operator.
-    for:
-      - square
-    labels:
-      - flag_dnn
-      - graph
-    kind:
-      - Math
-    stages:
-      - alpha: 'graph'
+
   - id: add_square
     description: |
       Computes a fused add followed by square operation.
@@ -767,97 +62,86 @@ ops:
       - Fused
     stages:
       - stable: 'graph'
-  - id: rmsnorm_rht_amax
+
+#   - id: batchnorm
+#     description: |
+#       Runs the graph-oriented batch normalization operator.
+#     for:
+#       - batchnorm
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - beta: 'graph'
+
+#   - id: batchnorm_inference
+#     description: |
+#       Runs batch normalization in inference mode.
+#     for:
+#       - batchnorm_inference
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - stable: 'graph'
+
+#   - id: binary_select
+#     description: |
+#       Selects elements from two tensors according to a boolean predicate in graph mode.
+#     for:
+#       - binary_select
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Tensor
+#     stages:
+#       - stable: 'graph'
+
+#   - id: causal_conv1d
+#     description: |
+#       Runs causal one-dimensional convolution.
+#     for:
+#       - causal_conv1d
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - beta: 'graph'
+
+#   - id: ceil
+#     description: |
+#       Computes the ceiling of each input element in graph mode.
+#     for:
+#       - ceil
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+  - id: cmp_eq
     description: |
-      Runs fused RMS normalization, randomized Hadamard transform, and row amax in graph mode.
+      Computes the FlagDNN `cmp_eq` elementwise binary operator.
     for:
-      - rmsnorm_rht_amax
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-      - fused
-    kind:
-      - NeuralNetwork
-      - Fused
-    stages:
-      - stable: 'graph'
-  - id: rsqrt
-    description: |
-      Computes the FlagDNN `rsqrt` elementwise unary operator.
-    for:
-      - rsqrt
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: log
-    description: |
-      Computes the FlagDNN `log` elementwise unary operator.
-    for:
-      - log
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: exp
-    description: |
-      Computes the FlagDNN `exp` elementwise unary operator.
-    for:
-      - exp
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: reciprocal
-    description: |
-      Computes the reciprocal of each input element in graph mode.
-    for:
-      - reciprocal
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: ceil
-    description: |
-      Computes the ceiling of each input element in graph mode.
-    for:
-      - ceil
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Math
-    stages:
-      - stable: 'graph'
-  - id: floor
-    description: |
-      Computes the floor of each input element in graph mode.
-    for:
-      - floor
+      - cmp_eq
     labels:
       - flag_dnn
       - graph
@@ -867,11 +151,162 @@ ops:
       - Math
     stages:
       - stable: 'graph'
-  - id: erf
+
+#   - id: cmp_ge
+#     description: |
+#       Computes the FlagDNN `cmp_ge` elementwise binary operator.
+#     for:
+#       - cmp_ge
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+#   - id: cmp_gt
+#     description: |
+#       Computes the FlagDNN `cmp_gt` elementwise binary operator.
+#     for:
+#       - cmp_gt
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+#   - id: cmp_le
+#     description: |
+#       Computes the FlagDNN `cmp_le` elementwise binary operator.
+#     for:
+#       - cmp_le
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+#   - id: cmp_lt
+#     description: |
+#       Computes the FlagDNN `cmp_lt` elementwise binary operator.
+#     for:
+#       - cmp_lt
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+#   - id: cmp_neq
+#     description: |
+#       Computes the FlagDNN `cmp_neq` elementwise binary operator.
+#     for:
+#       - cmp_neq
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+#   - id: concatenate
+#     description: |
+#       Concatenates input tensors along a selected dimension.
+#     for:
+#       - concatenate
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Tensor
+#     stages:
+#       - stable: 'graph'
+
+#   - id: conv_dgrad
+#     description: |
+#       Runs the convolution data-gradient operator.
+#     for:
+#       - conv_dgrad
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - alpha: 'graph'
+
+#   - id: conv_fprop
+#     description: |
+#       Runs the convolution forward-propagation operator.
+#     for:
+#       - conv_fprop
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - stable: 'graph'
+
+#   - id: conv_wgrad
+#     description: |
+#       Runs the convolution weight-gradient operator.
+#     for:
+#       - conv_wgrad
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - alpha: 'graph'
+
+#   - id: cos
+#     description: |
+#       Computes the cosine of each input element in graph mode.
+#     for:
+#       - cos
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+  - id: div
     description: |
-      Computes the error function for each input element in graph mode.
+      Computes the FlagDNN `div` elementwise binary operator.
     for:
-      - erf
+      - div
     labels:
       - flag_dnn
       - graph
@@ -881,11 +316,234 @@ ops:
       - Math
     stages:
       - stable: 'graph'
-  - id: sin
+
+#   - id: elu
+#     description: |
+#       Runs the FlagDNN `elu` neural-network operator.
+#     for:
+#       - elu
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - stable: 'graph'
+
+#   - id: erf
+#     description: |
+#       Computes the error function for each input element in graph mode.
+#     for:
+#       - erf
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+#   - id: exp
+#     description: |
+#       Computes the FlagDNN `exp` elementwise unary operator.
+#     for:
+#       - exp
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+#   - id: floor
+#     description: |
+#       Computes the floor of each input element in graph mode.
+#     for:
+#       - floor
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+#   - id: gelu
+#     description: |
+#       Runs the FlagDNN `gelu` neural-network operator.
+#     for:
+#       - gelu
+#     labels:
+#       - flag_dnn
+#       - graph
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - alpha: 'graph'
+
+#   - id: gelu_approx_tanh
+#     description: |
+#       Computes GELU using the tanh approximation.
+#     for:
+#       - gelu_approx_tanh
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - stable: 'graph'
+
+#   - id: gen_index
+#     description: |
+#       Generates an index tensor for graph kernels.
+#     for:
+#       - gen_index
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Tensor
+#     stages:
+#       - stable: 'graph'
+
+#   - id: identity
+#     description: |
+#       Returns the input tensor unchanged through the FlagDNN path.
+#     for:
+#       - identity
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Tensor
+#     stages:
+#       - stable: 'graph'
+
+#   - id: layernorm
+#     description: |
+#       Runs the graph-oriented layer normalization operator.
+#     for:
+#       - layernorm
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - beta: 'graph'
+
+#   - id: leaky_relu
+#     description: |
+#       Runs the FlagDNN `leaky_relu` neural-network operator.
+#     for:
+#       - leaky_relu
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - stable: 'graph'
+
+#   - id: log
+#     description: |
+#       Computes the FlagDNN `log` elementwise unary operator.
+#     for:
+#       - log
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+#   - id: logical_and
+#     description: |
+#       Computes the FlagDNN `logical_and` elementwise binary operator.
+#     for:
+#       - logical_and
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+#   - id: logical_not
+#     description: |
+#       Computes the FlagDNN `logical_not` elementwise unary operator.
+#     for:
+#       - logical_not
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+#   - id: logical_or
+#     description: |
+#       Computes the FlagDNN `logical_or` elementwise binary operator.
+#     for:
+#       - logical_or
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+#   - id: matmul
+#     description: |
+#       Runs the FlagDNN `matmul` linear algebra operator.
+#     for:
+#       - matmul
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - LinearAlg
+#     stages:
+#       - stable: 'graph'
+
+  - id: max
     description: |
-      Computes the sine of each input element in graph mode.
+      Computes the FlagDNN `max` elementwise binary operator.
     for:
-      - sin
+      - max
     labels:
       - flag_dnn
       - graph
@@ -895,11 +553,12 @@ ops:
       - Math
     stages:
       - stable: 'graph'
-  - id: cos
+
+  - id: min
     description: |
-      Computes the cosine of each input element in graph mode.
+      Computes the FlagDNN `min` elementwise binary operator.
     for:
-      - cos
+      - min
     labels:
       - flag_dnn
       - graph
@@ -909,11 +568,12 @@ ops:
       - Math
     stages:
       - stable: 'graph'
-  - id: tan
+
+  - id: mod
     description: |
-      Computes the tangent of each input element in graph mode.
+      Computes the FlagDNN `mod` elementwise binary operator in graph mode.
     for:
-      - tan
+      - mod
     labels:
       - flag_dnn
       - graph
@@ -923,35 +583,12 @@ ops:
       - Math
     stages:
       - stable: 'graph'
-  - id: minimum
+
+  - id: mul
     description: |
-      Computes the FlagDNN `minimum` elementwise binary operator.
+      Computes the FlagDNN `mul` elementwise binary operator.
     for:
-      - minimum
-    labels:
-      - flag_dnn
-      - graph
-    kind:
-      - Math
-    stages:
-      - alpha: 'graph'
-  - id: maximum
-    description: |
-      Computes the FlagDNN `maximum` elementwise binary operator.
-    for:
-      - maximum
-    labels:
-      - flag_dnn
-      - graph
-    kind:
-      - Math
-    stages:
-      - alpha: 'graph'
-  - id: logical_and
-    description: |
-      Computes the FlagDNN `logical_and` elementwise binary operator.
-    for:
-      - logical_and
+      - mul
     labels:
       - flag_dnn
       - graph
@@ -961,11 +598,25 @@ ops:
       - Math
     stages:
       - stable: 'graph'
-  - id: logical_or
+
+#   - id: neg
+#     description: |
+#       Computes the FlagDNN `neg` elementwise unary operator.
+#     for:
+#       - neg
+#     labels:
+#       - flag_dnn
+#       - graph
+#     kind:
+#       - Math
+#     stages:
+#       - alpha: 'graph'
+
+  - id: pow
     description: |
-      Computes the FlagDNN `logical_or` elementwise binary operator.
+      Computes the FlagDNN `pow` elementwise binary operator.
     for:
-      - logical_or
+      - pow
     labels:
       - flag_dnn
       - graph
@@ -975,11 +626,278 @@ ops:
       - Math
     stages:
       - stable: 'graph'
-  - id: logical_not
+
+#   - id: reciprocal
+#     description: |
+#       Computes the reciprocal of each input element in graph mode.
+#     for:
+#       - reciprocal
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+#   - id: reduction
+#     description: |
+#       Runs the FlagDNN `reduction` reduction or scan operator.
+#     for:
+#       - reduction
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#     kind:
+#       - Reduction
+#     stages:
+#       - beta: 'graph'
+
+#   - id: relu
+#     description: |
+#       Runs the FlagDNN `relu` neural-network operator.
+#     for:
+#       - relu
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - stable: 'graph'
+
+#   - id: reshape
+#     description: |
+#       Returns a tensor with the requested shape.
+#     for:
+#       - reshape
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Tensor
+#     stages:
+#       - stable: 'graph'
+
+#   - id: rmsnorm
+#     description: |
+#       Runs the graph-oriented RMS normalization operator.
+#     for:
+#       - rmsnorm
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - beta: 'graph'
+
+#   - id: rsqrt
+#     description: |
+#       Computes the FlagDNN `rsqrt` elementwise unary operator.
+#     for:
+#       - rsqrt
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+#   - id: scale
+#     description: |
+#       Multiplies the input tensor by a scalar or tensor scale value.
+#     for:
+#       - scale
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+#   - id: sdpa
+#     description: |
+#       Runs scaled dot product attention through the graph executor.
+#     for:
+#       - sdpa
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - NeuralNetwork
+#       - Attention
+#     stages:
+#       - alpha: 'graph'
+
+#   - id: sdpa_backward
+#     description: |
+#       Computes scaled dot product attention backward through the graph executor.
+#     for:
+#       - sdpa_backward
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - NeuralNetwork
+#       - Attention
+#     stages:
+#       - alpha: 'graph'
+#   # - id: sdpa_fp8
+#   #   description: |
+#   #     Runs FP8 scaled dot product attention through the graph executor.
+#   #   for:
+#   #     - sdpa_fp8
+#   #   labels:
+#   #     - flag_dnn
+#   #     - graph
+#   #     - accuracy
+#   #     - benchmark
+#   #   kind:
+#   #     - NeuralNetwork
+#   #     - Attention
+#   #   stages:
+#   #     - alpha: 'graph'
+#   # - id: sdpa_fp8_backward
+#   #   description: |
+#   #     Computes FP8 scaled dot product attention backward through the graph executor.
+#   #   for:
+#   #     - sdpa_fp8_backward
+#   #   labels:
+#   #     - flag_dnn
+#   #     - graph
+#   #     - accuracy
+#   #     - benchmark
+#   #   kind:
+#   #     - NeuralNetwork
+#   #     - Attention
+#   #   stages:
+#   #     - alpha: 'graph'
+#   # - id: conv2d
+#   #   description: |
+#   #     Runs the FlagDNN `conv2d` neural-network operator.
+#   #   for:
+#   #     - conv2d
+#   #   labels:
+#   #     - flag_dnn
+#   #     - graph
+#   #     - accuracy
+#   #   kind:
+#   #     - NeuralNetwork
+#   #   stages:
+#   #     - alpha: 'graph'
+
+#   - id: sigmoid
+#     description: |
+#       Runs the FlagDNN `sigmoid` neural-network operator.
+#     for:
+#       - sigmoid
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - stable: 'graph'
+
+#   - id: sigmoid_backward
+#     description: |
+#       Computes the backward gradient for sigmoid.
+#     for:
+#       - sigmoid_backward
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - stable: 'graph'
+
+#   - id: sin
+#     description: |
+#       Computes the sine of each input element in graph mode.
+#     for:
+#       - sin
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+#   - id: slice
+#     description: |
+#       Extracts a strided slice from the input tensor.
+#     for:
+#       - slice
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Tensor
+#     stages:
+#       - stable: 'graph'
+
+#   - id: softplus
+#     description: |
+#       Runs the FlagDNN `softplus` neural-network operator.
+#     for:
+#       - softplus
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - stable: 'graph'
+
+#   - id: sqrt
+#     description: |
+#       Computes the FlagDNN `sqrt` elementwise unary operator.
+#     for:
+#       - sqrt
+#     labels:
+#       - flag_dnn
+#       - graph
+#     kind:
+#       - Math
+#     stages:
+#       - alpha: 'graph'
+
+  - id: sub
     description: |
-      Computes the FlagDNN `logical_not` elementwise unary operator.
+      Computes the FlagDNN `sub` elementwise binary operator.
     for:
-      - logical_not
+      - sub
     labels:
       - flag_dnn
       - graph
@@ -989,65 +907,61 @@ ops:
       - Math
     stages:
       - stable: 'graph'
-  - id: binary_select
-    description: |
-      Selects elements from two tensors according to a boolean predicate in graph mode.
-    for:
-      - binary_select
-    labels:
-      - flag_dnn
-      - graph
-      - accuracy
-      - benchmark
-    kind:
-      - Tensor
-    stages:
-      - stable: 'graph'
-  - id: lt
-    description: |
-      Computes the FlagDNN `lt` elementwise binary operator.
-    for:
-      - lt
-    labels:
-      - flag_dnn
-      - graph
-    kind:
-      - Math
-    stages:
-      - alpha: 'graph'
-  - id: le
-    description: |
-      Computes the FlagDNN `le` elementwise binary operator.
-    for:
-      - le
-    labels:
-      - flag_dnn
-      - graph
-    kind:
-      - Math
-    stages:
-      - alpha: 'graph'
-  - id: gt
-    description: |
-      Computes the FlagDNN `gt` elementwise binary operator.
-    for:
-      - gt
-    labels:
-      - flag_dnn
-      - graph
-    kind:
-      - Math
-    stages:
-      - alpha: 'graph'
-  - id: ge
-    description: |
-      Computes the FlagDNN `ge` elementwise binary operator.
-    for:
-      - ge
-    labels:
-      - flag_dnn
-      - graph
-    kind:
-      - Math
-    stages:
-      - alpha: 'graph'
+
+#   - id: swish
+#     description: |
+#       Runs the FlagDNN `swish` neural-network operator.
+#     for:
+#       - swish
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - stable: 'graph'
+
+#   - id: tan
+#     description: |
+#       Computes the tangent of each input element in graph mode.
+#     for:
+#       - tan
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Math
+#     stages:
+#       - stable: 'graph'
+
+#   - id: tanh
+#     description: |
+#       Runs the FlagDNN `tanh` neural-network operator.
+#     for:
+#       - tanh
+#     labels:
+#       - flag_dnn
+#       - graph
+#     kind:
+#       - NeuralNetwork
+#     stages:
+#       - alpha: 'graph'
+
+#   - id: transpose
+#     description: |
+#       Permutes tensor dimensions according to the requested order.
+#     for:
+#       - transpose
+#     labels:
+#       - flag_dnn
+#       - graph
+#       - accuracy
+#       - benchmark
+#     kind:
+#       - Tensor
+#     stages:
+#       - stable: 'graph'

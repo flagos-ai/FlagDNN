@@ -18,24 +18,36 @@ from types import SimpleNamespace
 import pytest
 
 from devtools.dnn_reference import registry
+from devtools.dnn_reference.operations import (
+    DnnOperationNotImplementedError,
+    RegisteredOperationProvider,
+)
 
 
-class _FakeProvider:
+class _FakeOperation:
+    name = "add"
+
+    def supports_dtype(self, dtype):
+        return dtype == "float32"
+
+    def run(self, *args, **kwargs):
+        return args, kwargs
+
+    def prepare(self, *args, **kwargs):
+        return SimpleNamespace(
+            output=None,
+            run=lambda: None,
+            close=lambda: None,
+        )
+
+
+class _FakeProvider(RegisteredOperationProvider):
     vendor_name = "ascend"
     implementation = "aclnn"
     display_name = "ACLNN"
 
-    def add(self, x, y, *, alpha=1):
-        raise AssertionError("not used")
-
-    def abs(self, x):
-        raise AssertionError("not used")
-
-    def prepare_add(self, x, y, *, alpha=1):
-        raise AssertionError("not used")
-
-    def supports_dtype(self, dtype):
-        return True
+    def __init__(self):
+        self._set_operations((_FakeOperation(),))
 
     def synchronize(self):
         return None
@@ -62,7 +74,20 @@ def test_provider_registry_uses_flagdnn_vendor_and_lazy_import(monkeypatch):
 
     assert provider.vendor_name == "ascend"
     assert provider.implementation == "aclnn"
+    assert provider.operation_names == ("add",)
+    assert provider.supports("add", "float32")
+    assert not provider.supports("abs", "float32")
     assert imported == ["devtools.dnn_reference.providers.ascend"]
+
+
+def test_provider_reports_an_unregistered_operation():
+    provider = _FakeProvider()
+
+    with pytest.raises(
+        DnnOperationNotImplementedError,
+        match="'abs'.*not implemented for vendor: ascend",
+    ):
+        provider.get_operation("abs")
 
 
 def test_provider_registry_reports_unimplemented_vendor():
@@ -75,14 +100,12 @@ def test_provider_registry_reports_unimplemented_vendor():
 
 def test_provider_registry_rejects_missing_prepared_interface(monkeypatch):
     provider = _FakeProvider()
-    provider.prepare_add = None
+    provider.prepare = None
     monkeypatch.setattr(
         registry.importlib,
         "import_module",
         lambda module_name: SimpleNamespace(create_provider=lambda: provider),
     )
 
-    with pytest.raises(
-        RuntimeError, match="missing callable method: prepare_add"
-    ):
+    with pytest.raises(RuntimeError, match="missing callable method: prepare"):
         registry.create_provider("ascend")

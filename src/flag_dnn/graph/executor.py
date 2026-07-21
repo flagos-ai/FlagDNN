@@ -20,6 +20,7 @@ from typing import Any, Callable, Optional, Sequence, cast
 import torch
 
 from flag_dnn.graph.plan import ExecutionPlan
+from flag_dnn.graph.prepared import prepared_output_reuse
 from flag_dnn.graph.prepared.ops import prepare_run_fn
 from flag_dnn.graph.registry import get_op_schema
 from flag_dnn.graph.tensor import canonical_dtype
@@ -113,7 +114,17 @@ class _PreparedPlan:
     fast_path: Optional[_SingleStepFastPath]
 
 
-def execute_plan(plan: ExecutionPlan, inputs: tuple[Any, ...]) -> Any:
+def execute_plan(
+    plan: ExecutionPlan,
+    inputs: tuple[Any, ...],
+    *,
+    reuse_outputs: bool = False,
+) -> Any:
+    with prepared_output_reuse(reuse_outputs):
+        return _execute_plan(plan, inputs)
+
+
+def _execute_plan(plan: ExecutionPlan, inputs: tuple[Any, ...]) -> Any:
     prepared = _get_prepared_plan(plan)
     if len(inputs) != prepared.input_count:
         raise RuntimeError(

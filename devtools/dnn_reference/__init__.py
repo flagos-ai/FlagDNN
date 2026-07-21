@@ -14,12 +14,25 @@
 
 """Vendor DNN providers shared by correctness and performance tests."""
 
-from .interfaces import DnnProvider, PreparedOperation
+from .interfaces import (
+    DnnProvider,
+    DnnReferenceOperation,
+    PreparedOperation,
+)
+from .operations import (
+    DnnOperationNotImplementedError,
+    OperationRegistry,
+    RegisteredOperationProvider,
+)
 from .registry import DnnProviderNotImplementedError, create_provider
 
 __all__: list[str] = [
     "DnnProvider",
+    "DnnReferenceOperation",
+    "DnnOperationNotImplementedError",
     "DnnProviderNotImplementedError",
+    "OperationRegistry",
     "PreparedOperation",
+    "RegisteredOperationProvider",
     "create_provider",
 ]

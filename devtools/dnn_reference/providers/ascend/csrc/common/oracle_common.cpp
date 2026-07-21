@@ -22,6 +22,7 @@ namespace {
 constexpr int32_t kFloat16 = 0;
 constexpr int32_t kBFloat16 = 1;
 constexpr int32_t kFloat32 = 2;
+constexpr int32_t kBool = 3;
 
 void AppendText(ErrorState* state, const char* text) noexcept {
     if (state->buffer == nullptr || state->length == 0 || text == nullptr) {
@@ -105,6 +106,9 @@ bool MapDataType(int32_t code, aclDataType* result) noexcept {
             return true;
         case kFloat32:
             *result = ACL_FLOAT;
+            return true;
+        case kBool:
+            *result = ACL_BOOL;
             return true;
         default:
             return false;

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 import functools
 import json
 import os
@@ -28,15 +29,19 @@ from flag_dnn.graph.planner import Planner
 from flag_dnn.graph.registry import get_op_schema
 from flag_dnn.graph.tensor import GraphTensor, TensorSpec
 
-_CAPTURE_STACK: list["GraphCapture"] = []
+_CAPTURE_STACK: ContextVar[tuple["GraphCapture", ...]] = ContextVar(
+    "flagdnn_graph_capture_stack",
+    default=(),
+)
 
 
 def is_capturing() -> bool:
-    return bool(_CAPTURE_STACK)
+    return bool(_CAPTURE_STACK.get())
 
 
 def current_capture() -> Optional["GraphCapture"]:
-    return _CAPTURE_STACK[-1] if _CAPTURE_STACK else None
+    stack = _CAPTURE_STACK.get()
+    return stack[-1] if stack else None
 
 
 class GraphCapture:
@@ -46,14 +51,18 @@ class GraphCapture:
         self.graph_inputs: list[GraphTensor] = []
 
     def __enter__(self) -> "GraphCapture":
-        _CAPTURE_STACK.append(self)
+        _CAPTURE_STACK.set((*_CAPTURE_STACK.get(), self))
         for index, spec in enumerate(self.input_specs):
             named = spec if spec.name else spec.with_name(f"arg{index}")
             self.graph_inputs.append(self.graph.add_input(named))
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        popped = _CAPTURE_STACK.pop()
+        stack = _CAPTURE_STACK.get()
+        if not stack:
+            raise RuntimeError("FlagDNN graph capture stack is empty")
+        popped = stack[-1]
+        _CAPTURE_STACK.set(stack[:-1])
         if popped is not self:
             raise RuntimeError("FlagDNN graph capture stack is corrupted")
 
@@ -127,6 +136,8 @@ class CompiledGraph:
         self._run_fast_path: Optional[Callable[[tuple[Any, ...]], Any]] = None
 
     def run(self, *inputs: Any) -> Any:
+        from flag_dnn.graph.prepared import prepared_output_reuse
+
         fast_path = self._run_fast_path
         if fast_path is None:
             from flag_dnn.graph.executor import _get_prepared_plan
@@ -138,7 +149,8 @@ class CompiledGraph:
                 fast_path = None
             self._run_fast_path = fast_path
         if fast_path is not None:
-            return fast_path(inputs)
+            with prepared_output_reuse(False):
+                return fast_path(inputs)
         return self.plan.run(*inputs)
 
     def __call__(self, *inputs: Any) -> Any:
@@ -146,7 +158,8 @@ class CompiledGraph:
 
     def bind(self, *inputs: Any) -> Callable[[], Any]:
         """Bind inputs and prepare a minimal-overhead graph replay callable."""
-        from flag_dnn.graph.executor import _get_prepared_plan
+        from flag_dnn.graph.executor import _get_prepared_plan, execute_plan
+        from flag_dnn.graph.prepared import prepared_output_reuse
 
         prepared = _get_prepared_plan(self.plan)
         if len(inputs) != prepared.input_count:
@@ -155,8 +168,14 @@ class CompiledGraph:
                 f"got {len(inputs)}"
             )
         if prepared.validate_inputs or prepared.fast_path is None:
-            return lambda: self.run(*inputs)
-        return prepared.fast_path.bind(inputs)
+
+            def bound() -> Any:
+                return execute_plan(self.plan, inputs, reuse_outputs=True)
+
+        else:
+            with prepared_output_reuse(True):
+                bound = prepared.fast_path.bind(inputs)
+        return bound
 
 
 def graph(fn: Optional[Callable[..., Any]] = None, **options: Any):
@@ -207,6 +226,7 @@ def compile(
         specs,
         backend=backend,
         flagdnn_version=_flagdnn_version(),
+        options=compile_options,
     )
     plan = cache.get(key, captured_graph) if cache is not None else None
     validate_inputs = bool(compile_options.get("validate_inputs", True))

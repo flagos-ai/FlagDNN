@@ -17,6 +17,7 @@ flag_dnn - DNN operations implemented with Triton
 """
 
 import torch
+from packaging.version import Version
 from flag_dnn import runtime
 from flag_dnn import testing  # noqa: F401
 from flag_dnn.ops import (  # noqa: F401
@@ -178,6 +179,12 @@ current_work_registrar = None
 runtime.replace_customized_ops(globals())
 
 __version__ = "0.1.0"
+
+
+def _torch_version_at_least(required: str, *, current=None) -> bool:
+    version = torch.__version__ if current is None else current
+    return Version(str(version).split("+", 1)[0]) >= Version(required)
+
 
 _FULL_CONFIG = (
     ("abs", abs),
@@ -454,7 +461,7 @@ class use_dnn:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         global current_work_registrar
-        if torch.__version__ >= "2.5":
+        if _torch_version_at_least("2.5"):
             self.lib._destroy()
         del self.lib
         del self.exclude

@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 import triton
 import triton.language as tl
@@ -110,6 +110,151 @@ def can_use_aligned_core_loop(n_elements: int, block_size: int) -> bool:
     return n_elements >= 262144 and n_elements % block_size == 0
 
 
+def launch_dense_binary(
+    *,
+    op_type: str,
+    input: Any,
+    other: Any,
+    out: Any,
+    n_elements: int,
+    alpha: Any,
+) -> bool:
+    """Launch the Ascend dense Add specialization when it applies."""
+    if op_type != "add":
+        return False
+    block_size = get_add_block_size(n_elements, input.dtype, input.device)
+    grid = make_core_loop_grid(n_elements, input.device)
+    alpha_is_one = float(alpha) == 1.0
+    if alpha_is_one and can_use_aligned_core_loop(n_elements, block_size):
+        program_count = grid({"BLOCK_SIZE": block_size})[0]
+        blocks_per_program = n_elements // block_size // program_count
+        add_tensor_aligned_core_loop_kernel[grid](
+            input,
+            other,
+            out,
+            BLOCKS_PER_PROGRAM=blocks_per_program,
+            BLOCK_SIZE=block_size,
+            num_warps=4,
+            num_stages=1,
+        )
+    else:
+        add_tensor_core_loop_kernel[grid](
+            input,
+            other,
+            out,
+            float(alpha),
+            N_ELEMENTS=n_elements,
+            ALPHA_IS_ONE=alpha_is_one,
+            ALIGNED_BLOCKS=(
+                n_elements >= 262144 and n_elements % block_size == 0
+            ),
+            BLOCK_SIZE=block_size,
+            num_warps=4,
+            num_stages=1,
+        )
+    return True
+
+
+def prepare_dense_binary(
+    *,
+    kernel_op_type: str,
+    left_spec: Any,
+    input_checks: Any,
+    output_factory: Any,
+    default_run_fn: Any,
+    extra_check: Any,
+    n_elements: int,
+    alpha: float,
+    validate_inputs: bool,
+) -> Optional[Any]:
+    """Build the prepared Ascend Add replay.
+
+    The implementation stays outside the common graph code.
+    """
+    if kernel_op_type != "add":
+        return None
+
+    from flag_dnn.graph.prepared import (
+        PreparedSingleKernelRunSpec,
+        PreparedSingleKernelSpec,
+        make_single_kernel_run_fn,
+    )
+
+    block_size = get_add_block_size(
+        n_elements, left_spec.dtype, left_spec.device
+    )
+    grid = make_core_loop_grid(n_elements, left_spec.device)
+    alpha_is_one = alpha == 1.0
+
+    if alpha_is_one and can_use_aligned_core_loop(n_elements, block_size):
+        kernel = add_tensor_aligned_core_loop_kernel
+        program_count = grid({"BLOCK_SIZE": block_size})[0]
+        blocks_per_program = n_elements // block_size // program_count
+        constexpr_kwargs = {
+            "BLOCKS_PER_PROGRAM": blocks_per_program,
+            "BLOCK_SIZE": block_size,
+            "num_warps": 4,
+            "num_stages": 1,
+        }
+
+        def runtime_args(
+            inputs: Sequence[Any], output: Any
+        ) -> tuple[Any, ...]:
+            return (inputs[0], inputs[1], output)
+
+        def build_cached_call(
+            constexprs: dict[str, Any]
+        ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+            static_grid = (*grid({"BLOCK_SIZE": block_size}), 1, 1)
+            return static_grid, (blocks_per_program, block_size)
+
+    else:
+        kernel = add_tensor_core_loop_kernel
+        aligned_blocks = n_elements >= 262144 and n_elements % block_size == 0
+        constexpr_kwargs = {
+            "N_ELEMENTS": n_elements,
+            "ALPHA_IS_ONE": alpha_is_one,
+            "ALIGNED_BLOCKS": aligned_blocks,
+            "BLOCK_SIZE": block_size,
+            "num_warps": 4,
+            "num_stages": 1,
+        }
+
+        def runtime_args(
+            inputs: Sequence[Any], output: Any
+        ) -> tuple[Any, ...]:
+            return (inputs[0], inputs[1], output, alpha)
+
+        def build_cached_call(
+            constexprs: dict[str, Any]
+        ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+            static_grid = (*grid({"BLOCK_SIZE": block_size}), 1, 1)
+            return static_grid, (
+                n_elements,
+                alpha_is_one,
+                aligned_blocks,
+                block_size,
+            )
+
+    return make_single_kernel_run_fn(
+        PreparedSingleKernelRunSpec(
+            kernel=PreparedSingleKernelSpec(
+                kernel=kernel,
+                grid=grid,
+                static_args=(),
+                constexpr_kwargs=constexpr_kwargs,
+                build_cached_call=build_cached_call,
+            ),
+            input_checks=input_checks,
+            output_factory=output_factory,
+            runtime_args=runtime_args,
+            extra_check=extra_check,
+            validate_inputs=validate_inputs,
+        ),
+        default_run_fn,
+    )
+
+
 @libentry()
 @triton.jit
 def add_tensor_aligned_core_loop_kernel(
@@ -179,5 +324,7 @@ __all__: list[str] = [
     "can_use_aligned_core_loop",
     "get_add_block_size",
     "get_vector_core_count",
+    "launch_dense_binary",
     "make_core_loop_grid",
+    "prepare_dense_binary",
 ]

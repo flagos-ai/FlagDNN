@@ -79,10 +79,10 @@ def _validate_provider(provider: Any, spec: ProviderSpec) -> DnnProvider:
             f"provider={getattr(provider, 'implementation', None)}"
         )
     for method_name in (
-        "add",
-        "abs",
-        "prepare_add",
-        "supports_dtype",
+        "get_operation",
+        "supports",
+        "run",
+        "prepare",
         "synchronize",
         "close",
     ):
@@ -90,6 +90,11 @@ def _validate_provider(provider: Any, spec: ProviderSpec) -> DnnProvider:
             raise RuntimeError(
                 f"DNN provider is missing callable method: {method_name}"
             )
+    operation_names = getattr(provider, "operation_names", None)
+    if not isinstance(operation_names, tuple):
+        raise RuntimeError(
+            "DNN provider operation_names must be a tuple of op names"
+        )
     return cast(DnnProvider, provider)
 
 
