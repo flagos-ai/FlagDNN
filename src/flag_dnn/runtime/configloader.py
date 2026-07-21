@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+import threading
 import warnings
 
 import triton
@@ -23,63 +24,76 @@ from .backend.device import DeviceDetector
 
 class ConfigLoader(object):
     _instance = None
+    _lock = threading.RLock()
 
     def __new__(cls, *args, **kargs):
-        if cls._instance is None:
-            cls._instance = super(ConfigLoader, cls).__new__(cls)
-        return cls._instance
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super(ConfigLoader, cls).__new__(cls)
+            return cls._instance
 
     def __init__(self):
-        if not hasattr(self, "initialized"):
-            self.initialized = True
-            self.device = DeviceDetector()
-            # primitive_yaml_config is simply the dictionary returned by yaml
-            # and is reserved from being an attr for vendor customizability
-            self.arch_specialized_yaml_config = None
-            self.arch_heuristics_config = None
-            self.vendor_primitive_yaml_config = self.get_vendor_tune_config()
-            self.default_primitive_yaml_config = self.get_default_tune_config()
-            self.vendor_heuristics_config = self.get_vendor_heuristics_config()
-            self.default_heuristics_config = (
-                self.get_default_heuristics_config()
-            )
+        cls = type(self)
+        with cls._lock:
+            if cls._instance is not self:
+                raise RuntimeError("stale ConfigLoader instance; retry")
+            if getattr(self, "initialized", False):
+                return
             try:
-                if backend.BackendArchEvent().has_arch:
-                    self.arch_specialized_yaml_config = (
-                        backend.BackendArchEvent().autotune_configs
-                    )
-                    self.arch_heuristics_config = (
-                        backend.BackendArchEvent().heuristics_configs
-                    )
-            except Exception as err:
-                print(f"[INFO] : {err}")
+                self._initialize()
+            except BaseException:
+                self.__dict__.clear()
+                if cls._instance is self:
+                    cls._instance = None
+                raise
+            self.initialized = True
 
-            if self.vendor_heuristics_config is None:
-                vendorname = self.device.vendor_name
-                warnings.warn(
-                    f"The {vendorname} configuration"
-                    f" of heuristics_config is None"
+    def _initialize(self):
+        self.device = DeviceDetector()
+        # primitive_yaml_config is simply the dictionary returned by yaml
+        # and is reserved from being an attr for vendor customizability
+        self.arch_specialized_yaml_config = None
+        self.arch_heuristics_config = None
+        self.vendor_primitive_yaml_config = self.get_vendor_tune_config()
+        self.default_primitive_yaml_config = self.get_default_tune_config()
+        self.vendor_heuristics_config = self.get_vendor_heuristics_config()
+        self.default_heuristics_config = self.get_default_heuristics_config()
+        try:
+            if backend.BackendArchEvent().has_arch:
+                self.arch_specialized_yaml_config = (
+                    backend.BackendArchEvent().autotune_configs
                 )
-            # gen_key is an identifier that indicates whether
-            # the current config needs to be generated
-            # automatically
-            self.gen_key = "gen"
-            # loaded_triton_config is wrapped in triton.Config
-            # according to primitive_yaml_config
-            self.loaded_triton_config = {}
+                self.arch_heuristics_config = (
+                    backend.BackendArchEvent().heuristics_configs
+                )
+        except Exception as err:
+            print(f"[INFO] : {err}")
+
+        if self.vendor_heuristics_config is None:
+            vendorname = self.device.vendor_name
+            warnings.warn(
+                f"The {vendorname} configuration"
+                f" of heuristics_config is None"
+            )
+        # gen_key is an identifier that indicates whether
+        # the current config needs to be generated automatically
+        self.gen_key = "gen"
+        # loaded_triton_config is wrapped in triton.Config
+        # according to primitive_yaml_config
+        self.loaded_triton_config = {}
+        self.triton_config_default = {
+            "num_stages": 2,
+            "num_warps": 4,
+            "num_ctas": 1,
+        }
+        if self.device.vendor_name in ["hygon"]:
             self.triton_config_default = {
                 "num_stages": 2,
                 "num_warps": 4,
                 "num_ctas": 1,
+                "num_ldmatrixes": 0,
             }
-            if self.device.vendor_name in ["hygon"]:
-                self.triton_config_default = {
-                    "num_stages": 2,
-                    "num_warps": 4,
-                    "num_ctas": 1,
-                    "num_ldmatrixes": 0,
-                }
-            self.load_all()
+        self.load_all()
 
     def load_all(self):
         for key in self.vendor_primitive_yaml_config:

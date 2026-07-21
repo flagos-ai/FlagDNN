@@ -52,14 +52,14 @@ def _run_flag_dnn_abs_graph(x):
 @pytest.mark.graph
 @pytest.mark.parametrize("dtype", consts.DNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("shape", consts.ABS_SHAPES)
-def test_abs(dnn_oracle, dtype, shape):
+def test_abs(dnn_reference, dtype, shape):
     torch.manual_seed(0)
     x = _make_input(shape, dtype)
-    assert dnn_oracle.supports_dtype(dtype)
+    assert dnn_reference.supports("abs", dtype)
 
-    expected = dnn_oracle.abs(x)
+    expected = dnn_reference.run("abs", x)
     actual = _run_flag_dnn_abs_graph(x)
-    dnn_oracle.synchronize()
+    dnn_reference.synchronize()
 
     assert tuple(expected.shape) == tuple(x.shape)
     assert tuple(actual.shape) == tuple(x.shape)

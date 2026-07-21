@@ -274,6 +274,30 @@ def fake_aclnn_library(tmp_path_factory: pytest.TempPathFactory):
         ctypes.c_size_t,
     ]
     library.flagdnn_test_aclnn_abs.restype = ctypes.c_int
+    library.flagdnn_aclnn_abs_create.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.c_uint64,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.c_uint64,
+        ctypes.c_int32,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_char),
+        ctypes.c_size_t,
+    ]
+    library.flagdnn_aclnn_abs_create.restype = ctypes.c_int
+    for name in ("flagdnn_aclnn_abs_run", "flagdnn_aclnn_abs_destroy"):
+        function = getattr(library, name)
+        function.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_char),
+            ctypes.c_size_t,
+        ]
+        function.restype = ctypes.c_int
     library.fake_cann_reset.argtypes = []
     library.fake_cann_set_operation.argtypes = [ctypes.c_int]
     library.fake_cann_set_status.argtypes = [ctypes.c_int, ctypes.c_int]
@@ -343,6 +367,32 @@ def _create_fake_prepared_add(
     return status, error.value.decode(), handle
 
 
+def _create_fake_prepared_abs(
+    library: ctypes.CDLL,
+) -> tuple[int, str, ctypes.c_void_p]:
+    shape = (ctypes.c_int64 * 1)(1)
+    strides = (ctypes.c_int64 * 1)(1)
+    error = ctypes.create_string_buffer(1024)
+    handle = ctypes.c_void_p()
+    library.fake_cann_set_operation(1)
+    status = library.flagdnn_aclnn_abs_create(
+        ctypes.c_void_p(0x1010),
+        shape,
+        strides,
+        1,
+        ctypes.c_void_p(0x3030),
+        shape,
+        strides,
+        1,
+        2,
+        ctypes.c_void_p(0x4040),
+        ctypes.byref(handle),
+        error,
+        len(error),
+    )
+    return status, error.value.decode(), handle
+
+
 def test_fake_cann_prepared_add_separates_setup_run_and_cleanup(
     fake_aclnn_library,
 ):
@@ -369,6 +419,38 @@ def test_fake_cann_prepared_add_separates_setup_run_and_cleanup(
 
     error = ctypes.create_string_buffer(1024)
     status = library.flagdnn_aclnn_add_destroy(handle, error, len(error))
+    assert status == 0, error.value.decode()
+    assert library.fake_cann_count(b"synchronize") == 1
+    assert library.fake_cann_executor_destroy_count() == 1
+    assert library.fake_cann_count(b"free") == 1
+
+
+def test_fake_cann_prepared_abs_separates_setup_run_and_cleanup(
+    fake_aclnn_library,
+):
+    library = fake_aclnn_library
+    library.fake_cann_reset()
+
+    status, detail, handle = _create_fake_prepared_abs(library)
+
+    assert status == 0, detail
+    assert handle.value is not None
+    assert library.fake_cann_count(b"get_abs_workspace") == 1
+    assert library.fake_cann_count(b"set_repeatable") == 1
+    assert library.fake_cann_count(b"malloc") == 1
+    assert library.fake_cann_count(b"abs") == 0
+    assert library.fake_cann_count(b"synchronize") == 0
+
+    for _ in range(2):
+        error = ctypes.create_string_buffer(1024)
+        status = library.flagdnn_aclnn_abs_run(handle, error, len(error))
+        assert status == 0, error.value.decode()
+
+    assert library.fake_cann_count(b"abs") == 2
+    assert library.fake_cann_count(b"synchronize") == 0
+
+    error = ctypes.create_string_buffer(1024)
+    status = library.flagdnn_aclnn_abs_destroy(handle, error, len(error))
     assert status == 0, error.value.decode()
     assert library.fake_cann_count(b"synchronize") == 1
     assert library.fake_cann_executor_destroy_count() == 1
@@ -1251,12 +1333,18 @@ def test_ascend_oracle_configure_library_uses_exact_c_abi_signatures():
     run_function = _FakeCFunction()
     destroy_function = _FakeCFunction()
     abs_function = _FakeCFunction()
+    abs_create_function = _FakeCFunction()
+    abs_run_function = _FakeCFunction()
+    abs_destroy_function = _FakeCFunction()
     library = SimpleNamespace(
         flagdnn_test_aclnn_add=add_function,
         flagdnn_aclnn_add_create=create_function,
         flagdnn_aclnn_add_run=run_function,
         flagdnn_aclnn_add_destroy=destroy_function,
         flagdnn_test_aclnn_abs=abs_function,
+        flagdnn_aclnn_abs_create=abs_create_function,
+        flagdnn_aclnn_abs_run=abs_run_function,
+        flagdnn_aclnn_abs_destroy=abs_destroy_function,
     )
 
     assert ascend._configure_library(library) is library
@@ -1325,6 +1413,29 @@ def test_ascend_oracle_configure_library_uses_exact_c_abi_signatures():
     ]
     assert abs_function.restype is ctypes.c_int
     assert len(abs_function.argtypes) == 12
+    assert abs_create_function.argtypes == [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.c_uint64,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.POINTER(ctypes.c_int64),
+        ctypes.c_uint64,
+        ctypes.c_int32,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_char),
+        ctypes.c_size_t,
+    ]
+    assert abs_create_function.restype is ctypes.c_int
+    for function in (abs_run_function, abs_destroy_function):
+        assert function.argtypes == [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_char),
+            ctypes.c_size_t,
+        ]
+        assert function.restype is ctypes.c_int
 
 
 class _FakeDevice:
@@ -1423,6 +1534,15 @@ class _RecordingAbsFunction:
         return self.status
 
 
+def _abs_library(function):
+    return SimpleNamespace(
+        flagdnn_test_aclnn_abs=function,
+        flagdnn_aclnn_abs_create=_FakeCFunction(),
+        flagdnn_aclnn_abs_run=_FakeCFunction(),
+        flagdnn_aclnn_abs_destroy=_FakeCFunction(),
+    )
+
+
 def _install_fake_abs_runtime(monkeypatch, events, *, stream_pointer=0x4567):
     monkeypatch.setattr(ascend.torch, "Tensor", _FakeTensor)
     monkeypatch.setattr(
@@ -1449,7 +1569,7 @@ def test_python_ascend_oracle_abs_passes_exact_unary_abi_and_preserves_layout(
     events = []
     _install_fake_abs_runtime(monkeypatch, events)
     function = _RecordingAbsFunction()
-    library = SimpleNamespace(flagdnn_test_aclnn_abs=function)
+    library = _abs_library(function)
     x = _FakeTensor(
         shape=(2, 3, 4, 5),
         stride=(60, 1, 15, 3),
@@ -1544,7 +1664,7 @@ def test_python_abs_native_error_after_device_context_restores(
     events = []
     _install_fake_abs_runtime(monkeypatch, events, stream_pointer=0xABCD)
     function = _RecordingAbsFunction(status=27, detail=b"native detail")
-    library = SimpleNamespace(flagdnn_test_aclnn_abs=function)
+    library = _abs_library(function)
     x = _FakeTensor(shape=(4,), stride=(1,), data_pointer=0x1234)
     oracle = ascend.AscendDnnOracle(library_loader=lambda: library)
 
@@ -1553,7 +1673,7 @@ def test_python_abs_native_error_after_device_context_restores(
 
     assert events[-1] == "exit-device"
     assert str(caught.value) == (
-        "aclnnAbs oracle failed: status=27, detail=native detail, "
+        "aclnnAbs reference failed: status=27, detail=native detail, "
         "x_shape=(4,), x_stride=(1,), output_shape=(4,), "
         "output_stride=(1,), dtype=torch.float32, device=npu:2, "
         "stream=0xabcd"
@@ -1561,7 +1681,7 @@ def test_python_abs_native_error_after_device_context_restores(
 
 
 def test_python_ascend_oracle_abs_has_no_framework_arithmetic_fallback():
-    source = inspect.getsource(ascend.AscendDnnOracle.abs)
+    source = inspect.getsource(ascend.AscendAbsOperation.run)
 
     for forbidden in ("torch.abs(", ".abs(", ".cpu("):
         assert forbidden not in source
@@ -1596,7 +1716,7 @@ def test_ascend_oracle_rejects_cpu_before_loading_cann():
 
 
 def test_ascend_oracle_has_no_torch_arithmetic_fallback():
-    source = inspect.getsource(ascend.AscendDnnOracle.add)
+    source = inspect.getsource(ascend.AscendAddOperation.run)
 
     for forbidden in (
         "torch.add(",
@@ -1637,7 +1757,7 @@ def test_ascend_oracle_rejects_non_strided_layout_before_loading_cann():
 
 
 def test_ascend_oracle_uses_restoring_device_guard_not_set_device():
-    source = inspect.getsource(ascend.AscendDnnOracle.add)
+    source = inspect.getsource(ascend.AscendAddOperation.run)
 
     assert "npu.set_device(" not in source
     assert "with npu.device(x.device):" in source

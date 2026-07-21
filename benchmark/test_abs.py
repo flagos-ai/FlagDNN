@@ -13,65 +13,26 @@
 # limitations under the License.
 
 import pytest
-from benchmark.base import (
-    CudnnCompareBenchmark,
-    cudnn_data_type,
-    get_cudnn,
-    skip_unsupported_cudnn_graph,
-)
 import torch
 
 import flag_dnn
 from benchmark import consts
+from benchmark.base import DnnCompareBenchmark
 
 
-class AbsBenchmark(CudnnCompareBenchmark):
+class AbsBenchmark(DnnCompareBenchmark):
     op_name = "abs"
     shapes = consts.ABS_SHAPES
-    shape_ids_env = "FLAGDNN_CUDNN_ABS_PERF_SHAPE_IDS"
+    shape_ids_env = "FLAGDNN_ABS_PERF_SHAPE_IDS"
+    legacy_shape_ids_env = "FLAGDNN_CUDNN_ABS_PERF_SHAPE_IDS"
 
     def make_inputs(self, shape, dtype):
         x = consts.pointwise_randn(shape, dtype, flag_dnn.device)
         return (x,)
 
-    def build_cudnn_runner(self, inputs):
-        cudnn = get_cudnn()
+    def build_baseline_runner(self, inputs):
         (x,) = inputs
-        io_dtype = cudnn_data_type(x.dtype)
-        graph = cudnn.pygraph(
-            io_data_type=io_dtype,
-            intermediate_data_type=cudnn.data_type.FLOAT,
-            compute_data_type=cudnn.data_type.FLOAT,
-            handle=self.cudnn_handle,
-        )
-
-        x_tensor = graph.tensor_like(x)
-        y_tensor = graph.abs(
-            input=x_tensor,
-            compute_data_type=cudnn.data_type.FLOAT,
-            name="abs",
-        )
-        y_tensor.set_output(True).set_data_type(io_dtype)
-
-        try:
-            graph.build([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
-        except (cudnn.cudnnGraphNotSupportedError, RuntimeError) as exc:
-            skip_unsupported_cudnn_graph(exc, self.op_name)
-
-        y = torch.empty_like(x)
-        workspace = torch.empty(
-            graph.get_workspace_size(), device=x.device, dtype=torch.uint8
-        )
-
-        def run():
-            graph.execute(
-                {x_tensor: x, y_tensor: y},
-                workspace,
-                handle=self.cudnn_handle,
-            )
-            return y
-
-        return run
+        return self.baseline.prepare("abs", x)
 
     def build_flag_dnn_runner(self, inputs):
         (x,) = inputs
@@ -90,18 +51,13 @@ class AbsBenchmark(CudnnCompareBenchmark):
             options=consts.compile_options(),
         )
         assert [node.op_type for node in compiled.graph.nodes] == ["abs"]
-
-        def run():
-            return compiled.run(x)
-
-        return run
+        return compiled.bind(x)
 
 
 @pytest.mark.abs
 @pytest.mark.graph
 @pytest.mark.perf
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", AbsBenchmark.dtypes)
-def test_abs(cudnn_handle, dtype):
+def test_abs(dnn_baseline, dtype):
     torch.manual_seed(0)
-    AbsBenchmark(cudnn_handle).run(dtype)
+    AbsBenchmark(dnn_baseline).run(dtype)

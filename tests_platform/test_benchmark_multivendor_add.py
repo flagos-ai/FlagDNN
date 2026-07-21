@@ -43,10 +43,11 @@ class _Baseline:
     def __init__(self):
         self.prepared = None
 
-    def supports_dtype(self, dtype):
-        return dtype == torch.float32
+    def supports(self, op_name, dtype):
+        return op_name == "add" and dtype == torch.float32
 
-    def prepare_add(self, x, y, *, alpha=1):
+    def prepare(self, op_name, x, y, *, alpha=1):
+        assert op_name == "add"
         assert alpha == 1
         self.prepared = _PreparedAdd()
         return self.prepared
@@ -64,61 +65,76 @@ class _AddBenchmark(base.DnnCompareBenchmark):
         )
 
     def build_baseline_runner(self, inputs):
-        return self.baseline.prepare_add(*inputs, alpha=1)
+        return self.baseline.prepare("add", *inputs, alpha=1)
 
     def build_flag_dnn_runner(self, inputs):
         x, y = inputs
         return lambda: x + y
 
 
-def test_generic_benchmark_runs_and_closes_selected_baseline(
-    monkeypatch, capsys
-):
-    measurements = iter((2.0, 1.0))
+class _Timer:
+    def __init__(self):
+        self.calls = 0
 
-    def fake_bench(function):
-        function()
-        return next(measurements)
+    def measure_pair(self, first, second):
+        self.calls += 1
+        first()
+        second()
+        return 2.0, 1.0
 
-    monkeypatch.setattr(base, "bench_ms", fake_bench)
+
+def test_generic_benchmark_runs_and_closes_selected_baseline(capsys):
     baseline = _Baseline()
+    timer = _Timer()
 
-    _AddBenchmark(baseline).run(torch.float32)
+    _AddBenchmark(baseline, timer=timer).run(torch.float32)
 
     assert baseline.prepared is not None
     assert baseline.prepared.run_count == 1
     assert baseline.prepared.closed
+    assert timer.calls == 1
     output = capsys.readouterr().out
     assert "ACLNN Compare Performance Test" in output
     assert "ACLNN Latency (ms)" in output
 
 
 def test_add_benchmark_source_has_no_vendor_specific_control_flow():
-    source = (
-        Path(__file__).parents[1] / "benchmark" / "test_add.py"
-    ).read_text(encoding="utf-8")
+    benchmark_dir = Path(__file__).parents[1] / "benchmark"
+    sources = [
+        (benchmark_dir / filename).read_text(encoding="utf-8")
+        for filename in ("test_add.py", "test_abs.py")
+    ]
 
-    for forbidden in (
-        "import cudnn",
-        "get_cudnn",
-        "cudnn_handle",
-        "torch.cuda",
-        "torch.npu",
-    ):
-        assert forbidden not in source
+    for source in sources:
+        for forbidden in (
+            "import cudnn",
+            "get_cudnn",
+            "cudnn_handle",
+            "torch.cuda",
+            "torch.npu",
+        ):
+            assert forbidden not in source
 
 
 def test_generic_performance_environment_overrides_legacy_names(monkeypatch):
     monkeypatch.setenv("FLAGDNN_CUDNN_PERF_WARMUP", "11")
     monkeypatch.setenv("FLAGDNN_CUDNN_PERF_REPEAT", "12")
-    monkeypatch.setenv("FLAGDNN_CUDNN_PERF_MIN_SPEEDUP", "0.8")
     monkeypatch.setenv("FLAGDNN_PERF_WARMUP", "21")
     monkeypatch.setenv("FLAGDNN_PERF_REPEAT", "22")
-    monkeypatch.setenv("FLAGDNN_PERF_MIN_SPEEDUP", "0.9")
 
     assert consts.bench_warmup() == 21
     assert consts.bench_repeat() == 22
-    assert consts.min_speedup() == 0.9
+
+
+def test_benchmark_sources_do_not_enforce_a_speedup_threshold():
+    benchmark_dir = Path(__file__).parents[1] / "benchmark"
+    sources = "\n".join(
+        path.read_text(encoding="utf-8") for path in benchmark_dir.glob("*.py")
+    )
+
+    assert "min_speedup" not in sources
+    assert "enforce_min_speedup" not in sources
+    assert "PERF_MIN_SPEEDUP" not in sources
 
 
 class _FakePointwiseTensor:

@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, Union
+from typing import Any, TYPE_CHECKING, Protocol, Union
 
 if TYPE_CHECKING:
     import torch
@@ -24,11 +24,23 @@ Number = Union[int, float]
 
 
 class PreparedOperation(Protocol):
-    output: torch.Tensor
+    output: Any
 
-    def run(self) -> torch.Tensor: ...
+    def run(self) -> Any: ...
 
     def close(self) -> None: ...
+
+
+class DnnReferenceOperation(Protocol):
+    """One vendor DNN implementation registered under a FlagDNN op name."""
+
+    name: str
+
+    def supports_dtype(self, dtype: torch.dtype) -> bool: ...
+
+    def run(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    def prepare(self, *args: Any, **kwargs: Any) -> PreparedOperation: ...
 
 
 class DnnProvider(Protocol):
@@ -36,25 +48,18 @@ class DnnProvider(Protocol):
     implementation: str
     display_name: str
 
-    def add(
-        self,
-        x: torch.Tensor,
-        y: torch.Tensor,
-        *,
-        alpha: Number = 1,
-    ) -> torch.Tensor: ...
+    @property
+    def operation_names(self) -> tuple[str, ...]: ...
 
-    def abs(self, x: torch.Tensor) -> torch.Tensor: ...
+    def get_operation(self, op_name: str) -> DnnReferenceOperation: ...
 
-    def prepare_add(
-        self,
-        x: torch.Tensor,
-        y: torch.Tensor,
-        *,
-        alpha: Number = 1,
+    def supports(self, op_name: str, dtype: torch.dtype) -> bool: ...
+
+    def run(self, op_name: str, *args: Any, **kwargs: Any) -> Any: ...
+
+    def prepare(
+        self, op_name: str, *args: Any, **kwargs: Any
     ) -> PreparedOperation: ...
-
-    def supports_dtype(self, dtype: torch.dtype) -> bool: ...
 
     def synchronize(self) -> None: ...
 

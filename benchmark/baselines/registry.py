@@ -29,11 +29,15 @@ class DnnBaseline:
         self.implementation = provider.implementation
         self.display_name = provider.display_name
 
-    def supports_dtype(self, dtype) -> bool:
-        return self._provider.supports_dtype(dtype)
+    @property
+    def operation_names(self) -> tuple[str, ...]:
+        return self._provider.operation_names
 
-    def prepare_add(self, x, y, *, alpha=1) -> PreparedOperation:
-        return self._provider.prepare_add(x, y, alpha=alpha)
+    def supports(self, op_name, dtype) -> bool:
+        return self._provider.supports(op_name, dtype)
+
+    def prepare(self, op_name, *args, **kwargs) -> PreparedOperation:
+        return self._provider.prepare(op_name, *args, **kwargs)
 
     def close(self) -> None:
         self._provider.close()

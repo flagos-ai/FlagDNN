@@ -14,8 +14,10 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Iterator, Optional, Sequence
 
 import torch
 
@@ -36,8 +38,10 @@ __all__ = (
     "make_kernel_pipeline_run_fn",
     "make_static_cached_call",
     "get_cached_empty_tensor",
+    "get_prepared_output",
     "make_single_kernel_launcher",
     "make_single_kernel_run_fn",
+    "prepared_output_reuse",
     "prepare_run_fn",
     "register_generic_prepared_run_fn",
     "register_prepared_run_fn",
@@ -65,6 +69,66 @@ PipelineContextFactory = Callable[[Sequence[Any]], Any]
 PipelineStepArgsBuilder = Callable[[Sequence[Any], Any], tuple[Any, ...]]
 PreparedTensorCache = dict[tuple[Any, ...], torch.Tensor]
 
+_REUSE_PREPARED_OUTPUTS: ContextVar[bool] = ContextVar(
+    "flagdnn_reuse_prepared_outputs", default=True
+)
+_FUNCTIONAL_OUTPUT_SAFE = "_flagdnn_functional_output_safe"
+
+
+@contextmanager
+def prepared_output_reuse(enabled: bool) -> Iterator[None]:
+    """Select cached replay outputs or independent functional outputs."""
+    token = _REUSE_PREPARED_OUTPUTS.set(enabled)
+    try:
+        yield
+    finally:
+        _REUSE_PREPARED_OUTPUTS.reset(token)
+
+
+def _prepared_outputs_are_reused() -> bool:
+    return _REUSE_PREPARED_OUTPUTS.get()
+
+
+def get_prepared_output(
+    cache: dict[tuple[Any, ...], Any],
+    key: tuple[Any, ...],
+    factory: Callable[[], Any],
+) -> Any:
+    """Allocate per call unless the caller explicitly selected replay mode."""
+    if not _prepared_outputs_are_reused():
+        return factory()
+    output = cache.get(key)
+    if output is None:
+        output = factory()
+        cache[key] = output
+    return output
+
+
+def _mark_functional_output_safe(run_fn: RunFn) -> RunFn:
+    setattr(run_fn, _FUNCTIONAL_OUTPUT_SAFE, True)
+    return run_fn
+
+
+def _prepared_run_supports_independent_outputs(run_fn: RunFn) -> bool:
+    return bool(getattr(run_fn, _FUNCTIONAL_OUTPUT_SAFE, False))
+
+
+def _wrap_prepared_output_ownership(
+    prepared_run_fn: RunFn, default_run_fn: RunFn
+) -> RunFn:
+    if _prepared_run_supports_independent_outputs(prepared_run_fn):
+        return prepared_run_fn
+
+    def run(inputs: Sequence[Any], run_attrs: dict[str, Any]) -> Any:
+        if _prepared_outputs_are_reused():
+            return prepared_run_fn(inputs, run_attrs)
+        return default_run_fn(inputs, run_attrs)
+
+    binder = getattr(prepared_run_fn, "bind", None)
+    if binder is not None:
+        setattr(run, "bind", binder)
+    return run
+
 
 def _identity_result(output: Any) -> Any:
     return output
@@ -91,11 +155,11 @@ def get_cached_empty_tensor(
     device: torch.device,
     dtype: torch.dtype,
 ) -> torch.Tensor:
-    tensor = cache.get(key)
-    if tensor is None:
-        tensor = torch.empty(size, device=device, dtype=dtype)
-        cache[key] = tensor
-    return tensor
+    return get_prepared_output(
+        cache,
+        key,
+        lambda: torch.empty(size, device=device, dtype=dtype),
+    )
 
 
 @dataclass(frozen=True)
@@ -358,17 +422,21 @@ def make_single_kernel_run_fn(
             inputs: Sequence[Any], _run_attrs: dict[str, Any]
         ) -> Any:
             nonlocal cached_output
-            if cached_output is None:
-                cached_output = output_factory(inputs)
+            if _prepared_outputs_are_reused():
+                if cached_output is None:
+                    cached_output = output_factory(inputs)
+                output = cached_output
+            else:
+                output = output_factory(inputs)
             device_source = inputs[device_input_index]
             launch(
                 device_source.device,
-                *runtime_args(inputs, cached_output),
+                *runtime_args(inputs, output),
             )
-            return result(cached_output)
+            return result(output)
 
         setattr(run_unchecked, "bind", bind)
-        return run_unchecked
+        return _mark_functional_output_safe(run_unchecked)
 
     def run(inputs: Sequence[Any], run_attrs: dict[str, Any]) -> Any:
         if not runtime_tensor_checks_pass(inputs, input_checks):
@@ -385,7 +453,7 @@ def make_single_kernel_run_fn(
         return result(output)
 
     setattr(run, "bind", bind)
-    return run
+    return _mark_functional_output_safe(run)
 
 
 def make_kernel_pipeline_run_fn(
@@ -414,7 +482,7 @@ def make_kernel_pipeline_run_fn(
         launch(device_source.device, inputs, context)
         return result(context)
 
-    return run
+    return _mark_functional_output_safe(run)
 
 
 def prepare_run_fn(
@@ -426,9 +494,9 @@ def prepare_run_fn(
     for generic_prepare in _GENERIC_PREPARED_RUN_FNS:
         prepared = generic_prepare(op_type, attrs, input_specs, default_run_fn)
         if prepared is not None:
-            return prepared
+            return _wrap_prepared_output_ownership(prepared, default_run_fn)
     for op_prepare in _OP_PREPARED_RUN_FN_REGISTRY.get(op_type, []):
         prepared = op_prepare(attrs, input_specs, default_run_fn)
         if prepared is not None:
-            return prepared
+            return _wrap_prepared_output_ownership(prepared, default_run_fn)
     return default_run_fn

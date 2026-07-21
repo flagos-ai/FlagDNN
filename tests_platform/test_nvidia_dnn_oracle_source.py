@@ -14,40 +14,33 @@
 
 from pathlib import Path
 
-NVIDIA_ORACLE = (
-    Path(__file__).parents[1]
-    / "devtools"
-    / "dnn_reference"
-    / "providers"
-    / "nvidia.py"
+PROVIDERS = (
+    Path(__file__).parents[1] / "devtools" / "dnn_reference" / "providers"
 )
+NVIDIA_PROVIDER = PROVIDERS / "nvidia.py"
+NVIDIA_COMMON = PROVIDERS / "nvidia_ops" / "common.py"
+NVIDIA_ADD = PROVIDERS / "nvidia_ops" / "add.py"
+NVIDIA_ABS = PROVIDERS / "nvidia_ops" / "abs.py"
 TEST_BASE = Path(__file__).parents[1] / "tests" / "base.py"
 
 
-def _oracle_method_source(name):
-    source = NVIDIA_ORACLE.read_text(encoding="utf-8")
-    body = source.split(f"    def {name}(", 1)[1]
-    return body.split("\n    def ", 1)[0]
-
-
 def test_nvidia_oracle_uses_only_cudnn_for_add_reference():
-    source = NVIDIA_ORACLE.read_text(encoding="utf-8")
+    common_source = NVIDIA_COMMON.read_text(encoding="utf-8")
+    source = NVIDIA_ADD.read_text(encoding="utf-8")
 
-    assert "import cudnn" in source
-    assert "cuDNN frontend is unavailable" in source
+    assert "import cudnn" in common_source
+    assert "cuDNN frontend is unavailable" in common_source
     assert "graph.add(" in source
     assert "graph.mul(" in source
-    assert "skip_unsupported=False" in source
     assert "torch.add(" not in source
     assert "operator.add(" not in source
 
 
 def test_nvidia_oracle_uses_only_cudnn_for_abs_reference():
-    source = _oracle_method_source("abs")
+    source = NVIDIA_ABS.read_text(encoding="utf-8")
 
     assert "graph.abs(" in source
     assert '"abs"' in source
-    assert "skip_unsupported=False" in source
     assert "torch.abs(" not in source
     assert "operator.abs(" not in source
     assert "x.abs(" not in source
@@ -61,20 +54,29 @@ def test_cudnn_executor_retains_opt_in_strict_build_behavior():
 
 
 def test_nvidia_oracle_destroys_handle_on_its_own_device():
-    source = NVIDIA_ORACLE.read_text(encoding="utf-8")
+    source = NVIDIA_COMMON.read_text(encoding="utf-8")
     close_body = source.split("    def close(self) -> None:", 1)[1]
 
-    assert "handle = self._handle" in close_body
-    assert "self._handle = None" in close_body
-    assert "with torch.cuda.device(self._device):" in close_body
+    assert "handle = self.handle" in close_body
+    assert "self.handle = None" in close_body
+    assert "with torch.cuda.device(self.device):" in close_body
     assert "cudnn.destroy_handle(handle)" in close_body
 
 
 def test_nvidia_oracle_preserves_initialization_error_during_cleanup():
-    source = NVIDIA_ORACLE.read_text(encoding="utf-8")
+    source = NVIDIA_COMMON.read_text(encoding="utf-8")
     constructor_body = source.split("    def __init__(self) -> None:", 1)[1]
-    constructor_body = constructor_body.split("    def supports_dtype", 1)[0]
+    constructor_body = constructor_body.split("    def activate_stream", 1)[0]
 
     assert "except Exception as exc:" in constructor_body
     assert "except Exception as cleanup_exc:" in constructor_body
     assert "exc.add_note(" in constructor_body
+
+
+def test_nvidia_provider_only_registers_independent_operations():
+    source = NVIDIA_PROVIDER.read_text(encoding="utf-8")
+
+    assert "NvidiaAddOperation(self._context)" in source
+    assert "NvidiaAbsOperation(self._context)" in source
+    assert "graph.add(" not in source
+    assert "graph.abs(" not in source

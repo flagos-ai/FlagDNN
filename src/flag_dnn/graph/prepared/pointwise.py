@@ -24,6 +24,7 @@ from flag_dnn.graph.prepared import (
     PreparedSingleKernelRunSpec,
     PreparedSingleKernelSpec,
     RunFn,
+    get_prepared_output,
     make_single_kernel_run_fn,
     register_generic_prepared_run_fn,
     runtime_tensor_checks_from_specs,
@@ -256,106 +257,13 @@ def _prepare_dense_tensor_binary(
             shape,
             stride,
         )
-        output = output_cache.get(key)
-        if output is None:
-            output = torch.empty_strided(
+        return get_prepared_output(
+            output_cache,
+            key,
+            lambda: torch.empty_strided(
                 shape, stride, device=source.device, dtype=out_dtype
-            )
-            output_cache[key] = output
-        return output
-
-    def default_runtime_args(
-        inputs: Sequence[Any], output: torch.Tensor
-    ) -> tuple[Any, ...]:
-        if runtime.device.vendor_name == "ascend" and kernel_op_type == "add":
-            return (inputs[0], inputs[1], output, alpha)
-        return (inputs[0], inputs[1], output, n_elements, alpha)
-
-    runtime_args = default_runtime_args
-    kernel = binary_tensor_kernel
-    constexpr_kwargs: dict[str, Any] = {
-        "ROUND_MODE": 0,
-        "OP_TYPE": kernel_op_type,
-    }
-
-    if runtime.device.vendor_name == "ascend" and kernel_op_type == "add":
-        from flag_dnn.runtime.backend._ascend.ops.binary import (
-            add_tensor_aligned_core_loop_kernel,
-            add_tensor_core_loop_kernel,
-            can_use_aligned_core_loop,
-            get_add_block_size,
-            make_core_loop_grid,
+            ),
         )
-
-        block_size = get_add_block_size(
-            n_elements, left_spec.dtype, left_spec.device
-        )
-        grid = make_core_loop_grid(n_elements, left_spec.device)
-        alpha_is_one = alpha == 1.0
-        if alpha_is_one and can_use_aligned_core_loop(n_elements, block_size):
-            kernel = add_tensor_aligned_core_loop_kernel
-            program_count = grid({"BLOCK_SIZE": block_size})[0]
-            blocks_per_program = n_elements // block_size // program_count
-            constexpr_kwargs = {
-                "BLOCKS_PER_PROGRAM": blocks_per_program,
-                "BLOCK_SIZE": block_size,
-                "num_warps": 4,
-                "num_stages": 1,
-            }
-
-            def aligned_runtime_args(
-                inputs: Sequence[Any], output: torch.Tensor
-            ) -> tuple[Any, ...]:
-                return (inputs[0], inputs[1], output)
-
-            runtime_args = aligned_runtime_args
-
-            def build_cached_call(
-                constexprs: dict[str, Any],
-            ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
-                static_grid = (*grid({"BLOCK_SIZE": block_size}), 1, 1)
-                return static_grid, (blocks_per_program, block_size)
-
-        else:
-            kernel = add_tensor_core_loop_kernel
-            constexpr_kwargs = {
-                "N_ELEMENTS": n_elements,
-                "ALPHA_IS_ONE": alpha_is_one,
-                "ALIGNED_BLOCKS": (
-                    n_elements >= 262144 and n_elements % block_size == 0
-                ),
-                "BLOCK_SIZE": block_size,
-                "num_warps": 4,
-                "num_stages": 1,
-            }
-
-            def build_cached_call(
-                constexprs: dict[str, Any],
-            ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
-                static_grid = (*grid({"BLOCK_SIZE": block_size}), 1, 1)
-                return static_grid, (
-                    n_elements,
-                    alpha_is_one,
-                    n_elements >= 262144 and n_elements % block_size == 0,
-                    block_size,
-                )
-
-    else:
-
-        def grid(meta: dict[str, Any]) -> tuple[int, ...]:
-            block_size = int(meta["BLOCK_SIZE"])
-            return ((n_elements + block_size - 1) // block_size,)
-
-        def build_cached_call(
-            constexprs: dict[str, Any],
-        ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
-            block_size = int(constexprs["BLOCK_SIZE"])
-            static_grid = (
-                (n_elements + block_size - 1) // block_size,
-                1,
-                1,
-            )
-            return static_grid, (0, kernel_op_type, block_size)
 
     def extra_check(inputs: Sequence[Any]) -> bool:
         left, right = inputs
@@ -367,13 +275,52 @@ def _prepare_dense_tensor_binary(
             and left.device == right.device
         )
 
+    prepare_specialized = runtime.get_backend_hook("prepare_dense_binary")
+    if prepare_specialized is not None:
+        prepared = prepare_specialized(
+            kernel_op_type=kernel_op_type,
+            left_spec=left_spec,
+            input_checks=input_checks,
+            output_factory=output_factory,
+            default_run_fn=default_run_fn,
+            extra_check=extra_check,
+            n_elements=n_elements,
+            alpha=alpha,
+            validate_inputs=bool(attrs.get("_validate_inputs", True)),
+        )
+        if prepared is not None:
+            return prepared
+
+    def runtime_args(
+        inputs: Sequence[Any], output: torch.Tensor
+    ) -> tuple[Any, ...]:
+        return (inputs[0], inputs[1], output, n_elements, alpha)
+
+    def grid(meta: dict[str, Any]) -> tuple[int, ...]:
+        block_size = int(meta["BLOCK_SIZE"])
+        return ((n_elements + block_size - 1) // block_size,)
+
+    def build_cached_call(
+        constexprs: dict[str, Any]
+    ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+        block_size = int(constexprs["BLOCK_SIZE"])
+        static_grid = (
+            (n_elements + block_size - 1) // block_size,
+            1,
+            1,
+        )
+        return static_grid, (0, kernel_op_type, block_size)
+
     return make_single_kernel_run_fn(
         PreparedSingleKernelRunSpec(
             kernel=PreparedSingleKernelSpec(
-                kernel=kernel,
+                kernel=binary_tensor_kernel,
                 grid=grid,
                 static_args=(),
-                constexpr_kwargs=constexpr_kwargs,
+                constexpr_kwargs={
+                    "ROUND_MODE": 0,
+                    "OP_TYPE": kernel_op_type,
+                },
                 build_cached_call=build_cached_call,
             ),
             input_checks=input_checks,
@@ -441,13 +388,13 @@ def _prepare_binary_select_pointwise(
             shape,
             stride,
         )
-        output = output_cache.get(key)
-        if output is None:
-            output = torch.empty_strided(
+        return get_prepared_output(
+            output_cache,
+            key,
+            lambda: torch.empty_strided(
                 shape, stride, device=source.device, dtype=out_dtype
-            )
-            output_cache[key] = output
-        return output
+            ),
+        )
 
     def runtime_args(
         inputs: Sequence[Any], output: torch.Tensor
@@ -546,13 +493,13 @@ def _prepare_dense_tensor_pow(
             shape,
             stride,
         )
-        output = output_cache.get(key)
-        if output is None:
-            output = torch.empty_strided(
+        return get_prepared_output(
+            output_cache,
+            key,
+            lambda: torch.empty_strided(
                 shape, stride, device=source.device, dtype=out_dtype
-            )
-            output_cache[key] = output
-        return output
+            ),
+        )
 
     def runtime_args(
         inputs: Sequence[Any], output: torch.Tensor
@@ -652,13 +599,13 @@ def _prepare_add_square_pointwise(
             shape,
             stride,
         )
-        output = output_cache.get(key)
-        if output is None:
-            output = torch.empty_strided(
+        return get_prepared_output(
+            output_cache,
+            key,
+            lambda: torch.empty_strided(
                 shape, stride, device=source.device, dtype=out_dtype
-            )
-            output_cache[key] = output
-        return output
+            ),
+        )
 
     def runtime_args(
         inputs: Sequence[Any], output: torch.Tensor

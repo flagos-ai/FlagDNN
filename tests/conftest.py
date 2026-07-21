@@ -100,15 +100,24 @@ def cudnn_handle():
 
 
 @pytest.fixture(scope="module")
-def dnn_oracle():
-    from tests.oracles import OracleNotImplementedError, create_oracle
+def dnn_reference():
+    from devtools.dnn_reference import (
+        DnnProviderNotImplementedError,
+        create_provider,
+    )
 
     try:
-        oracle = create_oracle()
-    except OracleNotImplementedError as exc:
+        provider = create_provider()
+    except DnnProviderNotImplementedError as exc:
         pytest.skip(str(exc))
 
     try:
-        yield oracle
+        yield provider
     finally:
-        oracle.close()
+        provider.close()
+
+
+@pytest.fixture(scope="module")
+def dnn_oracle(dnn_reference):
+    """Compatibility fixture for tests not migrated to the shared API yet."""
+    return dnn_reference

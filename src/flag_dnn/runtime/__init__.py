@@ -40,6 +40,10 @@ def get_heuristic_config(op_name):
     return config_loader.get_heuristics_config(op_name)
 
 
+def get_backend_hook(hook_name):
+    return backend.get_backend_hook(hook_name, device.vendor_name)
+
+
 def replace_customized_ops(_globals):
     event = backend.BackendArchEvent()
     arch_specialization_operators = (

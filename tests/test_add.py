@@ -18,7 +18,6 @@ import pytest
 import flag_dnn
 from tests import accuracy_utils as utils
 from tests import consts
-from tests.oracles import get_add_test_cases
 
 
 def _make_input(shape, dtype):
@@ -55,15 +54,17 @@ def _run_flag_dnn_add_graph(x, y, alpha=1):
     return compiled.run(x, y)
 
 
-def _assert_add_matches_oracle(dnn_oracle, dtype, x_shape, y_shape, alpha):
+def _assert_add_matches_reference(
+    dnn_reference, dtype, x_shape, y_shape, alpha
+):
     torch.manual_seed(0)
     x = _make_input(x_shape, dtype)
     y = _make_input(y_shape, dtype)
-    assert dnn_oracle.supports_dtype(dtype)
+    assert dnn_reference.supports("add", dtype)
 
-    expected = dnn_oracle.add(x, y, alpha=alpha)
+    expected = dnn_reference.run("add", x, y, alpha=alpha)
     actual = _run_flag_dnn_add_graph(x, y, alpha=alpha)
-    dnn_oracle.synchronize()
+    dnn_reference.synchronize()
 
     output_shape = torch.broadcast_shapes(tuple(x.shape), tuple(y.shape))
     assert tuple(expected.shape) == output_shape
@@ -78,11 +79,11 @@ def _assert_add_matches_oracle(dnn_oracle, dtype, x_shape, y_shape, alpha):
 @pytest.mark.add
 @pytest.mark.graph
 @pytest.mark.parametrize("dtype", consts.DNN_COMPARE_DTYPES)
-@pytest.mark.parametrize("case", get_add_test_cases())
-def test_add(dnn_oracle, dtype, case):
+@pytest.mark.parametrize("case", consts.get_add_test_cases())
+def test_add(dnn_reference, dtype, case):
     x_shape, y_shape = case
-    _assert_add_matches_oracle(
-        dnn_oracle,
+    _assert_add_matches_reference(
+        dnn_reference,
         dtype,
         x_shape,
         y_shape,
@@ -94,9 +95,9 @@ def test_add(dnn_oracle, dtype, case):
 @pytest.mark.graph
 @pytest.mark.parametrize("dtype", consts.DNN_COMPARE_DTYPES)
 @pytest.mark.parametrize("alpha", (0.5, -2.0))
-def test_add_alpha(dnn_oracle, dtype, alpha):
-    _assert_add_matches_oracle(
-        dnn_oracle,
+def test_add_alpha(dnn_reference, dtype, alpha):
+    _assert_add_matches_reference(
+        dnn_reference,
         dtype,
         (2, 4, 8),
         (2, 4, 8),

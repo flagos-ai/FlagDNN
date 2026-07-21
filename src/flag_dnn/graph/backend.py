@@ -100,9 +100,9 @@ class TritonCudaBackend(GraphBackend):
         )
 
     def supports(self, graph: Graph, input_specs: list[TensorSpec]) -> bool:
-        if not self.is_available():
+        if not self.is_available() or not input_specs:
             return False
-        return any(
+        return all(
             spec.device is None
             or spec.device == "cuda"
             or str(spec.device).startswith("cuda:")

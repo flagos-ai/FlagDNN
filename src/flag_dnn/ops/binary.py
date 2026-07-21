@@ -627,54 +627,22 @@ def binary(
             if has_same_dense_flat_layout(
                 input, other  # type: ignore[arg-type]
             ) and can_use_flat_output(out, input):
-                if runtime.device.vendor_name == "ascend" and op_type == "add":
-                    from flag_dnn.runtime.backend._ascend.ops.binary import (
-                        add_tensor_aligned_core_loop_kernel,
-                        add_tensor_core_loop_kernel,
-                        can_use_aligned_core_loop,
-                        get_add_block_size,
-                        make_core_loop_grid,
+                launch_specialized = runtime.get_backend_hook(
+                    "launch_dense_binary"
+                )
+                handled = bool(
+                    launch_specialized(
+                        op_type=op_type,
+                        input=input,
+                        other=other,
+                        out=out,
+                        n_elements=n_elements,
+                        alpha=alpha,
                     )
-
-                    block_size = get_add_block_size(
-                        n_elements, input.dtype, input.device
-                    )
-                    ascend_grid = make_core_loop_grid(n_elements, input.device)
-                    if float(alpha) == 1.0 and can_use_aligned_core_loop(
-                        n_elements, block_size
-                    ):
-                        program_count = ascend_grid(
-                            {"BLOCK_SIZE": block_size}
-                        )[0]
-                        blocks_per_program = (
-                            n_elements // block_size // program_count
-                        )
-                        add_tensor_aligned_core_loop_kernel[ascend_grid](
-                            input,
-                            other,
-                            out,
-                            BLOCKS_PER_PROGRAM=blocks_per_program,
-                            BLOCK_SIZE=block_size,
-                            num_warps=4,
-                            num_stages=1,
-                        )
-                    else:
-                        add_tensor_core_loop_kernel[ascend_grid](
-                            input,
-                            other,
-                            out,
-                            float(alpha),
-                            N_ELEMENTS=n_elements,
-                            ALPHA_IS_ONE=float(alpha) == 1.0,
-                            ALIGNED_BLOCKS=(
-                                n_elements >= 262144
-                                and n_elements % block_size == 0
-                            ),
-                            BLOCK_SIZE=block_size,
-                            num_warps=4,
-                            num_stages=1,
-                        )
-                else:
+                    if launch_specialized is not None
+                    else False
+                )
+                if not handled:
                     binary_tensor_kernel[grid](
                         input,
                         other,

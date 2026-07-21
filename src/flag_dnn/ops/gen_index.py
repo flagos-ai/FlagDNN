@@ -22,6 +22,7 @@ from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import triton_lang_extension as tle
 
 _DTYPE_ALIASES = {
+    "bfloat16": torch.bfloat16,
     "boolean": torch.bool,
     "bool": torch.bool,
     "data_type.boolean": torch.bool,

@@ -18,6 +18,7 @@ import importlib
 import inspect
 import os
 import sys
+import threading
 from pathlib import Path
 
 from ..common import vendors
@@ -31,6 +32,7 @@ tl_extra_backend_module = None
 ops_module = None
 fused_module = None
 heuristic_config_module = None
+backend_hooks_modules: dict = {}
 vendor_extra_lib_imported = False
 device_fn_cache: dict = {}
 customized_ops = None
@@ -40,16 +42,32 @@ class BackendArchEvent:
     has_arch: bool = False
     _instance = None
     _initialized: bool = False
+    _lock = threading.RLock()
 
     def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+            return cls._instance
 
     def __init__(self, backend=None):
-        if BackendArchEvent._initialized:
-            return
-        BackendArchEvent._initialized = True
+        cls = type(self)
+        with cls._lock:
+            if cls._instance is not self:
+                raise RuntimeError("stale BackendArchEvent instance; retry")
+            if cls._initialized:
+                return
+            try:
+                self._initialize(backend)
+            except BaseException:
+                self.__dict__.clear()
+                if cls._instance is self:
+                    cls._instance = None
+                cls._initialized = False
+                raise
+            cls._initialized = True
+
+    def _initialize(self, backend=None):
         self.backend = backend
         self.error_msgs = []
         self.arch = self.get_arch()
@@ -326,6 +344,33 @@ def get_tune_config(vendor_name=None):
     global vendor_module  # noqa: F824
     get_vendor_module(vendor_name)
     return backend_utils.get_tune_config(vendor_name)
+
+
+def get_backend_hook(hook_name, vendor_name=None):
+    """Return one optional private backend hook.
+
+    The hook is not exposed as an operation.
+    """
+    selected_vendor = vendor_name or get_vendor_info().vendor_name
+    if selected_vendor not in backend_hooks_modules:
+        module_name = f"{__name__}._{selected_vendor}.hooks"
+        try:
+            backend_hooks_modules[selected_vendor] = importlib.import_module(
+                module_name
+            )
+        except ModuleNotFoundError as exc:
+            if exc.name != module_name:
+                raise
+            backend_hooks_modules[selected_vendor] = None
+    module = backend_hooks_modules[selected_vendor]
+    if module is None:
+        return None
+    hook = getattr(module, hook_name, None)
+    if hook is not None and not callable(hook):
+        raise TypeError(
+            f"backend hook {hook_name!r} must be callable, got {hook!r}"
+        )
+    return hook
 
 
 __all__ = ["*"]

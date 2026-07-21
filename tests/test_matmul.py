@@ -699,7 +699,10 @@ def test_matmul_fp8_prepared_cache_preserves_output_dtype(
         out_dtype=torch.float32,
         compute_mode="fast_float_for_fp8",
     )
-    first = compiled.run(a.clone(), b.clone())
+    replay_a = a.clone()
+    replay_b = b.clone()
+    replay = compiled.bind(replay_a, replay_b)
+    first = replay()
     first_snapshot = first.clone()
 
     a_second = torch.flip(a.float(), dims=(-1,)).to(input_dtype)
@@ -711,7 +714,9 @@ def test_matmul_fp8_prepared_cache_preserves_output_dtype(
         out_dtype=torch.float32,
         compute_mode="fast_float_for_fp8",
     )
-    second = compiled.run(a_second, b_second)
+    replay_a.copy_(a_second)
+    replay_b.copy_(b_second)
+    second = replay()
 
     assert first.dtype == second.dtype == torch.float32
     assert first.data_ptr() == second.data_ptr()
