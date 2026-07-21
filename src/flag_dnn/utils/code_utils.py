@@ -67,7 +67,10 @@ class IndentedBuffer:
         self._lines.append("")
 
     def writeline(self, line: str) -> None:
-        """Write a single line. Non-blank lines are prefixed with current indent."""
+        """
+        Write a single line.
+        Non-blank lines are prefixed with current indent.
+        """
         if line.strip():
             self._lines.append(f"{self._prefix()}{line}")
         else:
