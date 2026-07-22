@@ -22,9 +22,12 @@ from .common import (
     CUDNN_COMPARE_DTYPES,
     PreparedCudnnOperation,
     NvidiaContext,
+    build_cudnn_graph,
     cudnn,
     cudnn_data_type,
     cudnn_graph,
+    empty_output_like_layout,
+    require_non_overlapping_layout,
 )
 
 
@@ -92,6 +95,7 @@ class NvidiaAddOperation:
     ) -> PreparedCudnnOperation:
         alpha_value = _normalize_alpha(alpha)
         self._validate(x, y)
+        require_non_overlapping_layout(self.name, x, y)
         try:
             output_shape = tuple(torch.broadcast_shapes(x.shape, y.shape))
         except RuntimeError as exc:
@@ -126,11 +130,11 @@ class NvidiaAddOperation:
                 compute_data_type=cudnn.data_type.FLOAT,
                 name="add",
             )
+            output = empty_output_like_layout(x, output_shape, x.dtype)
             output_tensor.set_output(True).set_data_type(
                 cudnn_data_type(x.dtype)
-            )
-            graph.build([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
-            output = torch.empty(output_shape, device=x.device, dtype=x.dtype)
+            ).set_dim(list(output.shape)).set_stride(list(output.stride()))
+            build_cudnn_graph(graph, self.name)
             workspace = torch.empty(
                 graph.get_workspace_size(),
                 device=x.device,

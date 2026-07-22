@@ -23,6 +23,14 @@ if TYPE_CHECKING:
 Number = Union[int, float]
 
 
+class DnnProviderUnavailableError(RuntimeError):
+    """Raised when a known provider cannot initialize its runtime."""
+
+
+class DnnReferenceNotSupportedError(RuntimeError):
+    """Raised when the selected DNN library cannot build an operation."""
+
+
 class PreparedOperation(Protocol):
     output: Any
 

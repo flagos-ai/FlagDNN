@@ -1,0 +1,27 @@
+sdpa_backward_fused_atomic_gqa_causal_d128:
+  # SM90 rejects the two-stage D128 GQA kernel with an illegal instruction.
+  - META:
+      BLOCK_M: 64
+      BLOCK_N: 64
+      BLOCK_D: 128
+    num_warps: 4
+    num_stages: 1
+
+sdpa_backward_gqa_dq_delta_d128:
+  # Keep this override local to Hopper; Ampere retains the vendor default.
+  - META:
+      BLOCK_M: 64
+      BLOCK_N: 64
+      BLOCK_D: 128
+    num_warps: 4
+    num_stages: 1
+
+sdpa_backward_owner_mha_causal_d128:
+  - META:
+      BLOCK_M_DKDV: 64
+      BLOCK_N_DKDV: 64
+      BLOCK_M_DQ: 64
+      BLOCK_N_DQ: 64
+      BLOCK_D: 128
+    num_warps: 4
+    num_stages: 1

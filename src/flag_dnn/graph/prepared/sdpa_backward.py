@@ -18,6 +18,7 @@ from typing import Any, Optional, Sequence, cast
 
 import torch
 
+from flag_dnn import runtime
 from flag_dnn.graph.prepared import (
     PreparedKernelPipelineSpec,
     PreparedPipelineStepSpec,
@@ -29,8 +30,22 @@ from flag_dnn.graph.prepared import (
 )
 from flag_dnn.graph.prepared.common import _static_shape
 from flag_dnn.graph.tensor import TensorSpec, torch_dtype
+from flag_dnn.utils.device_info import get_device_capability_for
 
 # SDPA backward prepared paths
+
+
+def _mloop_supported_on_device(
+    inputs: Sequence[Any],
+) -> bool:
+    """Reject m-loop kernels on SM90 before they are launched."""
+    q = inputs[0] if inputs else None
+    if not isinstance(q, torch.Tensor):
+        return False
+    if runtime.device.vendor_name != "nvidia":
+        return True
+    capability = get_device_capability_for(q.device)
+    return capability not in ((0, 0), (9, 0))
 
 
 def _is_owner_compute_causal_d128(
@@ -110,6 +125,7 @@ def _prepare_sdpa_backward(
         _sdpa_bwd_mloop_causal_d128_kernel,
         _sdpa_bwd_owner_causal_d128_kernel,
         _single_tuned_config_kwargs,
+        _tuned_config_supported_on_device,
         _zero_two_contiguous_kernel,
         _zero_three_and_delta_kernel,
         _zero_three_contiguous_kernel,
@@ -233,6 +249,7 @@ def _prepare_sdpa_backward(
         attn_scale = 1.0 / math.sqrt(head_dim) if head_dim > 0 else 1.0
     attn_scale = float(attn_scale)
 
+    config_device = input_specs[0].device
     config_name = "sdpa_backward_fused_atomic"
     if use_fused_gqa:
         config_name = "sdpa_backward_fused_atomic_gqa_causal_d128"
@@ -246,24 +263,41 @@ def _prepare_sdpa_backward(
         config_name = "sdpa_backward_fused_atomic_d32"
     elif head_dim > 64:
         config_name = "sdpa_backward_fused_atomic_d128"
-    fused_config = _single_tuned_config_kwargs(config_name)
+    fused_config = _single_tuned_config_kwargs(
+        config_name, device=config_device
+    )
     mloop_config = _single_tuned_config_kwargs(
         "sdpa_backward_mloop_causal_d128"
     )
     gqa_dq_config = _single_tuned_config_kwargs(
-        "sdpa_backward_gqa_dq_delta_d128"
+        "sdpa_backward_gqa_dq_delta_d128",
+        device=config_device,
     )
     decode_config = _single_tuned_config_kwargs("sdpa_backward_decode_d128")
     owner_config = None
     if owner_kind is not None:
         owner_config = _single_tuned_config_kwargs(
-            "sdpa_backward_owner_mha_causal_d128"
+            "sdpa_backward_owner_mha_causal_d128",
+            device=config_device,
         )
     dense_mloop_config = _single_tuned_config_kwargs(
         "sdpa_backward_dense_mloop_d128"
         if head_dim > 64
         else "sdpa_backward_dense_mloop_d64"
     )
+
+    def config_guard(*named_configs):
+        def supported(inputs: Sequence[Any]) -> bool:
+            q = inputs[0] if inputs else None
+            if not isinstance(q, torch.Tensor):
+                return False
+            return all(
+                _tuned_config_supported_on_device(name, config, q.device)
+                for name, config in named_configs
+            )
+
+        return supported
+
     block_m = int(fused_config["BLOCK_M"])
     block_n = int(fused_config["BLOCK_N"])
     block_d = int(fused_config["BLOCK_D"])
@@ -664,6 +698,12 @@ def _prepare_sdpa_backward(
                 input_checks=bwd_input_checks,
                 context_factory=make_bwd_context,
                 result=bwd_result,
+                extra_check=config_guard(
+                    (
+                        "sdpa_backward_owner_mha_causal_d128",
+                        owner_config,
+                    )
+                ),
             ),
             default_run_fn,
         )
@@ -963,6 +1003,7 @@ def _prepare_sdpa_backward(
                 input_checks=bwd_input_checks,
                 context_factory=make_bwd_context,
                 result=bwd_result,
+                extra_check=_mloop_supported_on_device,
             ),
             default_run_fn,
         )
@@ -1007,6 +1048,7 @@ def _prepare_sdpa_backward(
                 input_checks=bwd_input_checks,
                 context_factory=make_bwd_context,
                 result=bwd_result,
+                extra_check=_mloop_supported_on_device,
             ),
             default_run_fn,
         )
@@ -1124,6 +1166,16 @@ def _prepare_sdpa_backward(
                 input_checks=bwd_input_checks,
                 context_factory=make_bwd_context,
                 result=bwd_result,
+                extra_check=config_guard(
+                    (
+                        "sdpa_backward_fused_atomic_gqa_causal_d128",
+                        fused_config,
+                    ),
+                    (
+                        "sdpa_backward_gqa_dq_delta_d128",
+                        gqa_dq_config,
+                    ),
+                ),
             ),
             default_run_fn,
         )
@@ -1253,6 +1305,16 @@ def _prepare_sdpa_backward(
             input_checks=bwd_input_checks,
             context_factory=make_bwd_context,
             result=bwd_result,
+            extra_check=(
+                config_guard(
+                    (
+                        "sdpa_backward_fused_atomic_gqa_causal_d128",
+                        fused_config,
+                    )
+                )
+                if use_fused_gqa
+                else None
+            ),
         ),
         default_run_fn,
     )

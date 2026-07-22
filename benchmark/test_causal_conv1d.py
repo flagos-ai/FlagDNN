@@ -17,21 +17,10 @@ import torch
 
 import flag_dnn
 from benchmark import consts
-from benchmark.base import CudnnCompareBenchmark, get_cudnn
-
-_DTYPE_TO_CUDNN_INT = {
-    torch.float32: 0,
-    torch.float16: 2,
-    torch.bfloat16: 9,
-}
-
-_ACTIVATION_TO_CUDNN_INT = {
-    "identity": 0,
-    "silu": 1,
-}
+from benchmark.base import DnnCompareBenchmark
 
 
-class CausalConv1dBenchmark(CudnnCompareBenchmark):
+class CausalConv1dBenchmark(DnnCompareBenchmark):
     op_name = "causal_conv1d"
     shapes = consts.CAUSAL_CONV1D_SHAPES
     shape_ids_env = "FLAGDNN_CUDNN_CAUSAL_CONV1D_PERF_SHAPE_IDS"
@@ -47,37 +36,15 @@ class CausalConv1dBenchmark(CudnnCompareBenchmark):
         bias = torch.randn((dim,), device=flag_dnn.device, dtype=dtype)
         return x, weight, bias, activation
 
-    def build_cudnn_runner(self, inputs):
-        cudnn = get_cudnn()
+    def build_baseline_runner(self, inputs):
         x, weight, bias, activation = inputs
-        if not hasattr(cudnn, "causal_conv1d_forward"):
-            pytest.skip(
-                "cuDNN frontend was built without causal_conv1d_forward"
-            )
-
-        batch, dim, seq_len = x.shape
-        kernel_size = weight.shape[1]
-        y = torch.empty_like(x)
-        dtype = _DTYPE_TO_CUDNN_INT[x.dtype]
-        activation_int = _ACTIVATION_TO_CUDNN_INT[activation]
-
-        def run():
-            cudnn.causal_conv1d_forward(
-                torch.cuda.current_stream().cuda_stream,
-                x.data_ptr(),
-                weight.data_ptr(),
-                bias.data_ptr(),
-                y.data_ptr(),
-                batch,
-                dim,
-                seq_len,
-                kernel_size,
-                dtype,
-                activation_int,
-            )
-            return y
-
-        return run
+        return self.baseline.prepare(
+            self.op_name,
+            x,
+            weight,
+            bias=bias,
+            activation=activation,
+        )
 
     def build_flag_dnn_runner(self, inputs):
         x, weight, bias, activation = inputs
@@ -100,11 +67,7 @@ class CausalConv1dBenchmark(CudnnCompareBenchmark):
         assert [node.op_type for node in compiled.graph.nodes] == [
             "causal_conv1d"
         ]
-
-        def run():
-            return compiled.run(x, weight, bias)
-
-        return run
+        return compiled.bind(x, weight, bias)
 
     def transfer_bytes(self, inputs):
         x, weight, bias, _ = inputs
@@ -129,6 +92,6 @@ class CausalConv1dBenchmark(CudnnCompareBenchmark):
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", CausalConv1dBenchmark.dtypes)
-def test_causal_conv1d(cudnn_handle, dtype):
+def test_causal_conv1d(dnn_baseline, dtype):
     torch.manual_seed(0)
-    CausalConv1dBenchmark(cudnn_handle).run(dtype)
+    CausalConv1dBenchmark(dnn_baseline).run(dtype)

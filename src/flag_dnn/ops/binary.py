@@ -173,9 +173,7 @@ def binary_tensor_kernel(
     elif OP_TYPE == "mod":
         x_f = x.to(tl.float32)
         y_f = y.to(tl.float32)
-        div = x_f / y_f
-        quotient = tl.where(div >= 0, tl.math.floor(div), tl.math.ceil(div))
-        res = x_f - y_f * quotient
+        res = tle.fmod(x_f, y_f)
     elif OP_TYPE == "max":
         res = tl.where(x >= y, x, y)
     elif OP_TYPE == "minimum":
@@ -253,9 +251,7 @@ def binary_scalar_kernel(
     elif OP_TYPE == "mod":
         x_f = x.to(tl.float32)
         y_f = other_val
-        div = x_f / y_f
-        quotient = tl.where(div >= 0, tl.math.floor(div), tl.math.ceil(div))
-        res = x_f - y_f * quotient
+        res = tle.fmod(x_f, y_f)
     elif OP_TYPE == "max":
         res = tl.where(x >= other_val, x, other_val)
     elif OP_TYPE == "minimum":
@@ -387,9 +383,7 @@ def binary_broadcast_tensor_kernel(
     elif OP_TYPE == "mod":
         x_f = x.to(tl.float32)
         y_f = y.to(tl.float32)
-        div = x_f / y_f
-        quotient = tl.where(div >= 0, tl.math.floor(div), tl.math.ceil(div))
-        res = x_f - y_f * quotient
+        res = tle.fmod(x_f, y_f)
     elif OP_TYPE == "max":
         res = tl.where(x >= y, x, y)
     elif OP_TYPE == "minimum":

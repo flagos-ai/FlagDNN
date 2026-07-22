@@ -20,6 +20,7 @@ from .common import (
     CUDNN_COMPARE_DTYPES,
     PreparedCudnnOperation,
     NvidiaContext,
+    build_cudnn_graph,
     cudnn,
     cudnn_data_type,
     cudnn_graph,
@@ -59,7 +60,7 @@ class NvidiaAbsOperation:
             output_tensor.set_output(True).set_data_type(
                 cudnn_data_type(x.dtype)
             )
-            graph.build([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
+            build_cudnn_graph(graph, self.name)
             output = torch.empty_strided(
                 tuple(x.shape),
                 tuple(x.stride()),

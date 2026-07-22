@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
 import math
 
 import pytest
@@ -31,6 +32,120 @@ _FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
 
 _ATOL = 0.08
 _RTOL = 0.2
+
+
+class _FakeTritonConfig:
+    def __init__(self, block_m, block_n, num_warps, num_stages):
+        self.kwargs = {"BLOCK_M": block_m, "BLOCK_N": block_n}
+        self.num_warps = num_warps
+        self.num_stages = num_stages
+
+
+class _FakeDeviceTensor:
+    device = "cuda:7"
+
+
+def _fp8_fast_candidate_grid():
+    return [
+        _FakeTritonConfig(block_m, block_n, num_warps, num_stages)
+        for block_m in (64, 128)
+        for block_n in (64, 128, 256)
+        for num_warps in (4, 8)
+        for num_stages in (2, 3, 4)
+    ]
+
+
+@pytest.mark.parametrize(
+    "vendor,device_cc,expected_count",
+    (
+        ("nvidia", 90, 29),
+        ("nvidia", 0, 29),
+        ("nvidia", 80, 36),
+        ("nvidia", 100, 36),
+        ("ascend", 90, 36),
+    ),
+)
+def test_fp8_fast_autotune_prunes_for_actual_hopper_only(
+    monkeypatch, vendor, device_cc, expected_count
+):
+    module = importlib.import_module("flag_dnn.ops.sdpa_fp8")
+    monkeypatch.setattr(module.runtime.device, "vendor_name", vendor)
+    monkeypatch.setattr(
+        module,
+        "get_device_capability_for",
+        lambda device: divmod(device_cc, 10),
+    )
+    configs = _fp8_fast_candidate_grid()
+
+    pruned = module._prune_sdpa_fp8_fast_configs(
+        configs, {"q_ptr": _FakeDeviceTensor()}
+    )
+
+    assert len(pruned) == expected_count
+    if vendor == "nvidia" and device_cc in (0, 90):
+        assert all(module._is_hopper_safe_fp8_fast_config(c) for c in pruned)
+
+
+def test_fp8_fast_autotune_cache_key_includes_actual_device_arch(monkeypatch):
+    module = importlib.import_module("flag_dnn.ops.sdpa_fp8")
+    tuner = module._sdpa_fp8_fwd_fast_kernel.fn
+
+    assert "q_ptr" in tuner.keys
+    assert "DEVICE_CC" not in tuner.keys
+
+    key_index = tuner.keys.index("q_ptr")
+    monkeypatch.setattr(module.runtime.device, "vendor_name", "nvidia")
+    monkeypatch.setattr(
+        module, "get_device_capability_for", lambda device: (9, 0)
+    )
+    assert (
+        tuner.strategy[key_index](_FakeDeviceTensor()) == "nvidia:90:policy1"
+    )
+
+    monkeypatch.setattr(module.runtime.device, "vendor_name", "ascend")
+    monkeypatch.setattr(
+        module,
+        "get_device_capability_for",
+        lambda device: pytest.fail(
+            "non-NVIDIA cache keys must not query CUDA capability"
+        ),
+    )
+    assert tuner.strategy[key_index](_FakeDeviceTensor()) == "ascend"
+
+
+@pytest.mark.parametrize(
+    "vendor,device_cc,fast_expected,tma_expected",
+    (
+        ("nvidia", 0, False, False),
+        ("nvidia", 80, True, False),
+        ("nvidia", 90, True, True),
+        ("nvidia", 100, True, True),
+        ("ascend", 90, True, False),
+    ),
+)
+def test_fp8_fast_path_architecture_guards(
+    monkeypatch, vendor, device_cc, fast_expected, tma_expected
+):
+    module = importlib.import_module("flag_dnn.ops.sdpa_fp8")
+    monkeypatch.setattr(module.runtime.device, "vendor_name", vendor)
+    if vendor == "nvidia":
+        monkeypatch.setattr(
+            module,
+            "get_device_capability_for",
+            lambda device: divmod(device_cc, 10),
+        )
+    else:
+        monkeypatch.setattr(
+            module,
+            "get_device_capability_for",
+            lambda device: pytest.fail(
+                "non-NVIDIA paths must not query CUDA capability"
+            ),
+        )
+
+    tensor = _FakeDeviceTensor()
+    assert module._sdpa_fp8_fast_arch_supported(tensor) is fast_expected
+    assert module._sdpa_fp8_tma_arch_supported(tensor) is tma_expected
 
 
 def _fp8_largest(dtype):
@@ -150,10 +265,13 @@ def _cudnn_sdpa_fp8(
         return torch.tensor([x], device=q.device, dtype=torch.float32)
 
     o_gpu = torch.empty((b, h, sq, d), device=q.device, dtype=dtype)
-    amax_s_gpu = torch.empty(
+    # cuDNN updates amax outputs with a max reduction, so these accumulation
+    # buffers must start at zero. Using empty() makes results depend on stale
+    # allocator contents when this module runs after the full test suite.
+    amax_s_gpu = torch.zeros(
         (1, 1, 1, 1), device=q.device, dtype=torch.float32
     )
-    amax_o_gpu = torch.empty(
+    amax_o_gpu = torch.zeros(
         (1, 1, 1, 1), device=q.device, dtype=torch.float32
     )
     pack = {

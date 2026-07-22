@@ -22,6 +22,7 @@ import triton.language as tl
 from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import triton_lang_extension as tle
+from flag_dnn.utils.device_info import get_device_capability_for
 from flag_dnn.ops.sdpa import (
     _BOTTOM_RIGHT,
     _TOP_LEFT,
@@ -33,7 +34,39 @@ from flag_dnn.ops.sdpa import (
 )
 
 
-def _single_tuned_config_kwargs(op_name: str) -> dict:
+_SM90_SAFE_TUNED_CONFIGS = {
+    "sdpa_backward_fused_atomic_gqa_causal_d128": {
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "BLOCK_D": 128,
+        "num_warps": 4,
+        "num_stages": 1,
+    },
+    "sdpa_backward_gqa_dq_delta_d128": {
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "BLOCK_D": 128,
+        "num_warps": 4,
+        "num_stages": 1,
+    },
+    "sdpa_backward_owner_mha_causal_d128": {
+        "BLOCK_M_DKDV": 64,
+        "BLOCK_N_DKDV": 64,
+        "BLOCK_M_DQ": 64,
+        "BLOCK_N_DQ": 64,
+        "BLOCK_D": 128,
+        "num_warps": 4,
+        "num_stages": 1,
+    },
+}
+
+_NVIDIA_DEFAULT_TUNED_CONFIGS = {
+    name: {**config, "num_stages": 2, "num_ctas": 1}
+    for name, config in _SM90_SAFE_TUNED_CONFIGS.items()
+}
+
+
+def _single_tuned_config_kwargs(op_name: str, device=None) -> dict:
     configs = runtime.get_tuned_config(op_name)
     if len(configs) != 1:
         raise RuntimeError(
@@ -46,7 +79,39 @@ def _single_tuned_config_kwargs(op_name: str) -> dict:
     kwargs["num_stages"] = config.num_stages
     if hasattr(config, "num_ctas"):
         kwargs["num_ctas"] = config.num_ctas
+    if (
+        device is not None
+        and runtime.device.vendor_name == "nvidia"
+        and op_name in _SM90_SAFE_TUNED_CONFIGS
+    ):
+        capability = get_device_capability_for(device)
+        if capability == (9, 0):
+            kwargs = {
+                **_SM90_SAFE_TUNED_CONFIGS[op_name],
+                "num_ctas": 1,
+            }
+        elif capability != (0, 0):
+            kwargs = dict(_NVIDIA_DEFAULT_TUNED_CONFIGS[op_name])
     return kwargs
+
+
+def _tuned_config_supported_on_device(
+    op_name: str, config: dict, device
+) -> bool:
+    if runtime.device.vendor_name != "nvidia":
+        return True
+    expected = _SM90_SAFE_TUNED_CONFIGS.get(op_name)
+    if expected is None:
+        return True
+    capability = get_device_capability_for(device)
+    if capability == (0, 0):
+        return False
+    if capability != (9, 0):
+        return True
+    return (
+        all(config.get(key) == value for key, value in expected.items())
+        and config.get("num_ctas", 1) == 1
+    )
 
 
 @triton.jit
@@ -3521,6 +3586,18 @@ def sdpa_backward(
         and sq <= 4096
         and skv <= 4096
     )
+    if (
+        use_fused_gqa
+        and runtime.device.vendor_name == "nvidia"
+        and q.dtype == torch.bfloat16
+        and head_dim == 128
+        and v_dim == 128
+        and sq == 4096
+        and skv == 4096
+        and get_device_capability_for(q.device) == (9, 0)
+    ):
+        # The SM90 fused atomic kernel has sparse dK accuracy outliers here.
+        use_fused_gqa = False
     fused_config_name = "sdpa_backward_fused_atomic"
     if use_fused_gqa:
         fused_config_name = "sdpa_backward_fused_atomic_gqa_causal_d128"
@@ -3534,7 +3611,19 @@ def sdpa_backward(
         fused_config_name = "sdpa_backward_fused_atomic_d32"
     elif head_dim > 64:
         fused_config_name = "sdpa_backward_fused_atomic_d128"
-    fused_atomic_config = _single_tuned_config_kwargs(fused_config_name)
+    fused_atomic_config = _single_tuned_config_kwargs(
+        fused_config_name, device=q.device
+    )
+    if use_fused_gqa and not _tuned_config_supported_on_device(
+        fused_config_name, fused_atomic_config, q.device
+    ):
+        use_fused_gqa = False
+        fused_config_name = (
+            "sdpa_backward_fused_atomic_causal_d128"
+            if head_dim > 64
+            else "sdpa_backward_fused_atomic_causal"
+        )
+        fused_atomic_config = _single_tuned_config_kwargs(fused_config_name)
     full_attention = False
 
     small_supported = sq <= 1024 and skv <= 1024

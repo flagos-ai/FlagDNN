@@ -87,7 +87,7 @@ def run_layernorm_test(dnn_reference: Any, dtype: torch.dtype) -> None:
     epsilon = 1e-3
     x = _to_device(torch.randn((2, 5, 17), dtype=dtype))
     scale = _to_device(torch.randn((1, 1, 17), dtype=dtype))
-    bias = _to_device(torch.randn((1, 1, 17), dtype=dtype))
+    bias = _to_device(torch.randn((17, 1), dtype=dtype))
     assert dnn_reference.supports("layernorm", dtype)
     expected = dnn_reference.run(
         "layernorm", "TRAINING", x, scale, bias, epsilon
@@ -134,7 +134,7 @@ def run_rmsnorm_test(dnn_reference: Any, dtype: torch.dtype) -> None:
     epsilon = 1e-3
     x = _to_device(torch.randn((2, 5, 17), dtype=dtype))
     scale = _to_device(torch.randn((1, 1, 17), dtype=dtype))
-    bias = _to_device(torch.randn((1, 1, 17), dtype=dtype))
+    bias = _to_device(torch.randn((17, 1), dtype=dtype))
     assert dnn_reference.supports("rmsnorm", dtype)
     expected = dnn_reference.run(
         "rmsnorm", "TRAINING", x, scale, bias=bias, epsilon=epsilon
@@ -201,8 +201,8 @@ def run_batchnorm_test(dnn_reference: Any, dtype: torch.dtype) -> None:
     torch.manual_seed(2)
     epsilon = 1e-3
     momentum = 0.1
-    x = _to_device(torch.randn((2, 4, 8, 8), dtype=dtype))
-    inputs = (x, *_batchnorm_parameters(4, dtype))
+    x = _to_device(torch.randn((2, 8, 8, 8), dtype=dtype))
+    inputs = (x, *_batchnorm_parameters(8, dtype))
     expected = dnn_reference.run("batchnorm", *inputs, epsilon, momentum)
     actual = _compile_batchnorm(inputs, epsilon, momentum).run(
         *(tensor.clone() for tensor in inputs)

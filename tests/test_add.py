@@ -16,6 +16,7 @@ import torch
 import pytest
 
 import flag_dnn
+from devtools.dnn_reference.interfaces import DnnReferenceNotSupportedError
 from tests import accuracy_utils as utils
 from tests import consts
 
@@ -103,3 +104,18 @@ def test_add_alpha(dnn_reference, dtype, alpha):
         (2, 4, 8),
         alpha=alpha,
     )
+
+
+@pytest.mark.add
+@pytest.mark.graph
+@pytest.mark.parametrize("dtype", consts.DNN_COMPARE_DTYPES)
+def test_add_rejects_internally_overlapping_input(dnn_reference, dtype):
+    x = torch.arange(4, device=flag_dnn.device, dtype=torch.float32)
+    x = x.to(dtype).reshape(1, 4).expand(3, 4)
+    y = torch.randn((3, 4), device=flag_dnn.device, dtype=dtype)
+
+    with pytest.raises(
+        DnnReferenceNotSupportedError,
+        match="internally overlapping inputs",
+    ):
+        dnn_reference.run("add", x, y)

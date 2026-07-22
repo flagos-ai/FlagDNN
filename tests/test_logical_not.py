@@ -15,6 +15,7 @@
 import pytest
 import torch
 
+import flag_dnn
 from tests import consts
 from tests.unary_test_utils import run_unary_test
 
@@ -32,3 +33,16 @@ def test_logical_not(dnn_reference, shape):
         domain="logical",
         exact=True,
     )
+
+
+def test_logical_not_prepared_output_contract(dnn_reference):
+    x = (torch.arange(16, device=flag_dnn.device) % 2 == 0).reshape(1, 1, 16)
+    prepared = dnn_reference.prepare("logical_not", x)
+    try:
+        first_output = prepared.output
+        assert prepared.output.dtype == torch.bool
+        assert prepared.run() is first_output
+        torch.testing.assert_close(first_output, ~x)
+        assert prepared.run() is first_output
+    finally:
+        prepared.close()

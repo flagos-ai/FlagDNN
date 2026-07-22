@@ -24,6 +24,10 @@ from tests.base import (
 import torch
 
 import flag_dnn
+from devtools.dnn_reference.interfaces import DnnReferenceNotSupportedError
+from devtools.dnn_reference.providers.nvidia_ops.common import (
+    require_cudnn_sdpa_execution_supported,
+)
 
 SDPA_BACKWARD_CASES = (
     (1, 2, 2, 32, 32, 32),
@@ -42,6 +46,201 @@ SDPA_BACKWARD_LONG_CAUSAL_D128_CASES = (
     (2, 16, 16, 2048, 2048, 128),
     (1, 32, 8, 4096, 4096, 128),
 )
+
+
+@pytest.mark.parametrize(
+    "vendor,capability,expected",
+    (
+        ("nvidia", (8, 0), True),
+        ("nvidia", (9, 0), False),
+        ("nvidia", (10, 0), True),
+        ("nvidia", (0, 0), False),
+        ("ascend", (9, 0), True),
+        ("ascend", (0, 0), True),
+    ),
+)
+def test_mloop_device_guard_fails_closed(
+    monkeypatch, vendor, capability, expected
+):
+    from flag_dnn.graph.prepared import sdpa_backward as prepared_module
+
+    monkeypatch.setattr(prepared_module.runtime.device, "vendor_name", vendor)
+    monkeypatch.setattr(
+        prepared_module,
+        "get_device_capability_for",
+        lambda _device: capability,
+    )
+    q = torch.empty(1)
+    assert prepared_module._mloop_supported_on_device((q,)) is expected
+    assert not prepared_module._mloop_supported_on_device(())
+
+
+@pytest.mark.parametrize(
+    "op_name",
+    (
+        "sdpa_backward_fused_atomic_gqa_causal_d128",
+        "sdpa_backward_gqa_dq_delta_d128",
+        "sdpa_backward_owner_mha_causal_d128",
+    ),
+)
+@pytest.mark.parametrize(
+    "capability,expected_stages",
+    (
+        ((8, 0), 2),
+        ((9, 0), 1),
+        ((10, 0), 2),
+        ((0, 0), 2),
+    ),
+)
+def test_hopper_sensitive_tuned_config_uses_explicit_input_device(
+    monkeypatch, op_name, capability, expected_stages
+):
+    import importlib
+
+    sdpa_backward_module = importlib.import_module(
+        "flag_dnn.ops.sdpa_backward"
+    )
+
+    class FakeConfig:
+        kwargs = {"BLOCK_M": 64, "BLOCK_N": 64, "BLOCK_D": 128}
+        num_warps = 4
+        num_stages = 2
+
+    monkeypatch.setattr(
+        sdpa_backward_module.runtime,
+        "get_tuned_config",
+        lambda _op_name: [FakeConfig()],
+    )
+    monkeypatch.setattr(
+        sdpa_backward_module,
+        "get_device_capability_for",
+        lambda device: capability if str(device) == "cuda:1" else (8, 0),
+    )
+
+    config = sdpa_backward_module._single_tuned_config_kwargs(
+        op_name, device=torch.device("cuda:1")
+    )
+
+    assert config["num_stages"] == expected_stages
+
+
+@pytest.mark.parametrize(
+    "capability,num_stages,expected",
+    (
+        ((8, 0), 2, True),
+        ((9, 0), 1, True),
+        ((9, 0), 2, False),
+        ((0, 0), 1, False),
+    ),
+)
+def test_hopper_sensitive_tuned_config_guard_fails_closed(
+    monkeypatch, capability, num_stages, expected
+):
+    import importlib
+
+    sdpa_backward_module = importlib.import_module(
+        "flag_dnn.ops.sdpa_backward"
+    )
+    monkeypatch.setattr(
+        sdpa_backward_module,
+        "get_device_capability_for",
+        lambda _device: capability,
+    )
+    config = {
+        "BLOCK_M": 64,
+        "BLOCK_N": 64,
+        "BLOCK_D": 128,
+        "num_warps": 4,
+        "num_stages": num_stages,
+    }
+
+    assert (
+        sdpa_backward_module._tuned_config_supported_on_device(
+            "sdpa_backward_fused_atomic_gqa_causal_d128",
+            config,
+            torch.device("cuda:1"),
+        )
+        is expected
+    )
+
+
+def test_hopper_tuned_config_override_does_not_change_other_vendors(
+    monkeypatch,
+):
+    import importlib
+
+    sdpa_backward_module = importlib.import_module(
+        "flag_dnn.ops.sdpa_backward"
+    )
+
+    class FakeConfig:
+        kwargs = {"BLOCK_M": 64, "BLOCK_N": 64, "BLOCK_D": 128}
+        num_warps = 4
+        num_stages = 2
+
+    monkeypatch.setattr(
+        sdpa_backward_module.runtime,
+        "get_tuned_config",
+        lambda _op_name: [FakeConfig()],
+    )
+    monkeypatch.setattr(
+        sdpa_backward_module.runtime.device, "vendor_name", "ascend"
+    )
+
+    config = sdpa_backward_module._single_tuned_config_kwargs(
+        "sdpa_backward_fused_atomic_gqa_causal_d128",
+        device=torch.device("cuda:1"),
+    )
+
+    assert config["num_stages"] == 2
+
+
+@pytest.mark.parametrize(
+    "op_name",
+    (
+        "sdpa_backward_fused_atomic_gqa_causal_d128",
+        "sdpa_backward_gqa_dq_delta_d128",
+        "sdpa_backward_owner_mha_causal_d128",
+    ),
+)
+def test_hopper_loaded_config_restores_generic_signature_on_sm80(
+    monkeypatch, op_name
+):
+    import importlib
+
+    sdpa_backward_module = importlib.import_module(
+        "flag_dnn.ops.sdpa_backward"
+    )
+    safe = sdpa_backward_module._SM90_SAFE_TUNED_CONFIGS[op_name]
+
+    class HopperConfig:
+        kwargs = {
+            key: value
+            for key, value in safe.items()
+            if not key.startswith("num_")
+        }
+        num_warps = safe["num_warps"]
+        num_stages = safe["num_stages"]
+        num_ctas = 1
+
+    monkeypatch.setattr(
+        sdpa_backward_module.runtime,
+        "get_tuned_config",
+        lambda _op_name: [HopperConfig()],
+    )
+    monkeypatch.setattr(
+        sdpa_backward_module,
+        "get_device_capability_for",
+        lambda _device: (8, 0),
+    )
+
+    config = sdpa_backward_module._single_tuned_config_kwargs(
+        op_name, device=torch.device("cuda:1")
+    )
+
+    assert (
+        config == sdpa_backward_module._NVIDIA_DEFAULT_TUNED_CONFIGS[op_name]
+    )
 
 
 def test_owner_compute_causal_d128_eligibility():
@@ -137,6 +336,13 @@ def _make_qkv(shape, dtype):
     return q, k, v
 
 
+def _skip_unsupported_cudnn_sdpa_execution(tensor, op_name):
+    try:
+        require_cudnn_sdpa_execution_supported(tensor, op_name)
+    except DnnReferenceNotSupportedError as exc:
+        pytest.skip(str(exc))
+
+
 def _cudnn_sdpa_forward(
     q,
     k,
@@ -149,6 +355,7 @@ def _cudnn_sdpa_forward(
     left_bound=None,
     right_bound=None,
 ):
+    _skip_unsupported_cudnn_sdpa_execution(q, "sdpa")
     graph = cudnn.pygraph(
         io_data_type=cudnn_data_type(q.dtype),
         intermediate_data_type=cudnn.data_type.FLOAT,
@@ -233,6 +440,7 @@ def _cudnn_sdpa_backward(
     left_bound=None,
     right_bound=None,
 ):
+    _skip_unsupported_cudnn_sdpa_execution(q, "sdpa_backward")
     graph = cudnn.pygraph(
         io_data_type=cudnn_data_type(q.dtype),
         intermediate_data_type=cudnn.data_type.FLOAT,
@@ -564,6 +772,71 @@ def test_sdpa_backward_long_causal_rebinds_storage(cudnn_handle, dtype, shape):
         left.data_ptr() != right.data_ptr()
         for left, right in zip(grads_b, grads_c)
     )
+
+
+@pytest.mark.sdpa_backward
+@pytest.mark.graph
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or torch.cuda.get_device_capability() != (9, 0),
+    reason="SM90 CUDA device is required",
+)
+@pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16))
+@pytest.mark.parametrize(
+    "shape",
+    (
+        (4, 16, 16, 512, 512, 64),
+        (8, 32, 32, 256, 256, 128),
+    ),
+    ids=("dense_d64", "dense_d128"),
+)
+def test_sdpa_backward_dense_sm90_safe_fallback(cudnn_handle, dtype, shape):
+    torch.manual_seed(31)
+    q, k, v = _make_qkv(shape, dtype)
+    dO = torch.randn_like(q)
+    o, stats = _cudnn_sdpa_forward(q, k, v, cudnn_handle)
+    expected = _cudnn_sdpa_backward(
+        q,
+        k,
+        v,
+        o,
+        dO,
+        stats,
+        cudnn_handle,
+    )
+    actual = _run_flag_dnn_sdpa_backward_graph(q, k, v, o, dO, stats)
+    _assert_grads_close(actual, expected, dtype)
+
+
+@pytest.mark.sdpa_backward
+@pytest.mark.graph
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or torch.cuda.get_device_capability() != (9, 0),
+    reason="SM90 CUDA device is required",
+)
+@pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16))
+def test_sdpa_backward_causal_d128_mloop_sm90_safe_fallback(
+    cudnn_handle, dtype
+):
+    torch.manual_seed(37)
+    shape = (1, 1, 1, 2048, 2048, 128)
+    q, k, v = _make_qkv(shape, dtype)
+    dO = torch.randn_like(q)
+    o, stats = _cudnn_sdpa_forward(q, k, v, cudnn_handle, right_bound=0)
+    expected = _cudnn_sdpa_backward(
+        q, k, v, o, dO, stats, cudnn_handle, right_bound=0
+    )
+    actual = _run_flag_dnn_sdpa_backward_graph(
+        q,
+        k,
+        v,
+        o,
+        dO,
+        stats,
+        right_bound=0,
+    )
+    _assert_grads_close(actual, expected, dtype)
 
 
 @pytest.mark.sdpa_backward

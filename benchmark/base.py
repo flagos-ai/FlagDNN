@@ -36,6 +36,9 @@ from benchmark.timers.default import (  # noqa: E402
     TritonBenchmarkTimer,
     bench_ms,
 )
+from devtools.dnn_reference.interfaces import (  # noqa: E402
+    DnnReferenceNotSupportedError,
+)
 
 
 _lower_percentile = lower_percentile
@@ -43,7 +46,11 @@ _lower_percentile = lower_percentile
 
 @lru_cache(maxsize=1)
 def get_cudnn():
-    return pytest.importorskip("cudnn", exc_type=ImportError)
+    try:
+        import cudnn
+    except (ImportError, OSError) as exc:
+        pytest.skip(f"cuDNN frontend cannot be imported: {exc}")
+    return cudnn
 
 
 def cudnn_data_type(dtype):
@@ -70,7 +77,6 @@ def skip_unsupported_cudnn_graph(exc, op_name):
     message = str(exc)
     if (
         isinstance(exc, cudnn.cudnnGraphNotSupportedError)
-        or "CUDNN_STATUS_BAD_PARAM" in message
         or "CUDNN_STATUS_NOT_SUPPORTED" in message
         or "No valid engine configs" in message
     ):
@@ -166,9 +172,22 @@ class DnnCompareBenchmark:
             )
 
         metrics = []
+        unsupported = []
+        reference_names = set()
         for shape in self.selected_shapes():
             inputs = self.make_inputs(shape, dtype)
-            baseline_run = self.build_baseline_runner(inputs)
+            try:
+                baseline_run = self.build_baseline_runner(inputs)
+            except DnnReferenceNotSupportedError as exc:
+                unsupported.append((shape, str(exc)))
+                continue
+            reference_names.add(
+                getattr(
+                    baseline_run,
+                    "reference_name",
+                    self.baseline.display_name,
+                )
+            )
             try:
                 flag_dnn_run = self.build_flag_dnn_runner(inputs)
                 timer = self.timer or create_timer(
@@ -178,6 +197,9 @@ class DnnCompareBenchmark:
                     baseline_run.run, flag_dnn_run
                 )
                 bytes_moved = self.transfer_bytes(inputs)
+            except DnnReferenceNotSupportedError as exc:
+                unsupported.append((shape, str(exc)))
+                continue
             finally:
                 baseline_run.close()
 
@@ -204,12 +226,27 @@ class DnnCompareBenchmark:
                 )
             )
 
+        for shape, reason in unsupported:
+            reason = reason.replace("\n", " ")
+            print(f"UNSUPPORTED shape={shape!r} reason={reason}")
+        if not metrics:
+            reasons = "; ".join(reason for _, reason in unsupported)
+            pytest.skip(
+                f"{self.baseline.display_name} supports none of the selected "
+                f"{self.op_name} shapes for {dtype}: {reasons}"
+            )
+
+        reference_name = (
+            next(iter(reference_names))
+            if len(reference_names) == 1
+            else self.baseline.display_name
+        )
         print(
             format_perf_result(
                 self.op_name,
                 dtype,
                 metrics,
-                reference_name=self.baseline.display_name,
+                reference_name=reference_name,
             )
         )
         assert all(
@@ -256,14 +293,21 @@ class CudnnCompareBenchmark:
 
     def run(self, dtype):
         metrics = []
+        unsupported = []
         for shape in self.selected_shapes():
             inputs = self.make_inputs(shape, dtype)
-            cudnn_run = self.build_cudnn_runner(inputs)
-            flag_dnn_run = self.build_flag_dnn_runner(inputs)
-
-            torch.cuda.synchronize()
-            cudnn_ms = bench_ms(cudnn_run)
-            flag_dnn_ms = bench_ms(flag_dnn_run)
+            try:
+                cudnn_run = self.build_cudnn_runner(inputs)
+                flag_dnn_run = self.build_flag_dnn_runner(inputs)
+                torch.cuda.synchronize()
+                cudnn_ms = bench_ms(cudnn_run)
+                flag_dnn_ms = bench_ms(flag_dnn_run)
+            except (
+                DnnReferenceNotSupportedError,
+                pytest.skip.Exception,
+            ) as exc:
+                unsupported.append((shape, str(exc)))
+                continue
             bytes_moved = self.transfer_bytes(inputs)
 
             metrics.append(
@@ -285,6 +329,16 @@ class CudnnCompareBenchmark:
                         else None
                     ),
                 )
+            )
+
+        for shape, reason in unsupported:
+            reason = reason.replace("\n", " ")
+            print(f"UNSUPPORTED shape={shape!r} reason={reason}")
+        if not metrics:
+            reasons = "; ".join(reason for _, reason in unsupported)
+            pytest.skip(
+                "cuDNN supports none of the selected "
+                f"{self.op_name} shapes for {dtype}: {reasons}"
             )
 
         print(format_perf_result(self.op_name, dtype, metrics))

@@ -19,6 +19,8 @@ from .add import NvidiaAddOperation
 from .binary import NvidiaBinaryOperation, create_binary_operations
 from .binary_select import NvidiaBinarySelectOperation
 from .batchnorm_inference import NvidiaBatchNormInferenceOperation
+from .causal_conv1d import NvidiaCausalConv1dOperation
+from .rmsnorm_rht_amax import NvidiaRmsNormRhtAmaxOperation
 from .norm import (
     NvidiaBatchNormOperation,
     NvidiaLayerNormOperation,
@@ -38,8 +40,10 @@ __all__ = (
     "NvidiaBinarySelectOperation",
     "NvidiaBatchNormInferenceOperation",
     "NvidiaBatchNormOperation",
+    "NvidiaCausalConv1dOperation",
     "NvidiaLayerNormOperation",
     "NvidiaRmsNormOperation",
+    "NvidiaRmsNormRhtAmaxOperation",
     "NvidiaSigmoidBackwardOperation",
     "NvidiaReductionOperation",
     "NvidiaContext",

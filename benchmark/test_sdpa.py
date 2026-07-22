@@ -25,6 +25,7 @@ import torch
 
 import flag_dnn
 from benchmark import consts
+from devtools.dnn_reference.interfaces import DnnReferenceNotSupportedError
 
 
 class SdpaBenchmark(CudnnCompareBenchmark):
@@ -56,6 +57,14 @@ class SdpaBenchmark(CudnnCompareBenchmark):
     def build_cudnn_runner(self, inputs):
         cudnn = get_cudnn()
         q, k, v, causal, stats = inputs
+        try:
+            from devtools.dnn_reference.providers.nvidia_ops.common import (
+                require_cudnn_sdpa_execution_supported,
+            )
+
+            require_cudnn_sdpa_execution_supported(q, self.op_name)
+        except DnnReferenceNotSupportedError as exc:
+            pytest.skip(str(exc))
         batch, heads, seq_q, head_dim = q.shape
         io_dtype = cudnn_data_type(q.dtype)
         graph = cudnn.pygraph(

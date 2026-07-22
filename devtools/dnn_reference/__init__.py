@@ -16,6 +16,8 @@
 
 from .interfaces import (
     DnnProvider,
+    DnnProviderUnavailableError,
+    DnnReferenceNotSupportedError,
     DnnReferenceOperation,
     PreparedOperation,
 )
@@ -31,6 +33,8 @@ __all__: list[str] = [
     "DnnReferenceOperation",
     "DnnOperationNotImplementedError",
     "DnnProviderNotImplementedError",
+    "DnnProviderUnavailableError",
+    "DnnReferenceNotSupportedError",
     "OperationRegistry",
     "PreparedOperation",
     "RegisteredOperationProvider",

@@ -23,6 +23,7 @@ from .common import (
     CUDNN_COMPARE_DTYPES,
     NvidiaContext,
     PreparedCudnnOperation,
+    build_cudnn_graph,
     cudnn,
     cudnn_data_type,
     cudnn_graph,
@@ -232,7 +233,7 @@ class NvidiaUtilityOperation:
                 unknown = ", ".join(sorted(call_kwargs))
                 raise TypeError(f"unexpected {self.name} arguments: {unknown}")
             output_tensor.set_output(True).set_data_type(io_dtype)
-            graph.build([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
+            build_cudnn_graph(graph, self.name)
             workspace = torch.empty(
                 graph.get_workspace_size(),
                 device=first.device,

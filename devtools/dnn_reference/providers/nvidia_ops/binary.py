@@ -22,9 +22,12 @@ from .common import (
     CUDNN_COMPARE_DTYPES,
     NvidiaContext,
     PreparedCudnnOperation,
+    build_cudnn_graph,
     cudnn,
     cudnn_data_type,
     cudnn_graph,
+    empty_output_like_layout,
+    require_non_overlapping_layout,
 )
 
 
@@ -49,17 +52,9 @@ BINARY_OPERATION_NAMES = (
     "logical_or",
 )
 
-_COMPARISON_METHODS = {
-    "cmp_eq": "eq",
-    "cmp_neq": "ne",
-    "cmp_gt": "gt",
-    "cmp_ge": "ge",
-    "cmp_lt": "lt",
-    "cmp_le": "le",
-}
 _LOGICAL_METHODS = {
-    "logical_and": "logical_and",
-    "logical_or": "logical_or",
+    "logical_and": "mul",
+    "logical_or": "add",
 }
 
 
@@ -104,13 +99,17 @@ class NvidiaBinaryOperation:
             raise ValueError(
                 f"cuDNN {self.name} inputs must share device and dtype"
             )
+        require_non_overlapping_layout(self.name, x, y)
         output_shape = tuple(torch.broadcast_shapes(x.shape, y.shape))
+        is_logical = self.name in _LOGICAL_METHODS
+        graph_x = x.to(torch.float32) if is_logical else x
+        graph_y = y.to(torch.float32) if is_logical else y
         with torch.cuda.device(x.device):
             context.activate_stream(x.device)
-            graph = cudnn_graph(x.dtype, context.handle)
-            x_tensor = graph.tensor_like(x)
-            y_tensor = graph.tensor_like(y)
-            exec_tensors = {x_tensor: x, y_tensor: y}
+            graph = cudnn_graph(graph_x.dtype, context.handle)
+            x_tensor = graph.tensor_like(graph_x)
+            y_tensor = graph.tensor_like(graph_y)
+            exec_tensors = {x_tensor: graph_x, y_tensor: graph_y}
 
             rhs = y_tensor
             if self.name == "sub" and float(alpha) != 1.0:
@@ -146,10 +145,10 @@ class NvidiaBinaryOperation:
                     compute_data_type=cudnn.data_type.FLOAT,
                     name=self.name,
                 )
-            elif self.name in _COMPARISON_METHODS:
-                output_tensor = getattr(graph, _COMPARISON_METHODS[self.name])(
-                    a=x_tensor,
-                    b=y_tensor,
+            elif self.name.startswith("cmp_"):
+                output_tensor = getattr(graph, self.name)(
+                    input=x_tensor,
+                    comparison=y_tensor,
                     compute_data_type=cudnn.data_type.FLOAT,
                     name=self.name,
                 )
@@ -176,19 +175,15 @@ class NvidiaBinaryOperation:
                         name=self.name,
                     )
 
-            output_dtype = (
-                torch.bool
-                if self.name in _COMPARISON_METHODS
-                or self.name in _LOGICAL_METHODS
-                else x.dtype
+            result_is_bool = self.name.startswith("cmp_") or is_logical
+            output_dtype = graph_x.dtype
+            output = empty_output_like_layout(
+                graph_x, output_shape, output_dtype
             )
             output_tensor.set_output(True).set_data_type(
                 cudnn_data_type(output_dtype)
-            )
-            graph.build([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
-            output = torch.empty(
-                output_shape, device=x.device, dtype=output_dtype
-            )
+            ).set_dim(list(output.shape)).set_stride(list(output.stride()))
+            build_cudnn_graph(graph, self.name)
             workspace = torch.empty(
                 graph.get_workspace_size(),
                 device=x.device,
@@ -196,9 +191,31 @@ class NvidiaBinaryOperation:
             )
             exec_tensors[output_tensor] = output
         context.last_device = x.device
-        return PreparedCudnnOperation(
-            graph, exec_tensors, workspace, output, context.handle
+        bool_output = None
+        result_transform = None
+        if result_is_bool:
+            bool_output = torch.empty_strided(
+                tuple(output.shape),
+                tuple(output.stride()),
+                device=output.device,
+                dtype=torch.bool,
+            )
+
+            def transform_result(result):
+                return torch.ne(result, 0, out=bool_output)
+
+            result_transform = transform_result
+        prepared = PreparedCudnnOperation(
+            graph,
+            exec_tensors,
+            workspace,
+            output,
+            context.handle,
+            result_transform=result_transform,
         )
+        if bool_output is not None:
+            prepared.output = bool_output
+        return prepared
 
 
 def create_binary_operations(

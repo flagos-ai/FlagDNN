@@ -59,6 +59,8 @@ def _prepare_sdpa_fp8(
         _ensure_triton_tma_allocator,
     )
     from flag_dnn.ops.sdpa_fp8 import (
+        _sdpa_fp8_fast_arch_supported,
+        _sdpa_fp8_tma_arch_supported,
         _sdpa_fp8_fwd_causal_nostats_hostdesc_tma_kernel,
         _sdpa_fp8_fwd_dense512_hostdesc_tma_kernel,
         _sdpa_fp8_fwd_dense_nostats_hostdesc_tma_kernel,
@@ -182,6 +184,7 @@ def _prepare_sdpa_fp8(
         and head_pow2
         and v_pow2
         and (not banded or pure_causal)
+        and _sdpa_fp8_fast_arch_supported(q_spec.device)
     )
     if fast_ok:
         fast_stats_stride = stats_stride if generate_stats else (0, 0, 0)
@@ -205,7 +208,8 @@ def _prepare_sdpa_fp8(
             )
         )
         tma_ok = (
-            tma_amortizes
+            _sdpa_fp8_tma_arch_supported(q_spec.device)
+            and tma_amortizes
             and q_stride[3] == 1
             and k_stride[3] == 1
             and v_stride[3] == 1
