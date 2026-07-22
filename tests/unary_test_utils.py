@@ -17,8 +17,10 @@ from __future__ import annotations
 from typing import Literal
 
 import torch
+import pytest
 
 import flag_dnn
+from devtools.dnn_reference.interfaces import DnnReferenceNotSupportedError
 from flag_dnn.graph import graph as graph_decorator
 from tests import accuracy_utils as utils
 from tests import consts
@@ -93,7 +95,10 @@ def run_unary_test(
     assert dnn_reference.supports(op_name, dtype)
 
     kwargs = operation_kwargs or {}
-    expected = dnn_reference.run(op_name, x, **kwargs)
+    try:
+        expected = dnn_reference.run(op_name, x, **kwargs)
+    except DnnReferenceNotSupportedError as exc:
+        pytest.skip(str(exc))
     actual = compile_unary_graph(op_name, x, operation_kwargs=kwargs).run(x)
     dnn_reference.synchronize()
 

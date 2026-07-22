@@ -24,6 +24,10 @@ from tests.base import (
 import torch
 
 import flag_dnn
+from devtools.dnn_reference.interfaces import DnnReferenceNotSupportedError
+from devtools.dnn_reference.providers.nvidia_ops.common import (
+    require_cudnn_sdpa_execution_supported,
+)
 from tests import accuracy_utils as utils
 from tests import consts
 
@@ -32,6 +36,13 @@ def _cudnn_alignment(diagonal_alignment):
     if diagonal_alignment == "BOTTOM_RIGHT":
         return cudnn.diagonal_alignment.BOTTOM_RIGHT
     return cudnn.diagonal_alignment.TOP_LEFT
+
+
+def _skip_unsupported_cudnn_sdpa_execution(tensor, op_name):
+    try:
+        require_cudnn_sdpa_execution_supported(tensor, op_name)
+    except DnnReferenceNotSupportedError as exc:
+        pytest.skip(str(exc))
 
 
 def _cudnn_sdpa(
@@ -46,6 +57,7 @@ def _cudnn_sdpa(
     right_bound=None,
     generate_stats=True,
 ):
+    _skip_unsupported_cudnn_sdpa_execution(q, "sdpa")
     graph = cudnn.pygraph(
         io_data_type=cudnn_data_type(q.dtype),
         intermediate_data_type=cudnn.data_type.FLOAT,

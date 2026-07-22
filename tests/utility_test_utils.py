@@ -17,8 +17,10 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 import torch
+import pytest
 
 import flag_dnn
+from devtools.dnn_reference.interfaces import DnnReferenceNotSupportedError
 from flag_dnn.graph import graph as graph_decorator
 from tests import accuracy_utils as utils
 from tests import consts
@@ -67,7 +69,10 @@ def run_single_input_utility_test(
     kwargs = dict(operation_kwargs or {})
     assert dnn_reference.supports(op_name, dtype)
 
-    expected = dnn_reference.run(op_name, x, **kwargs)
+    try:
+        expected = dnn_reference.run(op_name, x, **kwargs)
+    except DnnReferenceNotSupportedError as exc:
+        pytest.skip(str(exc))
     actual = _compile_single_input_graph(op_name, x, kwargs).run(x)
     dnn_reference.synchronize()
 
@@ -86,7 +91,10 @@ def run_concatenate_test(
     inputs = tuple(make_input(shape, dtype) for shape in shapes)
     assert dnn_reference.supports("concatenate", dtype)
 
-    expected = dnn_reference.run("concatenate", inputs, axis=axis)
+    try:
+        expected = dnn_reference.run("concatenate", inputs, axis=axis)
+    except DnnReferenceNotSupportedError as exc:
+        pytest.skip(str(exc))
 
     @graph_decorator
     def concatenate_graph(*values):
@@ -120,9 +128,12 @@ def run_gen_index_test(
 ) -> None:
     x = torch.empty(tuple(shape), device=flag_dnn.device, dtype=dtype)
     assert dnn_reference.supports("gen_index", dtype)
-    expected = dnn_reference.run(
-        "gen_index", x, axis=axis, compute_data_type=dtype
-    )
+    try:
+        expected = dnn_reference.run(
+            "gen_index", x, axis=axis, compute_data_type=dtype
+        )
+    except DnnReferenceNotSupportedError as exc:
+        pytest.skip(str(exc))
 
     @graph_decorator
     def gen_index_graph(x):

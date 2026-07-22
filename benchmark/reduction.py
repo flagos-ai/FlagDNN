@@ -33,6 +33,16 @@ class ReductionBenchmarkBase(DnnCompareBenchmark):
             x = consts.pointwise_randn(shape, dtype, flag_dnn.device)
         return (x,)
 
+    def shape_detail(self, inputs):
+        _, dim, mode = self.case
+        (x,) = inputs
+        return {
+            "input": tuple(x.shape),
+            "dim": dim,
+            "mode": mode,
+            "keepdim": True,
+        }
+
     def build_baseline_runner(self, inputs):
         _, dim, mode = self.case
         (x,) = inputs

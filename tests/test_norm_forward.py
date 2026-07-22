@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import pytest
+import torch
 
+import flag_dnn
 from tests import consts
 from tests.norm_test_utils import (
     run_batchnorm_test,
@@ -41,3 +43,75 @@ def test_rmsnorm_multi_output(dnn_reference, dtype):
 @pytest.mark.parametrize("dtype", consts.DNN_COMPARE_DTYPES)
 def test_batchnorm_multi_output(dnn_reference, dtype):
     run_batchnorm_test(dnn_reference, dtype)
+
+
+@pytest.mark.parametrize("op_name", ("layernorm", "rmsnorm"))
+def test_norm_reference_rejects_noncontiguous_parameters(
+    dnn_reference, op_name
+):
+    if dnn_reference.vendor_name != "nvidia":
+        pytest.skip("contiguity contract is NVIDIA-reference-specific")
+
+    x = torch.randn((2, 5, 17), device=flag_dnn.device, dtype=torch.float16)
+    scale_storage = torch.randn((17, 2), device=x.device, dtype=x.dtype)
+    scale = scale_storage[:, 0]
+    bias = torch.randn((17,), device=x.device, dtype=x.dtype)
+    assert not scale.is_contiguous()
+
+    with pytest.raises(ValueError, match="requires contiguous tensors"):
+        dnn_reference.prepare(
+            op_name,
+            "TRAINING",
+            x,
+            scale,
+            bias,
+            1e-5,
+        )
+
+
+def test_batchnorm_reference_accepts_channels_last_input(dnn_reference):
+    if dnn_reference.vendor_name != "nvidia":
+        pytest.skip("channels-last regression is NVIDIA-reference-specific")
+
+    x = torch.randn(
+        (2, 8, 8, 8), device=flag_dnn.device, dtype=torch.float16
+    ).to(memory_format=torch.channels_last)
+    params = [
+        torch.ones((1, 8, 1, 1), device=x.device, dtype=x.dtype),
+        torch.zeros((1, 8, 1, 1), device=x.device, dtype=x.dtype),
+        torch.zeros((1, 8, 1, 1), device=x.device, dtype=torch.float32),
+        torch.ones((1, 8, 1, 1), device=x.device, dtype=torch.float32),
+    ]
+    assert not x.is_contiguous()
+    assert x.is_contiguous(memory_format=torch.channels_last)
+
+    prepared = dnn_reference.prepare("batchnorm", x, *params, 1e-5, 0.1)
+    try:
+        outputs = prepared.run()
+        dnn_reference.synchronize()
+        assert all(torch.isfinite(output).all() for output in outputs)
+    finally:
+        prepared.close()
+
+
+def test_batchnorm_reference_still_rejects_noncontiguous_parameters(
+    dnn_reference,
+):
+    if dnn_reference.vendor_name != "nvidia":
+        pytest.skip("contiguity contract is NVIDIA-reference-specific")
+
+    x = torch.randn(
+        (2, 8, 8, 8), device=flag_dnn.device, dtype=torch.float16
+    ).to(memory_format=torch.channels_last)
+    scale_storage = torch.ones((1, 8, 1, 2), device=x.device, dtype=x.dtype)
+    scale = scale_storage[..., :1]
+    params = [
+        scale,
+        torch.zeros_like(scale),
+        torch.zeros((1, 8, 1, 1), device=x.device, dtype=torch.float32),
+        torch.ones((1, 8, 1, 1), device=x.device, dtype=torch.float32),
+    ]
+    assert not scale.is_contiguous()
+
+    with pytest.raises(ValueError, match="requires contiguous tensors"):
+        dnn_reference.prepare("batchnorm", x, *params, 1e-5, 0.1)

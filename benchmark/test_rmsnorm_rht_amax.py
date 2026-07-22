@@ -17,12 +17,12 @@ import torch
 
 import flag_dnn
 from benchmark import consts
-from benchmark.base import CudnnCompareBenchmark, get_cudnn
+from benchmark.base import DnnCompareBenchmark
 
 EPS = 1e-5
 
 
-class RmsNormRhtAmaxBenchmark(CudnnCompareBenchmark):
+class RmsNormRhtAmaxBenchmark(DnnCompareBenchmark):
     op_name = "rmsnorm_rht_amax_wrapper_sm100"
     dtypes = (torch.bfloat16,)
     shapes = consts.RMSNORM_RHT_AMAX_SHAPES
@@ -37,27 +37,15 @@ class RmsNormRhtAmaxBenchmark(CudnnCompareBenchmark):
         w = torch.randn((n,), device=flag_dnn.device, dtype=dtype).contiguous()
         return x, w
 
-    def build_cudnn_runner(self, inputs):
-        cudnn = get_cudnn()
-        try:
-            wrapper = getattr(cudnn, "rmsnorm_rht_amax_wrapper_sm100")
-        except (AttributeError, ImportError, RuntimeError) as exc:
-            pytest.skip(
-                f"cuDNN RMSNorm RHT amax wrapper is unavailable: {exc}"
-            )
+    def build_baseline_runner(self, inputs):
         x, w = inputs
-
-        def run():
-            return wrapper(x, w, eps=EPS, rows_per_cta=self.rows_per_cta)
-
-        try:
-            run()
-            torch.cuda.synchronize()
-        except (AssertionError, ImportError, RuntimeError, ValueError) as exc:
-            pytest.skip(
-                "cuDNN RMSNorm RHT amax wrapper is unsupported here: " f"{exc}"
-            )
-        return run
+        return self.baseline.prepare(
+            self.op_name,
+            x,
+            w,
+            eps=EPS,
+            rows_per_cta=self.rows_per_cta,
+        )
 
     def build_flag_dnn_runner(self, inputs):
         x, w = inputs
@@ -79,11 +67,7 @@ class RmsNormRhtAmaxBenchmark(CudnnCompareBenchmark):
         assert [node.op_type for node in compiled.graph.nodes] == [
             "rmsnorm_rht_amax_wrapper_sm100"
         ]
-
-        def run():
-            return compiled.run(x, w)
-
-        return run
+        return compiled.bind(x, w)
 
     def transfer_bytes(self, inputs):
         x, w = inputs
@@ -92,7 +76,7 @@ class RmsNormRhtAmaxBenchmark(CudnnCompareBenchmark):
             x.numel() * x.element_size()
             + w.numel() * w.element_size()
             + x.numel() * x.element_size()
-            + num_ctas * torch.empty((), dtype=torch.float32).element_size()
+            + num_ctas * torch.float32.itemsize
         )
 
     def shape_detail(self, inputs):
@@ -105,6 +89,6 @@ class RmsNormRhtAmaxBenchmark(CudnnCompareBenchmark):
 @pytest.mark.perf
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", RmsNormRhtAmaxBenchmark.dtypes)
-def test_rmsnorm_rht_amax(cudnn_handle, dtype):
+def test_rmsnorm_rht_amax(dnn_baseline, dtype):
     torch.manual_seed(0)
-    RmsNormRhtAmaxBenchmark(cudnn_handle).run(dtype)
+    RmsNormRhtAmaxBenchmark(dnn_baseline).run(dtype)

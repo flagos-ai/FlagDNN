@@ -103,12 +103,16 @@ def cudnn_handle():
 def dnn_reference():
     from devtools.dnn_reference import (
         DnnProviderNotImplementedError,
+        DnnProviderUnavailableError,
         create_provider,
     )
 
     try:
         provider = create_provider()
-    except DnnProviderNotImplementedError as exc:
+    except (
+        DnnProviderNotImplementedError,
+        DnnProviderUnavailableError,
+    ) as exc:
         pytest.skip(str(exc))
 
     try:

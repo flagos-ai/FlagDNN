@@ -79,6 +79,7 @@ class _WGMMA:
     acc: Union[warpgroup_mma_accumulator, gl.tensor]
     use_acc: gl.tensor
 
+    @gluon.constexpr_function
     def __init__(self, acc, use_acc):
         self.acc = acc
         self.use_acc = use_acc
@@ -125,10 +126,11 @@ class _BarrierCounter:
     phase: gl.tensor
     num_barriers: gl.constexpr
 
+    @gluon.constexpr_function
     def __init__(self, index, phase, num_barriers):
         self.index = index
         self.phase = phase
-        self.num_barriers = num_barriers
+        self.num_barriers = gl.constexpr(num_barriers)
 
     @gluon.jit
     def create(phase, num_barriers: gl.constexpr):
@@ -153,6 +155,7 @@ class _BatchedTileScheduler:
     tiles_per_batch: gl.tensor
     num_pid_m: gl.tensor
 
+    @gluon.constexpr_function
     def __init__(self, start_tile, total_tiles, tiles_per_batch, num_pid_m):
         self.start_tile = start_tile
         self.total_tiles = total_tiles
@@ -844,10 +847,11 @@ def _matmul_sm90_fp8_ws_kernel(
         c_buffer,
     )
     gl.warp_specialize(
-        args,
-        _matmul_sm90_fp8_ws_compute,
-        args,
-        [_matmul_sm90_fp8_ws_load, _matmul_sm90_fp8_ws_store],
+        [
+            (_matmul_sm90_fp8_ws_compute, args),
+            (_matmul_sm90_fp8_ws_load, args),
+            (_matmul_sm90_fp8_ws_store, args),
+        ],
         [1, 1],
         [24, 24],
     )
@@ -926,19 +930,21 @@ def _matmul_sm90_ws_kernel(
     )
     if cube_variant:
         gl.warp_specialize(
-            args,
-            _matmul_sm90_ws_cube_compute,
-            args,
-            [_matmul_sm90_ws_cube_load, _matmul_sm90_ws_cube_store],
+            [
+                (_matmul_sm90_ws_cube_compute, args),
+                (_matmul_sm90_ws_cube_load, args),
+                (_matmul_sm90_ws_cube_store, args),
+            ],
             [1, 1],
             [24, 24],
         )
     else:
         gl.warp_specialize(
-            args,
-            _matmul_sm90_ws_compute,
-            args,
-            [_matmul_sm90_ws_load, _matmul_sm90_ws_store],
+            [
+                (_matmul_sm90_ws_compute, args),
+                (_matmul_sm90_ws_load, args),
+                (_matmul_sm90_ws_store, args),
+            ],
             [1, 1],
             [24, 24],
         )
@@ -1242,29 +1248,28 @@ def _validate_inputs(a, b, c, config):
         )
     if config.num_buffers < 2:
         raise ValueError("SM90 Gluon matmul requires at least two TMA buffers")
-    if config.warp_specialized:
-        if config.family == "fp8":
-            expected_warps = 4 if config.block_m == 64 else 8
-            if config.block_k != 64 or config.num_warps != expected_warps:
-                raise ValueError(
-                    "FP8 warp-specialized SM90 Gluon matmul requires "
-                    "BLOCK_K=64 and 4 warps for BLOCK_M=64 or 8 otherwise"
-                )
-        else:
-            warp_specialized_shapes = (
-                (16, 1024, 1024, 1024),
-                (16, 2048, 2048, 512),
+    if config.family == "fp8":
+        expected_warps = 4 if config.block_m == 64 else 8
+        if config.block_k != 64 or config.num_warps != expected_warps:
+            raise ValueError(
+                "FP8 SM90 Gluon matmul requires BLOCK_K=64 and 4 warps "
+                "for BLOCK_M=64 or 8 otherwise"
             )
-            if (
-                batch,
-                m,
-                n,
-                k,
-            ) not in warp_specialized_shapes or config.block_k != 64:
-                raise ValueError(
-                    "warp-specialized SM90 Gluon matmul requires an exact "
-                    "validated shape and BLOCK_K=64"
-                )
+    elif config.warp_specialized:
+        warp_specialized_shapes = (
+            (16, 1024, 1024, 1024),
+            (16, 2048, 2048, 512),
+        )
+        if (
+            batch,
+            m,
+            n,
+            k,
+        ) not in warp_specialized_shapes or config.block_k != 64:
+            raise ValueError(
+                "warp-specialized SM90 Gluon matmul requires an exact "
+                "validated shape and BLOCK_K=64"
+            )
     if m % config.block_m or n % config.block_n or k % config.block_k:
         raise ValueError(
             "flattened batched descriptors require dimensions divisible by "
@@ -1329,35 +1334,34 @@ def run_sm90_matmul(
     use_id7_serial_kernel = _uses_id7_serial_kernel(batch, m, n, k, config)
     grid = (min(tiles, get_sm_count_for(a.device) * config.grid_multiplier),)
     precision = "tf32" if config.family == "tf32" else "ieee"
-    if config.warp_specialized:
-        if config.family == "fp8":
-            _matmul_sm90_fp8_ws_kernel[grid](
-                a_desc,
-                b_desc,
-                c_desc,
-                batch,
-                m,
-                n,
-                k,
-                config.num_buffers,
-                num_warps=config.num_warps,
-                maxnreg=config.maxnreg,
-            )
-        else:
-            _matmul_sm90_ws_kernel[grid](
-                a_desc,
-                b_desc,
-                c_desc,
-                batch,
-                m,
-                n,
-                k,
-                config.num_buffers,
-                precision=precision,
-                num_warps=config.num_warps,
-                cube_variant=((batch, m, n, k) == (16, 1024, 1024, 1024)),
-                maxnreg=config.maxnreg,
-            )
+    if config.family == "fp8":
+        _matmul_sm90_fp8_ws_kernel[grid](
+            a_desc,
+            b_desc,
+            c_desc,
+            batch,
+            m,
+            n,
+            k,
+            config.num_buffers,
+            num_warps=config.num_warps,
+            maxnreg=config.maxnreg,
+        )
+    elif config.warp_specialized:
+        _matmul_sm90_ws_kernel[grid](
+            a_desc,
+            b_desc,
+            c_desc,
+            batch,
+            m,
+            n,
+            k,
+            config.num_buffers,
+            precision=precision,
+            num_warps=config.num_warps,
+            cube_variant=((batch, m, n, k) == (16, 1024, 1024, 1024)),
+            maxnreg=config.maxnreg,
+        )
     else:
         kernel = (
             _matmul_sm90_id7_serial_kernel
@@ -1424,7 +1428,7 @@ def prepare_sm90_matmul(
     precision = "tf32" if config.family == "tf32" else "ieee"
     cached_launcher = None
 
-    if config.warp_specialized and config.family == "fp8":
+    if config.family == "fp8":
         fp8_ws_launch_args = (
             a_desc,
             b_desc,

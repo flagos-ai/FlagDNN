@@ -20,6 +20,11 @@ import triton
 import triton.language as tl
 
 from flag_dnn import runtime
+from flag_dnn.ops.binary import (
+    can_use_flat_output,
+    empty_like_preserve_dense_layout,
+    is_dense_flat_tensor,
+)
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
@@ -65,9 +70,11 @@ def sqrt(
 ) -> torch.Tensor:
     logger.debug("FLAG_DNN SQRT")
 
-    if not input.is_contiguous():
-        assert False, "input must be contiguous."
-        input = input.contiguous()
+    if not is_dense_flat_tensor(input):
+        raise NotImplementedError(
+            "flag_dnn sqrt currently supports contiguous or NHWC "
+            "channels-last input only"
+        )
 
     out_dtype = (
         torch.float32 if is_integral_dtype(input.dtype) else input.dtype
@@ -76,7 +83,7 @@ def sqrt(
 
     # 输出内存分配
     if out is None:
-        out = torch.empty(out_shape, dtype=out_dtype, device=input.device)
+        out = empty_like_preserve_dense_layout(input, out_dtype)
     else:
         assert (
             out.shape == out_shape
@@ -87,6 +94,11 @@ def sqrt(
                 f"{out.dtype}"
             )
         out_dtype = out.dtype
+        if not can_use_flat_output(out, input):
+            raise NotImplementedError(
+                "flag_dnn sqrt currently requires out to share input's "
+                "dense flat layout"
+            )
 
     n_elements = out.numel()
     if n_elements == 0:

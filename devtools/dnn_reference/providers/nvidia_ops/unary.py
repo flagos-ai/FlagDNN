@@ -20,6 +20,7 @@ from .common import (
     CUDNN_COMPARE_DTYPES,
     NvidiaContext,
     PreparedCudnnOperation,
+    build_cudnn_graph,
     cudnn,
     cudnn_data_type,
     cudnn_graph,
@@ -114,11 +115,13 @@ class NvidiaUnaryOperation:
             )
         context = self._context
         context.validate_tensor(self.name, x)
+        is_logical_not = self.name == "logical_not"
+        graph_x = x.to(torch.float32) if is_logical_not else x
         with torch.cuda.device(x.device):
             context.activate_stream(x.device)
-            graph = cudnn_graph(x.dtype, context.handle)
-            x_tensor = graph.tensor_like(x)
-            method_name = self.name
+            graph = cudnn_graph(graph_x.dtype, context.handle)
+            x_tensor = graph.tensor_like(graph_x)
+            method_name = "cmp_eq" if is_logical_not else self.name
             graph_method = getattr(graph, method_name, None)
             if self.name == "leaky_relu" and graph_method is None:
                 method_name = "relu"
@@ -132,6 +135,12 @@ class NvidiaUnaryOperation:
                 "compute_data_type": cudnn.data_type.FLOAT,
                 "name": self.name,
             }
+            exec_tensors = {x_tensor: graph_x}
+            if is_logical_not:
+                zero = torch.zeros_like(graph_x)
+                zero_tensor = graph.tensor_like(zero)
+                graph_kwargs["comparison"] = zero_tensor
+                exec_tensors[zero_tensor] = zero
             if self.name == "leaky_relu":
                 graph_kwargs["negative_slope"] = float(negative_slope)
             elif self.name == "swish":
@@ -147,25 +156,47 @@ class NvidiaUnaryOperation:
                 graph_kwargs["threshold"] = float(threshold)
             output_tensor = graph_method(**graph_kwargs)
             output_tensor.set_output(True).set_data_type(
-                cudnn_data_type(x.dtype)
+                cudnn_data_type(graph_x.dtype)
             )
-            graph.build([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
+            build_cudnn_graph(graph, self.name)
             output = torch.empty_strided(
-                tuple(x.shape),
-                tuple(x.stride()),
+                tuple(graph_x.shape),
+                tuple(graph_x.stride()),
                 device=x.device,
-                dtype=x.dtype,
+                dtype=graph_x.dtype,
             )
             workspace = torch.empty(
                 graph.get_workspace_size(),
                 device=x.device,
                 dtype=torch.uint8,
             )
-            exec_tensors = {x_tensor: x, output_tensor: output}
+            exec_tensors[output_tensor] = output
         context.last_device = x.device
-        return PreparedCudnnOperation(
-            graph, exec_tensors, workspace, output, context.handle
+        bool_output = None
+        result_transform = None
+        if is_logical_not:
+            bool_output = torch.empty_strided(
+                tuple(output.shape),
+                tuple(output.stride()),
+                device=output.device,
+                dtype=torch.bool,
+            )
+
+            def transform_result(result):
+                return torch.ne(result, 0, out=bool_output)
+
+            result_transform = transform_result
+        prepared = PreparedCudnnOperation(
+            graph,
+            exec_tensors,
+            workspace,
+            output,
+            context.handle,
+            result_transform=result_transform,
         )
+        if bool_output is not None:
+            prepared.output = bool_output
+        return prepared
 
 
 def create_unary_operations(

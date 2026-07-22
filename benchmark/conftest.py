@@ -48,11 +48,17 @@ def cudnn_handle():
 @pytest.fixture()
 def dnn_baseline():
     from benchmark.baselines import create_baseline
-    from devtools.dnn_reference import DnnProviderNotImplementedError
+    from devtools.dnn_reference import (
+        DnnProviderNotImplementedError,
+        DnnProviderUnavailableError,
+    )
 
     try:
         baseline = create_baseline()
-    except DnnProviderNotImplementedError as exc:
+    except (
+        DnnProviderNotImplementedError,
+        DnnProviderUnavailableError,
+    ) as exc:
         pytest.skip(str(exc))
 
     try:

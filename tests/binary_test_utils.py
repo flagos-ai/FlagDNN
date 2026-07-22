@@ -17,8 +17,10 @@ from __future__ import annotations
 from typing import Literal
 
 import torch
+import pytest
 
 import flag_dnn
+from devtools.dnn_reference.interfaces import DnnReferenceNotSupportedError
 from flag_dnn.graph import graph as graph_decorator
 from tests import accuracy_utils as utils
 from tests import consts
@@ -104,7 +106,10 @@ def assert_binary_values(
     alpha: float = 1,
 ) -> None:
     provider_kwargs = {"alpha": alpha} if op_name == "sub" else {}
-    expected = dnn_reference.run(op_name, x, y, **provider_kwargs)
+    try:
+        expected = dnn_reference.run(op_name, x, y, **provider_kwargs)
+    except DnnReferenceNotSupportedError as exc:
+        pytest.skip(str(exc))
     actual = compile_binary_graph(op_name, x, y, alpha=alpha).run(x, y)
     dnn_reference.synchronize()
 

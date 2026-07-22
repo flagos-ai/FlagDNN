@@ -20,6 +20,7 @@ import time
 import json
 import re
 from datetime import datetime
+from typing import TypedDict
 
 # ================= 配置区 =================
 
@@ -41,6 +42,37 @@ REPORT_FILE = os.path.join(REPO_ROOT, "benchmark_summary.json")
 DATA_FILE = os.path.join(REPO_ROOT, "benchmark_data.json")
 
 # ==========================================
+
+
+class BenchmarkDetail(TypedDict):
+    file: str
+    operator: str
+    status: str
+    return_code: int
+    duration_seconds: float
+    log_path: str
+    collected_items: int
+    passed_items: int
+    failed_items: int
+    skipped_items: int
+    error_items: int
+    data_points_collected: int
+    dtypes_collected: list[str]
+    operators_collected: list[str]
+
+
+class _RequiredBenchmarkSummary(TypedDict):
+    total: int
+    passed: int
+    failed: int
+    skipped_or_unsupported: int
+    errored_or_interrupted: int
+    details: list[BenchmarkDetail]
+    start_time: str
+
+
+class BenchmarkSummary(_RequiredBenchmarkSummary, total=False):
+    total_duration_seconds: float
 
 
 def get_operator_name(filename):
@@ -168,6 +200,29 @@ def parse_pytest_skipped_count(stdout_text):
     return skipped_count
 
 
+def parse_pytest_outcome_count(stdout_text, outcome):
+    """Return an outcome count parsed from pytest's terminal summary."""
+    labels = {
+        "passed": ("passed",),
+        "failed": ("failed",),
+        "skipped": ("skipped",),
+        "errors": ("error", "errors"),
+        "xfailed": ("xfailed",),
+        "xpassed": ("xpassed",),
+    }
+    if outcome not in labels:
+        raise ValueError(f"Unsupported pytest outcome: {outcome}")
+
+    count = 0
+    for line in stdout_text.splitlines():
+        for label in labels[outcome]:
+            match = re.search(rf"(\d+)\s+{label}\b", line)
+            if match:
+                count = int(match.group(1))
+                break
+    return count
+
+
 def all_pytest_items_skipped(stdout_text):
     collected_count = parse_pytest_collected_count(stdout_text)
     skipped_count = parse_pytest_skipped_count(stdout_text)
@@ -237,7 +292,7 @@ def parse_perf_output(stdout_text):
         if not current_op:
             continue
 
-        parts = line.split()
+        parts = line.split(maxsplit=6)
 
         # SUCCESS CudnnLatency FlagDNNLatency Speedup CudnnGBPS FlagDNNGBPS ...
         if len(parts) < 4:
@@ -275,20 +330,15 @@ def parse_perf_output(stdout_text):
                 record["cudnn_gbps"] = cudnn_gbps
                 record["flagdnn_gbps"] = flagdnn_gbps
 
-        # 提取 shape 信息
-        # 例子：
-        # [torch.Size([32, 3, 224, 224]), torch.Size([64, 3, 7, 7]),
-        # None, 2, 3, 1, 1]
-        size_match = re.search(r"(\[torch\.Size.*\])", line)
-        if size_match:
-            record["size_detail"] = size_match.group(1)
+        if len(parts) == 7 and parts[6].strip():
+            record["size_detail"] = parts[6].strip()
 
         records.append(record)
 
     return records
 
 
-def main():
+def main() -> int:
     os.makedirs(LOG_DIR, exist_ok=True)
 
     # 收集并过滤测试文件
@@ -299,15 +349,15 @@ def main():
             f"未在 {repo_relative_path(TEST_DIR)} 目录下找到任何 "
             "test_*.py 文件。"
         )
-        return
+        return 0
 
     test_files = []
 
     if TARGET_OPERATORS:
-        for f in all_test_files:
-            op_name = get_operator_name(f)
+        for candidate_file in all_test_files:
+            op_name = get_operator_name(candidate_file)
             if op_name in TARGET_OPERATORS:
-                test_files.append(f)
+                test_files.append(candidate_file)
 
         print(f"🔍 已启用算子过滤，目标算子数量: {len(TARGET_OPERATORS)}")
     else:
@@ -318,12 +368,12 @@ def main():
         print(
             "过滤后没有需要执行的测试文件，请检查 TARGET_OPERATORS 是否拼写正确。"
         )
-        return
+        return 0
 
     print(f"🚀 共发现 {len(test_files)} 个待测性能文件，开始提交测试任务...\n")
     print("-" * 60)
 
-    summary = {
+    summary: BenchmarkSummary = {
         "total": len(test_files),
         "passed": 0,
         "failed": 0,
@@ -442,6 +492,19 @@ def main():
                 "return_code": result.returncode,
                 "duration_seconds": round(duration, 2),
                 "log_path": log_file,
+                "collected_items": parse_pytest_collected_count(result.stdout),
+                "passed_items": parse_pytest_outcome_count(
+                    result.stdout, "passed"
+                ),
+                "failed_items": parse_pytest_outcome_count(
+                    result.stdout, "failed"
+                ),
+                "skipped_items": parse_pytest_outcome_count(
+                    result.stdout, "skipped"
+                ),
+                "error_items": parse_pytest_outcome_count(
+                    result.stdout, "errors"
+                ),
                 "data_points_collected": len(extracted_data),
                 "dtypes_collected": dtypes_collected,
                 "operators_collected": operators_collected,
@@ -475,6 +538,9 @@ def main():
     print(f"运行状态汇总已保存至 {REPORT_FILE}")
     print(f"总耗时: {summary['total_duration_seconds']} 秒")
 
+    has_failures = summary["failed"] or summary["errored_or_interrupted"]
+    return 1 if has_failures else 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

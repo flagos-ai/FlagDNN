@@ -15,6 +15,7 @@
 import pytest
 import torch
 
+import flag_dnn
 from tests import consts
 from tests.binary_test_utils import run_binary_test
 
@@ -26,3 +27,19 @@ from tests.binary_test_utils import run_binary_test
 def test_cmp_lt(dnn_reference, dtype, case):
     torch.manual_seed(0)
     run_binary_test(dnn_reference, "cmp_lt", dtype, case)
+
+
+def test_cmp_lt_prepared_output_contract(dnn_reference):
+    x = torch.arange(16, device=flag_dnn.device, dtype=torch.float16).reshape(
+        1, 1, 16
+    )
+    y = torch.full_like(x, 8)
+    prepared = dnn_reference.prepare("cmp_lt", x, y)
+    try:
+        first_output = prepared.output
+        assert prepared.output.dtype == torch.bool
+        assert prepared.run() is first_output
+        torch.testing.assert_close(first_output, x < y)
+        assert prepared.run() is first_output
+    finally:
+        prepared.close()

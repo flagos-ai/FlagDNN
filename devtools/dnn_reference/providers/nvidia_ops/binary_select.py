@@ -20,9 +20,12 @@ from .common import (
     CUDNN_COMPARE_DTYPES,
     NvidiaContext,
     PreparedCudnnOperation,
+    build_cudnn_graph,
     cudnn,
     cudnn_data_type,
     cudnn_graph,
+    empty_output_like_layout,
+    require_non_overlapping_layout,
 )
 
 
@@ -67,6 +70,7 @@ class NvidiaBinarySelectOperation:
             raise TypeError(
                 "cuDNN binary_select x and y must have the same dtype"
             )
+        require_non_overlapping_layout(self.name, x, y)
         if not self.supports_dtype(x.dtype):
             raise TypeError(f"cuDNN binary_select does not support {x.dtype}")
         if mask.dtype != torch.bool:
@@ -104,11 +108,11 @@ class NvidiaBinarySelectOperation:
                     compute_data_type=cudnn.data_type.FLOAT,
                     name=self.name,
                 )
+            output = empty_output_like_layout(x, output_shape, x.dtype)
             output_tensor.set_output(True).set_data_type(
                 cudnn_data_type(x.dtype)
-            )
-            graph.build([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
-            output = torch.empty(output_shape, device=x.device, dtype=x.dtype)
+            ).set_dim(list(output.shape)).set_stride(list(output.stride()))
+            build_cudnn_graph(graph, self.name)
             workspace = torch.empty(
                 graph.get_workspace_size(),
                 device=x.device,

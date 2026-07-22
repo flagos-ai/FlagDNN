@@ -22,6 +22,7 @@ from .common import (
     CUDNN_COMPARE_DTYPES,
     NvidiaContext,
     PreparedCudnnOperation,
+    build_cudnn_graph,
     cudnn,
     cudnn_data_type,
     cudnn_graph,
@@ -49,6 +50,12 @@ def _normalized_shape(x: torch.Tensor, scale: torch.Tensor) -> tuple[int, ...]:
     if scale.numel() != torch.Size(result).numel():
         raise ValueError("norm scale size does not match normalized shape")
     return result
+
+
+def _broadcast_parameter(value: torch.Tensor, input_rank: int) -> torch.Tensor:
+    if value.dim() > input_rank:
+        raise ValueError("norm parameter rank cannot exceed input rank")
+    return value.reshape((1,) * (input_rank - value.dim()) + value.shape)
 
 
 def _stat_shape(
@@ -90,7 +97,7 @@ def _prepared_graph(
     for graph_output, output in zip(graph_outputs, outputs):
         _set_output(graph_output, output, output.dtype)
         exec_tensors[graph_output] = output
-    graph.build([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
+    build_cudnn_graph(graph, "normalization")
     workspace = torch.empty(
         graph.get_workspace_size(), device=device, dtype=torch.uint8
     )
@@ -109,9 +116,20 @@ def _validate_same_device(
     context: NvidiaContext,
     op_name: str,
     tensors: Sequence[torch.Tensor],
+    *,
+    allow_channels_last_input: bool = False,
 ) -> torch.device:
-    for tensor in tensors:
+    for index, tensor in enumerate(tensors):
         context.validate_tensor(op_name, tensor)
+        layout_supported = tensor.is_contiguous()
+        if allow_channels_last_input and index == 0 and tensor.dim() == 4:
+            layout_supported = layout_supported or tensor.is_contiguous(
+                memory_format=torch.channels_last
+            )
+        if not layout_supported:
+            raise ValueError(
+                f"cuDNN {op_name} reference requires contiguous tensors"
+            )
     device = tensors[0].device
     if any(tensor.device != device for tensor in tensors):
         raise ValueError(f"cuDNN {op_name} tensors must share a device")
@@ -142,14 +160,14 @@ class NvidiaLayerNormOperation:
         normalized = _normalized_shape(x, scale)
         if bias.numel() != scale.numel():
             raise ValueError("layernorm bias size must match scale")
-        scale_flat = scale.reshape(-1)
-        bias_flat = bias.reshape(-1)
+        scale_view = _broadcast_parameter(scale, x.dim())
+        bias_view = _broadcast_parameter(bias.reshape(scale.shape), x.dim())
         with torch.cuda.device(device):
             context.activate_stream(device)
             graph = cudnn_graph(x.dtype, context.handle)
             x_tensor = graph.tensor_like(x)
-            scale_tensor = graph.tensor_like(scale_flat)
-            bias_tensor = graph.tensor_like(bias_flat)
+            scale_tensor = graph.tensor_like(scale_view)
+            bias_tensor = graph.tensor_like(bias_view)
             epsilon_tensor = _scalar_tensor(graph, x.dim(), "epsilon")
             graph_outputs = graph.layernorm(
                 cudnn.norm_forward_phase.TRAINING,
@@ -171,8 +189,8 @@ class NvidiaLayerNormOperation:
                 graph,
                 {
                     x_tensor: x,
-                    scale_tensor: scale_flat,
-                    bias_tensor: bias_flat,
+                    scale_tensor: scale_view,
+                    bias_tensor: bias_view,
                     epsilon_tensor: _scalar_value(float(epsilon), x.dim()),
                 },
                 graph_outputs,
@@ -215,15 +233,19 @@ class NvidiaRmsNormOperation:
         normalized = _normalized_shape(x, scale)
         if bias is not None and bias.numel() != scale.numel():
             raise ValueError("rmsnorm bias size must match scale")
-        scale_flat = scale.reshape(-1)
-        bias_flat = None if bias is None else bias.reshape(-1)
+        scale_view = _broadcast_parameter(scale, x.dim())
+        bias_view = (
+            None
+            if bias is None
+            else _broadcast_parameter(bias.reshape(scale.shape), x.dim())
+        )
         with torch.cuda.device(device):
             context.activate_stream(device)
             graph = cudnn_graph(x.dtype, context.handle)
             x_tensor = graph.tensor_like(x)
-            scale_tensor = graph.tensor_like(scale_flat)
+            scale_tensor = graph.tensor_like(scale_view)
             bias_tensor = (
-                None if bias_flat is None else graph.tensor_like(bias_flat)
+                None if bias_view is None else graph.tensor_like(bias_view)
             )
             epsilon_tensor = _scalar_tensor(graph, x.dim(), "epsilon")
             graph_outputs = graph.rmsnorm(
@@ -242,11 +264,11 @@ class NvidiaRmsNormOperation:
             )
             exec_tensors = {
                 x_tensor: x,
-                scale_tensor: scale_flat,
+                scale_tensor: scale_view,
                 epsilon_tensor: _scalar_value(float(epsilon), x.dim()),
             }
-            if bias_tensor is not None and bias_flat is not None:
-                exec_tensors[bias_tensor] = bias_flat
+            if bias_tensor is not None and bias_view is not None:
+                exec_tensors[bias_tensor] = bias_view
             return _prepared_graph(
                 context,
                 graph,
@@ -294,7 +316,12 @@ class NvidiaBatchNormOperation:
                 "batchnorm supports at most one peer_stats tensor"
             )
         tensors = (x, scale, bias, running_mean, running_var, *peers)
-        device = _validate_same_device(context, self.name, tensors)
+        device = _validate_same_device(
+            context,
+            self.name,
+            tensors,
+            allow_channels_last_input=True,
+        )
         channels = int(x.shape[1])
         if any(
             tensor.numel() != channels

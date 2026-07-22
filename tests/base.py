@@ -19,7 +19,13 @@ from pathlib import Path
 
 import pytest
 
-cudnn = pytest.importorskip("cudnn", exc_type=ImportError)
+try:
+    import cudnn
+except (ImportError, OSError) as exc:
+    pytest.skip(
+        f"cuDNN frontend cannot be imported: {exc}",
+        allow_module_level=True,
+    )
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
@@ -65,7 +71,6 @@ def skip_unsupported_cudnn_graph(exc, op_name):
     message = str(exc)
     if (
         isinstance(exc, cudnn.cudnnGraphNotSupportedError)
-        or "CUDNN_STATUS_BAD_PARAM" in message
         or "CUDNN_STATUS_NOT_SUPPORTED" in message
         or "No valid engine configs" in message
     ):

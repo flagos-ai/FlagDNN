@@ -17,45 +17,19 @@ import torch
 
 import flag_dnn
 from tests import accuracy_utils as utils
-from tests.base import get_cudnn
 
 COMPARE_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
 
-_DTYPE_TO_CUDNN_INT = {
-    torch.float32: 0,
-    torch.float16: 2,
-    torch.bfloat16: 9,
-}
 
-_ACTIVATION_TO_CUDNN_INT = {
-    "identity": 0,
-    "silu": 1,
-}
-
-
-def _cudnn_causal_conv1d(x, weight, bias, activation):
-    cudnn = get_cudnn()
-    if not hasattr(cudnn, "causal_conv1d_forward"):
-        pytest.skip("cuDNN frontend was built without causal_conv1d_forward")
-
-    batch, dim, seq_len = x.shape
-    kernel_size = weight.shape[1]
-    out = torch.empty_like(x)
-    cudnn.causal_conv1d_forward(
-        torch.cuda.current_stream().cuda_stream,
-        x.data_ptr(),
-        weight.data_ptr(),
-        bias.data_ptr(),
-        out.data_ptr(),
-        batch,
-        dim,
-        seq_len,
-        kernel_size,
-        _DTYPE_TO_CUDNN_INT[x.dtype],
-        _ACTIVATION_TO_CUDNN_INT[activation],
+def _cudnn_causal_conv1d(dnn_reference, x, weight, bias, activation):
+    assert dnn_reference.supports("causal_conv1d", x.dtype)
+    return dnn_reference.run(
+        "causal_conv1d",
+        x,
+        weight,
+        bias=bias,
+        activation=activation,
     )
-    torch.cuda.synchronize()
-    return out
 
 
 def _run_flag_dnn_causal_conv1d_graph(x, weight, bias, activation):
@@ -84,7 +58,9 @@ def _run_flag_dnn_causal_conv1d_graph(x, weight, bias, activation):
 @pytest.mark.parametrize("dtype", COMPARE_DTYPES)
 @pytest.mark.parametrize("shape_kernel", [((2, 4, 16), 3), ((3, 8, 33), 5)])
 @pytest.mark.parametrize("activation", ["identity", "silu"])
-def test_causal_conv1d_matches_cudnn(dtype, shape_kernel, activation):
+def test_causal_conv1d_matches_cudnn(
+    dnn_reference, dtype, shape_kernel, activation
+):
     torch.manual_seed(0)
     shape, kernel = shape_kernel
     x = torch.randn(shape, device=flag_dnn.device, dtype=dtype)
@@ -92,7 +68,108 @@ def test_causal_conv1d_matches_cudnn(dtype, shape_kernel, activation):
         (shape[1], kernel), device=flag_dnn.device, dtype=dtype
     )
     bias = torch.randn((shape[1],), device=flag_dnn.device, dtype=dtype)
-    cudnn_out = _cudnn_causal_conv1d(x, weight, bias, activation)
+    cudnn_out = _cudnn_causal_conv1d(
+        dnn_reference, x, weight, bias, activation
+    )
     actual = _run_flag_dnn_causal_conv1d_graph(x, weight, bias, activation)
     atol = 2e-2 if dtype in (torch.float16, torch.bfloat16) else 2e-4
     utils.gems_assert_close(actual, cudnn_out, dtype, atol=atol)
+
+
+@pytest.mark.causal_conv1d
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_causal_conv1d_h100_reference_is_standard_frontend(dnn_reference):
+    if torch.cuda.get_device_capability()[0] >= 10:
+        pytest.skip("SM100+ uses the native causal cuDNN route")
+    x = torch.randn((1, 2, 8), device=flag_dnn.device, dtype=torch.float16)
+    weight = torch.randn((2, 3), device=x.device, dtype=x.dtype)
+    bias = torch.randn((2,), device=x.device, dtype=x.dtype)
+    prepared = dnn_reference.prepare(
+        "causal_conv1d", x, weight, bias=bias, activation="silu"
+    )
+    try:
+        assert prepared.reference_name == "cuDNN standard composite"
+        assert prepared.output.shape == x.shape
+    finally:
+        prepared.close()
+
+
+@pytest.mark.causal_conv1d
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_causal_conv1d_sm100_native_requires_packed_input(
+    dnn_reference, monkeypatch
+):
+    from devtools.dnn_reference.providers.nvidia_ops import (
+        causal_conv1d as provider_module,
+    )
+
+    native_called = False
+
+    def native_wrapper(*_args, **_kwargs):
+        nonlocal native_called
+        native_called = True
+        raise AssertionError("non-contiguous input reached native wrapper")
+
+    monkeypatch.setattr(
+        provider_module.torch.cuda,
+        "get_device_capability",
+        lambda _device=None: (10, 0),
+    )
+    monkeypatch.setattr(
+        provider_module.cudnn,
+        "causal_conv1d_forward",
+        native_wrapper,
+        raising=False,
+    )
+    storage = torch.randn(
+        (1, 2, 16), device=flag_dnn.device, dtype=torch.float16
+    )
+    x = storage[:, :, ::2]
+    assert not x.is_contiguous()
+    weight = torch.randn((2, 3), device=x.device, dtype=x.dtype)
+    bias = torch.randn((2,), device=x.device, dtype=x.dtype)
+    prepared = dnn_reference.prepare(
+        "causal_conv1d", x, weight, bias=bias, activation="identity"
+    )
+    try:
+        assert not native_called
+        assert prepared.reference_name == "cuDNN standard composite"
+    finally:
+        prepared.close()
+
+
+@pytest.mark.causal_conv1d
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_causal_conv1d_sm100_runtime_failure_is_not_retried(
+    dnn_reference, monkeypatch
+):
+    from devtools.dnn_reference.providers.nvidia_ops import (
+        causal_conv1d as provider_module,
+    )
+
+    def fail_native(*_args, **_kwargs):
+        raise RuntimeError("native execution failed")
+
+    monkeypatch.setattr(
+        provider_module.torch.cuda,
+        "get_device_capability",
+        lambda _device=None: (10, 0),
+    )
+    monkeypatch.setattr(
+        provider_module.cudnn,
+        "causal_conv1d_forward",
+        fail_native,
+        raising=False,
+    )
+    x = torch.randn((1, 2, 8), device=flag_dnn.device, dtype=torch.float16)
+    weight = torch.randn((2, 3), device=x.device, dtype=x.dtype)
+    bias = torch.randn((2,), device=x.device, dtype=x.dtype)
+
+    with pytest.raises(RuntimeError, match="native execution failed"):
+        dnn_reference.prepare(
+            "causal_conv1d",
+            x,
+            weight,
+            bias=bias,
+            activation="identity",
+        )

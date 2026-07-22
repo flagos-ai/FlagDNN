@@ -24,6 +24,7 @@ from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
 from flag_dnn.utils import triton_lang_extension as tle
+from flag_dnn.utils.device_info import get_device_capability_for
 
 from flag_dnn.ops.sdpa import (
     _BOTTOM_RIGHT,
@@ -45,6 +46,61 @@ _LOG2E_KERNEL = tl.constexpr(1.4426950408889634)
 # Natural-log of 2; converts a value expressed in log2 units back to natural
 # units (1 / log2(e)). Used only to report amax_s in natural score units.
 _LN2_KERNEL = tl.constexpr(0.6931471805599453)
+_FP8_FAST_TUNING_POLICY_VERSION = 1
+
+
+def _is_hopper_safe_fp8_fast_config(config) -> bool:
+    block_m = config.kwargs.get("BLOCK_M")
+    block_n = config.kwargs.get("BLOCK_N")
+    if config.num_warps != 4:
+        return True
+    if block_m == 128 and block_n == 256:
+        return False
+    return not (block_n == 64 and config.num_stages in (3, 4))
+
+
+def _sdpa_fp8_device_cc(tensor_or_device) -> int:
+    if runtime.device.vendor_name != "nvidia":
+        return 0
+    device = getattr(tensor_or_device, "device", tensor_or_device)
+    if device is None:
+        return 0
+    major, minor = get_device_capability_for(device)
+    return int(major) * 10 + int(minor)
+
+
+def _sdpa_fp8_fast_arch_supported(tensor_or_device) -> bool:
+    if runtime.device.vendor_name != "nvidia":
+        return True
+    return _sdpa_fp8_device_cc(tensor_or_device) != 0
+
+
+def _sdpa_fp8_tma_arch_supported(tensor_or_device) -> bool:
+    return (
+        runtime.device.vendor_name == "nvidia"
+        and _sdpa_fp8_device_cc(tensor_or_device) >= 90
+    )
+
+
+def _sdpa_fp8_device_arch_key(tensor_or_device) -> str:
+    vendor = runtime.device.vendor_name
+    if vendor != "nvidia":
+        return vendor
+    return (
+        f"{vendor}:{_sdpa_fp8_device_cc(tensor_or_device)}:"
+        f"policy{_FP8_FAST_TUNING_POLICY_VERSION}"
+    )
+
+
+def _prune_sdpa_fp8_fast_configs(configs, named_args, **kwargs):
+    if runtime.device.vendor_name != "nvidia":
+        return configs
+    device_cc = _sdpa_fp8_device_cc(named_args.get("q_ptr"))
+    if device_cc not in (0, 90):
+        return configs
+    return [
+        config for config in configs if _is_hopper_safe_fp8_fast_config(config)
+    ]
 
 
 @triton.jit
@@ -460,9 +516,20 @@ def _sdpa_fp8_fast_inner(
     for start_n in tl.range(lo, hi, BLOCK_N):
         start_n = tl.multiple_of(start_n, BLOCK_N)
         offs_n = start_n + tl.arange(0, BLOCK_N)
-        k = tl.load(
-            k_base + offs_d[:, None] * stride_kd + offs_n[None, :] * stride_kn
-        )
+        if CAUSAL_MASK or TAIL_MASK:
+            k = tl.load(
+                k_base
+                + offs_d[:, None] * stride_kd
+                + offs_n[None, :] * stride_kn,
+                mask=offs_n[None, :] < SKV,
+                other=0.0,
+            )
+        else:
+            k = tl.load(
+                k_base
+                + offs_d[:, None] * stride_kd
+                + offs_n[None, :] * stride_kn
+            )
         score = tl.dot(q, k).to(tl.float32) * qk_scale
         if CAUSAL_MASK:
             score = tl.where(
@@ -479,9 +546,20 @@ def _sdpa_fp8_fast_inner(
         alpha = tl.math.exp2(m_i - m_safe)
         l_ij = tl.sum(p, 1)
         acc = acc * alpha[:, None]
-        v = tl.load(
-            v_base + offs_n[:, None] * stride_vn + offs_dv[None, :] * stride_vd
-        )
+        if CAUSAL_MASK or TAIL_MASK:
+            v = tl.load(
+                v_base
+                + offs_n[:, None] * stride_vn
+                + offs_dv[None, :] * stride_vd,
+                mask=offs_n[:, None] < SKV,
+                other=0.0,
+            )
+        else:
+            v = tl.load(
+                v_base
+                + offs_n[:, None] * stride_vn
+                + offs_dv[None, :] * stride_vd
+            )
         acc = tl.dot((p * s_scale).to(v.dtype), v, acc)
         l_i = l_i * alpha + l_ij
         m_i = m_new
@@ -491,6 +569,9 @@ def _sdpa_fp8_fast_inner(
 @libentry()
 @libtuner(
     configs=runtime.get_tuned_config("sdpa_fp8_fast"),
+    prune_configs_by={
+        "early_config_prune": _prune_sdpa_fp8_fast_configs,
+    },
     key=[
         "SQ",
         "SKV",
@@ -499,6 +580,7 @@ def _sdpa_fp8_fast_inner(
         "Q_PER_K",
         "CAUSAL",
         "GENERATE_STATS",
+        "q_ptr",
     ],
     strategy=[
         "log",
@@ -508,6 +590,7 @@ def _sdpa_fp8_fast_inner(
         "default",
         "default",
         "default",
+        _sdpa_fp8_device_arch_key,
     ],
     warmup=5,
     rep=10,
@@ -2695,6 +2778,7 @@ def sdpa_fp8(
             and head_pow2
             and v_pow2
             and (not banded or pure_causal)
+            and _sdpa_fp8_fast_arch_supported(q)
         )
 
         # TMA path needs a contiguous innermost dim and a 16B-aligned box.
@@ -2719,7 +2803,8 @@ def sdpa_fp8(
         q_per_k = heads // hkv
         q_per_v = heads // hv
         tma_ok = (
-            fast_ok
+            _sdpa_fp8_tma_arch_supported(q)
+            and fast_ok
             and tma_amortizes
             and q.stride(3) == 1
             and k.stride(3) == 1

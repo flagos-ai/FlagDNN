@@ -20,6 +20,7 @@ from .common import (
     CUDNN_COMPARE_DTYPES,
     NvidiaContext,
     PreparedCudnnOperation,
+    build_cudnn_graph,
     cudnn,
     cudnn_data_type,
     cudnn_graph,
@@ -83,7 +84,7 @@ class NvidiaSigmoidBackwardOperation:
             output_tensor.set_output(True).set_data_type(
                 cudnn_data_type(input.dtype)
             )
-            graph.build([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
+            build_cudnn_graph(graph, self.name)
             output = torch.empty_strided(
                 tuple(input.shape),
                 tuple(input.stride()),
