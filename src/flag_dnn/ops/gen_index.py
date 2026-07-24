@@ -18,8 +18,9 @@ import torch
 import triton
 import triton.language as tl
 
+from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
-from flag_dnn.utils import triton_lang_extension as tle
+from flag_dnn.utils import libentry, libtuner, triton_lang_extension as tle
 
 _DTYPE_ALIASES = {
     "bfloat16": torch.bfloat16,
@@ -50,15 +51,21 @@ _DTYPE_ALIASES = {
     "torch.int64": torch.int64,
 }
 
-_BLOCK_SIZE = 1024
 
-
+@libentry()
+@libtuner(
+    configs=runtime.get_tuned_config("gen_index"),
+    key=["n_elements", "axis_size", "inner_size"],
+    strategy=["align32", "default", "default"],
+    warmup=5,
+    rep=10,
+)
 @triton.jit
 def _gen_index_kernel(
     out_ptr,
     n_elements,
-    axis_size,
-    inner_size,
+    axis_size: tl.constexpr,
+    inner_size: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
     pid = tle.program_id(0)
@@ -156,7 +163,5 @@ def gen_index(
             n_elements,
             axis_size,
             inner_size,
-            BLOCK_SIZE=_BLOCK_SIZE,
-            num_warps=4,
         )
     return out

@@ -44,8 +44,8 @@ def layer_norm_kernel(
     weight_ptr,
     bias_ptr,
     M,
-    N,
     eps,
+    N: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
     HAS_WEIGHT: tl.constexpr,
     HAS_BIAS: tl.constexpr,
@@ -55,36 +55,20 @@ def layer_norm_kernel(
 
     x_row_ptr = x_ptr + row_idx * N
     y_row_ptr = y_ptr + row_idx * N
+    inv_n: tl.constexpr = 1.0 / N
 
-    sum_x = 0.0
-    sum_x2 = 0.0
-    for offset in range(0, N, BLOCK_SIZE):
-        cols = offset + tl.arange(0, BLOCK_SIZE)
+    if BLOCK_SIZE >= N:
+        cols = tl.arange(0, BLOCK_SIZE)
         mask = cols < N
-
         x = tl.load(x_row_ptr + cols, mask=mask, other=0.0).to(tl.float32)
-
-        sum_x += tl.sum(x, axis=0)
-        sum_x2 += tl.sum(x * x, axis=0)
-
-    # 均值和方差
-    mean = sum_x / N
-    var = (sum_x2 / N) - (mean * mean)
-    # 防浮点精度越界产生负数
-    var = tl.maximum(var, 0.0)
-    rstd = 1.0 / tl.sqrt(var + eps)
-    if RETURN_STATS:
-        tl.store(mean_ptr + row_idx, mean)
-        tl.store(rstd_ptr + row_idx, rstd)
-
-    for offset in range(0, N, BLOCK_SIZE):
-        cols = offset + tl.arange(0, BLOCK_SIZE)
-        mask = cols < N
-
-        x = tl.load(x_row_ptr + cols, mask=mask, other=0.0).to(tl.float32)
+        mean = tl.sum(x, axis=0) * inv_n
+        sum_x2 = tl.sum(x * x, axis=0)
+        var = tl.maximum((sum_x2 * inv_n) - (mean * mean), 0.0)
+        rstd = tl.math.rsqrt(var + eps)
+        if RETURN_STATS:
+            tl.store(mean_ptr + row_idx, mean)
+            tl.store(rstd_ptr + row_idx, rstd)
         x_hat = (x - mean) * rstd
-
-        # 仿射变换
         if HAS_WEIGHT:
             weight = tl.load(weight_ptr + cols, mask=mask, other=0.0).to(
                 tl.float32
@@ -99,6 +83,40 @@ def layer_norm_kernel(
 
         y = x_hat.to(x_ptr.dtype.element_ty)
         tl.store(y_row_ptr + cols, y, mask=mask)
+    else:
+        sum_x = 0.0
+        sum_x2 = 0.0
+        for offset in range(0, N, BLOCK_SIZE):
+            cols = offset + tl.arange(0, BLOCK_SIZE)
+            mask = cols < N
+            x = tl.load(x_row_ptr + cols, mask=mask, other=0.0).to(tl.float32)
+            sum_x += tl.sum(x, axis=0)
+            sum_x2 += tl.sum(x * x, axis=0)
+
+        mean = sum_x * inv_n
+        var = tl.maximum((sum_x2 * inv_n) - (mean * mean), 0.0)
+        rstd = tl.math.rsqrt(var + eps)
+        if RETURN_STATS:
+            tl.store(mean_ptr + row_idx, mean)
+            tl.store(rstd_ptr + row_idx, rstd)
+
+        for offset in range(0, N, BLOCK_SIZE):
+            cols = offset + tl.arange(0, BLOCK_SIZE)
+            mask = cols < N
+            x = tl.load(x_row_ptr + cols, mask=mask, other=0.0).to(tl.float32)
+            x_hat = (x - mean) * rstd
+            if HAS_WEIGHT:
+                weight = tl.load(weight_ptr + cols, mask=mask, other=0.0).to(
+                    tl.float32
+                )
+                x_hat = x_hat * weight
+            if HAS_BIAS:
+                bias = tl.load(bias_ptr + cols, mask=mask, other=0.0).to(
+                    tl.float32
+                )
+                x_hat = x_hat + bias
+            y = x_hat.to(x_ptr.dtype.element_ty)
+            tl.store(y_row_ptr + cols, y, mask=mask)
 
 
 def _layer_norm_impl(
@@ -169,8 +187,8 @@ def _layer_norm_impl(
             weight,
             bias,
             M,
-            N,
             eps,
+            N,
             HAS_WEIGHT=(weight is not None),
             HAS_BIAS=(bias is not None),
             RETURN_STATS=return_stats,

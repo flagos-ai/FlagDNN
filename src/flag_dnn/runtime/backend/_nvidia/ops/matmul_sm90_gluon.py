@@ -33,7 +33,9 @@ from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils.device_info import get_sm_count_for
 
 if TYPE_CHECKING:
-    from flag_dnn.ops.matmul_sm90 import Sm90MatmulConfig
+    from flag_dnn.runtime.backend._nvidia.ops.matmul_sm90 import (
+        Sm90MatmulConfig,
+    )
 
 
 @gluon.constexpr_function
@@ -1208,12 +1210,25 @@ def _descriptor_dtype(dtype: torch.dtype):
     raise TypeError(f"unsupported SM90 Gluon descriptor dtype: {dtype}")
 
 
-def _validate_inputs(a, b, c, config):
-    if a.ndim != 3 or b.ndim != 3 or c.ndim != 3:
+def _validate_input_metadata(
+    a,
+    b,
+    *,
+    output_shape,
+    output_dtype,
+    output_device,
+    output_contiguous,
+    config,
+):
+    if a.ndim != 3 or b.ndim != 3 or len(output_shape) != 3:
         raise ValueError("SM90 Gluon matmul expects three-dimensional tensors")
-    if not a.is_contiguous() or not b.is_contiguous() or not c.is_contiguous():
+    if not a.is_contiguous() or not b.is_contiguous() or not output_contiguous:
         raise ValueError("SM90 Gluon matmul expects contiguous tensors")
-    if a.device != b.device or a.device != c.device or a.device.type != "cuda":
+    if (
+        a.device != b.device
+        or a.device != output_device
+        or a.device.type != "cuda"
+    ):
         raise ValueError(
             "SM90 Gluon matmul expects tensors on one CUDA device"
         )
@@ -1224,23 +1239,23 @@ def _validate_inputs(a, b, c, config):
     if tuple(b.shape[:2]) != (batch, k):
         raise ValueError("SM90 Gluon matmul has incompatible input shapes")
     n = int(b.shape[2])
-    if tuple(c.shape) != (batch, m, n):
+    if tuple(output_shape) != (batch, m, n):
         raise ValueError("SM90 Gluon matmul has an incompatible output shape")
     if config.family == "lowp":
         if (
             a.dtype not in (torch.float16, torch.bfloat16)
-            or c.dtype != a.dtype
+            or output_dtype != a.dtype
         ):
             raise TypeError(
                 "lowp SM90 Gluon matmul requires FP16 or BF16 tensors"
             )
     elif config.family == "tf32":
-        if a.dtype != torch.float32 or c.dtype != torch.float32:
+        if a.dtype != torch.float32 or output_dtype != torch.float32:
             raise TypeError("TF32 SM90 Gluon matmul requires FP32 tensors")
     elif config.family == "fp8":
         if a.dtype not in (torch.float8_e4m3fn, torch.float8_e5m2):
             raise TypeError("FP8 SM90 Gluon matmul requires FP8 input tensors")
-        if c.dtype != torch.float32:
+        if output_dtype != torch.float32:
             raise TypeError("FP8 SM90 Gluon matmul requires FP32 output")
     else:
         raise NotImplementedError(
@@ -1280,6 +1295,18 @@ def _validate_inputs(a, b, c, config):
     return batch, m, n, k
 
 
+def _validate_inputs(a, b, c, config):
+    return _validate_input_metadata(
+        a,
+        b,
+        output_shape=tuple(c.shape),
+        output_dtype=c.dtype,
+        output_device=c.device,
+        output_contiguous=c.is_contiguous(),
+        config=config,
+    )
+
+
 def _uses_id7_serial_kernel(batch, m, n, k, config):
     return (batch, m, n, k) == (32, 1024, 1024, 4096) and (
         config.family,
@@ -1292,6 +1319,173 @@ def _uses_id7_serial_kernel(batch, m, n, k, config):
         config.maxnreg,
         config.warp_specialized,
     ) == ("lowp", 128, 256, 64, 3, 8, 2, 168, False)
+
+
+def _triton_tma_alloc(size: int, alignment: int, stream):
+    del alignment, stream
+    device = torch.device("cuda", torch.cuda.current_device())
+    return torch.empty(size, device=device, dtype=torch.int8)
+
+
+@gluon.jit
+def _matmul_sm90_dynamic_output_kernel(
+    a_desc,
+    b_desc,
+    c_ptr,
+    batch,
+    m,
+    n,
+    k,
+    num_buffers: gl.constexpr,
+    block_m: gl.constexpr,
+    block_n: gl.constexpr,
+    block_k: gl.constexpr,
+    precision: gl.constexpr,
+    num_warps: gl.constexpr,
+    warp_specialized: gl.constexpr,
+    cube_variant: gl.constexpr,
+    use_id7_serial: gl.constexpr,
+):
+    """Run a bound-input SM90 GEMM with a functional output pointer.
+
+    A and B descriptors are stable for a compiled graph and remain host-side.
+    Only C changes for ``compiled.run`` calls, so create its descriptor on the
+    device instead of rebuilding all three host descriptors on every replay.
+    """
+    output_dtype: gl.constexpr = c_ptr.dtype.element_ty
+    c_layout: gl.constexpr = gl.NVMMASharedLayout.get_default_for(
+        [block_m, block_n], output_dtype
+    )
+    c_desc = tma.make_tensor_descriptor(
+        c_ptr,
+        [batch * m, n],
+        [n, 1],
+        [block_m, block_n],
+        c_layout,
+    )
+    if warp_specialized:
+        _matmul_sm90_ws_kernel(
+            a_desc,
+            b_desc,
+            c_desc,
+            batch,
+            m,
+            n,
+            k,
+            num_buffers,
+            precision,
+            num_warps,
+            cube_variant,
+        )
+    elif use_id7_serial:
+        _matmul_sm90_id7_serial_kernel(
+            a_desc,
+            b_desc,
+            c_desc,
+            batch,
+            m,
+            n,
+            k,
+            num_buffers,
+            precision,
+            num_warps,
+        )
+    else:
+        _matmul_sm90_kernel(
+            a_desc,
+            b_desc,
+            c_desc,
+            batch,
+            m,
+            n,
+            k,
+            num_buffers,
+            precision,
+            num_warps,
+        )
+
+
+def prepare_sm90_matmul_dynamic_output(
+    a: torch.Tensor,
+    b: torch.Tensor,
+    *,
+    output_dtype: torch.dtype,
+    config: "Sm90MatmulConfig",
+) -> Callable[[torch.Tensor], torch.Tensor]:
+    """Bind graph inputs while accepting a newly allocated output each run."""
+    if config.family != "lowp":
+        raise NotImplementedError(
+            "dynamic-output SM90 launcher currently supports lowp matmul"
+        )
+    batch, m, k = map(int, a.shape)
+    n = int(b.shape[2])
+    _validate_input_metadata(
+        a,
+        b,
+        output_shape=(batch, m, n),
+        output_dtype=output_dtype,
+        output_device=a.device,
+        output_contiguous=True,
+        config=config,
+    )
+
+    input_layout_dtype = _descriptor_dtype(a.dtype)
+    a_layout = gl.NVMMASharedLayout.get_default_for(
+        [config.block_m, config.block_k], input_layout_dtype
+    )
+    b_layout = gl.NVMMASharedLayout.get_default_for(
+        [config.block_k, config.block_n], input_layout_dtype
+    )
+    a_desc = TensorDescriptor.from_tensor(
+        a.reshape(batch * m, k),
+        [config.block_m, config.block_k],
+        a_layout,
+    )
+    b_desc = TensorDescriptor.from_tensor(
+        b.reshape(batch * k, n),
+        [config.block_k, config.block_n],
+        b_layout,
+    )
+    tiles = (
+        batch * triton.cdiv(m, config.block_m) * triton.cdiv(n, config.block_n)
+    )
+    grid = (min(tiles, get_sm_count_for(a.device) * config.grid_multiplier),)
+    precision = "tf32" if config.family == "tf32" else "ieee"
+    cube_variant = (batch, m, n, k) == (16, 1024, 1024, 1024)
+    use_id7_serial = _uses_id7_serial_kernel(batch, m, n, k, config)
+    triton.set_allocator(_triton_tma_alloc)
+
+    def launch(output: torch.Tensor) -> torch.Tensor:
+        if (
+            tuple(output.shape) != (batch, m, n)
+            or output.dtype != output_dtype
+            or output.device != a.device
+            or not output.is_contiguous()
+        ):
+            raise ValueError("SM90 dynamic-output matmul received invalid C")
+        with torch_device_fn.device(a.device):
+            _matmul_sm90_dynamic_output_kernel[grid](
+                a_desc,
+                b_desc,
+                output,
+                batch,
+                m,
+                n,
+                k,
+                config.num_buffers,
+                config.block_m,
+                config.block_n,
+                config.block_k,
+                precision,
+                warp_specialized=config.warp_specialized,
+                cube_variant=cube_variant,
+                use_id7_serial=use_id7_serial,
+                num_warps=config.num_warps,
+                maxnreg=config.maxnreg,
+            )
+        return output
+
+    return launch
 
 
 def run_sm90_matmul(

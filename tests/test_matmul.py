@@ -176,7 +176,7 @@ def _run_flag_dnn_matmul_graph(
 
 
 def test_matmul_sm90_selector_requires_hopper_and_validated_key(monkeypatch):
-    import flag_dnn.ops.matmul_sm90 as sm90
+    import flag_dnn.runtime.backend._nvidia.ops.matmul_sm90 as sm90
 
     key = sm90.Sm90MatmulKey(
         16,
@@ -210,7 +210,10 @@ def test_matmul_sm90_selector_requires_hopper_and_validated_key(monkeypatch):
 
 
 def test_matmul_sm90_id7_uses_exact_serial_kernel():
-    from flag_dnn.ops import matmul_sm90, matmul_sm90_gluon
+    from flag_dnn.runtime.backend._nvidia.ops import (
+        matmul_sm90,
+        matmul_sm90_gluon,
+    )
 
     config = matmul_sm90.Sm90MatmulConfig(
         "lowp", 128, 256, 64, 3, 8, 2, 168, False
@@ -237,12 +240,41 @@ def test_matmul_sm90_id7_uses_exact_serial_kernel():
     )
 
 
+@pytest.mark.parametrize(
+    ("batch", "m", "n", "k"),
+    (
+        (32, 512, 512, 512),
+        (16, 2048, 2048, 512),
+    ),
+    ids=("id2", "id6"),
+)
+def test_matmul_sm90_bf16_borderline_shapes_use_cublaslt(batch, m, n, k):
+    from flag_dnn.runtime.backend._nvidia.ops import matmul_sm90
+
+    key = matmul_sm90.Sm90MatmulKey(
+        batch,
+        m,
+        n,
+        k,
+        torch.bfloat16,
+        torch.bfloat16,
+        "float32",
+    )
+
+    config = matmul_sm90.select_sm90_matmul_config((9, 0), key)
+
+    assert config is not None
+    assert config.family == "lowp_cublaslt"
+
+
 @pytest.mark.parametrize("warp_specialized", (False, True))
 def test_prepared_sm90_runner_uses_input_device_context(
     monkeypatch, warp_specialized
 ):
-    from flag_dnn.ops import matmul_sm90_gluon
-    from flag_dnn.ops.matmul_sm90 import Sm90MatmulConfig
+    from flag_dnn.runtime.backend._nvidia.ops import matmul_sm90_gluon
+    from flag_dnn.runtime.backend._nvidia.ops.matmul_sm90 import (
+        Sm90MatmulConfig,
+    )
 
     input_device = torch.device("cpu")
     other_device = torch.device("meta")
@@ -331,7 +363,12 @@ def test_matmul_selected_sm90_failure_is_not_silently_fallback(monkeypatch):
     def fail(*args, **kwargs):
         raise RuntimeError("selected SM90 kernel failed")
 
-    monkeypatch.setattr(matmul_module, "launch_sm90_matmul_if_supported", fail)
+    def get_backend_hook(name):
+        return fail if name == "matmul_3d_out" else None
+
+    monkeypatch.setattr(
+        matmul_module.runtime, "get_backend_hook", get_backend_hook
+    )
     a = torch.randn((1, 32, 32), device=flag_dnn.device, dtype=torch.float16)
     b = torch.randn((1, 32, 32), device=flag_dnn.device, dtype=torch.float16)
     with pytest.raises(RuntimeError, match="selected SM90 kernel failed"):
@@ -356,12 +393,7 @@ def test_matmul_id7_uses_fixed_stage3_config(monkeypatch):
 
     monkeypatch.setattr(matmul_module, "_batched_matmul_kernel", FakeKernel())
     monkeypatch.setattr(
-        matmul_module,
-        "launch_sm90_matmul_if_supported",
-        lambda *args, **kwargs: False,
-    )
-    monkeypatch.setattr(
-        matmul_module, "get_device_capability_for", lambda device: (0, 0)
+        matmul_module.runtime, "get_backend_hook", lambda name: None
     )
     monkeypatch.setattr(
         matmul_module.torch_device_fn,
@@ -400,8 +432,12 @@ def test_matmul_id7_uses_fixed_stage3_config(monkeypatch):
 )
 @pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16))
 def test_matmul_sm90_gluon_lowp_direct(cudnn_handle, dtype):
-    from flag_dnn.ops.matmul_sm90 import Sm90MatmulConfig
-    from flag_dnn.ops.matmul_sm90_gluon import run_sm90_matmul
+    from flag_dnn.runtime.backend._nvidia.ops.matmul_sm90 import (
+        Sm90MatmulConfig,
+    )
+    from flag_dnn.runtime.backend._nvidia.ops.matmul_sm90_gluon import (
+        run_sm90_matmul,
+    )
 
     torch.manual_seed(0)
     a = torch.randn((2, 128, 64), device=flag_dnn.device, dtype=dtype)
@@ -418,6 +454,26 @@ def test_matmul_sm90_gluon_lowp_direct(cudnn_handle, dtype):
 
 
 @pytest.mark.matmul
+@pytest.mark.graph
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or torch.cuda.get_device_capability() != (9, 0),
+    reason="SM90 is required",
+)
+@pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16))
+def test_matmul_sm90_persistent_lowp_matches_cudnn(cudnn_handle, dtype):
+    torch.manual_seed(37)
+    a = torch.randn((32, 512, 512), device=flag_dnn.device, dtype=dtype)
+    b = torch.randn((32, 512, 512), device=flag_dnn.device, dtype=dtype)
+
+    expected = _cudnn_matmul(a, b, cudnn_handle)
+    actual = _run_flag_dnn_matmul_graph(a, b)
+
+    atol = 1e-1 if dtype == torch.bfloat16 else 5e-2
+    utils.gems_assert_close(actual, expected, dtype, atol=atol)
+
+
+@pytest.mark.matmul
 @pytest.mark.skipif(
     not torch.cuda.is_available()
     or torch.cuda.get_device_capability()[0] != 9,
@@ -425,8 +481,12 @@ def test_matmul_sm90_gluon_lowp_direct(cudnn_handle, dtype):
 )
 @pytest.mark.parametrize("dtype", _FP8_DTYPES)
 def test_matmul_sm90_gluon_fp8_direct(cudnn_handle, dtype):
-    from flag_dnn.ops.matmul_sm90 import Sm90MatmulConfig
-    from flag_dnn.ops.matmul_sm90_gluon import run_sm90_matmul
+    from flag_dnn.runtime.backend._nvidia.ops.matmul_sm90 import (
+        Sm90MatmulConfig,
+    )
+    from flag_dnn.runtime.backend._nvidia.ops.matmul_sm90_gluon import (
+        run_sm90_matmul,
+    )
 
     torch.manual_seed(0)
     a = torch.randn((2, 128, 64), device=flag_dnn.device).mul_(0.25).to(dtype)
@@ -455,8 +515,12 @@ def test_matmul_sm90_gluon_fp8_direct(cudnn_handle, dtype):
 )
 @pytest.mark.parametrize("dtype", _FP8_DTYPES)
 def test_matmul_sm90_gluon_fp8_warp_specialized_direct(cudnn_handle, dtype):
-    from flag_dnn.ops.matmul_sm90 import Sm90MatmulConfig
-    from flag_dnn.ops.matmul_sm90_gluon import run_sm90_matmul
+    from flag_dnn.runtime.backend._nvidia.ops.matmul_sm90 import (
+        Sm90MatmulConfig,
+    )
+    from flag_dnn.runtime.backend._nvidia.ops.matmul_sm90_gluon import (
+        run_sm90_matmul,
+    )
 
     torch.manual_seed(0)
     a = torch.randn((2, 128, 64), device=flag_dnn.device).mul_(0.25).to(dtype)
@@ -474,6 +538,43 @@ def test_matmul_sm90_gluon_fp8_warp_specialized_direct(cudnn_handle, dtype):
     )
 
     assert actual is c
+    torch.testing.assert_close(actual, expected, atol=5e-4, rtol=0)
+
+
+@pytest.mark.matmul
+@pytest.mark.graph
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or torch.cuda.get_device_capability() != (9, 0),
+    reason="SM90 is required",
+)
+@pytest.mark.parametrize("dtype", _FP8_DTYPES)
+def test_matmul_sm90_fp8_tma_pretranspose_matches_cudnn(
+    cudnn_handle,
+    dtype,
+):
+    torch.manual_seed(29)
+    a = torch.randint(-1, 2, (16, 1024, 1024), device=flag_dnn.device).to(
+        dtype
+    )
+    b = torch.randint(-1, 2, (16, 1024, 1024), device=flag_dnn.device).to(
+        dtype
+    )
+
+    expected = _cudnn_matmul(
+        a,
+        b,
+        cudnn_handle,
+        out_dtype=torch.float32,
+        compute_mode="fast_float_for_fp8",
+    )
+    actual = _run_flag_dnn_matmul_graph(
+        a,
+        b,
+        out_dtype=torch.float32,
+        compute_mode="fast_float_for_fp8",
+    )
+
     torch.testing.assert_close(actual, expected, atol=5e-4, rtol=0)
 
 
@@ -610,6 +711,50 @@ def test_matmul_fp32_compute_modes(cudnn_handle):
     # use different K-reduction trees on Hopper.
     utils.gems_assert_close(tf32, expected_tf32, torch.float32, atol=5e-3)
     assert (ieee - tf32).abs().max().item() > 1e-4
+
+
+@pytest.mark.matmul
+@pytest.mark.graph
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or torch.cuda.get_device_capability() != (9, 0),
+    reason="SM90 is required",
+)
+def test_matmul_sm90_cublaslt_tf32_matches_cudnn(cudnn_handle):
+    torch.manual_seed(31)
+    a = torch.randn(
+        (32, 512, 512), dtype=torch.float32, device=flag_dnn.device
+    )
+    b = torch.randn(
+        (32, 512, 512), dtype=torch.float32, device=flag_dnn.device
+    )
+
+    expected = _cudnn_matmul(a, b, cudnn_handle, compute_mode="tf32")
+    actual = _run_flag_dnn_matmul_graph(a, b, compute_mode="tf32")
+
+    utils.gems_assert_close(actual, expected, torch.float32, atol=5e-3)
+
+
+@pytest.mark.matmul
+@pytest.mark.graph
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or torch.cuda.get_device_capability() != (9, 0),
+    reason="SM90 is required",
+)
+def test_matmul_sm90_cublaslt_bf16_id6_matches_cudnn(cudnn_handle):
+    torch.manual_seed(41)
+    a = torch.randn(
+        (16, 2048, 512), dtype=torch.bfloat16, device=flag_dnn.device
+    )
+    b = torch.randn(
+        (16, 512, 2048), dtype=torch.bfloat16, device=flag_dnn.device
+    )
+
+    expected = _cudnn_matmul(a, b, cudnn_handle)
+    actual = _run_flag_dnn_matmul_graph(a, b)
+
+    utils.gems_assert_close(actual, expected, torch.bfloat16, atol=1e-1)
 
 
 @pytest.mark.matmul

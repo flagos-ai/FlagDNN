@@ -144,10 +144,7 @@ class SdpaBenchmark(CudnnCompareBenchmark):
         )
         assert [node.op_type for node in compiled.graph.nodes] == ["sdpa"]
 
-        def run():
-            return compiled.run(q, k, v)
-
-        return run
+        return compiled.bind(q, k, v)
 
     def transfer_bytes(self, inputs):
         q, k, v, _, stats = inputs

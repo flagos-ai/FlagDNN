@@ -18,15 +18,22 @@ from typing import Any, Optional, Sequence, cast
 
 import torch
 
+from flag_dnn import runtime
 from flag_dnn.graph.prepared import (
+    PreparedSingleKernelRunSpec,
+    PreparedSingleKernelSpec,
     PreparedTensorCache,
     RunFn,
     get_cached_empty_tensor,
+    get_prepared_output,
+    make_single_kernel_run_fn,
     register_prepared_run_fn,
+    runtime_tensor_checks_from_specs,
 )
 from flag_dnn.graph.prepared.common import (
     _is_runtime_device_spec,
     _require_runtime_backend,
+    _static_shape,
 )
 from flag_dnn.graph.tensor import TensorSpec, torch_dtype
 
@@ -84,12 +91,209 @@ def _is_cross_correlation(convolution_mode: Any) -> bool:
 # Convolution prepared paths
 
 
+def _prepare_backend_conv(
+    op_type: str,
+    attrs: dict[str, Any],
+    input_specs: Sequence[TensorSpec],
+    default_run_fn: RunFn,
+) -> Optional[RunFn]:
+    prepare = runtime.get_backend_hook("prepare_conv")
+    if prepare is None:
+        return None
+    return prepare(op_type, attrs, input_specs, default_run_fn)
+
+
+@register_prepared_run_fn("causal_conv1d")
+def _prepare_causal_conv1d(
+    attrs: dict[str, Any],
+    input_specs: Sequence[TensorSpec],
+    default_run_fn: RunFn,
+) -> Optional[RunFn]:
+    has_bias = bool(attrs.get("has_bias"))
+    expected_inputs = 3 if has_bias else 2
+    if len(input_specs) != expected_inputs or not all(
+        _is_runtime_device_spec(spec) for spec in input_specs
+    ):
+        return None
+
+    activation = str(attrs.get("activation", "identity")).lower()
+    if activation not in ("identity", "silu"):
+        return None
+
+    x_spec, weight_spec = input_specs[:2]
+    x_shape = _static_shape(x_spec)
+    weight_shape = _static_shape(weight_spec)
+    if (
+        x_shape is None
+        or weight_shape is None
+        or len(x_shape) != 3
+        or len(weight_shape) != 2
+        or x_spec.stride is None
+        or weight_spec.stride is None
+        or x_spec.dtype not in ("float16", "bfloat16", "float32")
+        or weight_spec.dtype != x_spec.dtype
+    ):
+        return None
+
+    batch, channels, sequence = x_shape
+    weight_channels, kernel_size = weight_shape
+    if (
+        batch <= 0
+        or channels <= 0
+        or sequence <= 0
+        or kernel_size <= 0
+        or weight_channels != channels
+    ):
+        return None
+    if has_bias:
+        bias_spec = input_specs[2]
+        bias_shape = _static_shape(bias_spec)
+        if (
+            bias_shape != (channels,)
+            or bias_spec.stride is None
+            or bias_spec.dtype != x_spec.dtype
+        ):
+            return None
+
+    tensor_indices = tuple(range(expected_inputs))
+    checks = runtime_tensor_checks_from_specs(
+        input_specs,
+        tensor_indices,
+        require_shape=True,
+        require_stride=True,
+        require_dtype=True,
+    )
+    if checks is None:
+        return None
+
+    output_dtype = torch_dtype(x_spec.dtype)
+    output_cache: dict[tuple[Any, ...], torch.Tensor] = {}
+
+    def output_factory(inputs: Sequence[Any]) -> torch.Tensor:
+        source = inputs[0]
+        assert isinstance(source, torch.Tensor)
+        key = (
+            source.device.type,
+            source.device.index,
+            output_dtype,
+            x_shape,
+        )
+        return get_prepared_output(
+            output_cache,
+            key,
+            lambda: torch.empty(
+                x_shape, device=source.device, dtype=output_dtype
+            ),
+        )
+
+    dtype_id = {
+        "float16": 0,
+        "bfloat16": 1,
+        "float32": 2,
+    }[x_spec.dtype]
+
+    def runtime_args(
+        inputs: Sequence[Any], output: torch.Tensor
+    ) -> tuple[Any, ...]:
+        x = inputs[0]
+        weight = inputs[1]
+        bias = inputs[2] if has_bias else output
+        assert isinstance(x, torch.Tensor)
+        assert isinstance(weight, torch.Tensor)
+        assert isinstance(bias, torch.Tensor)
+        return (
+            x,
+            weight,
+            bias,
+            output,
+            sequence,
+            sequence,
+            channels,
+            dtype_id,
+            x.stride(0),
+            x.stride(1),
+            x.stride(2),
+            weight.stride(0),
+            weight.stride(1),
+            bias.stride(0) if has_bias else 0,
+            output.stride(0),
+            output.stride(1),
+            output.stride(2),
+        )
+
+    def grid(meta: dict[str, Any]) -> tuple[int, ...]:
+        block_l = int(meta["BLOCK_L"])
+        block_c = int(meta["BLOCK_C"])
+        return (
+            (sequence + block_l - 1) // block_l,
+            (channels + block_c - 1) // block_c,
+            batch,
+        )
+
+    def build_cached_call(
+        constexprs: dict[str, Any],
+    ) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+        block_c = int(constexprs["BLOCK_C"])
+        block_l = int(constexprs["BLOCK_L"])
+        return (
+            (sequence + block_l - 1) // block_l,
+            (channels + block_c - 1) // block_c,
+            batch,
+        ), (
+            1,
+            kernel_size - 1,
+            1,
+            kernel_size,
+            has_bias,
+            activation,
+            block_c,
+            block_l,
+        )
+
+    def extra_check(inputs: Sequence[Any]) -> bool:
+        tensors = inputs[:expected_inputs]
+        return all(
+            isinstance(value, torch.Tensor)
+            and value.device == tensors[0].device
+            for value in tensors
+        )
+
+    from flag_dnn.ops.conv1d import conv1d_depthwise_kernel
+
+    return make_single_kernel_run_fn(
+        PreparedSingleKernelRunSpec(
+            kernel=PreparedSingleKernelSpec(
+                kernel=conv1d_depthwise_kernel,
+                grid=grid,
+                static_args=(1, kernel_size - 1, 1, kernel_size),
+                constexpr_kwargs={
+                    "HAS_BIAS": has_bias,
+                    "ACTIVATION": activation,
+                },
+                build_cached_call=build_cached_call,
+            ),
+            input_checks=checks,
+            output_factory=output_factory,
+            runtime_args=runtime_args,
+            extra_check=extra_check,
+            validate_inputs=bool(attrs.get("_validate_inputs", True)),
+        ),
+        default_run_fn,
+    )
+
+
 @register_prepared_run_fn("conv_dgrad")
 def _prepare_conv_dgrad(
     attrs: dict[str, Any],
     input_specs: Sequence[TensorSpec],
     default_run_fn: RunFn,
 ) -> Optional[RunFn]:
+    backend_run_fn = _prepare_backend_conv(
+        "conv_dgrad", attrs, input_specs, default_run_fn
+    )
+    if backend_run_fn is not None:
+        return backend_run_fn
+
     del default_run_fn
     if len(input_specs) < 2:
         return None
@@ -151,6 +355,12 @@ def _prepare_conv_wgrad(
     input_specs: Sequence[TensorSpec],
     default_run_fn: RunFn,
 ) -> Optional[RunFn]:
+    backend_run_fn = _prepare_backend_conv(
+        "conv_wgrad", attrs, input_specs, default_run_fn
+    )
+    if backend_run_fn is not None:
+        return backend_run_fn
+
     del default_run_fn
     if len(input_specs) < 2:
         return None
@@ -529,6 +739,12 @@ def _prepare_conv_fprop(
     input_specs: Sequence[TensorSpec],
     default_run_fn: RunFn,
 ) -> Optional[RunFn]:
+    backend_run_fn = _prepare_backend_conv(
+        "conv_fprop", attrs, input_specs, default_run_fn
+    )
+    if backend_run_fn is not None:
+        return backend_run_fn
+
     if len(input_specs) < 2:
         return None
 

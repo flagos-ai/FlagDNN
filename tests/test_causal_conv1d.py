@@ -77,6 +77,33 @@ def test_causal_conv1d_matches_cudnn(
 
 
 @pytest.mark.causal_conv1d
+@pytest.mark.graph
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", COMPARE_DTYPES)
+@pytest.mark.parametrize(
+    "shape_kernel_activation",
+    [
+        ((1, 64, 128), 3, "identity"),
+        ((3, 192, 257), 4, "silu"),
+    ],
+)
+def test_causal_conv1d_benchmark_regressions(
+    dnn_reference, dtype, shape_kernel_activation
+):
+    torch.manual_seed(0)
+    shape, kernel, activation = shape_kernel_activation
+    x = torch.randn(shape, device=flag_dnn.device, dtype=dtype)
+    weight = torch.randn(
+        (shape[1], kernel), device=flag_dnn.device, dtype=dtype
+    )
+    bias = torch.randn((shape[1],), device=flag_dnn.device, dtype=dtype)
+    expected = _cudnn_causal_conv1d(dnn_reference, x, weight, bias, activation)
+    actual = _run_flag_dnn_causal_conv1d_graph(x, weight, bias, activation)
+    atol = 2e-2 if dtype in (torch.float16, torch.bfloat16) else 2e-4
+    utils.gems_assert_close(actual, expected, dtype, atol=atol)
+
+
+@pytest.mark.causal_conv1d
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_causal_conv1d_h100_reference_is_standard_frontend(dnn_reference):
     if torch.cuda.get_device_capability()[0] >= 10:

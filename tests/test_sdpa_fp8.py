@@ -400,7 +400,10 @@ def test_sdpa_fp8_vs_cudnn_with_stats(cudnn_handle, dtype, case):
 @pytest.mark.sdpa_fp8
 @pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-@pytest.mark.parametrize("case", consts.SDPA_FP8_CASES[:4])
+@pytest.mark.parametrize(
+    "case",
+    consts.SDPA_FP8_CASES[:4] + ((4, 16, 16, 512, 512, 128, False),),
+)
 def test_sdpa_fp8_inference_no_stats(cudnn_handle, case):
     dtype = torch.float8_e4m3fn
     torch.manual_seed(0)

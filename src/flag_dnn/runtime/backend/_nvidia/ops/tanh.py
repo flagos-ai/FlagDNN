@@ -29,6 +29,21 @@ logger = logging.getLogger(__name__)
 _TANH_CONFIGS = runtime.get_tuned_config("tanh")
 _TANH_FP64_CONFIGS = runtime.get_tuned_config("tanh")
 
+
+def _is_dense_flat_tensor(input: torch.Tensor) -> bool:
+    return (
+        input.is_contiguous()
+        or (
+            input.ndim == 4
+            and input.is_contiguous(memory_format=torch.channels_last)
+        )
+        or (
+            input.ndim == 5
+            and input.is_contiguous(memory_format=torch.channels_last_3d)
+        )
+    )
+
+
 # Triton 的 tanh 在不同版本里导入路径不一致
 if tuple(map(int, triton.__version__.split(".")[:2])) >= (3, 0):
     try:
@@ -104,7 +119,10 @@ def tanh(input: torch.Tensor) -> torch.Tensor:
             f"flag_dnn tanh does not support dtype={input.dtype}"
         )
 
-    if not input.is_contiguous():
+    # Elementwise tanh only depends on the physical element order.  Dense
+    # channels-last tensors can therefore be consumed directly and their
+    # layout preserved in the output instead of paying for an NCHW copy.
+    if not _is_dense_flat_tensor(input):
         input = input.contiguous()
 
     n_elements = input.numel()

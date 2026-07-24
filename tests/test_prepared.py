@@ -17,13 +17,17 @@ from __future__ import annotations
 from contextlib import nullcontext
 from typing import Any, Sequence
 
+import pytest
 import torch
 
-import flag_dnn.graph.prepared.matmul as prepared_matmul
+import flag_dnn.graph.prepared.conv as prepared_conv
 from flag_dnn import runtime
 from flag_dnn.graph import prepared
+from flag_dnn.graph import executor as graph_executor
+from flag_dnn.graph.capture import CompiledGraph
 from flag_dnn.graph.prepared import core as prepared_core
 from flag_dnn.graph.prepared import ops as prepared_ops
+from flag_dnn.graph.prepared import pointwise as prepared_pointwise
 from flag_dnn.graph.prepared import (
     PreparedKernelPipelineSpec,
     PreparedPipelineStepSpec,
@@ -77,6 +81,371 @@ class _KernelEntry:
 
 def _fallback(inputs: Sequence[Any], attrs: dict[str, Any]) -> str:
     return "fallback"
+
+
+def test_compiled_bind_validates_once_then_uses_prepared_fast_path(
+    monkeypatch: Any,
+) -> None:
+    calls: list[tuple[Any, ...]] = []
+
+    class FastPath:
+        def bind(self, inputs: tuple[Any, ...]) -> Any:
+            calls.append(("bind", *inputs))
+
+            def replay() -> str:
+                calls.append(("replay", *inputs))
+                return "fast"
+
+            return replay
+
+    input_check = object()
+    prepared_plan = type(
+        "PreparedPlan",
+        (),
+        {
+            "input_count": 1,
+            "input_checks": (input_check,),
+            "validate_inputs": True,
+            "fast_path": FastPath(),
+        },
+    )()
+    monkeypatch.setattr(
+        graph_executor, "_get_prepared_plan", lambda plan: prepared_plan
+    )
+    monkeypatch.setattr(
+        graph_executor,
+        "_validate_prepared_input",
+        lambda check, actual: calls.append(("validate", check, actual)),
+    )
+    plan = type("Plan", (), {"graph": object()})()
+
+    replay = CompiledGraph(plan).bind("input")
+
+    assert calls == [
+        ("validate", input_check, "input"),
+        ("bind", "input"),
+    ]
+    assert replay() == "fast"
+    assert replay() == "fast"
+    assert calls == [
+        ("validate", input_check, "input"),
+        ("bind", "input"),
+        ("replay", "input"),
+        ("replay", "input"),
+    ]
+
+
+@pytest.mark.parametrize("op_type", ("logical_and", "logical_or"))
+def test_logical_bool_pair_has_prepared_cached_launcher(op_type: str) -> None:
+    shape = (4, 16, 64, 128)
+    stride = (131072, 1, 2048, 16)
+    specs = (
+        TensorSpec(
+            "left",
+            shape,
+            "bool",
+            stride=stride,
+            layout="nhwc",
+            device=runtime.device.name,
+        ),
+        TensorSpec(
+            "right",
+            shape,
+            "bool",
+            stride=stride,
+            layout="nhwc",
+            device=runtime.device.name,
+        ),
+    )
+
+    run = prepared_pointwise._prepare_pointwise(op_type, {}, specs, _fallback)
+
+    assert run is not None
+    assert getattr(run, "bind", None) is not None
+
+
+def test_batchnorm_training_has_prepared_cached_launcher() -> None:
+    input_shape = (32, 1024, 1, 1)
+    input_stride = (1024, 1, 1, 1)
+    param_shape = (1, 1024, 1, 1)
+    param_stride = (1024, 1, 1, 1)
+    device = runtime.device.name
+    specs = (
+        TensorSpec(
+            "x",
+            input_shape,
+            "float16",
+            stride=input_stride,
+            layout="contiguous",
+            device=device,
+            contiguous=True,
+        ),
+        TensorSpec(
+            "scale",
+            param_shape,
+            "float16",
+            stride=param_stride,
+            layout="contiguous",
+            device=device,
+            contiguous=True,
+        ),
+        TensorSpec(
+            "bias",
+            param_shape,
+            "float16",
+            stride=param_stride,
+            layout="contiguous",
+            device=device,
+            contiguous=True,
+        ),
+        TensorSpec(
+            "running_mean",
+            param_shape,
+            "float32",
+            stride=param_stride,
+            layout="contiguous",
+            device=device,
+            contiguous=True,
+        ),
+        TensorSpec(
+            "running_var",
+            param_shape,
+            "float32",
+            stride=param_stride,
+            layout="contiguous",
+            device=device,
+            contiguous=True,
+        ),
+        TensorSpec("epsilon", (), "float32"),
+        TensorSpec("momentum", (), "float32"),
+    )
+
+    run = prepared.prepare_run_fn(
+        "batchnorm",
+        {"peer_stats_count": 0, "_validate_inputs": False},
+        specs,
+        _fallback,
+    )
+
+    assert run is not _fallback
+    assert getattr(run, "bind", None) is not None
+
+
+def test_layernorm_training_has_prepared_cached_launcher() -> None:
+    device = runtime.device.name
+    specs = (
+        TensorSpec(
+            "x",
+            (1, 128, 768),
+            "float16",
+            stride=(98304, 768, 1),
+            layout="contiguous",
+            device=device,
+            contiguous=True,
+        ),
+        TensorSpec(
+            "scale",
+            (1, 1, 768),
+            "float16",
+            stride=(768, 768, 1),
+            layout="contiguous",
+            device=device,
+            contiguous=True,
+        ),
+        TensorSpec(
+            "bias",
+            (1, 1, 768),
+            "float16",
+            stride=(768, 768, 1),
+            layout="contiguous",
+            device=device,
+            contiguous=True,
+        ),
+        TensorSpec("epsilon", (), "float32"),
+    )
+
+    run = prepared.prepare_run_fn(
+        "layernorm",
+        {
+            "norm_forward_phase": "TRAINING",
+            "_validate_inputs": False,
+        },
+        specs,
+        _fallback,
+    )
+
+    assert run is not _fallback
+    assert getattr(run, "bind", None) is not None
+
+
+def test_layer_norm_hidden_width_is_constexpr() -> None:
+    from flag_dnn.ops.layer_norm import layer_norm_kernel
+
+    jit_kernel = layer_norm_kernel.fn.fn
+    constexpr_names = {
+        jit_kernel.arg_names[index] for index in jit_kernel.constexprs
+    }
+    assert "N" in constexpr_names
+
+
+def test_rmsnorm_training_has_prepared_cached_launcher() -> None:
+    device = runtime.device.name
+    specs = (
+        TensorSpec(
+            "x",
+            (3, 257, 513),
+            "float16",
+            stride=(131841, 513, 1),
+            layout="contiguous",
+            device=device,
+            contiguous=True,
+        ),
+        TensorSpec(
+            "scale",
+            (1, 1, 513),
+            "float16",
+            stride=(513, 513, 1),
+            layout="contiguous",
+            device=device,
+            contiguous=True,
+        ),
+        TensorSpec(
+            "bias",
+            (1, 1, 513),
+            "float16",
+            stride=(513, 513, 1),
+            layout="contiguous",
+            device=device,
+            contiguous=True,
+        ),
+        TensorSpec("epsilon", (), "float32"),
+    )
+
+    run = prepared.prepare_run_fn(
+        "rmsnorm",
+        {
+            "norm_forward_phase": "TRAINING",
+            "has_bias": True,
+            "_validate_inputs": False,
+        },
+        specs,
+        _fallback,
+    )
+
+    assert run is not _fallback
+    assert getattr(run, "bind", None) is not None
+
+
+def test_single_axis_reduction_has_prepared_cached_launcher() -> None:
+    spec = TensorSpec(
+        "x",
+        (8, 8, 32, 32),
+        "bfloat16",
+        stride=(8192, 1, 256, 8),
+        layout="nhwc",
+        device=runtime.device.name,
+        contiguous=False,
+    )
+
+    run = prepared.prepare_run_fn(
+        "reduction",
+        {
+            "mode": "ADD",
+            "dim": 1,
+            "keepdim": True,
+            "dtype": None,
+            "_validate_inputs": False,
+        },
+        (spec,),
+        _fallback,
+    )
+
+    assert run is not _fallback
+    assert getattr(run, "bind", None) is not None
+
+
+def test_gen_index_has_prepared_cached_launcher() -> None:
+    spec = TensorSpec(
+        "x",
+        (32, 128, 256),
+        "float32",
+        stride=(32768, 256, 1),
+        layout="contiguous",
+        device=runtime.device.name,
+        contiguous=True,
+    )
+
+    run = prepared.prepare_run_fn(
+        "gen_index",
+        {
+            "axis": 2,
+            "compute_data_type": torch.float32,
+            "_validate_inputs": False,
+        },
+        (spec,),
+        _fallback,
+    )
+
+    assert run is not _fallback
+    assert getattr(run, "bind", None) is not None
+
+
+def test_gen_index_tuner_keys_index_geometry() -> None:
+    from flag_dnn.ops.gen_index import _gen_index_kernel
+
+    assert _gen_index_kernel.fn.keys == [
+        "n_elements",
+        "axis_size",
+        "inner_size",
+    ]
+
+
+@pytest.mark.parametrize("activation", ("identity", "silu"))
+def test_causal_conv1d_has_prepared_cached_launcher(activation: str) -> None:
+    device = runtime.device.name
+    specs = (
+        TensorSpec(
+            "x",
+            (3, 192, 257),
+            "float16",
+            stride=(49344, 257, 1),
+            layout="contiguous",
+            device=device,
+            contiguous=True,
+        ),
+        TensorSpec(
+            "weight",
+            (192, 4),
+            "float16",
+            stride=(4, 1),
+            layout="contiguous",
+            device=device,
+            contiguous=True,
+        ),
+        TensorSpec(
+            "bias",
+            (192,),
+            "float16",
+            stride=(1,),
+            layout="contiguous",
+            device=device,
+            contiguous=True,
+        ),
+    )
+
+    run = prepared.prepare_run_fn(
+        "causal_conv1d",
+        {
+            "activation": activation,
+            "has_bias": True,
+            "_validate_inputs": False,
+        },
+        specs,
+        _fallback,
+    )
+
+    assert run is not _fallback
+    assert getattr(run, "bind", None) is not None
 
 
 def test_runtime_tensor_checks_from_specs_and_pass() -> None:
@@ -237,6 +606,72 @@ def test_prepared_ops_import_registers_builtin_preparers() -> None:
         assert op_type in prepared_core._OP_PREPARED_RUN_FN_REGISTRY
 
 
+@pytest.mark.parametrize(
+    ("op_type", "prepare"),
+    (
+        ("conv_fprop", prepared_conv._prepare_conv_fprop),
+        ("conv_dgrad", prepared_conv._prepare_conv_dgrad),
+        ("conv_wgrad", prepared_conv._prepare_conv_wgrad),
+    ),
+)
+def test_prepared_conv_prefers_backend_hook(
+    monkeypatch: Any, op_type: str, prepare: Any
+) -> None:
+    calls: list[tuple[Any, ...]] = []
+    backend_run = object()
+    specs = (
+        TensorSpec(
+            "input",
+            (8, 64, 28, 28),
+            "float16",
+            stride=(50176, 784, 28, 1),
+            layout="contiguous",
+            device=runtime.device.name,
+            contiguous=True,
+        ),
+        TensorSpec(
+            "weight",
+            (128, 64, 1, 1),
+            "float16",
+            stride=(64, 1, 1, 1),
+            layout="contiguous",
+            device=runtime.device.name,
+            contiguous=True,
+        ),
+    )
+    attrs = {
+        "input_size": (8, 64, 28, 28),
+        "filter_size": (128, 64, 1, 1),
+        "stride": 1,
+        "padding": 0,
+        "dilation": 1,
+        "convolution_mode": "CROSS_CORRELATION",
+        "groups": 1,
+    }
+
+    def backend_prepare(
+        requested_op: str,
+        requested_attrs: dict[str, Any],
+        requested_specs: Sequence[TensorSpec],
+        default: Any,
+    ) -> Any:
+        calls.append(
+            (requested_op, requested_attrs, tuple(requested_specs), default)
+        )
+        return backend_run
+
+    monkeypatch.setattr(
+        prepared_conv.runtime,
+        "get_backend_hook",
+        lambda name: backend_prepare if name == "prepare_conv" else None,
+    )
+
+    run = prepare(attrs, specs, _fallback)
+
+    assert run is backend_run
+    assert calls == [(op_type, attrs, specs, _fallback)]
+
+
 def test_register_prepared_run_fn_uses_first_non_none_preparer() -> None:
     op_type = "__prepared_test_unique__"
 
@@ -265,63 +700,29 @@ def test_register_prepared_run_fn_uses_first_non_none_preparer() -> None:
 def test_prepared_matmul_reuses_sm90_runner_for_identical_inputs(
     monkeypatch: Any,
 ) -> None:
-    monkeypatch.setattr(
-        prepared_matmul, "_require_runtime_backend", lambda inputs, op: None
-    )
-    active_devices: list[torch.device] = []
-    context_devices: list[torch.device] = []
-    capability_devices: list[torch.device] = []
-
-    class DeviceContext:
-        def __init__(self, device: torch.device) -> None:
-            self.device = device
-
-        def __enter__(self) -> None:
-            context_devices.append(self.device)
-            active_devices.append(self.device)
-
-        def __exit__(self, *args: Any) -> None:
-            assert active_devices.pop() == self.device
-
-    class DeviceFn:
-        @staticmethod
-        def device(device: torch.device) -> DeviceContext:
-            return DeviceContext(device)
-
-    def get_device_capability_for(device: torch.device) -> tuple[int, int]:
-        assert active_devices[-1] == device
-        capability_devices.append(device)
-        return (9, 0)
+    from flag_dnn.runtime.backend._nvidia.ops import matmul as nvidia_matmul
 
     monkeypatch.setattr(
-        prepared_matmul, "torch_device_fn", DeviceFn(), raising=False
-    )
-    monkeypatch.setattr(
-        prepared_matmul,
+        nvidia_matmul,
         "get_device_capability_for",
-        get_device_capability_for,
-        raising=False,
+        lambda device: (9, 0),
     )
-    from flag_dnn.ops import matmul_sm90
-
-    prepare_calls: list[tuple[Any, Any, Any]] = []
+    prepare_calls: list[tuple[Any, Any]] = []
     launch_calls: list[tuple[Any, Any, Any]] = []
 
-    def prepare_runner(a: Any, b: Any, c: Any, **kwargs: Any) -> Any:
-        assert active_devices[-1] == a.device
-        prepare_calls.append((a, b, c))
+    def prepare_runner(a: Any, b: Any, **kwargs: Any) -> Any:
+        prepare_calls.append((a, b))
 
-        def launch() -> Any:
-            launch_calls.append((a, b, c))
-            return c
+        def launch(output: Any) -> Any:
+            launch_calls.append((a, b, output))
+            return output
 
         return launch
 
     monkeypatch.setattr(
-        matmul_sm90,
-        "prepare_sm90_matmul_if_supported",
+        nvidia_matmul,
+        "prepare_sm90_matmul_dynamic_output",
         prepare_runner,
-        raising=False,
     )
     shape = (16, 1024, 1024)
     stride = (1024 * 1024, 1024, 1)
@@ -349,7 +750,7 @@ def test_prepared_matmul_reuses_sm90_runner_for_identical_inputs(
         fallback_calls.append(tuple(inputs))
         return "fallback"
 
-    run = prepared_matmul._prepare_matmul(
+    run = nvidia_matmul.prepare_matmul(
         {"compute_data_type": "float32", "out_dtype": torch.float16},
         specs,
         fallback,
@@ -371,40 +772,33 @@ def test_prepared_matmul_reuses_sm90_runner_for_identical_inputs(
     assert stride_mismatch == "fallback"
     assert dtype_mismatch == "fallback"
     assert len(prepare_calls) == 2
-    assert prepare_calls[0][0:2] == (a, b)
-    assert prepare_calls[1][0:2] == (replacement_a, b)
+    assert prepare_calls[0] == (a, b)
+    assert prepare_calls[1] == (replacement_a, b)
     assert len(launch_calls) == 3
     assert len(fallback_calls) == 3
-    assert context_devices == [a.device, replacement_a.device]
-    assert capability_devices == [a.device, replacement_a.device]
 
 
 def test_prepared_matmul_rebuilds_sm90_runner_after_storage_rebind(
     monkeypatch: Any,
 ) -> None:
-    monkeypatch.setattr(
-        prepared_matmul, "_require_runtime_backend", lambda inputs, op: None
+    from flag_dnn.runtime.backend._nvidia.ops import matmul as nvidia_matmul
+    from flag_dnn.runtime.backend._nvidia.ops.matmul_sm90 import (
+        Sm90MatmulConfig,
     )
+
     monkeypatch.setattr(
-        prepared_matmul,
+        nvidia_matmul,
         "get_device_capability_for",
         lambda device: (9, 0),
     )
-
-    class DeviceFn:
-        @staticmethod
-        def device(device: torch.device) -> Any:
-            return nullcontext()
-
-    monkeypatch.setattr(prepared_matmul, "torch_device_fn", DeviceFn())
-    from flag_dnn.ops import matmul_sm90
-
     monkeypatch.setattr(
-        matmul_sm90,
+        nvidia_matmul,
         "select_sm90_matmul_config",
-        lambda capability, key: object(),
+        lambda capability, key: Sm90MatmulConfig(
+            "lowp", 1, 1, 1, 2, 4, 1, 168, False
+        ),
     )
-    prepare_ptrs: list[tuple[int, int, int]] = []
+    prepare_ptrs: list[tuple[int, int]] = []
 
     def descriptor_view(tensor: torch.Tensor) -> torch.Tensor:
         view = torch.empty(0, device=tensor.device, dtype=tensor.dtype)
@@ -418,23 +812,21 @@ def test_prepared_matmul_rebuilds_sm90_runner_after_storage_rebind(
     def prepare_runner(
         a: torch.Tensor,
         b: torch.Tensor,
-        c: torch.Tensor,
         **kwargs: Any,
     ) -> Any:
-        prepare_ptrs.append((a.data_ptr(), b.data_ptr(), c.data_ptr()))
+        prepare_ptrs.append((a.data_ptr(), b.data_ptr()))
         a_desc = descriptor_view(a)
         b_desc = descriptor_view(b)
-        c_desc = descriptor_view(c)
 
-        def launch() -> torch.Tensor:
-            c_desc.copy_(a_desc + b_desc)
-            return c
+        def launch(output: torch.Tensor) -> torch.Tensor:
+            output.copy_(a_desc + b_desc)
+            return output
 
         return launch
 
     monkeypatch.setattr(
-        matmul_sm90,
-        "prepare_sm90_matmul_if_supported",
+        nvidia_matmul,
+        "prepare_sm90_matmul_dynamic_output",
         prepare_runner,
     )
     shape = (1, 2, 2)
@@ -461,7 +853,7 @@ def test_prepared_matmul_rebuilds_sm90_runner_after_storage_rebind(
     def fallback(inputs: Sequence[Any], attrs: dict[str, Any]) -> Any:
         raise AssertionError("valid storage rebind must not use fallback")
 
-    run = prepared_matmul._prepare_matmul(
+    run = nvidia_matmul.prepare_matmul(
         {"compute_data_type": "tf32", "out_dtype": torch.float32},
         specs,
         fallback,
@@ -501,4 +893,4 @@ def test_prepared_matmul_rebuilds_sm90_runner_after_storage_rebind(
     rebound_result = run((a, b), {})
     assert rebound_result is result
     torch.testing.assert_close(rebound_result, a + b)
-    assert len(prepare_ptrs) == 4
+    assert len(prepare_ptrs) == 3

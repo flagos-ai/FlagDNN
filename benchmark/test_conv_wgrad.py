@@ -219,10 +219,7 @@ class ConvWgradBenchmark(CudnnCompareBenchmark):
             "conv_wgrad"
         ]
 
-        def run():
-            return compiled.run(image, loss)
-
-        return run
+        return compiled.bind(image, loss)
 
     def transfer_bytes(self, inputs):
         image, loss = inputs

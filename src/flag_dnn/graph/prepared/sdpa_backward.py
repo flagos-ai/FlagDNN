@@ -103,6 +103,11 @@ def _prepare_sdpa_backward(
     input_specs: Sequence[TensorSpec],
     default_run_fn: RunFn,
 ) -> Optional[RunFn]:
+    backend_prepare = runtime.get_backend_hook("prepare_sdpa_backward")
+    if backend_prepare is not None:
+        backend_run = backend_prepare(attrs, input_specs, default_run_fn)
+        if backend_run is not None:
+            return backend_run
     import math
 
     import triton

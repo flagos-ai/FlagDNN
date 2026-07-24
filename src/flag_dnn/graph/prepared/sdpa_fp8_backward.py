@@ -20,6 +20,7 @@ from typing import Any, Optional, Sequence
 
 import torch
 
+from flag_dnn import runtime
 from flag_dnn.graph.prepared import (
     PreparedSingleKernelSpec,
     RunFn,
@@ -38,6 +39,11 @@ def _prepare_sdpa_fp8_backward(
     input_specs: Sequence[TensorSpec],
     default_run_fn: RunFn,
 ) -> Optional[RunFn]:
+    backend_prepare = runtime.get_backend_hook("prepare_sdpa_fp8_backward")
+    if backend_prepare is not None:
+        backend_run = backend_prepare(attrs, input_specs, default_run_fn)
+        if backend_run is not None:
+            return backend_run
     import triton
 
     from flag_dnn.ops.sdpa import _TOP_LEFT

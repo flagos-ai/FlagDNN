@@ -54,6 +54,8 @@ _POINTWISE_BINARY_OPS = {
     "le",
     "gt",
     "ge",
+    "logical_and",
+    "logical_or",
 }
 
 _POINTWISE_CMP_REVERSE = {
@@ -90,10 +92,13 @@ _POINTWISE_BINARY_KERNEL_OPS = {
     "le": "le",
     "gt": "gt",
     "ge": "ge",
+    "logical_and": "bitwise_and",
+    "logical_or": "bitwise_or",
 }
 
 _POINTWISE_COMPARISON_OPS = {"eq", "ne", "lt", "le", "gt", "ge"}
 _POINTWISE_FAST_DTYPES = {"float16", "bfloat16", "float32"}
+_POINTWISE_LOGICAL_KERNEL_OPS = {"bitwise_and", "bitwise_or"}
 
 
 @register_generic_prepared_run_fn
@@ -220,7 +225,13 @@ def _prepare_dense_tensor_binary(
         or not _is_dense_flat_spec(right_spec)
         or left_spec.stride != right_spec.stride
         or left_spec.dtype != right_spec.dtype
-        or left_spec.dtype not in _POINTWISE_FAST_DTYPES
+        or (
+            left_spec.dtype not in _POINTWISE_FAST_DTYPES
+            and not (
+                left_spec.dtype == "bool"
+                and kernel_op_type in _POINTWISE_LOGICAL_KERNEL_OPS
+            )
+        )
     ):
         return None
 

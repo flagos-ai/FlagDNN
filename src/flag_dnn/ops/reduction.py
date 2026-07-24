@@ -18,6 +18,7 @@ import triton.language as tl
 
 from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
+from flag_dnn.utils import libentry, libtuner
 
 _REDUCE_CONFIGS = runtime.get_tuned_config("reduction")
 _PORTABLE_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
@@ -95,7 +96,14 @@ def _reduction_2d_kernel(
     tl.store(out_ptr + m_offsets, acc, mask=m_mask)
 
 
-@triton.autotune(configs=_REDUCE_CONFIGS, key=["M", "N"])
+@libentry()
+@libtuner(
+    configs=_REDUCE_CONFIGS,
+    key=["M", "N"],
+    strategy=["align32", "align32"],
+    warmup=5,
+    rep=10,
+)
 @triton.jit
 def _reduction_3d_kernel(
     x_ptr,

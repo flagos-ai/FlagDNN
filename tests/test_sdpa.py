@@ -254,6 +254,53 @@ def test_sdpa_gqa_causal_d128_low_precision(cudnn_handle, dtype):
 
 @pytest.mark.sdpa
 @pytest.mark.graph
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or torch.cuda.get_device_capability() != (9, 0),
+    reason="SM90 CUDA device is required",
+)
+@pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16))
+@pytest.mark.parametrize(
+    ("shape", "causal", "generate_stats"),
+    (
+        ((1, 32, 32, 1024, 1024, 64), True, True),
+        ((8, 32, 32, 256, 256, 128), False, False),
+    ),
+)
+def test_sdpa_nvidia_sm90_exact_fast_path(
+    cudnn_handle, dtype, shape, causal, generate_stats
+):
+    torch.manual_seed(19)
+    q, k, v = _make_qkv(shape, dtype)
+    right_bound = 0 if causal else None
+    expected = _cudnn_sdpa(
+        q,
+        k,
+        v,
+        cudnn_handle,
+        right_bound=right_bound,
+        generate_stats=generate_stats,
+    )
+    actual = _run_flag_dnn_sdpa_graph(
+        q,
+        k,
+        v,
+        diagonal_band_right_bound=right_bound,
+        generate_stats=generate_stats,
+    )
+    if generate_stats:
+        _assert_sdpa_close(actual, expected, dtype)
+    else:
+        utils.gems_assert_close(
+            actual,
+            expected,
+            dtype,
+            atol=_output_atol(dtype),
+        )
+
+
+@pytest.mark.sdpa
+@pytest.mark.graph
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", (torch.float16, torch.bfloat16))
 def test_sdpa_long_causal_host_k_descriptor_rebinds_storage(

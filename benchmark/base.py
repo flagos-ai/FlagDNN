@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import json
+import math
 from functools import lru_cache
 from typing import Any
 
@@ -42,6 +44,8 @@ from devtools.dnn_reference.interfaces import (  # noqa: E402
 
 
 _lower_percentile = lower_percentile
+PERF_RECORD_PREFIX = "FLAGDNN_PERF_JSON "
+UNSUPPORTED_RECORD_PREFIX = "FLAGDNN_UNSUPPORTED_JSON "
 
 
 @lru_cache(maxsize=1)
@@ -89,6 +93,56 @@ def bench_pair_ms(first, second, *, use_ascend_events=False):
     return timer.measure_pair(first, second)
 
 
+def _raw_perf_record(op_name, dtype, item, reference_name):
+    baseline = float(item.latency_base)
+    flagdnn = float(item.latency)
+    speedup = baseline / flagdnn
+    if not all(
+        math.isfinite(value) and value > 0.0
+        for value in (baseline, flagdnn, speedup)
+    ):
+        raise ValueError(
+            "performance latency and speedup must be finite and positive"
+        )
+    execution_path = str(item.execution_path or "").strip()
+    if not execution_path:
+        raise ValueError("performance metric execution_path must be nonempty")
+    baseline_gbps = None if item.gbps_base is None else float(item.gbps_base)
+    flagdnn_gbps = None if item.gbps is None else float(item.gbps)
+    return {
+        "schema_version": 1,
+        "operator": op_name,
+        "dtype": str(dtype),
+        "dtype_short": str(dtype).removeprefix("torch."),
+        "mode": BenchMode.KERNEL.value,
+        "level": BenchLevel.COMPREHENSIVE.value,
+        "execution_path": execution_path,
+        "size_detail": str(item.shape_detail),
+        "baseline": reference_name,
+        "baseline_latency_ms": baseline,
+        "flagdnn_latency_ms": flagdnn,
+        "speedup": speedup,
+        "baseline_gbps": baseline_gbps,
+        "flagdnn_gbps": flagdnn_gbps,
+        "cudnn_latency": baseline,
+        "flagdnn_latency": flagdnn,
+        "cudnn_gbps": baseline_gbps,
+    }
+
+
+def format_unsupported_record(op_name, dtype, shape, reason):
+    payload = {
+        "schema_version": 1,
+        "operator": op_name,
+        "dtype": str(dtype),
+        "size_detail": repr(shape),
+        "reason": str(reason).replace("\n", " "),
+    }
+    return UNSUPPORTED_RECORD_PREFIX + json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, allow_nan=False
+    )
+
+
 def format_perf_result(op_name, dtype, metrics, reference_name="cuDNN"):
     title = (
         f"\nOperator: {op_name}  {reference_name} Compare Performance Test "
@@ -117,11 +171,28 @@ def format_perf_result(op_name, dtype, metrics, reference_name="cuDNN"):
             f"{item.gbps:>20.3f}"
             f"          {item.shape_detail}\n"
         )
+    raw_records = [
+        _raw_perf_record(op_name, dtype, item, reference_name)
+        for item in metrics
+        if item.error_msg is None
+    ]
+    lines.extend(
+        PERF_RECORD_PREFIX
+        + json.dumps(
+            record,
+            ensure_ascii=False,
+            sort_keys=True,
+            allow_nan=False,
+        )
+        + "\n"
+        for record in raw_records
+    )
     return "".join(lines)
 
 
 class DnnCompareBenchmark:
     op_name: str = ""
+    execution_path: str = "compiled_graph.bind"
     dtypes: tuple[Any, ...] = consts.COMPARE_FLOAT_DTYPES
     shapes: Any = ()
     shape_ids_env: str = ""
@@ -223,12 +294,16 @@ class DnnCompareBenchmark:
                         if flag_dnn_ms > 0
                         else None
                     ),
+                    execution_path=self.execution_path,
                 )
             )
 
         for shape, reason in unsupported:
             reason = reason.replace("\n", " ")
             print(f"UNSUPPORTED shape={shape!r} reason={reason}")
+            print(
+                format_unsupported_record(self.op_name, dtype, shape, reason)
+            )
         if not metrics:
             reasons = "; ".join(reason for _, reason in unsupported)
             pytest.skip(
@@ -257,6 +332,7 @@ class DnnCompareBenchmark:
 
 class CudnnCompareBenchmark:
     op_name: str = ""
+    execution_path: str = "compiled_graph.bind"
     dtypes: tuple[Any, ...] = consts.COMPARE_FLOAT_DTYPES
     shapes: Any = ()
     shape_ids_env: str = ""
@@ -328,12 +404,16 @@ class CudnnCompareBenchmark:
                         if flag_dnn_ms > 0
                         else None
                     ),
+                    execution_path=self.execution_path,
                 )
             )
 
         for shape, reason in unsupported:
             reason = reason.replace("\n", " ")
             print(f"UNSUPPORTED shape={shape!r} reason={reason}")
+            print(
+                format_unsupported_record(self.op_name, dtype, shape, reason)
+            )
         if not metrics:
             reasons = "; ".join(reason for _, reason in unsupported)
             pytest.skip(

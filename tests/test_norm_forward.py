@@ -18,6 +18,8 @@ import torch
 import flag_dnn
 from tests import consts
 from tests.norm_test_utils import (
+    _assert_outputs_close,
+    _compile_layernorm,
     run_batchnorm_test,
     run_layernorm_test,
     run_rmsnorm_test,
@@ -29,6 +31,28 @@ from tests.norm_test_utils import (
 @pytest.mark.parametrize("dtype", consts.DNN_COMPARE_DTYPES)
 def test_layernorm_multi_output(dnn_reference, dtype):
     run_layernorm_test(dnn_reference, dtype)
+
+
+@pytest.mark.layernorm
+@pytest.mark.graph
+@pytest.mark.parametrize("dtype", consts.DNN_COMPARE_DTYPES)
+def test_layernorm_wide_single_tile(dnn_reference, dtype):
+    torch.manual_seed(11)
+    epsilon = 1e-3
+    x = torch.randn(
+        (2, 4, 4096), device=flag_dnn.device, dtype=dtype
+    ).contiguous()
+    scale = torch.randn(
+        (1, 1, 4096), device=x.device, dtype=dtype
+    ).contiguous()
+    bias = torch.randn((1, 1, 4096), device=x.device, dtype=dtype).contiguous()
+    expected = dnn_reference.run(
+        "layernorm", "TRAINING", x, scale, bias, epsilon
+    )
+    actual = _compile_layernorm(x, scale, bias, epsilon).run(x, scale, bias)
+    dnn_reference.synchronize()
+    atol = 2e-2 if dtype in (torch.float16, torch.bfloat16) else 2e-4
+    _assert_outputs_close(actual, expected, dtype, atol)
 
 
 @pytest.mark.rmsnorm

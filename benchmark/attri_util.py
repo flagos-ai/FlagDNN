@@ -96,6 +96,8 @@ class BenchmarkMetrics:
     compared_speedup: Optional[float] = None
     # Error message
     error_msg: Optional[str] = None
+    # Measured FlagDNN execution path
+    execution_path: Optional[str] = None
 
 
 ALL_AVAILABLE_METRICS = set(

@@ -31,6 +31,20 @@ _TANH_CONFIGS = runtime.get_tuned_config("tanh")
 _PORTABLE_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
 
 
+def _is_dense_flat_tensor(input: torch.Tensor) -> bool:
+    return (
+        input.is_contiguous()
+        or (
+            input.ndim == 4
+            and input.is_contiguous(memory_format=torch.channels_last)
+        )
+        or (
+            input.ndim == 5
+            and input.is_contiguous(memory_format=torch.channels_last_3d)
+        )
+    )
+
+
 @libentry()
 @libtuner(
     configs=_TANH_CONFIGS,
@@ -75,7 +89,7 @@ def tanh(input: torch.Tensor) -> torch.Tensor:
             f"got device={input.device}"
         )
 
-    if not input.is_contiguous():
+    if not _is_dense_flat_tensor(input):
         input = input.contiguous()
 
     n_elements = input.numel()
