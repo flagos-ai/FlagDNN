@@ -15,6 +15,7 @@
 import pytest
 import torch
 
+import flag_dnn
 from tests import consts
 from tests.unary_test_utils import run_unary_test
 
@@ -26,3 +27,15 @@ from tests.unary_test_utils import run_unary_test
 def test_tanh(dnn_reference, dtype, shape):
     torch.manual_seed(0)
     run_unary_test(dnn_reference, "tanh", dtype, shape)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", consts.DNN_COMPARE_DTYPES)
+def test_tanh_preserves_channels_last_layout(dtype):
+    x = torch.randn((4, 16, 64, 128), device=flag_dnn.device, dtype=dtype)
+    x = x.contiguous(memory_format=torch.channels_last)
+
+    actual = flag_dnn.tanh(x)
+
+    assert actual.stride() == x.stride()
+    torch.testing.assert_close(actual, torch.tanh(x))

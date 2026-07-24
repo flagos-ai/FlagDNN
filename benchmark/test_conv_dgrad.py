@@ -219,10 +219,7 @@ class ConvDgradBenchmark(CudnnCompareBenchmark):
             "conv_dgrad"
         ]
 
-        def run():
-            return compiled.run(loss, weight)
-
-        return run
+        return compiled.bind(loss, weight)
 
     def transfer_bytes(self, inputs):
         loss, weight = inputs

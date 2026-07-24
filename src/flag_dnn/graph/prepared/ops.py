@@ -23,11 +23,14 @@ for _module_name in (
     "batchnorm",
     "conv",
     "matmul",
+    "norm",
     "pointwise",
+    "reduction",
     "sdpa_backward",
     "sdpa_forward",
     "sdpa_fp8_forward",
     "sdpa_fp8_backward",
+    "utility",
 ):
     import_module(f"{__package__}.{_module_name}")
 

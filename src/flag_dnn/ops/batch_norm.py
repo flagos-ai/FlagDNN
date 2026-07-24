@@ -19,10 +19,12 @@ import torch
 import triton
 import triton.language as tl
 
+from flag_dnn import runtime
 from flag_dnn.runtime import torch_device_fn
-from flag_dnn.utils import triton_lang_extension as tle
+from flag_dnn.utils import libentry, libtuner, triton_lang_extension as tle
 
 logger = logging.getLogger(__name__)
+_BATCH_NORM_CONFIGS = runtime.get_tuned_config("batch_norm")
 
 
 def _scalar(value: Any) -> float:
@@ -93,24 +95,13 @@ def batch_norm_inference_kernel(
     tl.store(y_ptr + offsets, y.to(y_ptr.dtype.element_ty), mask=mask)
 
 
-def get_autotune_configs():
-    return [
-        triton.Config({"BLOCK_SIZE": 128}, num_warps=2, num_stages=2),
-        triton.Config({"BLOCK_SIZE": 256}, num_warps=4, num_stages=2),
-        triton.Config({"BLOCK_SIZE": 512}, num_warps=4, num_stages=2),
-        triton.Config({"BLOCK_SIZE": 1024}, num_warps=8, num_stages=3),
-        triton.Config({"BLOCK_SIZE": 1024}, num_warps=16, num_stages=2),
-        triton.Config({"BLOCK_SIZE": 2048}, num_warps=16, num_stages=2),
-        triton.Config({"BLOCK_SIZE": 1024}, num_warps=8, num_stages=1),
-        triton.Config({"BLOCK_SIZE": 2048}, num_warps=16, num_stages=1),
-        triton.Config({"BLOCK_SIZE": 4096}, num_warps=16, num_stages=2),
-    ]
-
-
-@triton.autotune(
-    configs=get_autotune_configs(),
+@libentry()
+@libtuner(
+    configs=_BATCH_NORM_CONFIGS,
     key=["N", "C", "S"],
     restore_value=["mean_ptr", "var_ptr"],
+    warmup=5,
+    rep=10,
 )
 @triton.jit
 def batch_norm_fused_kernel_optimized_(

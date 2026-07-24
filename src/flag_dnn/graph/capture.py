@@ -158,7 +158,11 @@ class CompiledGraph:
 
     def bind(self, *inputs: Any) -> Callable[[], Any]:
         """Bind inputs and prepare a minimal-overhead graph replay callable."""
-        from flag_dnn.graph.executor import _get_prepared_plan, execute_plan
+        from flag_dnn.graph.executor import (
+            _get_prepared_plan,
+            _validate_prepared_input,
+            execute_plan,
+        )
         from flag_dnn.graph.prepared import prepared_output_reuse
 
         prepared = _get_prepared_plan(self.plan)
@@ -167,7 +171,10 @@ class CompiledGraph:
                 f"compiled graph expected {prepared.input_count} inputs, "
                 f"got {len(inputs)}"
             )
-        if prepared.validate_inputs or prepared.fast_path is None:
+        if prepared.validate_inputs:
+            for check, actual in zip(prepared.input_checks, inputs):
+                _validate_prepared_input(check, actual)
+        if prepared.fast_path is None:
 
             def bound() -> Any:
                 return execute_plan(self.plan, inputs, reuse_outputs=True)

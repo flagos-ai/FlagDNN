@@ -174,10 +174,7 @@ class MatmulBenchmark(CudnnCompareBenchmark):
         )
         assert [node.op_type for node in compiled.graph.nodes] == ["matmul"]
 
-        def run():
-            return compiled.run(a, b)
-
-        return run
+        return compiled.bind(a, b)
 
     def transfer_bytes(self, inputs):
         a, b = inputs

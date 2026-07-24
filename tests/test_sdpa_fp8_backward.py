@@ -26,6 +26,7 @@ from tests import consts
 
 _FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
 _FP8_BWD_CASES = consts.SDPA_FP8_CASES[:4] + (consts.SDPA_FP8_CASES[5],)
+_NVIDIA_FP8_BWD_CASE = (4, 16, 16, 512, 512, 128, False)
 
 _ATOL = 0.18
 _RTOL = 0.35
@@ -388,12 +389,7 @@ def _assert_close(flag_out, cudnn_out, scales):
         assert actual_v > 0.0
 
 
-@pytest.mark.sdpa_fp8_backward
-@pytest.mark.graph
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-@pytest.mark.parametrize("dtype", _FP8_DTYPES)
-@pytest.mark.parametrize("case", _FP8_BWD_CASES)
-def test_sdpa_fp8_backward_vs_cudnn(cudnn_handle, dtype, case):
+def _check_sdpa_fp8_backward(cudnn_handle, dtype, case):
     q, k, v, dO, descale, causal = _make_inputs(case, dtype)
     attn_scale = 1.0 / math.sqrt(q.shape[-1])
     ss = _fp8_scale(1.0, dtype)
@@ -435,3 +431,27 @@ def test_sdpa_fp8_backward_vs_cudnn(cudnn_handle, dtype, case):
         q, k, v, o, dO, stats, scales, descale, attn_scale, causal
     )
     _assert_close(flag_out, cudnn_out, scales)
+
+
+@pytest.mark.sdpa_fp8_backward
+@pytest.mark.graph
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", _FP8_DTYPES)
+@pytest.mark.parametrize("case", _FP8_BWD_CASES)
+def test_sdpa_fp8_backward_vs_cudnn(cudnn_handle, dtype, case):
+    _check_sdpa_fp8_backward(cudnn_handle, dtype, case)
+
+
+@pytest.mark.sdpa_fp8_backward
+@pytest.mark.graph
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or torch.cuda.get_device_capability() != (9, 0),
+    reason="SM90 CUDA device is required",
+)
+def test_sdpa_fp8_backward_nvidia_sm90_exact_fast_path(cudnn_handle):
+    _check_sdpa_fp8_backward(
+        cudnn_handle,
+        torch.float8_e4m3fn,
+        _NVIDIA_FP8_BWD_CASE,
+    )

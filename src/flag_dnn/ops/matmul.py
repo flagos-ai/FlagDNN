@@ -18,13 +18,9 @@ import triton.language as tl
 
 from flag_dnn import runtime
 from flag_dnn.ops.mm import mm
-from flag_dnn.ops.matmul_sm90 import launch_sm90_matmul_if_supported
 from flag_dnn.runtime import torch_device_fn
 from flag_dnn.utils import libentry, libtuner
-from flag_dnn.utils.device_info import (
-    get_device_capability_for,
-    get_device_info,
-)
+from flag_dnn.utils.device_info import get_device_info
 
 _MATMUL_CONFIGS = runtime.get_tuned_config("matmul")
 _MATMUL_PERSISTENT_CONFIGS = runtime.get_tuned_config("matmul_persistent")
@@ -426,14 +422,10 @@ def _batched_matmul_3d_out(
     exact_long_k = batch == 32 and m == 1024 and n == 1024 and k == 4096
 
     with torch_device_fn.device(A.device):
-        if launch_sm90_matmul_if_supported(
-            A,
-            B,
-            C,
-            compute_mode=compute_mode,
-            capability=get_device_capability_for(A.device),
-        ):
-            return C
+        backend_matmul = runtime.get_backend_hook("matmul_3d_out")
+        if backend_matmul is not None:
+            if backend_matmul(A, B, C, compute_mode=compute_mode):
+                return C
         if (
             exact_long_k
             and A.dtype in (torch.float16, torch.bfloat16)

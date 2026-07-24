@@ -222,10 +222,7 @@ class ConvFpropBenchmark(CudnnCompareBenchmark):
             "conv_fprop"
         ]
 
-        def run():
-            return compiled.run(x, weight)
-
-        return run
+        return compiled.bind(x, weight)
 
     def _output_shape(self, inputs):
         x, weight = inputs

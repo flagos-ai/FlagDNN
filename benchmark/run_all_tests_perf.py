@@ -12,24 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
+import argparse
 import glob
+import json
+import math
+import os
+import platform
+import re
 import subprocess
 import sys
 import time
-import json
-import re
 from datetime import datetime
-from typing import TypedDict
+from pathlib import Path
+from typing import Any, Sequence, TypedDict
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+import torch  # noqa: E402
+import triton  # noqa: E402
+
+from benchmark import consts  # noqa: E402
+from benchmark.base import (  # noqa: E402
+    PERF_RECORD_PREFIX,
+    UNSUPPORTED_RECORD_PREFIX,
+)
 
 # ================= 配置区 =================
 
 # 目标算子列表 (白名单)
 # 例如: ["relu", "add"]。如果留空 []，则自动测试目录下所有的 test_*.py
 TARGET_OPERATORS: list[str] = []
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 
 # benchmark/run_all_tests_perf.py 只负责 benchmark 目录。
 TEST_DIR = SCRIPT_DIR
@@ -231,7 +246,7 @@ def all_pytest_items_skipped(stdout_text):
     )
 
 
-def parse_perf_output(stdout_text):
+def _parse_legacy_perf_output(stdout_text):
     """
     从 pytest 的输出中解析出性能数据。
 
@@ -338,7 +353,168 @@ def parse_perf_output(stdout_text):
     return records
 
 
-def main() -> int:
+def parse_perf_output(
+    stdout_text: str,
+    *,
+    source_file: str,
+    source_log: str | None = None,
+    allow_legacy: bool = False,
+) -> list[dict[str, Any]]:
+    raw_records: list[dict[str, Any]] = []
+    success_count = sum(
+        line.startswith("SUCCESS") for line in stdout_text.splitlines()
+    )
+    required = {
+        "schema_version",
+        "operator",
+        "dtype",
+        "mode",
+        "level",
+        "execution_path",
+        "size_detail",
+        "baseline_latency_ms",
+        "flagdnn_latency_ms",
+        "speedup",
+    }
+    for line in stdout_text.splitlines():
+        marker = line.find(PERF_RECORD_PREFIX)
+        if marker < 0:
+            continue
+        payload = line[marker + len(PERF_RECORD_PREFIX) :]
+        try:
+            record = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise ValueError("malformed raw performance record") from exc
+        if not isinstance(record, dict):
+            raise ValueError("raw performance record must be an object")
+        missing = required - record.keys()
+        if missing or record.get("schema_version") != 1:
+            raise ValueError(f"invalid raw schema; missing={sorted(missing)}")
+        for field in (
+            "operator",
+            "dtype",
+            "mode",
+            "level",
+            "execution_path",
+            "size_detail",
+        ):
+            if not str(record[field]).strip():
+                raise ValueError(f"raw field {field} must be nonempty")
+        baseline = float(record["baseline_latency_ms"])
+        flagdnn = float(record["flagdnn_latency_ms"])
+        speedup = float(record["speedup"])
+        if not all(
+            math.isfinite(value) and value > 0.0
+            for value in (baseline, flagdnn, speedup)
+        ):
+            raise ValueError("raw latency/speedup must be finite and positive")
+        if not math.isclose(
+            speedup, baseline / flagdnn, rel_tol=1e-12, abs_tol=0.0
+        ):
+            raise ValueError("raw speedup does not match raw latencies")
+        normalized = dict(record)
+        normalized["source_file"] = source_file
+        normalized["source_log"] = source_log
+        normalized["source_row_index"] = len(raw_records)
+        raw_records.append(normalized)
+    if raw_records:
+        if len(raw_records) != success_count:
+            raise ValueError(
+                f"raw/SUCCESS count mismatch: {len(raw_records)} != "
+                f"{success_count}"
+            )
+        return raw_records
+    if success_count and not allow_legacy:
+        raise ValueError("raw performance records are required")
+    if not allow_legacy:
+        return []
+
+    legacy = _parse_legacy_perf_output(stdout_text)
+    normalized_legacy = []
+    for index, row in enumerate(legacy):
+        baseline = float(row["cudnn_latency"])
+        flagdnn = float(row["flagdnn_latency"])
+        normalized_legacy.append(
+            {
+                **row,
+                "schema_version": 0,
+                "execution_path": "legacy_text_parser",
+                "baseline_latency_ms": baseline,
+                "flagdnn_latency_ms": flagdnn,
+                "speedup": baseline / flagdnn,
+                "source_file": source_file,
+                "source_log": source_log,
+                "source_row_index": index,
+            }
+        )
+    return normalized_legacy
+
+
+def parse_unsupported_output(
+    stdout_text: str, *, source_file: str
+) -> list[dict[str, Any]]:
+    lines = stdout_text.splitlines()
+    human_count = sum("UNSUPPORTED shape=" in line for line in lines)
+    records: list[dict[str, Any]] = []
+    required = {
+        "schema_version",
+        "operator",
+        "dtype",
+        "size_detail",
+        "reason",
+    }
+    for line in lines:
+        marker = line.find(UNSUPPORTED_RECORD_PREFIX)
+        if marker < 0:
+            continue
+        payload = line[marker + len(UNSUPPORTED_RECORD_PREFIX) :]
+        try:
+            record = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise ValueError("malformed unsupported record") from exc
+        if not isinstance(record, dict):
+            raise ValueError("unsupported record must be an object")
+        missing = required - record.keys()
+        if missing or record.get("schema_version") != 1:
+            raise ValueError(
+                f"invalid unsupported schema; missing={sorted(missing)}"
+            )
+        normalized = {
+            "schema_version": 1,
+            "operator": str(record["operator"]),
+            "dtype": str(record["dtype"]),
+            "size_detail": str(record["size_detail"]),
+            "reason": str(record["reason"]),
+            "source_file": source_file,
+        }
+        if not all(str(value).strip() for value in normalized.values()):
+            raise ValueError("unsupported record contains an empty field")
+        records.append(normalized)
+    if len(records) != human_count:
+        raise ValueError(
+            f"unsupported raw/human count mismatch: "
+            f"{len(records)} != {human_count}"
+        )
+    identities = [
+        (row["source_file"], row["dtype"], row["size_detail"])
+        for row in records
+    ]
+    if len(identities) != len(set(identities)):
+        raise ValueError(
+            "duplicate unsupported identity in one benchmark file"
+        )
+    return records
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--operator", action="append", default=[])
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--allow-legacy-perf", action="store_true")
+    return parser.parse_args(argv)
+
+
+def _legacy_main() -> int:
     os.makedirs(LOG_DIR, exist_ok=True)
 
     # 收集并过滤测试文件
@@ -427,7 +603,11 @@ def main() -> int:
         duration = time.time() - start_time
 
         # ==== 核心解析步骤 ====
-        extracted_data = parse_perf_output(result.stdout)
+        extracted_data = parse_perf_output(
+            result.stdout,
+            source_file=file_name,
+            allow_legacy=True,
+        )
         all_perf_data.extend(extracted_data)
 
         # 分析退出状态码
@@ -538,6 +718,269 @@ def main() -> int:
     print(f"运行状态汇总已保存至 {REPORT_FILE}")
     print(f"总耗时: {summary['total_duration_seconds']} 秒")
 
+    has_failures = summary["failed"] or summary["errored_or_interrupted"]
+    return 1 if has_failures else 0
+
+
+def _classify_result(returncode: int, stdout: str) -> tuple[str, str]:
+    if returncode == 0 and all_pytest_items_skipped(stdout):
+        return "SKIPPED/UNSUPPORTED", "⏭️ SKIPPED/UNSUPPORTED"
+    if returncode == 0:
+        return "PASS", "✅ PASS"
+    if returncode == 1:
+        return "FAIL", "❌ FAIL"
+    if returncode == 5 and all_pytest_items_skipped(stdout):
+        return "SKIPPED/UNSUPPORTED", "⏭️ SKIPPED/UNSUPPORTED"
+    if returncode == 5:
+        return "NO TESTS", "⚠️ NO TESTS"
+    return f"ERROR (Code: {returncode})", f"💥 ERROR (Code: {returncode})"
+
+
+def _environment_snapshot() -> dict[str, Any]:
+    cuda_available = torch.cuda.is_available()
+    return {
+        "python": platform.python_version(),
+        "torch": torch.__version__,
+        "triton": triton.__version__,
+        "cuda_runtime": torch.version.cuda,
+        "cuda_available": cuda_available,
+        "device_name": (
+            torch.cuda.get_device_name() if cuda_available else None
+        ),
+        "device_capability": (
+            list(torch.cuda.get_device_capability())
+            if cuda_available
+            else None
+        ),
+        "flagdnn_cache_dir": os.environ.get("FLAGGEMS_CACHE_DIR"),
+        "triton_cache_dir": os.environ.get("TRITON_CACHE_DIR"),
+        "triton_cache_autotuning": os.environ.get("TRITON_CACHE_AUTOTUNING"),
+        "perf_warmup": consts.bench_warmup(),
+        "perf_repeat": consts.bench_repeat(),
+    }
+
+
+def _case_key(row: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    return tuple(
+        str(row[field])
+        for field in ("operator", "dtype", "mode", "level", "size_detail")
+    )  # type: ignore[return-value]
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    output_dir = args.output_dir.resolve()
+    if output_dir.exists():
+        print(
+            f"refusing to overwrite output directory: {output_dir}",
+            file=sys.stderr,
+        )
+        return 2
+
+    all_test_files = sorted(Path(TEST_DIR).glob("test_*.py"))
+    by_operator = {
+        get_operator_name(path.name): path for path in all_test_files
+    }
+    requested = list(args.operator)
+    if len(requested) != len(set(requested)):
+        print("--operator values must be unique", file=sys.stderr)
+        return 2
+    invalid = [
+        name for name in requested if re.fullmatch(r"[a-z0-9_]+", name) is None
+    ]
+    unknown = sorted(set(requested).difference(by_operator))
+    if invalid or unknown:
+        print(
+            f"invalid operators={invalid}, unknown operators={unknown}",
+            file=sys.stderr,
+        )
+        return 2
+    test_files = (
+        [by_operator[name] for name in requested]
+        if requested
+        else all_test_files
+    )
+    if not test_files:
+        print("no benchmark test files selected", file=sys.stderr)
+        return 2
+
+    log_dir = output_dir / "benchmark_logs"
+    log_dir.mkdir(parents=True)
+    report_file = output_dir / "benchmark_summary.json"
+    data_file = output_dir / "benchmark_data.json"
+    summary: dict[str, Any] = {
+        "total": len(test_files),
+        "passed": 0,
+        "failed": 0,
+        "skipped_or_unsupported": 0,
+        "errored_or_interrupted": 0,
+        "details": [],
+        "unsupported_records": [],
+        "environment": _environment_snapshot(),
+        "start_time": datetime.now().isoformat(timespec="seconds"),
+    }
+    all_perf_data: list[dict[str, Any]] = []
+    all_unsupported_records: list[dict[str, Any]] = []
+    total_start = time.time()
+
+    for index, file_path in enumerate(test_files, 1):
+        file_name = file_path.name
+        relative_test = str(file_path.relative_to(REPO_ROOT))
+        log_file = log_dir / f"benchmark_{file_name}.log"
+        source_log = str(log_file.relative_to(output_dir))
+        cmd = [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-v",
+            "-s",
+            "-rs",
+            relative_test,
+        ]
+        print(
+            f"[{index}/{len(test_files)}] benchmark: {file_name:<35}",
+            end="",
+            flush=True,
+        )
+        started = time.time()
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+        )
+        duration = time.time() - started
+        status_label, status_display = _classify_result(
+            result.returncode, result.stdout
+        )
+        extracted_data: list[dict[str, Any]] = []
+        unsupported_data: list[dict[str, Any]] = []
+        if status_label in {"PASS", "SKIPPED/UNSUPPORTED"}:
+            try:
+                extracted_data = parse_perf_output(
+                    result.stdout,
+                    source_file=file_name,
+                    source_log=source_log,
+                    allow_legacy=args.allow_legacy_perf,
+                )
+                unsupported_data = parse_unsupported_output(
+                    result.stdout, source_file=file_name
+                )
+            except ValueError as exc:
+                status_label = "RAW DATA ERROR"
+                status_display = f"💥 RAW DATA ERROR ({exc})"
+                extracted_data = []
+                unsupported_data = []
+
+        accepted_data = extracted_data if status_label == "PASS" else []
+        if status_label == "PASS":
+            summary["passed"] += 1
+        elif status_label == "SKIPPED/UNSUPPORTED":
+            summary["skipped_or_unsupported"] += 1
+        elif status_label == "FAIL":
+            summary["failed"] += 1
+        else:
+            summary["errored_or_interrupted"] += 1
+        all_perf_data.extend(accepted_data)
+        all_unsupported_records.extend(unsupported_data)
+        print(f" -> {status_display} ({duration:.2f}s)")
+
+        with log_file.open("x", encoding="utf-8") as handle:
+            handle.write(f"=== Command: {' '.join(cmd)} ===\n")
+            handle.write(f"=== Status: {status_display} ===\n")
+            handle.write(f"=== Duration: {duration:.6f}s ===\n\n")
+            handle.write("--- STDOUT ---\n")
+            handle.write(result.stdout)
+            handle.write("\n")
+            if result.stderr:
+                handle.write("--- STDERR ---\n")
+                handle.write(result.stderr)
+                handle.write("\n")
+
+        summary["details"].append(
+            {
+                "file": file_name,
+                "operator": get_operator_name(file_name),
+                "status": status_label,
+                "return_code": result.returncode,
+                "duration_seconds": duration,
+                "log_path": source_log,
+                "collected_items": parse_pytest_collected_count(result.stdout),
+                "passed_items": parse_pytest_outcome_count(
+                    result.stdout, "passed"
+                ),
+                "failed_items": parse_pytest_outcome_count(
+                    result.stdout, "failed"
+                ),
+                "skipped_items": parse_pytest_outcome_count(
+                    result.stdout, "skipped"
+                ),
+                "error_items": parse_pytest_outcome_count(
+                    result.stdout, "errors"
+                ),
+                "data_points_collected": len(accepted_data),
+                "raw_records_collected": sum(
+                    row["schema_version"] == 1 for row in accepted_data
+                ),
+                "legacy_records_collected": sum(
+                    row["schema_version"] == 0 for row in accepted_data
+                ),
+                "unsupported_records_collected": len(unsupported_data),
+                "dtypes_collected": sorted(
+                    {str(row["dtype"]) for row in accepted_data}
+                ),
+                "operators_collected": sorted(
+                    {str(row["operator"]) for row in accepted_data}
+                ),
+            }
+        )
+
+    all_perf_data.sort(key=_case_key)
+    keys = [_case_key(row) for row in all_perf_data]
+    if len(keys) != len(set(keys)):
+        summary["errored_or_interrupted"] += 1
+        summary["duplicate_case_keys"] = [
+            list(key)
+            for key in sorted({key for key in keys if keys.count(key) > 1})
+        ]
+    all_unsupported_records.sort(
+        key=lambda row: (
+            row["source_file"],
+            row["dtype"],
+            row["size_detail"],
+            row["operator"],
+            row["reason"],
+        )
+    )
+    summary["unsupported_records"] = all_unsupported_records
+    summary["total_duration_seconds"] = time.time() - total_start
+    with report_file.open("x", encoding="utf-8") as handle:
+        json.dump(
+            summary,
+            handle,
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        handle.write("\n")
+    with data_file.open("x", encoding="utf-8") as handle:
+        json.dump(
+            all_perf_data,
+            handle,
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        handle.write("\n")
+
+    print(
+        f"completed: files={summary['total']} passed={summary['passed']} "
+        f"skipped={summary['skipped_or_unsupported']} "
+        f"errors={summary['failed'] + summary['errored_or_interrupted']} "
+        f"records={len(all_perf_data)} output={output_dir}"
+    )
     has_failures = summary["failed"] or summary["errored_or_interrupted"]
     return 1 if has_failures else 0
 

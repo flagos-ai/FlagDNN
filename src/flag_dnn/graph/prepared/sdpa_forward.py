@@ -18,6 +18,7 @@ from typing import Any, Optional, Sequence
 
 import torch
 
+from flag_dnn import runtime
 from flag_dnn.graph.prepared import (
     PreparedKernelPipelineSpec,
     PreparedPipelineStepSpec,
@@ -41,6 +42,11 @@ def _prepare_sdpa(
     input_specs: Sequence[TensorSpec],
     default_run_fn: RunFn,
 ) -> Optional[RunFn]:
+    backend_prepare = runtime.get_backend_hook("prepare_sdpa")
+    if backend_prepare is not None:
+        backend_run = backend_prepare(attrs, input_specs, default_run_fn)
+        if backend_run is not None:
+            return backend_run
     # Bind every scalar kernel argument at plan time so graph replay only
     # has to allocate outputs and launch the cached compiled kernel.
     import math

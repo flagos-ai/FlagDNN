@@ -199,6 +199,7 @@ def conv1d_depthwise_kernel(
     DIL_W: tl.constexpr,
     KW: tl.constexpr,
     HAS_BIAS: tl.constexpr,
+    ACTIVATION: tl.constexpr,
     BLOCK_C: tl.constexpr,
     BLOCK_L: tl.constexpr,
 ):
@@ -240,6 +241,9 @@ def conv1d_depthwise_kernel(
     if HAS_BIAS:
         bias = tl.load(bias_ptr + offs_c * bias_stride, mask=mask_c, other=0.0)
         acc += bias[:, None]
+
+    if ACTIVATION == "silu":
+        acc *= tl.sigmoid(acc)
 
     tl.store(
         y_base + offs_c[:, None] * y_stride_c + offs_l[None, :] * y_stride_l,
@@ -522,6 +526,7 @@ def conv1d(
                 dilation_w,
                 kw,
                 HAS_BIAS=bias is not None,
+                ACTIVATION="identity",
             )
             return output
 

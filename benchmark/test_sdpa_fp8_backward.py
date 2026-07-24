@@ -334,10 +334,7 @@ class SdpaFp8BackwardBenchmark(CudnnCompareBenchmark):
             "sdpa_fp8_backward"
         ]
 
-        def run():
-            return compiled.run(q, k, v, o, dO, stats)
-
-        return run
+        return compiled.bind(q, k, v, o, dO, stats)
 
     def transfer_bytes(self, inputs):
         q, k, v, o, dO, stats = inputs[:6]

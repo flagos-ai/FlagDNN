@@ -27,3 +27,31 @@ def test_gen_index(dnn_reference, dtype, case):
     torch.manual_seed(0)
     shape, axis = case
     run_gen_index_test(dnn_reference, dtype, shape, axis)
+
+
+@pytest.mark.gen_index
+@pytest.mark.graph
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_gen_index_large_axis_two_exact_values():
+    import flag_dnn
+
+    x = torch.empty((32, 128, 256), device=flag_dnn.device)
+    expected = torch.arange(256, device=x.device, dtype=torch.float32)
+    expected = expected.reshape(1, 1, 256).expand_as(x)
+
+    @flag_dnn.graph
+    def gen_index_graph(x):
+        return flag_dnn.gen_index(
+            x,
+            2,
+            compute_data_type="float32",
+            name="gen_index",
+        )
+
+    compiled = flag_dnn.compile(
+        gen_index_graph,
+        inputs=[flag_dnn.TensorSpec.from_tensor(x, "x")],
+        options={"cache": None},
+    )
+    actual = compiled.run(x)
+    torch.testing.assert_close(actual, expected, atol=0, rtol=0)
