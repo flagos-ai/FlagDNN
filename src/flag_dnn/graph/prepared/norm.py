@@ -128,6 +128,21 @@ def _prepare_layernorm(
     if checks is None:
         return None
 
+    prepare_backend = runtime.get_backend_hook("prepare_dense_layernorm")
+    if prepare_backend is not None:
+        prepared = prepare_backend(
+            attrs=attrs,
+            input_specs=input_specs,
+            default_run_fn=default_run_fn,
+            input_checks=checks,
+            input_shape=input_shape,
+            stat_shape=stat_shape,
+            rows=rows,
+            columns=columns,
+        )
+        if prepared is not None:
+            return prepared
+
     input_stride = tuple(int(item) for item in input_spec.stride)
     output_cache: dict[tuple[Any, ...], tuple[torch.Tensor, ...]] = {}
 
@@ -279,6 +294,25 @@ def _prepare_rmsnorm(
     )
     if checks is None:
         return None
+
+    prepare_dense_backend = runtime.get_backend_hook("prepare_dense_rmsnorm")
+    if prepare_dense_backend is not None:
+        prepared = prepare_dense_backend(
+            attrs=attrs,
+            input_specs=input_specs,
+            default_run_fn=default_run_fn,
+            input_checks=checks,
+            input_shape=input_shape,
+            stat_shape=stat_shape,
+            rows=rows,
+            columns=columns,
+            has_bias=has_bias,
+            bias_index=bias_index,
+            epsilon_index=epsilon_index,
+            tensor_indices=tensor_indices,
+        )
+        if prepared is not None:
+            return prepared
 
     input_stride = tuple(int(item) for item in input_spec.stride)
     output_cache: dict[tuple[Any, ...], tuple[torch.Tensor, ...]] = {}

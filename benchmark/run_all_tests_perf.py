@@ -738,7 +738,7 @@ def _classify_result(returncode: int, stdout: str) -> tuple[str, str]:
 
 def _environment_snapshot() -> dict[str, Any]:
     cuda_available = torch.cuda.is_available()
-    return {
+    snapshot = {
         "python": platform.python_version(),
         "torch": torch.__version__,
         "triton": triton.__version__,
@@ -758,6 +758,55 @@ def _environment_snapshot() -> dict[str, Any]:
         "perf_warmup": consts.bench_warmup(),
         "perf_repeat": consts.bench_repeat(),
     }
+    configured_vendor = os.environ.get("DNN_VENDOR", "").strip().lower()
+    npu = getattr(torch, "npu", None)
+    ascend_selected = configured_vendor == "ascend"
+    if not configured_vendor and not cuda_available and npu is not None:
+        try:
+            ascend_selected = bool(npu.is_available())
+        except Exception:
+            ascend_selected = False
+    if not ascend_selected:
+        return snapshot
+
+    try:
+        import torch_npu
+    except (ImportError, OSError):
+        torch_npu = None
+    if npu is None and torch_npu is not None:
+        npu = getattr(torch, "npu", None)
+        if npu is None:
+            npu = getattr(torch_npu, "npu", None)
+
+    try:
+        npu_available = bool(npu is not None and npu.is_available())
+    except Exception:
+        npu_available = False
+    try:
+        npu_device_count = int(npu.device_count()) if npu is not None else 0
+    except Exception:
+        npu_device_count = 0
+    try:
+        npu_device_name = (
+            npu.get_device_name()
+            if npu_available and npu is not None
+            else None
+        )
+    except Exception:
+        npu_device_name = None
+
+    snapshot.update(
+        {
+            "npu_available": npu_available,
+            "npu_device_count": npu_device_count,
+            "npu_device_name": npu_device_name,
+            "torch_npu": getattr(torch_npu, "__version__", None),
+            "cann_runtime": getattr(torch.version, "cann", None),
+            "ascend_home_path": os.environ.get("ASCEND_HOME_PATH"),
+            "ascend_opp_path": os.environ.get("ASCEND_OPP_PATH"),
+        }
+    )
+    return snapshot
 
 
 def _case_key(row: dict[str, Any]) -> tuple[str, str, str, str, str]:

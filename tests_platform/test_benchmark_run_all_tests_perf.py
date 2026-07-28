@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import importlib
+import json
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -32,37 +34,65 @@ from benchmark.run_all_tests_perf import (
 
 
 def test_parse_perf_output_preserves_arbitrary_shape_detail():
+    size_detail = "[(1, 32, 1024, 64), (1, 8, 1024, 64), 'causal=True']"
+    raw_record = {
+        "schema_version": 1,
+        "operator": "sdpa",
+        "dtype": "torch.float16",
+        "mode": "kernel",
+        "level": "comprehensive",
+        "execution_path": "compiled_graph.bind",
+        "size_detail": size_detail,
+        "baseline_latency_ms": 0.5,
+        "flagdnn_latency_ms": 1.0,
+        "speedup": 0.5,
+    }
     output = (
         "Operator: sdpa  cuDNN Compare Performance Test "
         "(dtype=torch.float16, mode=kernel, "
         "level=comprehensive)\n"
         "SUCCESS 0.500000 1.000000 0.500 3.000 4.000 "
-        "[(1, 32, 1024, 64), (1, 8, 1024, 64), "
-        "'causal=True']\n"
+        f"{size_detail}\n"
+        f"FLAGDNN_PERF_JSON {json.dumps(raw_record)}\n"
     )
 
-    records = parse_perf_output(output)
+    records = parse_perf_output(output, source_file="test_sdpa.py")
 
-    assert records == [
-        {
-            "operator": "sdpa",
-            "dtype": "torch.float16",
-            "dtype_short": "float16",
-            "cudnn_latency": 0.5,
-            "flagdnn_latency": 1.0,
-            "speedup": 0.5,
-            "mode": "kernel",
-            "level": "comprehensive",
-            "cudnn_gbps": 3.0,
-            "flagdnn_gbps": 4.0,
-            "size_detail": (
-                "[(1, 32, 1024, 64), (1, 8, 1024, 64), " "'causal=True']"
-            ),
-        }
-    ]
+    assert len(records) == 1
+    assert records[0]["size_detail"] == size_detail
+    assert records[0]["source_file"] == "test_sdpa.py"
+    assert records[0]["source_row_index"] == 0
 
 
-def test_bad_param_is_not_treated_as_an_unsupported_benchmark():
+def test_parse_perf_output_allows_explicit_legacy_compatibility():
+    output = (
+        "Operator: add_fp16 Performance Test\n"
+        "SUCCESS 0.500000 1.000000 0.500 3.000 4.000 [(16,)]\n"
+    )
+
+    records = parse_perf_output(
+        output,
+        source_file="test_add.py",
+        allow_legacy=True,
+    )
+
+    assert len(records) == 1
+    assert records[0]["schema_version"] == 0
+    assert records[0]["operator"] == "add"
+    assert records[0]["dtype"] == "torch.float16"
+    assert records[0]["execution_path"] == "legacy_text_parser"
+
+
+def _install_fake_cudnn(monkeypatch):
+    fake_error = type("cudnnGraphNotSupportedError", (RuntimeError,), {})
+    monkeypatch.setattr(
+        "benchmark.base.get_cudnn",
+        lambda: SimpleNamespace(cudnnGraphNotSupportedError=fake_error),
+    )
+
+
+def test_bad_param_is_not_treated_as_an_unsupported_benchmark(monkeypatch):
+    _install_fake_cudnn(monkeypatch)
     error = RuntimeError("cudnn_status: CUDNN_STATUS_BAD_PARAM")
 
     with pytest.raises(RuntimeError) as caught:
@@ -71,7 +101,8 @@ def test_bad_param_is_not_treated_as_an_unsupported_benchmark():
     assert caught.value is error
 
 
-def test_not_supported_is_skipped_by_benchmark():
+def test_not_supported_is_skipped_by_benchmark(monkeypatch):
+    _install_fake_cudnn(monkeypatch)
     error = RuntimeError("cudnn_status: CUDNN_STATUS_NOT_SUPPORTED")
 
     with pytest.raises(pytest.skip.Exception, match="does not support"):
@@ -87,6 +118,80 @@ def test_parse_pytest_outcome_count_handles_partial_skips():
     assert parse_pytest_outcome_count(output, "passed") == 2
     assert parse_pytest_outcome_count(output, "skipped") == 1
     assert parse_pytest_outcome_count(output, "failed") == 0
+
+
+def test_environment_snapshot_keeps_npu_fields_out_of_nvidia(monkeypatch):
+    module = importlib.import_module("benchmark.run_all_tests_perf")
+    monkeypatch.setenv("DNN_VENDOR", "nvidia")
+    monkeypatch.setattr(module.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(
+        module.torch.cuda,
+        "get_device_name",
+        lambda: "H100",
+    )
+    monkeypatch.setattr(
+        module.torch.cuda,
+        "get_device_capability",
+        lambda: (9, 0),
+    )
+
+    snapshot = module._environment_snapshot()
+
+    assert snapshot["cuda_available"] is True
+    assert snapshot["device_name"] == "H100"
+    assert snapshot["device_capability"] == [9, 0]
+    assert "npu_available" not in snapshot
+    assert "torch_npu" not in snapshot
+    assert "cann_runtime" not in snapshot
+
+
+def test_environment_snapshot_adds_ascend_runtime_fields(monkeypatch):
+    module = importlib.import_module("benchmark.run_all_tests_perf")
+    fake_npu = SimpleNamespace(
+        is_available=lambda: True,
+        device_count=lambda: 16,
+        get_device_name=lambda: "Ascend 910",
+    )
+    monkeypatch.setenv("DNN_VENDOR", "ascend")
+    monkeypatch.setenv("ASCEND_HOME_PATH", "/opt/cann")
+    monkeypatch.setenv("ASCEND_OPP_PATH", "/opt/cann/opp")
+    monkeypatch.setattr(module.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(module.torch, "npu", fake_npu, raising=False)
+    monkeypatch.setattr(module.torch.version, "cann", "9.0.0", raising=False)
+
+    snapshot = module._environment_snapshot()
+
+    assert snapshot["npu_available"] is True
+    assert snapshot["npu_device_count"] == 16
+    assert snapshot["npu_device_name"] == "Ascend 910"
+    assert snapshot["torch_npu"]
+    assert snapshot["cann_runtime"] == "9.0.0"
+    assert snapshot["ascend_home_path"] == "/opt/cann"
+    assert snapshot["ascend_opp_path"] == "/opt/cann/opp"
+
+
+def test_environment_snapshot_accepts_torch_npu_device_api(monkeypatch):
+    module = importlib.import_module("benchmark.run_all_tests_perf")
+    fake_npu = SimpleNamespace(
+        is_available=lambda: True,
+        device_count=lambda: 8,
+        get_device_name=lambda: "Ascend 910B",
+    )
+    fake_torch_npu = SimpleNamespace(
+        __version__="test",
+        npu=fake_npu,
+    )
+    monkeypatch.setenv("DNN_VENDOR", "ascend")
+    monkeypatch.setattr(module.torch.cuda, "is_available", lambda: False)
+    monkeypatch.delattr(module.torch, "npu", raising=False)
+    monkeypatch.setitem(sys.modules, "torch_npu", fake_torch_npu)
+
+    snapshot = module._environment_snapshot()
+
+    assert snapshot["npu_available"] is True
+    assert snapshot["npu_device_count"] == 8
+    assert snapshot["npu_device_name"] == "Ascend 910B"
+    assert snapshot["torch_npu"] == "test"
 
 
 @pytest.mark.parametrize(
@@ -118,18 +223,24 @@ def test_benchmark_runner_exit_code_reflects_child_failures(
     monkeypatch, tmp_path, return_code, stdout, expected
 ):
     module = importlib.import_module("benchmark.run_all_tests_perf")
-    test_file = tmp_path / "test_fake.py"
-    monkeypatch.setattr(module, "LOG_DIR", str(tmp_path / "logs"))
-    monkeypatch.setattr(module, "REPORT_FILE", str(tmp_path / "summary.json"))
-    monkeypatch.setattr(module, "DATA_FILE", str(tmp_path / "data.json"))
-    monkeypatch.setattr(module, "TARGET_OPERATORS", [])
-    monkeypatch.setattr(module.glob, "glob", lambda pattern: [str(test_file)])
+    test_dir = tmp_path / "benchmark"
+    test_dir.mkdir()
+    (test_dir / "test_fake.py").write_text("", encoding="utf-8")
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(module, "REPO_ROOT", str(tmp_path))
+    monkeypatch.setattr(module, "TEST_DIR", str(test_dir))
+    monkeypatch.setattr(module, "_environment_snapshot", lambda: {})
     result = SimpleNamespace(returncode=return_code, stdout=stdout, stderr="")
     monkeypatch.setattr(
         module.subprocess, "run", lambda *args, **kwargs: result
     )
 
-    assert module.main() == expected
+    assert module.main(["--output-dir", str(output_dir)]) == expected
+    summary = json.loads(
+        (output_dir / "benchmark_summary.json").read_text(encoding="utf-8")
+    )
+    assert summary["total"] == 1
+    assert summary["details"][0]["return_code"] == return_code
 
 
 def test_reduction_benchmark_shape_detail_includes_operation():

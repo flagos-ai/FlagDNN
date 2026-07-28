@@ -263,6 +263,45 @@ def _probe_torch() -> None:
         perror(f"PyTorch not installed, please fix it - {exc}")
         sys.exit(1)
 
+    if flag_dnn.vendor_name == "ascend":
+        try:
+            import torch_npu
+        except (ImportError, OSError):
+            torch_npu = None
+
+        npu = getattr(torch, "npu", None)
+        if npu is None and torch_npu is not None:
+            npu = getattr(torch_npu, "npu", None)
+
+        try:
+            npu_available = bool(npu is not None and npu.is_available())
+            ENV_INFO["torch"]["npu_available"] = npu_available
+            pinfo(f"PyTorch NPU support ... {npu_available}")
+        except Exception:
+            ENV_INFO["torch"]["npu_available"] = False
+
+        try:
+            dev_name = npu.get_device_name()
+            ENV_INFO["torch"]["device_name"] = dev_name
+            pinfo(f"PyTorch device name ... {dev_name}")
+        except Exception:
+            ENV_INFO["torch"]["device_name"] = "N/A"
+
+        try:
+            dev_count = npu.device_count()
+            ENV_INFO["torch"]["device_count"] = dev_count
+            pinfo(f"PyTorch device count ... {dev_count}")
+        except Exception:
+            ENV_INFO["torch"]["device_count"] = 0
+
+        ENV_INFO["torch"]["torch_npu"] = getattr(
+            torch_npu, "__version__", None
+        )
+        ENV_INFO["torch"]["cann_runtime"] = getattr(
+            torch.version, "cann", None
+        )
+        return
+
     try:
         cuda_available = torch.cuda.is_available()
         ENV_INFO["torch"]["cuda_available"] = cuda_available

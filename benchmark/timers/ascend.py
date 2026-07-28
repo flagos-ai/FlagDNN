@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import statistics
+from contextlib import nullcontext
 from typing import Callable
 
 import triton
@@ -52,6 +53,40 @@ class AscendEventTimer:
     ) -> tuple[float, float]:
         device_interface = triton.runtime.driver.active.get_device_interface()
         active_driver = triton.runtime.driver.active
+        owner = getattr(first, "__self__", None)
+        benchmark_stream = getattr(owner, "benchmark_stream", None)
+        stream_context = (
+            device_interface.stream(benchmark_stream)
+            if benchmark_stream is not None
+            else nullcontext()
+        )
+        with stream_context:
+            if (
+                os.getenv("FLAGDNN_PERF_DEBUG_TIMING") == "1"
+                and benchmark_stream is not None
+            ):
+                current_stream = device_interface.current_stream()
+                prepared_stream = getattr(benchmark_stream, "npu_stream", None)
+                print(
+                    "Ascend benchmark streams: "
+                    f"prepared={prepared_stream}, "
+                    f"current={getattr(current_stream, 'npu_stream', None)}"
+                )
+            return self._measure_pair_on_current_stream(
+                first,
+                second,
+                device_interface=device_interface,
+                active_driver=active_driver,
+            )
+
+    def _measure_pair_on_current_stream(
+        self,
+        first: Callable[[], object],
+        second: Callable[[], object],
+        *,
+        device_interface,
+        active_driver,
+    ) -> tuple[float, float]:
         first()
         second()
         device_interface.synchronize()
@@ -94,6 +129,8 @@ class AscendEventTimer:
             else:
                 record(second, second_start[index], second_end[index])
                 record(first, first_start[index], first_end[index])
+            if (index + 1) % 16 == 0:
+                device_interface.synchronize()
 
         device_interface.synchronize()
         first_times = [

@@ -174,11 +174,6 @@ class AscendReductionOperation:
                     output_shape.append(1)
             else:
                 output_shape.append(int(size))
-        if not output_shape:
-            raise ValueError(
-                "rank-0 ACLNN reduction outputs are not supported by this "
-                "reference wrapper; use keepdim=True"
-            )
 
         context = self._context
         npu = context.npu()

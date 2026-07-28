@@ -39,14 +39,18 @@ def test_reduction(dnn_reference, dtype, shape, dim, mode):
 def test_reduction_channels_last_repeated(dnn_reference, dtype, mode):
     shape = (2, 3, 5, 5)
     axis = 1
+    is_ascend = dnn_reference.vendor_name == "ascend"
+    input_device = "cpu" if is_ascend else flag_dnn.device
     x = torch.linspace(
         -1.1,
         1.1,
         math.prod(shape),
-        device=flag_dnn.device,
+        device=input_device,
         dtype=torch.float32,
     ).to(dtype)
     x = x.reshape(shape).contiguous(memory_format=torch.channels_last)
+    if is_ascend:
+        x = x.to(flag_dnn.device)
     x[0, 0, 0, 0] = 0
     is_nvidia = dnn_reference.vendor_name == "nvidia"
     if is_nvidia:

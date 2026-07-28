@@ -166,6 +166,21 @@ def _prepare_causal_conv1d(
     if checks is None:
         return None
 
+    prepare_backend = runtime.get_backend_hook("prepare_causal_conv1d")
+    if prepare_backend is not None:
+        prepared = prepare_backend(
+            attrs=attrs,
+            input_specs=input_specs,
+            default_run_fn=default_run_fn,
+            input_checks=checks,
+            x_shape=x_shape,
+            weight_shape=weight_shape,
+            has_bias=has_bias,
+            activation=activation,
+        )
+        if prepared is not None:
+            return prepared
+
     output_dtype = torch_dtype(x_spec.dtype)
     output_cache: dict[tuple[Any, ...], torch.Tensor] = {}
 

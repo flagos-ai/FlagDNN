@@ -19,6 +19,17 @@ from tests import consts
 from tests.utility_test_utils import run_gen_index_test
 
 
+def _active_device_is_available():
+    import flag_dnn
+
+    device_type = torch.device(flag_dnn.device).type
+    device_module = getattr(torch, device_type, None)
+    if device_module is None:
+        return device_type == "cpu"
+    is_available = getattr(device_module, "is_available", None)
+    return bool(is_available is not None and is_available())
+
+
 @pytest.mark.gen_index
 @pytest.mark.graph
 @pytest.mark.parametrize("dtype", consts.DNN_COMPARE_DTYPES)
@@ -31,7 +42,10 @@ def test_gen_index(dnn_reference, dtype, case):
 
 @pytest.mark.gen_index
 @pytest.mark.graph
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.skipif(
+    not _active_device_is_available(),
+    reason="the active FlagDNN device is unavailable",
+)
 def test_gen_index_large_axis_two_exact_values():
     import flag_dnn
 

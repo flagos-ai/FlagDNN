@@ -30,7 +30,10 @@ These functions can be used in kernel progamming and are not bound to any grid.
 import triton
 from triton import language as tl
 
-from flag_dnn.utils.triton_lang_helper import use_tl_extra
+from flag_dnn.utils.triton_lang_helper import (
+    use_tl_extra,
+    use_tl_extra_except,
+)
 
 
 @triton.jit
@@ -106,11 +109,16 @@ def div_rz(x, y):
     return tl.where(result >= 0, tl.floor(result), tl.ceil(result))
 
 
-@use_tl_extra
+@use_tl_extra_except("triton.language.extra.cann.libdevice")
 @triton.jit
 def fmod(x, y):
     """fmod default - floating point modulo"""
-    quotient = div_rz(x, y)
+    quotient = x / y
+    quotient = tl.where(
+        quotient >= 0,
+        tl.floor(quotient),
+        tl.ceil(quotient),
+    )
     return x - y * quotient
 
 

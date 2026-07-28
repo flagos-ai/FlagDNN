@@ -110,3 +110,206 @@ rms_norm:
       BLOCK_SIZE: 256
     num_warps: 4
     num_stages: 1
+
+# Complex operators use one conservative Ascend configuration per kernel.
+# This prevents the Ascend runtime from inheriting NVIDIA's autotune search
+# spaces while keeping every NVIDIA configuration and dispatch path untouched.
+matmul:
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_K: 32
+      GROUP_M: 8
+    num_warps: 4
+    num_stages: 1
+matmul_persistent:
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_K: 32
+      GROUP_M: 8
+    num_warps: 4
+    num_stages: 1
+conv1d_gemm_v3:
+  - META:
+      BLOCK_M: 32
+      BLOCK_OC: 32
+      BLOCK_K: 32
+    num_warps: 4
+    num_stages: 1
+conv1d_general:
+  - META:
+      BLOCK_SIZE: 128
+    num_warps: 4
+    num_stages: 1
+conv1d_depthwise_v5:
+  - META:
+      BLOCK_C: 16
+      BLOCK_L: 128
+    num_warps: 4
+    num_stages: 1
+
+sdpa:
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+    num_warps: 4
+    num_stages: 1
+sdpa_dense_exact:
+  - META:
+      BLOCK_M: 64
+      BLOCK_N: 32
+    num_warps: 4
+    num_stages: 1
+sdpa_gqa_causal:
+  - META:
+      BLOCK_M: 16
+      BLOCK_H: 2
+      BLOCK_N: 32
+    num_warps: 4
+    num_stages: 1
+sdpa_mha_causal_desc:
+  - META:
+      BLOCK_M: 64
+      BLOCK_N: 64
+    num_warps: 4
+    num_stages: 1
+sdpa_gqa_causal_desc:
+  - META:
+      BLOCK_M: 16
+      BLOCK_H: 2
+      BLOCK_N: 64
+    num_warps: 4
+    num_stages: 1
+sdpa_mha_causal_hostdesc:
+  - META:
+      BLOCK_M: 64
+      BLOCK_N: 64
+    num_warps: 4
+    num_stages: 1
+sdpa_decode:
+  - META:
+      BLOCK_N: 64
+    num_warps: 4
+    num_stages: 1
+
+sdpa_backward_fused_atomic_d32:
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_D: 32
+    num_warps: 4
+    num_stages: 1
+sdpa_backward_fused_atomic:
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_D: 64
+    num_warps: 4
+    num_stages: 1
+sdpa_backward_fused_atomic_d128:
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_D: 128
+    num_warps: 4
+    num_stages: 1
+sdpa_backward_dense_mloop_d64:
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_D: 64
+    num_warps: 4
+    num_stages: 1
+sdpa_backward_dense_mloop_d128:
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_D: 128
+    num_warps: 4
+    num_stages: 1
+sdpa_backward_fused_atomic_causal:
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_D: 64
+    num_warps: 4
+    num_stages: 1
+sdpa_backward_fused_atomic_causal_d128:
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_D: 128
+    num_warps: 4
+    num_stages: 1
+sdpa_backward_fused_atomic_gqa_causal_d128:
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_D: 128
+    num_warps: 4
+    num_stages: 1
+sdpa_backward_gqa_dq_delta_d128:
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_D: 128
+    num_warps: 4
+    num_stages: 1
+sdpa_backward_mloop_causal_d128:
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_D: 128
+    num_warps: 4
+    num_stages: 1
+sdpa_backward_owner_mha_causal_d128:
+  - META:
+      BLOCK_M_DKDV: 32
+      BLOCK_N_DKDV: 32
+      BLOCK_M_DQ: 32
+      BLOCK_N_DQ: 32
+      BLOCK_D: 128
+    num_warps: 4
+    num_stages: 1
+sdpa_backward_decode_d128:
+  - META:
+      BLOCK_N: 64
+      BLOCK_D: 128
+    num_warps: 4
+    num_stages: 1
+sdpa_backward_zero_delta:
+  - META:
+      BLOCK_ZERO: 256
+      BLOCK_M: 32
+      BLOCK_D: 128
+    num_warps: 4
+    num_stages: 1
+sdpa_backward_dq:
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_D_OUT: 128
+    num_warps: 4
+    num_stages: 1
+sdpa_backward_dkdv:
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_D_OUT: 128
+    num_warps: 4
+    num_stages: 1
+sdpa_backward_dk:
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_D_OUT: 128
+    num_warps: 4
+    num_stages: 1
+sdpa_backward_dv:
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_DV_OUT: 128
+    num_warps: 4
+    num_stages: 1

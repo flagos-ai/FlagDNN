@@ -35,6 +35,7 @@ from .ops import (
     configure_abs as _configure_abs,
     configure_add as _configure_add,
     create_binary_operations,
+    create_complex_operations,
     create_norm_operations,
     create_unary_operations,
     create_utility_operations,
@@ -81,6 +82,7 @@ class AscendDnnProvider(RegisteredOperationProvider):
                 AscendReductionOperation(self._context),
                 *create_unary_operations(self._context),
                 *create_binary_operations(self._context),
+                *create_complex_operations(self._context),
                 *create_utility_operations(self._context),
                 *create_norm_operations(self._context),
             )

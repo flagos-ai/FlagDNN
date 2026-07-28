@@ -116,6 +116,16 @@ def _prepare_pointwise(
     actual_op_type = _POINTWISE_CMP_ALIASES.get(
         op_type, attrs.get("op_type", op_type)
     )
+    prepare_unary = runtime.get_backend_hook("prepare_dense_unary")
+    if prepare_unary is not None:
+        prepared = prepare_unary(
+            op_type=actual_op_type,
+            attrs=attrs,
+            input_specs=input_specs,
+            default_run_fn=default_run_fn,
+        )
+        if prepared is not None:
+            return prepared
     if actual_op_type in _POINTWISE_BINARY_OPS:
         return _prepare_binary_pointwise(
             actual_op_type, attrs, input_specs, default_run_fn
@@ -123,10 +133,30 @@ def _prepare_pointwise(
     if actual_op_type == "binary_select":
         return _prepare_binary_select_pointwise(input_specs, default_run_fn)
     if actual_op_type == "add_square":
+        prepare_specialized = runtime.get_backend_hook(
+            "prepare_dense_add_square"
+        )
+        if prepare_specialized is not None:
+            prepared = prepare_specialized(
+                attrs=attrs,
+                input_specs=input_specs,
+                default_run_fn=default_run_fn,
+            )
+            if prepared is not None:
+                return prepared
         return _prepare_add_square_pointwise(
             attrs, input_specs, default_run_fn
         )
     if actual_op_type == "pow":
+        prepare_specialized = runtime.get_backend_hook("prepare_dense_pow")
+        if prepare_specialized is not None:
+            prepared = prepare_specialized(
+                attrs=attrs,
+                input_specs=input_specs,
+                default_run_fn=default_run_fn,
+            )
+            if prepared is not None:
+                return prepared
         prepared = _prepare_dense_tensor_pow(
             attrs, input_specs, default_run_fn
         )
@@ -155,6 +185,17 @@ def _prepare_pointwise(
 
         return run
     if op_type == "sigmoid_backward":
+        prepare_specialized = runtime.get_backend_hook(
+            "prepare_dense_sigmoid_backward"
+        )
+        if prepare_specialized is not None:
+            prepared = prepare_specialized(
+                attrs=attrs,
+                input_specs=input_specs,
+                default_run_fn=default_run_fn,
+            )
+            if prepared is not None:
+                return prepared
         from flag_dnn.ops.sigmoid_backward import sigmoid_backward
 
         compute_data_type = attrs.get("compute_data_type")

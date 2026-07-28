@@ -19,6 +19,10 @@ from typing import Any, Union
 
 import torch
 
+from devtools.dnn_reference.interfaces import (
+    DnnReferenceNotSupportedError,
+)
+
 from ..common import (
     DTYPE_CODES,
     ERROR_BUFFER_SIZE,
@@ -30,6 +34,25 @@ from ..common import (
 
 
 Number = Union[int, float]
+
+
+def _is_non_overlapping(tensor: torch.Tensor) -> bool:
+    if tensor.numel() == 0:
+        return True
+    dimensions = sorted(
+        (
+            (int(stride), int(size))
+            for size, stride in zip(tensor.shape, tensor.stride())
+            if int(size) > 1
+        ),
+        key=lambda item: item[0],
+    )
+    expected_stride = 1
+    for stride, size in dimensions:
+        if stride < expected_stride:
+            return False
+        expected_stride = stride * size
+    return True
 
 
 def configure_add(library: Any) -> None:
@@ -140,6 +163,10 @@ class AscendAddOperation:
         if x.dim() == 0 or y.dim() == 0:
             raise ValueError(
                 "aclnnAdd reference does not support rank-0 tensors"
+            )
+        if not _is_non_overlapping(x) or not _is_non_overlapping(y):
+            raise DnnReferenceNotSupportedError(
+                "ACLNN add does not support internally overlapping inputs"
             )
         if x.storage_offset() != 0 or y.storage_offset() != 0:
             raise ValueError(

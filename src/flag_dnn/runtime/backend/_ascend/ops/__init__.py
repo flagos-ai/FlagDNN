@@ -12,4 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-__all__: list[str] = []
+from .tanh import tanh
+
+__all__ = ("tanh",)
