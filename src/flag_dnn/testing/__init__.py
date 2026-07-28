@@ -54,6 +54,24 @@ else:
 
 
 def _maybe_move_to_cpu(res, ref):
+    if res.device.type == "npu" and ref.device.type == "npu":
+        required = res.numel() * res.element_size()
+
+        free_mem = None
+        try:
+            free_mem, _ = torch_device_fn.mem_get_info(res.device)
+        except RuntimeError:
+            pass
+
+        # Keep the CUDA behavior below unchanged while applying the same
+        # comparison-memory guard to NPU tensors.
+        HUGE_TENSOR_BYTES = 1 << 30  # 1 GiB
+        if (free_mem is not None and required >= free_mem) or (
+            required >= HUGE_TENSOR_BYTES
+        ):
+            return res.cpu(), ref.cpu()
+        return res, ref
+
     if not (res.is_cuda and ref.is_cuda):
         return res, ref
 

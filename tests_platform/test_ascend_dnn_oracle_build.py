@@ -124,6 +124,12 @@ def test_default_native_discovery_includes_all_operator_sources_and_headers():
         "common/oracle_common.cpp",
         "ops/abs.cpp",
         "ops/add.cpp",
+        "ops/binary.cpp",
+        "ops/binary_select.cpp",
+        "ops/norm.cpp",
+        "ops/reduction.cpp",
+        "ops/unary.cpp",
+        "ops/utility.cpp",
     )
     assert headers == ("common/oracle_common.h",)
 

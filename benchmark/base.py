@@ -48,6 +48,20 @@ PERF_RECORD_PREFIX = "FLAGDNN_PERF_JSON "
 UNSUPPORTED_RECORD_PREFIX = "FLAGDNN_UNSUPPORTED_JSON "
 
 
+def active_device_is_available() -> bool:
+    import flag_dnn
+
+    device_type = torch.device(flag_dnn.device).type
+    device_module = getattr(torch, device_type, None)
+    if device_module is None:
+        return device_type == "cpu"
+    is_available = getattr(device_module, "is_available", None)
+    try:
+        return bool(is_available is not None and is_available())
+    except Exception:
+        return False
+
+
 @lru_cache(maxsize=1)
 def get_cudnn():
     try:

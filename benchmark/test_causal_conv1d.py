@@ -17,7 +17,7 @@ import torch
 
 import flag_dnn
 from benchmark import consts
-from benchmark.base import DnnCompareBenchmark
+from benchmark.base import DnnCompareBenchmark, active_device_is_available
 
 
 class CausalConv1dBenchmark(DnnCompareBenchmark):
@@ -90,7 +90,10 @@ class CausalConv1dBenchmark(DnnCompareBenchmark):
 @pytest.mark.causal_conv1d
 @pytest.mark.graph
 @pytest.mark.perf
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.skipif(
+    not active_device_is_available(),
+    reason="the active FlagDNN device is required",
+)
 @pytest.mark.parametrize("dtype", CausalConv1dBenchmark.dtypes)
 def test_causal_conv1d(dnn_baseline, dtype):
     torch.manual_seed(0)

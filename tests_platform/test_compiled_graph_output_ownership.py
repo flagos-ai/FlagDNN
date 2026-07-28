@@ -13,9 +13,25 @@
 # limitations under the License.
 
 import torch
+import pytest
 
 import flag_dnn
 from flag_dnn import runtime
+
+
+def _active_device_is_available():
+    device_type = torch.device(flag_dnn.device).type
+    if device_type == "cuda":
+        return torch.cuda.is_available()
+    if device_type == "npu":
+        return hasattr(torch, "npu") and torch.npu.is_available()
+    return True
+
+
+pytestmark = pytest.mark.skipif(
+    not _active_device_is_available(),
+    reason="the active FlagDNN device is unavailable",
+)
 
 
 def _compile_add(x, y):

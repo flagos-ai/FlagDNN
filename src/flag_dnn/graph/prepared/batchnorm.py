@@ -18,6 +18,7 @@ from typing import Any, Optional, Sequence
 
 import torch
 
+from flag_dnn import runtime
 from flag_dnn.graph.prepared import (
     PreparedSingleKernelRunSpec,
     PreparedSingleKernelSpec,
@@ -115,6 +116,24 @@ def _prepare_batchnorm_training(
     stat_shape = _static_shape(input_specs[3])
     if stat_shape is None:
         return None
+    prepare_backend = runtime.get_backend_hook(
+        "prepare_dense_batchnorm_training"
+    )
+    if prepare_backend is not None:
+        prepared = prepare_backend(
+            attrs=attrs,
+            input_specs=input_specs,
+            default_run_fn=default_run_fn,
+            shape=shape,
+            input_checks=checks,
+            batch=batch,
+            channels=channels,
+            spatial=spatial,
+            stat_shape=stat_shape,
+        )
+        if prepared is not None:
+            return prepared
+
     input_stride = tuple(int(item) for item in input_spec.stride)
     output_cache: dict[tuple[Any, ...], tuple[torch.Tensor, ...]] = {}
 
@@ -228,7 +247,6 @@ def _prepare_batchnorm_inference(
     input_specs: Sequence[TensorSpec],
     default_run_fn: RunFn,
 ) -> Optional[RunFn]:
-    del attrs
     if len(input_specs) != 5:
         return None
     if not all(_is_runtime_device_spec(spec) for spec in input_specs):
@@ -261,12 +279,29 @@ def _prepare_batchnorm_inference(
     if checks is None:
         return None
 
-    from flag_dnn.ops.batch_norm import batch_norm_inference_kernel
-
     total_elements = _static_numel(shape)
     if total_elements == 0:
         return None
     spatial = total_elements // (int(shape[0]) * channels)
+    prepare_backend = runtime.get_backend_hook(
+        "prepare_dense_batchnorm_inference"
+    )
+    if prepare_backend is not None:
+        prepared = prepare_backend(
+            attrs=attrs,
+            input_specs=input_specs,
+            default_run_fn=default_run_fn,
+            shape=shape,
+            input_checks=checks,
+            total_elements=total_elements,
+            channels=channels,
+            spatial=spatial,
+        )
+        if prepared is not None:
+            return prepared
+
+    from flag_dnn.ops.batch_norm import batch_norm_inference_kernel
+
     block_size = 1024
     grid = ((total_elements + block_size - 1) // block_size,)
     output_cache: dict[tuple[Any, ...], torch.Tensor] = {}

@@ -116,7 +116,7 @@ class PreparedAclnnOperation:
         library: Any,
         handle: ctypes.c_void_p,
         keepalive: tuple[torch.Tensor, ...],
-        output: torch.Tensor,
+        output: Any,
         *,
         operation_name: str,
         symbol_name: Optional[str] = None,
@@ -129,8 +129,24 @@ class PreparedAclnnOperation:
             "aclnn_" + operation_name[len("aclnn") :].lower()
         )
         self.output = output
+        output_tensors = (
+            (output,) if isinstance(output, torch.Tensor) else tuple(output)
+        )
+        output_device = next(
+            (
+                item.device
+                for item in output_tensors
+                if isinstance(item, torch.Tensor)
+            ),
+            None,
+        )
+        if output_device is None:
+            raise TypeError(
+                "prepared ACLNN output must contain at least one tensor"
+            )
+        self.benchmark_stream = torch.npu.current_stream(device=output_device)
 
-    def run(self) -> torch.Tensor:
+    def run(self) -> Any:
         handle = self._handle
         if handle.value is None:
             raise RuntimeError(
@@ -151,7 +167,7 @@ class PreparedAclnnOperation:
             )
         return self.output
 
-    def __call__(self) -> torch.Tensor:
+    def __call__(self) -> Any:
         return self.run()
 
     def close(self) -> None:

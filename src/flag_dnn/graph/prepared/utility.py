@@ -18,6 +18,7 @@ from typing import Any, Optional, Sequence
 
 import torch
 
+from flag_dnn import runtime
 from flag_dnn.graph.prepared import (
     PreparedSingleKernelRunSpec,
     PreparedSingleKernelSpec,
@@ -41,12 +42,37 @@ def _numel(shape: Sequence[int]) -> int:
     return result
 
 
+@register_prepared_run_fn("concatenate")
+def _prepare_concatenate(
+    attrs: dict[str, Any],
+    input_specs: Sequence[TensorSpec],
+    default_run_fn: RunFn,
+) -> Optional[RunFn]:
+    prepare = runtime.get_backend_hook("prepare_dense_concatenate")
+    if prepare is None:
+        return None
+    return prepare(
+        attrs=attrs,
+        input_specs=input_specs,
+        default_run_fn=default_run_fn,
+    )
+
+
 @register_prepared_run_fn("gen_index")
 def _prepare_gen_index(
     attrs: dict[str, Any],
     input_specs: Sequence[TensorSpec],
     default_run_fn: RunFn,
 ) -> Optional[RunFn]:
+    prepare = runtime.get_backend_hook("prepare_dense_gen_index")
+    if prepare is not None:
+        prepared = prepare(
+            attrs=attrs,
+            input_specs=input_specs,
+            default_run_fn=default_run_fn,
+        )
+        if prepared is not None:
+            return prepared
     if len(input_specs) != 1 or not _is_runtime_device_spec(input_specs[0]):
         return None
     input_spec = input_specs[0]

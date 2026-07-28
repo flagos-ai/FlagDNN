@@ -17,6 +17,8 @@ import math
 import pytest
 from benchmark.base import (
     CudnnCompareBenchmark,
+    DnnCompareBenchmark,
+    active_device_is_available,
     cudnn_data_type,
     get_cudnn,
     skip_unsupported_cudnn_graph,
@@ -191,6 +193,66 @@ class SdpaBackwardBenchmark(CudnnCompareBenchmark):
         return [tuple(q.shape), tuple(k.shape), f"causal={causal}"]
 
 
+class AscendSdpaBackwardBenchmark(DnnCompareBenchmark):
+    op_name = "sdpa_backward"
+    shapes = consts.SDPA_BACKWARD_SHAPES
+    shape_ids_env = "FLAGDNN_SDPA_BACKWARD_PERF_SHAPE_IDS"
+    legacy_shape_ids_env = "FLAGDNN_CUDNN_SDPA_BACKWARD_PERF_SHAPE_IDS"
+
+    build_flag_dnn_runner = SdpaBackwardBenchmark.build_flag_dnn_runner
+    transfer_bytes = SdpaBackwardBenchmark.transfer_bytes
+    shape_detail = SdpaBackwardBenchmark.shape_detail
+
+    def make_inputs(self, shape, dtype):
+        batch, heads_q, heads_kv, seq_q, seq_kv, head_dim, causal = shape
+        q = torch.randn(
+            (batch, heads_q, seq_q, head_dim),
+            dtype=dtype,
+            device=flag_dnn.device,
+        )
+        k = torch.randn(
+            (batch, heads_kv, seq_kv, head_dim),
+            dtype=dtype,
+            device=flag_dnn.device,
+        )
+        v = torch.randn(
+            (batch, heads_kv, seq_kv, head_dim),
+            dtype=dtype,
+            device=flag_dnn.device,
+        )
+        dO = torch.randn(
+            (batch, heads_q, seq_q, head_dim),
+            dtype=dtype,
+            device=flag_dnn.device,
+        )
+        forward = self.baseline.prepare(
+            "sdpa",
+            q,
+            k,
+            v,
+            use_causal_mask=bool(causal),
+            generate_stats=True,
+        )
+        try:
+            o, stats = forward.run()
+        finally:
+            forward.close()
+        return q, k, v, o, dO, stats, bool(causal)
+
+    def build_baseline_runner(self, inputs):
+        q, k, v, o, dO, stats, causal = inputs
+        return self.baseline.prepare(
+            self.op_name,
+            q,
+            k,
+            v,
+            o,
+            dO,
+            stats,
+            use_causal_mask=causal,
+        )
+
+
 @pytest.mark.sdpa_backward
 @pytest.mark.graph
 @pytest.mark.perf
@@ -199,3 +261,16 @@ class SdpaBackwardBenchmark(CudnnCompareBenchmark):
 def test_sdpa_backward(cudnn_handle, dtype):
     torch.manual_seed(0)
     SdpaBackwardBenchmark(cudnn_handle).run(dtype)
+
+
+@pytest.mark.sdpa_backward
+@pytest.mark.graph
+@pytest.mark.perf
+@pytest.mark.skipif(
+    flag_dnn.vendor_name != "ascend" or not active_device_is_available(),
+    reason="an active Ascend NPU is required",
+)
+@pytest.mark.parametrize("dtype", AscendSdpaBackwardBenchmark.dtypes)
+def test_sdpa_backward_ascend(dnn_baseline, dtype):
+    torch.manual_seed(0)
+    AscendSdpaBackwardBenchmark(dnn_baseline).run(dtype)

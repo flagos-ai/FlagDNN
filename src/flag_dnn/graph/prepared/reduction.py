@@ -18,6 +18,7 @@ from typing import Any, Optional, Sequence
 
 import torch
 
+from flag_dnn import runtime
 from flag_dnn.graph.prepared import (
     PreparedSingleKernelRunSpec,
     PreparedSingleKernelSpec,
@@ -140,6 +141,25 @@ def _prepare_reduction(
                 output_shape, device=source.device, dtype=output_dtype
             ),
         )
+
+    prepare_backend = runtime.get_backend_hook("prepare_dense_reduction")
+    if prepare_backend is not None:
+        prepared = prepare_backend(
+            mode=mode,
+            input_spec=input_spec,
+            input_checks=checks,
+            output_factory=output_factory,
+            default_run_fn=default_run_fn,
+            rows=rows,
+            reduced=reduced,
+            inner=inner,
+            stride_outer=stride_outer,
+            stride_reduced=stride_reduced,
+            stride_inner=stride_inner,
+            validate_inputs=bool(attrs.get("_validate_inputs", True)),
+        )
+        if prepared is not None:
+            return prepared
 
     def runtime_args(
         inputs: Sequence[Any], output: torch.Tensor

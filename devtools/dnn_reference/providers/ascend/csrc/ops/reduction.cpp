@@ -104,7 +104,7 @@ extern "C" int flagdnn_aclnn_reduction_create(
         input_shape == nullptr || input_strides == nullptr ||
         output_shape == nullptr || output_strides == nullptr ||
         dimensions == nullptr || input_rank == 0 ||
-        input_rank > kMaxTensorRank || output_rank == 0 ||
+        input_rank > kMaxTensorRank ||
         output_rank > kMaxTensorRank || dimension_count == 0 ||
         dimension_count > input_rank || stream_handle == nullptr) {
         return ReturnFailure(&state, "invalid reduction arguments", -81);

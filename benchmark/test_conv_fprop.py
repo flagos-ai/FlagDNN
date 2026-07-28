@@ -17,6 +17,8 @@ import math
 import pytest
 from benchmark.base import (
     CudnnCompareBenchmark,
+    DnnCompareBenchmark,
+    active_device_is_available,
     cudnn_data_type,
     get_cudnn,
     skip_unsupported_cudnn_graph,
@@ -258,6 +260,42 @@ class ConvFpropBenchmark(CudnnCompareBenchmark):
         }
 
 
+class AscendConvFpropBenchmark(DnnCompareBenchmark):
+    op_name = "conv_fprop"
+    shapes = consts.CONV_FPROP_SHAPES
+    shape_ids_env = "FLAGDNN_CONV_FPROP_PERF_SHAPE_IDS"
+    legacy_shape_ids_env = "FLAGDNN_CUDNN_CONV_FPROP_PERF_SHAPE_IDS"
+
+    make_inputs = ConvFpropBenchmark.make_inputs
+    build_flag_dnn_runner = ConvFpropBenchmark.build_flag_dnn_runner
+    _output_shape = ConvFpropBenchmark._output_shape
+    transfer_bytes = ConvFpropBenchmark.transfer_bytes
+    shape_detail = ConvFpropBenchmark.shape_detail
+
+    def build_baseline_runner(self, inputs):
+        (
+            _,
+            _,
+            stride,
+            padding,
+            pre_padding,
+            post_padding,
+            dilation,
+        ) = self.case
+        x, weight = inputs
+        kwargs = {
+            "stride": stride,
+            "dilation": dilation,
+            "convolution_mode": "CROSS_CORRELATION",
+        }
+        if pre_padding is None:
+            kwargs["padding"] = padding
+        else:
+            kwargs["pre_padding"] = pre_padding
+            kwargs["post_padding"] = post_padding
+        return self.baseline.prepare(self.op_name, x, weight, **kwargs)
+
+
 @pytest.mark.conv_fprop
 @pytest.mark.graph
 @pytest.mark.perf
@@ -266,3 +304,16 @@ class ConvFpropBenchmark(CudnnCompareBenchmark):
 def test_conv_fprop(cudnn_handle, dtype):
     torch.manual_seed(0)
     ConvFpropBenchmark(cudnn_handle).run(dtype)
+
+
+@pytest.mark.conv_fprop
+@pytest.mark.graph
+@pytest.mark.perf
+@pytest.mark.skipif(
+    flag_dnn.vendor_name != "ascend" or not active_device_is_available(),
+    reason="an active Ascend NPU is required",
+)
+@pytest.mark.parametrize("dtype", AscendConvFpropBenchmark.dtypes)
+def test_conv_fprop_ascend(dnn_baseline, dtype):
+    torch.manual_seed(0)
+    AscendConvFpropBenchmark(dnn_baseline).run(dtype)

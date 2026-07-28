@@ -54,3 +54,14 @@ def use_backend(module):
 def use_tl_extra(func):
     """backend function shim"""
     return use_backend(tl_extra_shim)(func)
+
+
+def use_tl_extra_except(*unsupported_modules):
+    """Use the backend math shim unless that module lacks a usable lowering."""
+
+    def decorator(func):
+        if getattr(tl_extra_shim, "__name__", "") in unsupported_modules:
+            return func
+        return use_tl_extra(func)
+
+    return decorator

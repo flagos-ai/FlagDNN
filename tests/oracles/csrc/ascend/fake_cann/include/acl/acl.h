@@ -29,6 +29,7 @@ typedef enum aclDataType {
     ACL_DT_UNDEFINED = -1,
     ACL_FLOAT = 0,
     ACL_FLOAT16 = 1,
+    ACL_BOOL = 12,
     ACL_BF16 = 27,
 } aclDataType;
 

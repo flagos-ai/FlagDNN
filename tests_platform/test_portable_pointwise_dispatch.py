@@ -34,6 +34,9 @@ POINTWISE_NAMES = (
     "sigmoid",
     "sigmoid_backward",
 )
+ASCEND_GENERIC_POINTWISE_NAMES = tuple(
+    name for name in POINTWISE_NAMES if name != "tanh"
+)
 NVIDIA_OVERRIDE_NAMES = POINTWISE_NAMES + ("reduction",)
 
 
@@ -110,6 +113,55 @@ def test_generic_sigmoid_backward_has_no_direct_cuda_libdevice_import():
     )
 
 
+def test_tl_extra_exclusion_keeps_nonexcluded_backend(monkeypatch):
+    helper = importlib.import_module("flag_dnn.utils.triton_lang_helper")
+
+    def backend_fmod():
+        return "backend"
+
+    fake_backend = SimpleNamespace(
+        __name__="triton.language.extra.cuda.libdevice",
+        fmod=backend_fmod,
+    )
+    monkeypatch.setattr(helper, "tl_extra_shim", fake_backend)
+
+    @helper.use_tl_extra_except("triton.language.extra.cann.libdevice")
+    def fmod():
+        return "fallback"
+
+    assert fmod is backend_fmod
+
+
+def test_tl_extra_exclusion_uses_fallback_for_excluded_backend(monkeypatch):
+    helper = importlib.import_module("flag_dnn.utils.triton_lang_helper")
+    fake_backend = SimpleNamespace(
+        __name__="triton.language.extra.cann.libdevice",
+        fmod=lambda: "backend",
+    )
+    monkeypatch.setattr(helper, "tl_extra_shim", fake_backend)
+
+    def fallback_fmod():
+        return "fallback"
+
+    selected = helper.use_tl_extra_except(
+        "triton.language.extra.cann.libdevice"
+    )(fallback_fmod)
+
+    assert selected is fallback_fmod
+
+
+@pytest.mark.skipif(
+    flag_dnn.vendor_name != "ascend",
+    reason="CANN fmod fallback is asserted for the Ascend route",
+)
+def test_ascend_fmod_uses_portable_lowering():
+    extension = importlib.import_module("flag_dnn.utils.triton_lang_extension")
+
+    assert extension.fmod.__module__ == (
+        "flag_dnn.utils.triton_lang_extension"
+    )
+
+
 def test_generic_reduction_uses_selected_tune_config():
     source = _generic_source("reduction")
     assert source.count('runtime.get_tuned_config("reduction")') == 1
@@ -166,11 +218,25 @@ assert eager_fn.__module__ == "flag_dnn.runtime.backend._nvidia.ops.reduction"
     flag_dnn.vendor_name != "ascend",
     reason="module identity is asserted for the Ascend route",
 )
-@pytest.mark.parametrize("op_name", POINTWISE_NAMES)
+@pytest.mark.parametrize("op_name", ASCEND_GENERIC_POINTWISE_NAMES)
 def test_ascend_uses_generic_pointwise_function(op_name):
     public_fn = getattr(flag_dnn, op_name)
     eager_fn = getattr(public_fn, "__flagdnn_eager_fn__", public_fn)
     assert eager_fn.__module__ == f"flag_dnn.ops.{op_name}"
+
+
+@pytest.mark.skipif(
+    flag_dnn.vendor_name != "ascend",
+    reason="module identity is asserted for the Ascend route",
+)
+def test_ascend_uses_private_tanh_layout_orchestration():
+    eager_fn = getattr(
+        flag_dnn.tanh,
+        "__flagdnn_eager_fn__",
+        flag_dnn.tanh,
+    )
+
+    assert eager_fn.__module__ == ("flag_dnn.runtime.backend._ascend.ops.tanh")
 
 
 @pytest.mark.skipif(

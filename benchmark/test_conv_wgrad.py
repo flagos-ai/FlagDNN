@@ -17,6 +17,8 @@ import math
 import pytest
 from benchmark.base import (
     CudnnCompareBenchmark,
+    DnnCompareBenchmark,
+    active_device_is_available,
     cudnn_data_type,
     get_cudnn,
     skip_unsupported_cudnn_graph,
@@ -244,6 +246,47 @@ class ConvWgradBenchmark(CudnnCompareBenchmark):
         }
 
 
+class AscendConvWgradBenchmark(DnnCompareBenchmark):
+    op_name = "conv_wgrad"
+    shapes = consts.CONV_WGRAD_SHAPES
+    shape_ids_env = "FLAGDNN_CONV_WGRAD_PERF_SHAPE_IDS"
+    legacy_shape_ids_env = "FLAGDNN_CUDNN_CONV_WGRAD_PERF_SHAPE_IDS"
+
+    make_inputs = ConvWgradBenchmark.make_inputs
+    build_flag_dnn_runner = ConvWgradBenchmark.build_flag_dnn_runner
+    transfer_bytes = ConvWgradBenchmark.transfer_bytes
+    shape_detail = ConvWgradBenchmark.shape_detail
+
+    def build_baseline_runner(self, inputs):
+        (
+            _,
+            filter_size,
+            stride,
+            padding,
+            pre_padding,
+            post_padding,
+            dilation,
+        ) = self.case
+        image, loss = inputs
+        kwargs = {
+            "stride": stride,
+            "dilation": dilation,
+            "convolution_mode": "CROSS_CORRELATION",
+        }
+        if pre_padding is None:
+            kwargs["padding"] = padding
+        else:
+            kwargs["pre_padding"] = pre_padding
+            kwargs["post_padding"] = post_padding
+        return self.baseline.prepare(
+            self.op_name,
+            image,
+            loss,
+            filter_size,
+            **kwargs,
+        )
+
+
 @pytest.mark.conv_wgrad
 @pytest.mark.graph
 @pytest.mark.perf
@@ -252,3 +295,16 @@ class ConvWgradBenchmark(CudnnCompareBenchmark):
 def test_conv_wgrad(cudnn_handle, dtype):
     torch.manual_seed(0)
     ConvWgradBenchmark(cudnn_handle).run(dtype)
+
+
+@pytest.mark.conv_wgrad
+@pytest.mark.graph
+@pytest.mark.perf
+@pytest.mark.skipif(
+    flag_dnn.vendor_name != "ascend" or not active_device_is_available(),
+    reason="an active Ascend NPU is required",
+)
+@pytest.mark.parametrize("dtype", AscendConvWgradBenchmark.dtypes)
+def test_conv_wgrad_ascend(dnn_baseline, dtype):
+    torch.manual_seed(0)
+    AscendConvWgradBenchmark(dnn_baseline).run(dtype)

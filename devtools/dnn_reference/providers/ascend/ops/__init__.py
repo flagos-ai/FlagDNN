@@ -18,6 +18,14 @@ from .abs import AscendAbsOperation, configure_abs
 from .add import AscendAddOperation, configure_add
 from .binary import AscendBinaryOperation, create_binary_operations
 from .binary_select import AscendBinarySelectOperation
+from .complex import (
+    AscendCausalConv1dOperation,
+    AscendConvolutionOperation,
+    AscendMatmulOperation,
+    AscendSdpaBackwardOperation,
+    AscendSdpaOperation,
+    create_complex_operations,
+)
 from .sigmoid_backward import AscendSigmoidBackwardOperation
 from .norm import (
     AscendBatchNormInferenceOperation,
@@ -39,6 +47,11 @@ __all__ = (
     "AscendAddOperation",
     "AscendBinaryOperation",
     "AscendBinarySelectOperation",
+    "AscendCausalConv1dOperation",
+    "AscendConvolutionOperation",
+    "AscendMatmulOperation",
+    "AscendSdpaBackwardOperation",
+    "AscendSdpaOperation",
     "AscendSigmoidBackwardOperation",
     "AscendBatchNormInferenceOperation",
     "AscendBatchNormOperation",
@@ -51,6 +64,7 @@ __all__ = (
     "configure_abs",
     "configure_add",
     "create_binary_operations",
+    "create_complex_operations",
     "create_norm_operations",
     "create_unary_operations",
     "create_utility_operations",

@@ -17,6 +17,8 @@ import math
 import pytest
 from benchmark.base import (
     CudnnCompareBenchmark,
+    DnnCompareBenchmark,
+    active_device_is_available,
     cudnn_data_type,
     get_cudnn,
     skip_unsupported_cudnn_graph,
@@ -187,6 +189,48 @@ class MatmulBenchmark(CudnnCompareBenchmark):
         )
 
 
+class AscendMatmulBenchmark(DnnCompareBenchmark):
+    op_name = "matmul"
+    shapes = consts.MATMUL_SHAPES
+    shape_ids_env = "FLAGDNN_MATMUL_PERF_SHAPE_IDS"
+    legacy_shape_ids_env = "FLAGDNN_CUDNN_MATMUL_PERF_SHAPE_IDS"
+
+    def __init__(
+        self,
+        baseline,
+        *,
+        mode_name,
+        compute_mode,
+        out_dtype,
+    ):
+        super().__init__(baseline)
+        self.mode_name = mode_name
+        self.compute_mode = compute_mode
+        self.out_dtype = out_dtype
+
+    make_inputs = MatmulBenchmark.make_inputs
+    build_flag_dnn_runner = MatmulBenchmark.build_flag_dnn_runner
+    transfer_bytes = MatmulBenchmark.transfer_bytes
+
+    def build_baseline_runner(self, inputs):
+        a, b = inputs
+        return self.baseline.prepare(
+            self.op_name,
+            a,
+            b,
+            compute_data_type=self.compute_mode,
+            out_dtype=self.out_dtype,
+        )
+
+    def shape_detail(self, inputs):
+        a, b = inputs
+        return {
+            "a": tuple(a.shape),
+            "b": tuple(b.shape),
+            "mode": self.mode_name,
+        }
+
+
 @pytest.mark.matmul
 @pytest.mark.graph
 @pytest.mark.perf
@@ -211,3 +255,31 @@ def test_matmul(
         out_dtype=out_dtype,
     )
     benchmark.run(dtype)
+
+
+@pytest.mark.matmul
+@pytest.mark.graph
+@pytest.mark.perf
+@pytest.mark.skipif(
+    flag_dnn.vendor_name != "ascend" or not active_device_is_available(),
+    reason="an active Ascend NPU is required",
+)
+@pytest.mark.parametrize(
+    ("mode_name", "dtype", "compute_mode", "out_dtype"),
+    _MATMUL_MODES[:3],
+    ids=[mode[0] for mode in _MATMUL_MODES[:3]],
+)
+def test_matmul_ascend(
+    dnn_baseline,
+    mode_name,
+    dtype,
+    compute_mode,
+    out_dtype,
+):
+    torch.manual_seed(0)
+    AscendMatmulBenchmark(
+        dnn_baseline,
+        mode_name=mode_name,
+        compute_mode=compute_mode,
+        out_dtype=out_dtype,
+    ).run(dtype)
