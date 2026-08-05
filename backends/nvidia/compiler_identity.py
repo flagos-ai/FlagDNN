@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import triton
-import yaml
+import yaml  # type: ignore[import-untyped]
 from triton.backends.nvidia.compiler import get_ptxas, get_ptxas_version
 
 from flagdnn_codegen.kernel_registry import (

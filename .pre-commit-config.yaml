@@ -25,4 +25,11 @@ repos:
     rev: v1.10.0
     hooks:
       - id: mypy
-        args: [--no-strict-optional, --ignore-missing-imports]
+        # Triton kernel sources are compiler DSL, and platform compiler.py
+        # consumes dynamically typed request schemas. Keep mypy focused on
+        # ordinary Python control-plane code until those APIs are typed.
+        exclude: '^(backends/[^/]+/(compiler\.py|kernels/)|kernels/common/)'
+        args:
+          - --no-strict-optional
+          - --ignore-missing-imports
+          - --explicit-package-bases

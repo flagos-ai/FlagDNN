@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import triton
-import yaml
+import yaml  # type: ignore[import-untyped]
 from triton.backends.compiler import GPUTarget
 
 from .compiler_identity import build_compiler_identity
@@ -3766,7 +3766,8 @@ def _batchnorm_inference_kernel_configuration(
             )
         if math.prod(tensor["dimensions"]) != channels:
             raise ValueError(
-                f"batchnorm inference {parameter_name} size must match channels"
+                f"batchnorm inference {parameter_name} size must match "
+                "channels"
             )
         if not _is_row_major_contiguous(tensor):
             raise ValueError(
@@ -5217,19 +5218,22 @@ def _kernel_configuration(
             or tensor_data_types[0] not in FLOAT_DATA_TYPES
         ):
             raise ValueError(
-                "numeric unary pointwise tensor data types must match and be floating"
+                "numeric unary pointwise tensor data types must match and "
+                "be floating"
             )
         input_pointer_type = TRITON_POINTER_TYPES.get(tensor_data_types[0])
         output_pointer_type = TRITON_POINTER_TYPES.get(tensor_data_types[1])
         if input_pointer_type is None or output_pointer_type is None:
             raise ValueError(
-                f"unsupported unary pointwise data type: {tensor_data_types[0]!r}"
+                "unsupported unary pointwise data type: "
+                f"{tensor_data_types[0]!r}"
             )
         elements = _require_integer(parameters, "n_elements")
         expected_elements = math.prod(tensors[0]["dimensions"])
         if elements != expected_elements:
             raise ValueError(
-                "parameters.n_elements is inconsistent with unary pointwise input"
+                "parameters.n_elements is inconsistent with unary "
+                "pointwise input"
             )
         has_upper_clip_value = parameters.get("has_upper_clip", 0)
         if (
@@ -5314,7 +5318,8 @@ def _kernel_configuration(
             or tensor_data_types[0] not in FLOAT_DATA_TYPES
         ):
             raise ValueError(
-                "numeric binary pointwise tensor data types must match and be floating"
+                "numeric binary pointwise tensor data types must match and "
+                "be floating"
             )
         pointer_types = [
             TRITON_POINTER_TYPES.get(data_type)
@@ -5396,7 +5401,8 @@ def _kernel_configuration(
         elements = _require_integer(parameters, "n_elements")
         if elements != math.prod(tensors[3]["dimensions"]):
             raise ValueError(
-                "parameters.n_elements is inconsistent with binary_select output"
+                "parameters.n_elements is inconsistent with binary_select "
+                "output"
             )
         block = 256
         constants: dict[str, int] = {"BLOCK_SIZE": block}
@@ -5873,7 +5879,8 @@ def _tensor_metadata(
             optional = port.get("optional", False)
             if not isinstance(optional, bool) or optional:
                 raise ValueError(
-                    "the NVIDIA provider does not support absent optional ports"
+                    "the NVIDIA provider does not support absent optional "
+                    "ports"
                 )
             uid = port.get("uid")
             if isinstance(uid, bool) or not isinstance(uid, int) or uid <= 0:

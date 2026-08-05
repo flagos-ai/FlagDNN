@@ -219,12 +219,16 @@ def run_one(
         else:
             status = "failed"
     except subprocess.TimeoutExpired as error:
-        stdout = error.stdout or ""
-        stderr = error.stderr or ""
-        if isinstance(stdout, bytes):
-            stdout = stdout.decode(errors="replace")
-        if isinstance(stderr, bytes):
-            stderr = stderr.decode(errors="replace")
+        stdout = (
+            error.stdout.decode(errors="replace")
+            if isinstance(error.stdout, bytes)
+            else error.stdout or ""
+        )
+        stderr = (
+            error.stderr.decode(errors="replace")
+            if isinstance(error.stderr, bytes)
+            else error.stderr or ""
+        )
         exit_code = None
         status = "timeout"
 
@@ -252,7 +256,9 @@ def run_one(
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run FlagDNN native functional tests and benchmarks serially"
+        description=(
+            "Run FlagDNN native functional tests and benchmarks " "serially"
+        )
     )
     parser.add_argument(
         "--build-dir",
@@ -280,7 +286,10 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument(
         "--device",
-        help="visible device id; leaves the current environment unchanged if omitted",
+        help=(
+            "visible device id; leaves the current environment unchanged "
+            "if omitted"
+        ),
     )
     parser.add_argument(
         "--timeout",

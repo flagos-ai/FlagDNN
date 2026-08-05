@@ -11,10 +11,8 @@ platforms use the compact portable module under ``kernels/common``.
 
 from __future__ import annotations
 
-import math
 import triton
 import triton.language as tl
-from triton.language.extra import libdevice
 
 # -----------------------------------------------------------------------------
 # Attention algorithm variants. Native dispatch selects only registry-declared

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 from pathlib import Path
 import sys
@@ -14,11 +15,17 @@ from typing import Any
 # resource directories, which may also be read-only in deployed SDKs.
 sys.dont_write_bytecode = True
 
-if __package__:
-    from .provider_loader import get_provider
-else:
+if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from flagdnn_codegen.provider_loader import get_provider
+
+_provider_loader = importlib.import_module(
+    ".provider_loader",
+    package=__package__ or "flagdnn_codegen",
+)
+
+
+def get_provider(backend: str) -> Any:
+    return _provider_loader.get_provider(backend)  # type: ignore[attr-defined]
 
 
 def _request_backend(request_path: Path) -> str:

@@ -16,7 +16,6 @@ from triton.experimental.gluon.language.nvidia.hopper import (
     warpgroup_mma_accumulator,
     warpgroup_mma_wait,
 )
-from triton.experimental.gluon.nvidia.hopper import TensorDescriptor
 from triton.language.core import _aggregate as aggregate
 
 # -----------------------------------------------------------------------------

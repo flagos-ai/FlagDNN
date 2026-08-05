@@ -3046,7 +3046,7 @@ def _conv_wgrad2d_batched_tma_kernel(
     BLOCK_CI: tl.constexpr,
     BLOCK_M: tl.constexpr,
 ):
-    """Batched WGrad GEMM over contiguous image rows or materialized patches."""
+    """Batched WGrad GEMM over image rows or materialized patches."""
     loss_desc = tl.make_tensor_descriptor(
         loss_ptr,
         shape=[BATCH_N * C_OUT, M],
