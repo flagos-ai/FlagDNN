@@ -1,0 +1,232 @@
+{
+  "schema_version": 1,
+  "ownership": "platform",
+  "backend": "nvidia",
+  "kernels": [
+    {
+      "operations": [
+        "relu",
+        "abs",
+        "ceil",
+        "cos",
+        "erf",
+        "exp",
+        "floor",
+        "identity",
+        "log",
+        "neg",
+        "reciprocal",
+        "rsqrt",
+        "sin",
+        "sqrt",
+        "tan",
+        "logical_not",
+        "sigmoid",
+        "tanh",
+        "elu",
+        "gelu",
+        "softplus",
+        "swish",
+        "gelu_approx_tanh"
+      ],
+      "provider": "nvidia_triton",
+      "source": "unary.py",
+      "functions": [
+        "unary_pointwise_contiguous_kernel",
+        "unary_pointwise_strided_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "unary",
+        "key": "n_elements",
+        "strategy": "align32",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operations": [
+        "reduction_sum",
+        "reduction_avg",
+        "reduction_mul"
+      ],
+      "provider": "nvidia_triton",
+      "source": "reduction.py",
+      "functions": [
+        "reduction_2d_kernel",
+        "reduction_3d_kernel",
+        "reduction_strided_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "reduction",
+        "key": "output_elements",
+        "strategy": "reduction",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operations": [
+        "pow",
+        "sigmoid_backward"
+      ],
+      "provider": "nvidia_triton",
+      "source": "binary.py",
+      "functions": [
+        "binary_contiguous_kernel",
+        "binary_strided_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "binary",
+        "key": "n_elements",
+        "strategy": "align32",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "matmul",
+      "provider": "nvidia_triton",
+      "source": "matmul.py",
+      "functions": [
+        "matmul_strided_kernel",
+        "matmul_batched_contiguous_kernel",
+        "matmul_batched_broadcast_a_kernel",
+        "matmul_batched_tma_persistent_kernel",
+        "matmul_p5_split_k_kernel",
+        "matmul_p5_split_k_reduce_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "matmul",
+        "key": "m",
+        "strategy": "matmul",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "sdpa",
+      "provider": "nvidia_triton",
+      "source": "attention.py",
+      "functions": ["_sdpa_fwd_kernel"],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "sdpa",
+        "key": "sequence_q",
+        "strategy": "attention",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "sdpa_backward",
+      "provider": "nvidia_triton",
+      "source": "attention.py",
+      "functions": [
+        "_zero_contiguous_kernel",
+        "_sdpa_bwd_dq_dbias_kernel",
+        "_sdpa_bwd_dkdv_kernel",
+        "_sdpa_bwd_dk_kernel",
+        "_sdpa_bwd_dv_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "sdpa_backward_dq",
+        "key": "sequence_q",
+        "strategy": "attention",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "sdpa_fp8",
+      "provider": "nvidia_triton",
+      "source": "attention.py",
+      "functions": [
+        "_zero_sdpa_fp8_fwd_amax_kernel",
+        "_sdpa_fp8_fwd_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "sdpa_fp8",
+        "key": "sequence_q",
+        "strategy": "attention",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "sdpa_fp8_backward",
+      "provider": "nvidia_triton",
+      "source": "attention.py",
+      "functions": [
+        "_zero_sdpa_fp8_bwd_amax_kernel",
+        "_sdpa_fp8_bwd_dq_kernel",
+        "_sdpa_fp8_bwd_dkdv_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "sdpa_fp8_backward_dq",
+        "key": "sequence_q",
+        "strategy": "attention",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operations": [
+        "conv2d_fprop",
+        "convolution_fprop",
+        "convolution_dgrad",
+        "convolution_wgrad"
+      ],
+      "provider": "nvidia_triton",
+      "source": "convolution.py",
+      "functions": [
+        "conv1d_gemm_kernel",
+        "conv2d_im2col_nchw_kernel",
+        "conv2d_im2col_nchw_3x3_stride2_pad1_kernel",
+        "conv2d_1x1_nchw_pad0_kernel",
+        "conv2d_spatial_nchw_kernel",
+        "conv3d_spatial_ncdhw_m_kernel",
+        "conv_dgrad2d_1x1_nchw_kernel",
+        "conv_dgrad2d_stride1_kernel",
+        "cast_contiguous_kernel",
+        "conv_dgrad2d_pack_weight_kernel",
+        "zero_contiguous_kernel",
+        "conv_dgrad2d_p5_fp32_tile2w_splitk_kernel",
+        "conv_dgrad2d_stride2_pad1_3x3_packed_parity_kernel",
+        "conv_dgrad2d_stride2_pad1_3x3_packed_tile2w_kernel",
+        "conv_dgrad2d_stride2_pad1_3x3_packed_tile4_kernel",
+        "conv_dgrad3d_pack_weight_kernel",
+        "conv_dgrad3d_pad1_3x3_fp32_ci8_dot_kernel",
+        "conv_dgrad3d_packed_kernel",
+        "conv_dgrad_nd_kernel",
+        "conv_wgrad_nd_kernel",
+        "_conv_wgrad2d_1x1_direct_nodiv_kernel",
+        "_conv_wgrad2d_1x1_split_nodiv_kernel",
+        "_conv_wgrad2d_1x1_reduce_kernel",
+        "_conv_wgrad2d_3tap_split_kernel",
+        "_conv_wgrad2d_batched_tma_kernel",
+        "_conv_wgrad2d_stride2_row4_split_kernel",
+        "_conv_wgrad2d_reduce_kernel",
+        "_conv_wgrad2d_col_split_kernel",
+        "_conv_wgrad2d_split_vector_reduce_kernel",
+        "_conv_wgrad2d_col_reduce_kernel",
+        "_conv_wgrad2d_p5_pack_image_kernel",
+        "_conv_wgrad2d_p5_mm_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "conv2d_spatial",
+        "key": "n_outputs",
+        "strategy": "convolution",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    }
+  ]
+}

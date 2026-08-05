@@ -1,34 +1,46 @@
-# Build and Release Folders
-bin-debug/
-bin-release/
-[Oo]bj/
-[Bb]in/
-
-# Other files and folders
-.settings/
-__pycache__/
-.vscode/
-.worktrees/
-.superpowers/
-
-# Python venv directory
-.venv
-
-# Distribution files
+# CMake and native build artifacts
 build/
-*.egg-info/
-.eggs/
-dist/
+build-*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+compile_commands.json
+install_manifest.txt
+*.ninja
+.ninja_*
+Makefile
 
-# An auxiliary product of unittests
-tests/*.json
+# Native binaries and libraries
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.o
+*.obj
 
-# Executables
-*.swf
-*.air
-*.ipa
-*.apk
+# Python used by Triton/codegen
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.venv/
+venv/
 
-# Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`
-# should NOT be excluded as they contain compiler settings and other important
-# information for Eclipse / Flash Builder.
+# Compiler, autotune and benchmark outputs
+.flagdnn/
+.triton/
+results/
+*.jsonl
+coverage/
+.coverage
+htmlcov/
+
+# Editors and local workspaces
+.vscode/
+.idea/
+.settings/
+.worktrees/

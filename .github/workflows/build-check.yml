@@ -1,51 +1,44 @@
-# Copyright 2026 FlagOS Contributors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-name: Build Check
+name: Native Core Build
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [master]
   pull_request:
-    branches: [ "master" ]
+    branches: [master]
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build and import check
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
 
-      - name: Install build dependencies
-        shell: bash
+      - name: Configure platform-neutral core
         run: |
-          python -m pip install --upgrade pip build
+          cmake -S . -B build-core -G Ninja \
+            -DFLAGDNN_BACKENDS= \
+            -DFLAGDNN_BUILD_TESTS=ON \
+            -DFLAGDNN_WARNINGS_AS_ERRORS=ON
 
-      - name: Build wheel
-        shell: bash
-        run: |
-          python -m build --wheel
+      - name: Build
+        run: cmake --build build-core -j2
 
-      - name: Verify wheel contents
-        shell: bash
+      - name: Test
+        run: ctest --test-dir build-core -j2 --output-on-failure
+
+      - name: Install SDK
+        run: cmake --install build-core --prefix build-core/install
+
+      - name: Configure installed SDK consumer
         run: |
-          python -m zipfile --list dist/*.whl | grep "flag_dnn/" | head -20 || true
-          echo "Wheel built successfully."
+          cmake -S tests/core/installed_consumer -B build-consumer -G Ninja \
+            -DCMAKE_PREFIX_PATH="$PWD/build-core/install"
+
+      - name: Build installed SDK consumer
+        run: cmake --build build-consumer -j2
+
+      - name: Test installed SDK headers and link interface
+        run: ctest --test-dir build-consumer -j2 --output-on-failure

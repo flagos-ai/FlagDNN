@@ -1,0 +1,70 @@
+name: NVIDIA Native Test
+
+on:
+  workflow_call:
+    inputs:
+      runner_label:
+        description: "GitHub Actions runner label"
+        required: true
+        type: string
+      gpu_check_script:
+        description: "Optional GPU availability script"
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  test:
+    runs-on: ${{ inputs.runner_label }}
+    concurrency:
+      group: nvidia-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check GPU availability
+        if: ${{ inputs.gpu_check_script != '' }}
+        shell: bash
+        run: bash ${{ inputs.gpu_check_script }}
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build-backend -G Ninja \
+            -DFLAGDNN_BACKENDS=nvidia \
+            -DFLAGDNN_BUILD_TESTS=ON \
+            -DFLAGDNN_BUILD_BENCHMARKS=OFF \
+            -DFLAGDNN_EXECUTION_ENGINE=libtriton_jit \
+            -DFLAGDNN_CODEGEN_PYTHON="$(command -v python3)" \
+            -DFLAGDNN_WARNINGS_AS_ERRORS=ON
+
+      - name: Build
+        run: cmake --build build-backend -j2
+
+      - name: Structural contracts
+        run: |
+          ctest --test-dir build-backend \
+            -R 'core.test_architecture|integration.nvidia.dependency_boundary|core.backend_contract' \
+            -j1 --output-on-failure
+
+      - name: Functional tests
+        run: ctest --test-dir build-backend -L functional -j1 --output-on-failure
+
+      - name: Install SDK
+        run: cmake --install build-backend --prefix build-backend/install
+
+      - name: Build installed NVIDIA Add consumer
+        shell: bash
+        run: |
+          cmake -S tests/core/installed_consumer \
+            -B build-installed-consumer -G Ninja \
+            -DCMAKE_PREFIX_PATH="$PWD/build-backend/install" \
+            -DFLAGDNN_INSTALLED_NVIDIA_ADD=ON \
+            -DFLAGDNN_INSTALLED_CODEGEN_PYTHON="$(command -v python3)"
+          cmake --build build-installed-consumer -j2
+
+      - name: Test installed NVIDIA Add chain
+        run: |
+          ctest --test-dir build-installed-consumer \
+            -R '^installed\.nvidia_add$' -j1 --output-on-failure

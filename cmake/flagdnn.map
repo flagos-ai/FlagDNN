@@ -1,0 +1,6 @@
+FLAGDNN_0.1 {
+  global:
+    flagdnn*;
+  local:
+    *;
+};
