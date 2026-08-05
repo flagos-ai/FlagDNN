@@ -34,7 +34,6 @@ benchmark workload 都不能包含 CUDA、cuDNN、ACLNN 或其他平台 SDK 头�
 - `flagdnn/flagdnn.hpp`：面向内部 lowering 和底层集成者的 C++ descriptor/RAII wrapper。
 - `flagdnn/frontend.hpp`：header-only Frontend Graph API。
 - `flagdnn_frontend.h`：推荐使用的 cuDNN-Frontend-style 公开入口。
-- `flagnn_frontend.h`：历史拼写兼容入口，仅转发到 canonical header。
 
 应用开发者以 `flagdnn_frontend::graph::Graph` 为主入口；`flagdnn::Graph::add()` 只是把已经
 构造好的 descriptor 挂入底层图，并不是 `graph.add()` 算子 API。Add 与 cuDNN Frontend

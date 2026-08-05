@@ -1,5 +1,4 @@
 #include <flagdnn_frontend.h>
-#include <flagnn_frontend.h>
 
 #include <cstdint>
 #include <stdexcept>
@@ -10,8 +9,6 @@ namespace fe = flagdnn_frontend;
 
 static_assert(!std::is_copy_constructible_v<fe::graph::Graph>);
 static_assert(std::is_move_constructible_v<fe::graph::Graph>);
-static_assert(std::is_same_v<flagnn_frontend::graph::Graph,
-                             flagdnn_frontend::graph::Graph>);
 
 int main() {
   fe::graph::Graph relu_graph;

@@ -32,8 +32,7 @@
  * graph and attribute objects to the stable C ABI in flagdnn.h; it is not a
  * second binary ABI and it does not embed Python or initialize Torch.
  *
- * flagdnn_frontend is the canonical public namespace. The historical
- * flagnn_frontend misspelling remains as a source-compatibility alias below.
+ * flagdnn_frontend is the canonical public namespace.
  */
 namespace flagdnn_frontend {
 
@@ -4324,6 +4323,5 @@ class Graph {
 }  // namespace graph
 }  // namespace flagdnn_frontend
 
-namespace flagnn_frontend = flagdnn_frontend;
 
 #endif  // FLAGDNN_FRONTEND_HPP_

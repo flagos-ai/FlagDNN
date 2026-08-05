@@ -48,8 +48,6 @@ FlagDNN/
 - 平台功能/性能适配：`backends/<platform>/validation/`
 - C++ API：`include/flagdnn/` 与 `include/flagdnn_frontend.h`
 
-历史拼写 `flagnn_frontend.h`/`flagnn_frontend` 仅作为源码兼容别名保留；新代码统一使用
-`flagdnn_frontend.h`/`flagdnn_frontend`。
 
 ## 算子执行链
 
