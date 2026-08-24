@@ -1437,6 +1437,29 @@ def main() -> int:
         "ordinary skipped CTest lost its classification",
     )
 
+    nested_skip_output = (
+        "11: 1/1 Test #1: integration.iluvatar.jit ***Skipped\n"
+        "11/30 Test #11: core.run_tests_contract ... Passed\n"
+    )
+    require(
+        runner.ctest_aggregate_status(0, nested_skip_output) == "passed",
+        "nested contract output incorrectly skipped an aggregate CTest run",
+    )
+    require(
+        runner.ctest_aggregate_status(
+            0, "1/1 Test #1: integration.iluvatar.jit ***Skipped"
+        )
+        == "skipped",
+        "top-level aggregate CTest skip lost its classification",
+    )
+    require(
+        runner.ctest_aggregate_status(
+            0, "1/1 Test #1: integration.iluvatar.jit ***Not Run (Disabled)"
+        )
+        == "failed",
+        "top-level disabled aggregate CTest was accepted",
+    )
+
     operator_environment = {
         "HIP_VISIBLE_DEVICES": "0",
         "CUDA_VISIBLE_DEVICES": "stale",
