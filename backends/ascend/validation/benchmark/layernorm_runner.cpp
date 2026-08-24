@@ -487,7 +487,7 @@ void run_case(const BenchmarkCase& specification,
   stream.synchronize();
   if (before != snapshot_cache(cache)) {
     throw std::runtime_error(
-        "production cache changed during LayerNorm timing");
+        "Triton cache changed during LayerNorm timing");
   }
   validate_outputs(specification,
                    std::span<GuardedBuffer>(flagdnn_buffers).subspan(3),

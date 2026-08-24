@@ -515,7 +515,7 @@ void run_case(const BenchmarkCase& specification,
   }
   stream.synchronize();
   if (before != snapshot_cache(cache)) {
-    throw std::runtime_error("production cache changed during RMSNorm timing");
+    throw std::runtime_error("Triton cache changed during RMSNorm timing");
   }
   validate_outputs(specification,
                    flagdnn_y,

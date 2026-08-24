@@ -442,7 +442,6 @@ def build_compiler_identity(
             "tuning_decoder.py"
         ),
         "capabilities": provider_path.with_name("capabilities.json"),
-        "sandbox_policy": provider_path.with_name("sandbox_policy.json"),
     }
     for registry_path in iter_kernel_registry_sources("ascend"):
         label = registry_path.resolve().relative_to(resource_root).as_posix()

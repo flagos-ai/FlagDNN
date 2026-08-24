@@ -117,6 +117,46 @@ def _ieee_fmodf(left, right):
 
 
 @triton.jit
+def _hybrid_fmodf(left, right):
+    left_bits = left.to(tl.int32, bitcast=True)
+    right_bits = right.to(tl.int32, bitcast=True)
+    sign = left_bits & -2147483648
+    abs_left = left_bits & 0x7fffffff
+    abs_right = right_bits & 0x7fffffff
+    infinity = 0x7f800000
+
+    left_magnitude = abs_left.to(tl.float32, bitcast=True)
+    right_magnitude = abs_right.to(tl.float32, bitcast=True)
+    quotient = (left_magnitude / right_magnitude).to(tl.int32).to(tl.float32)
+    native = tl.fma(-quotient, right_magnitude, left_magnitude)
+
+    # Below 2^20 the rounded FP32 quotient can differ from the exact truncated
+    # quotient only by one, so bringing a negative result back into [0, |y|)
+    # repairs that boundary without an external math-library call.
+    native = tl.where(native < 0.0, native + right_magnitude, native)
+    native = tl.where(native >= right_magnitude, native - right_magnitude, native)
+    result_bits = native.to(tl.int32, bitcast=True) | sign
+
+    invalid = (abs_right == 0) | (abs_right > infinity) | (abs_left >= infinity)
+    algorithm_lane = (~invalid) & (abs_left > abs_right)
+    result_bits = tl.where(abs_left < abs_right, left_bits, result_bits)
+    result_bits = tl.where(abs_left == abs_right, sign, result_bits)
+    result_bits = tl.where(invalid, 0x7fc00000, result_bits)
+    result = result_bits.to(tl.float32, bitcast=True)
+
+    # Native fmod converts its quotient to int32 and therefore cannot represent
+    # wide exponent ratios.  Keep the exact binary32 path off the common case,
+    # but select it for every block that contains a ratio above the safe bound.
+    requires_exact = algorithm_lane & (
+        left_magnitude > right_magnitude * 1048576.0
+    )
+    if tl.max(requires_exact.to(tl.int32), axis=0) != 0:
+        exact = _ieee_fmodf(left, right)
+        result = tl.where(requires_exact, exact, result)
+    return result
+
+
+@triton.jit
 def _apply_binary_operation(
     left,
     right,
@@ -136,7 +176,7 @@ def _apply_binary_operation(
     elif OP_KIND == POINTWISE_MAX:
         result = tl.maximum(left, right)
     elif OP_KIND == POINTWISE_MOD:
-        result = _ieee_fmodf(left.to(tl.float32), right.to(tl.float32))
+        result = _hybrid_fmodf(left.to(tl.float32), right.to(tl.float32))
     elif OP_KIND == POINTWISE_POW:
         result = cann_libdevice.pow(left.to(tl.float32), right.to(tl.float32))
     elif OP_KIND == POINTWISE_CMP_EQ:
@@ -176,19 +216,91 @@ def binary_contiguous_kernel(
     WORKER_COUNT: tl.constexpr,
 ):
     program_id = tl.program_id(0).to(tl.int64)
-    start = program_id * BLOCK_SIZE
-    while start < n_elements:
-        offsets = start + tl.arange(0, BLOCK_SIZE)
-        mask = offsets < n_elements
-        left = tl.load(x_ptr + offsets, mask=mask, other=0.0)
-        right = tl.load(y_ptr + offsets, mask=mask, other=1.0)
-        result = _apply_binary_operation(left, right, OP_KIND, ALPHA)
-        tl.store(
-            out_ptr + offsets,
-            result.to(out_ptr.dtype.element_ty),
-            mask=mask,
-        )
-        start += WORKER_COUNT * BLOCK_SIZE
+    if (
+        OP_KIND == POINTWISE_MIN
+        or OP_KIND == POINTWISE_MAX
+        or OP_KIND == POINTWISE_CMP_EQ
+        or OP_KIND == POINTWISE_CMP_NEQ
+        or OP_KIND == POINTWISE_CMP_GT
+        or OP_KIND == POINTWISE_CMP_GE
+        or OP_KIND == POINTWISE_CMP_LT
+        or OP_KIND == POINTWISE_CMP_LE
+        or OP_KIND == POINTWISE_LOGICAL_AND
+        or OP_KIND == POINTWISE_LOGICAL_OR
+    ):
+        vector_block_size: tl.constexpr = BLOCK_SIZE * 8
+        if n_elements >= WORKER_COUNT * vector_block_size:
+            start = program_id * vector_block_size
+            worker_stride = WORKER_COUNT * vector_block_size
+            while start + vector_block_size <= n_elements:
+                offsets = start + tl.arange(0, vector_block_size)
+                left = tl.load(x_ptr + offsets)
+                right = tl.load(y_ptr + offsets)
+                result = _apply_binary_operation(left, right, OP_KIND, ALPHA)
+                tl.store(
+                    out_ptr + offsets,
+                    result.to(out_ptr.dtype.element_ty),
+                )
+                start += worker_stride
+
+            tail_base = (n_elements // vector_block_size) * vector_block_size
+            tail_start = tail_base + program_id * BLOCK_SIZE
+            while tail_start < n_elements:
+                offsets = tail_start + tl.arange(0, BLOCK_SIZE)
+                mask = offsets < n_elements
+                left = tl.load(x_ptr + offsets, mask=mask, other=0.0)
+                right = tl.load(y_ptr + offsets, mask=mask, other=1.0)
+                result = _apply_binary_operation(left, right, OP_KIND, ALPHA)
+                tl.store(
+                    out_ptr + offsets,
+                    result.to(out_ptr.dtype.element_ty),
+                    mask=mask,
+                )
+                tail_start += WORKER_COUNT * BLOCK_SIZE
+        else:
+            start = program_id * BLOCK_SIZE
+            worker_stride = WORKER_COUNT * BLOCK_SIZE
+            while start < n_elements:
+                for tile_index in tl.static_range(4):
+                    tile_start = start + tile_index * worker_stride
+                    if tile_start < n_elements:
+                        offsets = tile_start + tl.arange(0, BLOCK_SIZE)
+                        mask = offsets < n_elements
+                        left = tl.load(
+                            x_ptr + offsets, mask=mask, other=0.0
+                        )
+                        right = tl.load(
+                            y_ptr + offsets, mask=mask, other=1.0
+                        )
+                        result = _apply_binary_operation(
+                            left, right, OP_KIND, ALPHA
+                        )
+                        tl.store(
+                            out_ptr + offsets,
+                            result.to(out_ptr.dtype.element_ty),
+                            mask=mask,
+                        )
+                start += 4 * worker_stride
+    else:
+        start = program_id * BLOCK_SIZE
+        worker_stride = WORKER_COUNT * BLOCK_SIZE
+        while start < n_elements:
+            for tile_index in tl.static_range(4):
+                tile_start = start + tile_index * worker_stride
+                if tile_start < n_elements:
+                    offsets = tile_start + tl.arange(0, BLOCK_SIZE)
+                    mask = offsets < n_elements
+                    left = tl.load(x_ptr + offsets, mask=mask, other=0.0)
+                    right = tl.load(y_ptr + offsets, mask=mask, other=1.0)
+                    result = _apply_binary_operation(
+                        left, right, OP_KIND, ALPHA
+                    )
+                    tl.store(
+                        out_ptr + offsets,
+                        result.to(out_ptr.dtype.element_ty),
+                        mask=mask,
+                    )
+            start += 4 * worker_stride
 
 
 @triton.jit

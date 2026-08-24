@@ -29,9 +29,11 @@ def binary_select_contiguous_kernel(
     WORKER_COUNT: tl.constexpr,
 ):
     program_id = tl.program_id(0).to(tl.int64)
-    start = program_id * BLOCK_SIZE
+    vector_block_size: tl.constexpr = BLOCK_SIZE * 4
+    start = program_id * vector_block_size
+    worker_stride = WORKER_COUNT * vector_block_size
     while start < n_elements:
-        offsets = start + tl.arange(0, BLOCK_SIZE)
+        offsets = start + tl.arange(0, vector_block_size)
         active = offsets < n_elements
         left = tl.load(x_ptr + offsets, mask=active, other=0.0)
         right = tl.load(y_ptr + offsets, mask=active, other=0.0)
@@ -42,7 +44,7 @@ def binary_select_contiguous_kernel(
             result.to(out_ptr.dtype.element_ty),
             mask=active,
         )
-        start += WORKER_COUNT * BLOCK_SIZE
+        start += worker_stride
 
 
 @triton.jit

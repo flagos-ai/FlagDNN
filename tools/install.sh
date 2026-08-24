@@ -20,7 +20,8 @@ Options:
                      tree, or build/nvidia when none exists yet)
   --prefix PATH      Install prefix (default: <build-dir>/install)
   --config NAME      Build configuration (default: the configuration recorded
-                     by tools/build.sh, or Release)
+                     by tools/build.sh, CMAKE_BUILD_TYPE, or Release for a
+                     multi-config build)
   --strip            Strip installed binaries
   -h, --help         Show this help
 
@@ -138,15 +139,22 @@ else
 fi
 install_prefix="$(realpath -m -- "${install_prefix}")"
 
-if [[ -z "${build_config}" && -f "${build_directory}/CMakeCache.txt" ]]; then
+cached_build_type=""
+configuration_types=""
+if [[ -f "${build_directory}/CMakeCache.txt" ]]; then
   while IFS= read -r cache_line; do
     case "${cache_line}" in
       CMAKE_BUILD_TYPE:*=*)
-        build_config="${cache_line#*=}"
-        break
+        cached_build_type="${cache_line#*=}"
+        ;;
+      CMAKE_CONFIGURATION_TYPES:*=*)
+        configuration_types="${cache_line#*=}"
         ;;
     esac
   done < "${build_directory}/CMakeCache.txt"
+fi
+if [[ -z "${build_config}" && -n "${cached_build_type}" ]]; then
+  build_config="${cached_build_type}"
 fi
 if [[ -z "${build_config}" ]]; then
   configuration_marker="${build_directory}/.flagdnn-build-config"
@@ -154,9 +162,17 @@ if [[ -z "${build_config}" ]]; then
     IFS= read -r build_config < "${configuration_marker}" || true
   fi
 fi
-build_config="${build_config:-Release}"
-[[ "${build_config}" =~ ^[A-Za-z0-9_.+-]+$ ]] ||
-  fail "invalid build configuration '${build_config}'"
+if [[ -z "${build_config}" && -n "${configuration_types}" ]]; then
+  if [[ ";${configuration_types};" == *";Release;"* ]]; then
+    build_config="Release"
+  else
+    build_config="${configuration_types%%;*}"
+  fi
+fi
+if [[ -n "${build_config}" ]]; then
+  [[ "${build_config}" =~ ^[A-Za-z0-9_.+-]+$ ]] ||
+    fail "invalid build configuration '${build_config}'"
+fi
 
 [[ "${install_prefix}" != "/" ]] || fail "refusing to install into /"
 [[ -f "${build_directory}/CMakeCache.txt" ]] ||
@@ -165,8 +181,10 @@ build_config="${build_config:-Release}"
 install_arguments=(
   --install "${build_directory}"
   --prefix "${install_prefix}"
-  --config "${build_config}"
 )
+if [[ -n "${build_config}" ]]; then
+  install_arguments+=(--config "${build_config}")
+fi
 if (( strip_install )); then
   install_arguments+=(--strip)
 fi
@@ -174,7 +192,7 @@ fi
 echo "Installing FlagDNN"
 echo "  build:  ${build_directory}"
 echo "  prefix: ${install_prefix}"
-echo "  config: ${build_config}"
+echo "  config: ${build_config:-NOCONFIG}"
 
 install_manifest="${build_directory}/install_manifest.txt"
 # CMake rewrites this file for each non-component install. Remove any previous
@@ -237,7 +255,7 @@ done < "${install_manifest}"
 [[ -n "${installed_cmake}" ]] ||
   fail "installation did not produce the FlagDNN CMake package"
 [[ -n "${installed_targets_configuration}" ]] ||
-  fail "installation did not produce a configuration-specific CMake target"
+  fail "installation did not produce a CMake target configuration file"
 [[ -n "${installed_resources}" ]] ||
   fail "installation did not produce the FlagDNN kernel registry"
 

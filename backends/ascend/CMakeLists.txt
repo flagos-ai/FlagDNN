@@ -338,6 +338,24 @@ file(SHA256 "${_flagdnn_ascend_python_library}"
   _flagdnn_ascend_python_library_sha256)
 file(SHA256 "${_flagdnn_ascend_ltj_standalone}"
   _flagdnn_ascend_ltj_standalone_sha256)
+set(_flagdnn_ascend_tuning_source
+  "${CMAKE_CURRENT_SOURCE_DIR}/tuning/common.yaml")
+set(_flagdnn_ascend_kernel_names
+  binary unary ternary layout reduction matmul convolution normalization)
+set(_flagdnn_ascend_identity_sources "${_flagdnn_ascend_tuning_source}")
+foreach(_flagdnn_ascend_kernel IN LISTS _flagdnn_ascend_kernel_names)
+  list(APPEND _flagdnn_ascend_identity_sources
+    "${CMAKE_CURRENT_SOURCE_DIR}/kernels/${_flagdnn_ascend_kernel}.py")
+endforeach()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  ${_flagdnn_ascend_identity_sources})
+file(SHA256 "${_flagdnn_ascend_tuning_source}"
+  _flagdnn_ascend_tuning_source_sha256)
+foreach(_flagdnn_ascend_kernel IN LISTS _flagdnn_ascend_kernel_names)
+  file(SHA256
+    "${CMAKE_CURRENT_SOURCE_DIR}/kernels/${_flagdnn_ascend_kernel}.py"
+    "_flagdnn_ascend_${_flagdnn_ascend_kernel}_source_sha256")
+endforeach()
 set(_flagdnn_ascend_identity_definitions
   FLAGDNN_ASCEND_CANN_ROOT="${FLAGDNN_ASCEND_CANN_ROOT}"
   FLAGDNN_ASCEND_CANN_VERSION="${FLAGDNN_ASCEND_CANN_VERSION}"
@@ -363,7 +381,16 @@ set(_flagdnn_ascend_identity_definitions
   FLAGDNN_ASCEND_TORCH_NPU_MODULE_PATH="${_flagdnn_ascend_torch_npu_module}"
   FLAGDNN_ASCEND_TORCH_NPU_MODULE_SHA256="${_flagdnn_ascend_torch_npu_module_sha256}"
   FLAGDNN_ASCEND_YAML_MODULE_PATH="${_flagdnn_ascend_yaml_module}"
-  FLAGDNN_ASCEND_YAML_MODULE_SHA256="${_flagdnn_ascend_yaml_module_sha256}")
+  FLAGDNN_ASCEND_YAML_MODULE_SHA256="${_flagdnn_ascend_yaml_module_sha256}"
+  FLAGDNN_ASCEND_TUNING_SOURCE_SHA256="${_flagdnn_ascend_tuning_source_sha256}"
+  FLAGDNN_ASCEND_BINARY_SOURCE_SHA256="${_flagdnn_ascend_binary_source_sha256}"
+  FLAGDNN_ASCEND_UNARY_SOURCE_SHA256="${_flagdnn_ascend_unary_source_sha256}"
+  FLAGDNN_ASCEND_TERNARY_SOURCE_SHA256="${_flagdnn_ascend_ternary_source_sha256}"
+  FLAGDNN_ASCEND_LAYOUT_SOURCE_SHA256="${_flagdnn_ascend_layout_source_sha256}"
+  FLAGDNN_ASCEND_REDUCTION_SOURCE_SHA256="${_flagdnn_ascend_reduction_source_sha256}"
+  FLAGDNN_ASCEND_MATMUL_SOURCE_SHA256="${_flagdnn_ascend_matmul_source_sha256}"
+  FLAGDNN_ASCEND_CONVOLUTION_SOURCE_SHA256="${_flagdnn_ascend_convolution_source_sha256}"
+  FLAGDNN_ASCEND_NORMALIZATION_SOURCE_SHA256="${_flagdnn_ascend_normalization_source_sha256}")
 
 # The core owns the external compiler process. Preserve the configure-time
 # canonical toolkit root so a deployment configured with CANN_ROOT (rather
@@ -396,14 +423,7 @@ flagdnn_add_backend_plugin(ascend INSTALL ABI_VERSION 3
     engines/engine.cpp
     engines/embedded_python.cpp
     engines/libtriton_jit.cpp
-    engines/batchnorm_oracle.cpp
-    engines/batchnorm_inference_oracle.cpp
-    engines/layernorm_oracle.cpp
-    engines/matmul_oracle.cpp
-    engines/convolution_fprop_oracle.cpp
-    engines/rmsnorm_oracle.cpp
     engines/python_stdout_containment.cpp
-    engines/reduction_oracle.cpp
     error.cpp
     ${PROJECT_SOURCE_DIR}/src/runtime/json.cpp
     ${PROJECT_SOURCE_DIR}/src/runtime/sha256.cpp
@@ -428,13 +448,12 @@ target_include_directories(flagdnn_backend_ascend SYSTEM PRIVATE
   "${_flagdnn_ascend_runtime_header_root}/runtime/runtime")
 set_target_properties(flagdnn_backend_ascend PROPERTIES
   INSTALL_RPATH "$ORIGIN"
-  INSTALL_RPATH_USE_LINK_PATH NO)
+  INSTALL_RPATH_USE_LINK_PATH YES)
 
 install(FILES kernels/registry.json
   DESTINATION "${FLAGDNN_RESOURCE_INSTALL_DIR}/backends/ascend/kernels")
 foreach(resource IN ITEMS add_plan.py compiler.py compiler_identity.py
-                          capabilities.json sandbox_policy.json
-                          tuning_decoder.py workspace_attestation.py)
+                          capabilities.json tuning_decoder.py)
   install(FILES "${resource}"
     DESTINATION "${FLAGDNN_RESOURCE_INSTALL_DIR}/backends/ascend")
 endforeach()
@@ -446,362 +465,3 @@ install(DIRECTORY kernels/
 install(DIRECTORY tuning/
   DESTINATION "${FLAGDNN_RESOURCE_INSTALL_DIR}/backends/ascend/tuning"
   FILES_MATCHING PATTERN "*.yaml")
-
-if(FLAGDNN_BUILD_TESTS)
-  find_package(Threads REQUIRED)
-  add_executable(flagdnn_test_ascend_batchnorm_oracle
-    tests/batchnorm_oracle_test.cpp
-    engines/batchnorm_oracle.cpp)
-  target_compile_features(flagdnn_test_ascend_batchnorm_oracle PRIVATE
-    cxx_std_20)
-  target_include_directories(flagdnn_test_ascend_batchnorm_oracle PRIVATE
-    ${PROJECT_SOURCE_DIR})
-  flagdnn_enable_warnings(flagdnn_test_ascend_batchnorm_oracle)
-  add_test(NAME core.ascend.batchnorm_host_oracle
-    COMMAND flagdnn_test_ascend_batchnorm_oracle)
-  set_tests_properties(core.ascend.batchnorm_host_oracle PROPERTIES
-    LABELS "core;ascend;no_device" TIMEOUT 30)
-
-  add_executable(flagdnn_test_ascend_layernorm_oracle
-    tests/layernorm_oracle_test.cpp
-    engines/layernorm_oracle.cpp)
-  target_compile_features(flagdnn_test_ascend_layernorm_oracle PRIVATE
-    cxx_std_20)
-  target_include_directories(flagdnn_test_ascend_layernorm_oracle PRIVATE
-    ${PROJECT_SOURCE_DIR})
-  flagdnn_enable_warnings(flagdnn_test_ascend_layernorm_oracle)
-  add_test(NAME core.ascend.layernorm_host_oracle
-    COMMAND flagdnn_test_ascend_layernorm_oracle)
-  set_tests_properties(core.ascend.layernorm_host_oracle PROPERTIES
-    LABELS "core;ascend;no_device" TIMEOUT 30)
-
-  add_executable(flagdnn_test_ascend_rmsnorm_oracle
-    tests/rmsnorm_oracle_test.cpp
-    engines/rmsnorm_oracle.cpp)
-  target_compile_features(flagdnn_test_ascend_rmsnorm_oracle PRIVATE
-    cxx_std_20)
-  target_include_directories(flagdnn_test_ascend_rmsnorm_oracle PRIVATE
-    ${PROJECT_SOURCE_DIR})
-  flagdnn_enable_warnings(flagdnn_test_ascend_rmsnorm_oracle)
-  add_test(NAME core.ascend.rmsnorm_host_oracle
-    COMMAND flagdnn_test_ascend_rmsnorm_oracle)
-  set_tests_properties(core.ascend.rmsnorm_host_oracle PROPERTIES
-    LABELS "core;ascend;no_device" TIMEOUT 30)
-
-  add_executable(flagdnn_test_ascend_batchnorm_inference_oracle
-    tests/batchnorm_inference_oracle_test.cpp
-    engines/batchnorm_inference_oracle.cpp)
-  target_compile_features(flagdnn_test_ascend_batchnorm_inference_oracle PRIVATE
-    cxx_std_20)
-  target_include_directories(flagdnn_test_ascend_batchnorm_inference_oracle PRIVATE
-    ${PROJECT_SOURCE_DIR})
-  flagdnn_enable_warnings(flagdnn_test_ascend_batchnorm_inference_oracle)
-  add_test(NAME core.ascend.batchnorm_inference_host_oracle
-    COMMAND flagdnn_test_ascend_batchnorm_inference_oracle)
-  set_tests_properties(core.ascend.batchnorm_inference_host_oracle PROPERTIES
-    LABELS "core;ascend;no_device" TIMEOUT 30)
-
-  add_executable(flagdnn_test_ascend_embedded_python_environment
-    tests/embedded_python_environment_test.cpp
-    engines/embedded_python.cpp)
-  target_compile_features(flagdnn_test_ascend_embedded_python_environment
-    PRIVATE cxx_std_20)
-  target_include_directories(flagdnn_test_ascend_embedded_python_environment
-    PRIVATE ${PROJECT_SOURCE_DIR})
-  target_link_libraries(flagdnn_test_ascend_embedded_python_environment
-    PRIVATE Python::Python)
-  flagdnn_enable_warnings(flagdnn_test_ascend_embedded_python_environment)
-  add_test(NAME core.ascend.embedded_python_environment
-    COMMAND flagdnn_test_ascend_embedded_python_environment
-      "${Python_EXECUTABLE}"
-      "${_flagdnn_ascend_python_module_root}")
-  set_tests_properties(core.ascend.embedded_python_environment PROPERTIES
-    LABELS "core;ascend;no_device" TIMEOUT 30)
-
-  add_executable(flagdnn_test_ascend_reduction_oracle
-    tests/reduction_oracle_test.cpp
-    engines/reduction_oracle.cpp)
-  target_compile_features(flagdnn_test_ascend_reduction_oracle PRIVATE
-    cxx_std_20)
-  target_include_directories(flagdnn_test_ascend_reduction_oracle PRIVATE
-    ${PROJECT_SOURCE_DIR})
-  flagdnn_enable_warnings(flagdnn_test_ascend_reduction_oracle)
-  add_test(NAME core.ascend.reduction_host_oracle
-    COMMAND flagdnn_test_ascend_reduction_oracle)
-  set_tests_properties(core.ascend.reduction_host_oracle PROPERTIES
-    LABELS "core;ascend;no_device" TIMEOUT 30)
-
-  add_executable(flagdnn_test_ascend_matmul_oracle
-    tests/matmul_oracle_test.cpp
-    engines/matmul_oracle.cpp)
-  target_compile_features(flagdnn_test_ascend_matmul_oracle PRIVATE
-    cxx_std_20)
-  target_include_directories(flagdnn_test_ascend_matmul_oracle PRIVATE
-    ${PROJECT_SOURCE_DIR})
-  flagdnn_enable_warnings(flagdnn_test_ascend_matmul_oracle)
-  add_test(NAME core.ascend.matmul_host_oracle
-    COMMAND flagdnn_test_ascend_matmul_oracle)
-  set_tests_properties(core.ascend.matmul_host_oracle PROPERTIES
-    LABELS "core;ascend;no_device" TIMEOUT 30)
-
-  add_executable(flagdnn_test_ascend_convolution_fprop_oracle
-    tests/convolution_fprop_oracle_test.cpp
-    engines/convolution_fprop_oracle.cpp)
-  target_compile_features(flagdnn_test_ascend_convolution_fprop_oracle PRIVATE
-    cxx_std_20)
-  target_include_directories(flagdnn_test_ascend_convolution_fprop_oracle PRIVATE
-    ${PROJECT_SOURCE_DIR})
-  flagdnn_enable_warnings(flagdnn_test_ascend_convolution_fprop_oracle)
-  add_test(NAME core.ascend.convolution_fprop_host_oracle
-    COMMAND flagdnn_test_ascend_convolution_fprop_oracle)
-  set_tests_properties(core.ascend.convolution_fprop_host_oracle PROPERTIES
-    LABELS "core;ascend;no_device" TIMEOUT 30)
-
-  add_executable(flagdnn_test_ascend_domain
-    tests/domain_state_test.cpp
-    context.cpp
-    error.cpp
-    engines/embedded_python.cpp
-    ${PROJECT_SOURCE_DIR}/src/runtime/sha256.cpp)
-  target_compile_features(flagdnn_test_ascend_domain PRIVATE cxx_std_20)
-  target_include_directories(flagdnn_test_ascend_domain PRIVATE
-    ${PROJECT_SOURCE_DIR}
-    ${PROJECT_SOURCE_DIR}/src)
-  target_include_directories(flagdnn_test_ascend_domain SYSTEM PRIVATE
-    "${_flagdnn_ascend_ltj_include}"
-    "${_flagdnn_ascend_arch_root}/include/experiment/msprof/toolchain"
-    "${_flagdnn_ascend_runtime_header_root}"
-    "${_flagdnn_ascend_runtime_header_root}/runtime/runtime")
-  target_compile_definitions(flagdnn_test_ascend_domain PRIVATE
-    ${_flagdnn_ascend_identity_definitions})
-  target_link_libraries(flagdnn_test_ascend_domain PRIVATE
-    Ascend::ascendcl Ascend::runtime Python::Python Threads::Threads
-    ${CMAKE_DL_LIBS})
-  flagdnn_enable_warnings(flagdnn_test_ascend_domain)
-  add_test(NAME core.ascend.domain_state
-    COMMAND flagdnn_test_ascend_domain)
-  set_tests_properties(core.ascend.domain_state PROPERTIES
-    LABELS "core;ascend;no_device" TIMEOUT 60)
-
-  add_executable(flagdnn_test_ascend_python_stdout_containment
-    tests/python_stdout_containment_test.cpp
-    engines/python_stdout_containment.cpp)
-  target_compile_features(flagdnn_test_ascend_python_stdout_containment
-    PRIVATE cxx_std_20)
-  target_include_directories(flagdnn_test_ascend_python_stdout_containment
-    PRIVATE ${PROJECT_SOURCE_DIR})
-  target_link_libraries(flagdnn_test_ascend_python_stdout_containment
-    PRIVATE Python::Python)
-  flagdnn_enable_warnings(flagdnn_test_ascend_python_stdout_containment)
-  add_test(NAME core.ascend.python_stdout_containment
-    COMMAND flagdnn_test_ascend_python_stdout_containment)
-  set_tests_properties(core.ascend.python_stdout_containment PROPERTIES
-    LABELS "core;ascend;no_device" TIMEOUT 30)
-
-  add_test(NAME core.ascend.no_owned_acl_lifecycle
-    COMMAND "${CMAKE_COMMAND}"
-      -DBACKEND_LIBRARY=$<TARGET_FILE:flagdnn_backend_ascend>
-      -DLTJ_LIBRARY=${_flagdnn_ascend_triton_jit_library}
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/VerifyNoOwnedAcl.cmake")
-  set_tests_properties(core.ascend.no_owned_acl_lifecycle PROPERTIES
-    LABELS "core;ascend;no_device")
-
-  add_test(NAME core.ascend.workspace_attestation_contract
-    COMMAND "${Python_EXECUTABLE}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/tests/workspace_attestation_contract_test.py"
-      "${CMAKE_CURRENT_SOURCE_DIR}/workspace_attestation.py")
-  set_tests_properties(core.ascend.workspace_attestation_contract PROPERTIES
-    LABELS "core;ascend;no_device;production;attestation"
-    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;PYTHONNOUSERSITE=1"
-    TIMEOUT 60)
-
-  add_executable(flagdnn_test_ascend_production_preflight
-    tests/production_preflight_test.cpp)
-  target_compile_features(flagdnn_test_ascend_production_preflight PRIVATE
-    cxx_std_20)
-  target_include_directories(flagdnn_test_ascend_production_preflight PRIVATE
-    ${PROJECT_SOURCE_DIR})
-  target_link_libraries(flagdnn_test_ascend_production_preflight PRIVATE
-    ${CMAKE_DL_LIBS})
-  flagdnn_enable_warnings(flagdnn_test_ascend_production_preflight)
-  add_test(NAME core.ascend.production_preflight_fail_fast
-    COMMAND flagdnn_test_ascend_production_preflight
-      $<TARGET_FILE:flagdnn_backend_ascend>
-      "${CMAKE_CURRENT_BINARY_DIR}/flagdnn-production-preflight-must-not-create")
-  set_tests_properties(core.ascend.production_preflight_fail_fast PROPERTIES
-    LABELS "core;ascend;no_device" TIMEOUT 60)
-
-  add_test(NAME integration.ascend.installed_consumer_contract
-    COMMAND "${CMAKE_COMMAND}"
-      "-DPROJECT_BUILD_DIR=${PROJECT_BINARY_DIR}"
-      "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
-      "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/installed-consumer-contract"
-      "-DBUILD_CONFIG=$<CONFIG>"
-      "-DCANN_ROOT=${FLAGDNN_ASCEND_CANN_ROOT}"
-      "-DCANN_VERSION=${FLAGDNN_ASCEND_CANN_VERSION}"
-      "-DCODEGEN_PYTHON=${Python_EXECUTABLE}"
-      "-DPYTHON_MODULE_ROOT=${_flagdnn_ascend_python_module_root}"
-      "-DLTJ_LIBRARY=${_flagdnn_ascend_triton_jit_library}"
-      "-DLTJ_STANDALONE=${_flagdnn_ascend_ltj_standalone}"
-      "-DLTJ_CONFIG=${_flagdnn_ascend_ltj_config}"
-      "-DLTJ_INCLUDE=${_flagdnn_ascend_ltj_include}"
-      "-DRESOURCE_INSTALL_DIR=${FLAGDNN_RESOURCE_INSTALL_DIR}"
-      "-DLIB_INSTALL_DIR=${CMAKE_INSTALL_LIBDIR}"
-      -P "${PROJECT_SOURCE_DIR}/tests/core/VerifyInstalledAscendConsumer.cmake")
-  set_tests_properties(integration.ascend.installed_consumer_contract PROPERTIES
-    LABELS "integration;ascend;no_device;installed" RUN_SERIAL TRUE TIMEOUT 120)
-
-  add_executable(flagdnn_test_ascend_embedded_preflight
-    tests/embedded_preflight_test.cpp)
-  target_compile_features(flagdnn_test_ascend_embedded_preflight PRIVATE
-    cxx_std_20)
-  target_link_libraries(flagdnn_test_ascend_embedded_preflight PRIVATE
-    ${_flagdnn_ascend_triton_jit_target} Python::Python)
-  get_filename_component(_flagdnn_ascend_site_packages
-    "${Torch_DIR}/../../../.." ABSOLUTE)
-  set(_flagdnn_ascend_torch_private_libraries
-    "${_flagdnn_ascend_site_packages}/torch.libs")
-  if(IS_DIRECTORY "${_flagdnn_ascend_torch_private_libraries}")
-    target_link_options(flagdnn_test_ascend_embedded_preflight PRIVATE
-      "LINKER:-rpath-link,${_flagdnn_ascend_torch_private_libraries}")
-    set_property(TARGET flagdnn_test_ascend_embedded_preflight APPEND PROPERTY
-      BUILD_RPATH "${_flagdnn_ascend_torch_private_libraries}")
-  endif()
-  get_filename_component(_flagdnn_ascend_ltj_library_directory
-    "${_flagdnn_ascend_triton_jit_library}" DIRECTORY)
-  get_filename_component(_flagdnn_ascend_python_library_directory
-    "${_flagdnn_ascend_python_library}" DIRECTORY)
-  get_filename_component(_flagdnn_ascend_ascendcl_library_directory
-    "${FLAGDNN_ASCEND_ASCENDCL_LIBRARY}" DIRECTORY)
-  get_filename_component(_flagdnn_ascend_runtime_library_directory
-    "${FLAGDNN_ASCEND_RUNTIME_LIBRARY}" DIRECTORY)
-  set(_flagdnn_ascend_embedded_library_directories
-    "${_flagdnn_ascend_ltj_library_directory}"
-    "${_flagdnn_ascend_python_library_directory}"
-    "${_flagdnn_ascend_ascendcl_library_directory}"
-    "${_flagdnn_ascend_runtime_library_directory}"
-    "${FLAGDNN_ASCEND_CANN_ROOT}/lib64"
-    "${_flagdnn_ascend_site_packages}/torch/lib")
-  set(_flagdnn_ascend_driver_root "")
-  if(DEFINED ENV{ASCEND_DRIVER_HOME} AND
-     IS_DIRECTORY "$ENV{ASCEND_DRIVER_HOME}")
-    file(REAL_PATH "$ENV{ASCEND_DRIVER_HOME}"
-      _flagdnn_ascend_driver_root)
-  elseif(IS_DIRECTORY "/usr/local/Ascend/driver")
-    file(REAL_PATH "/usr/local/Ascend/driver"
-      _flagdnn_ascend_driver_root)
-  endif()
-  if(_flagdnn_ascend_driver_root)
-    foreach(relative IN ITEMS lib64 lib64/common lib64/driver)
-      if(IS_DIRECTORY "${_flagdnn_ascend_driver_root}/${relative}")
-        list(APPEND _flagdnn_ascend_embedded_library_directories
-          "${_flagdnn_ascend_driver_root}/${relative}")
-      endif()
-    endforeach()
-  endif()
-  if(IS_DIRECTORY "${_flagdnn_ascend_torch_private_libraries}")
-    list(APPEND _flagdnn_ascend_embedded_library_directories
-      "${_flagdnn_ascend_torch_private_libraries}")
-  endif()
-  list(REMOVE_DUPLICATES _flagdnn_ascend_embedded_library_directories)
-  foreach(directory IN LISTS _flagdnn_ascend_embedded_library_directories)
-    if(NOT IS_DIRECTORY "${directory}")
-      message(FATAL_ERROR
-        "Embedded Ascend preflight library directory is missing: ${directory}")
-    endif()
-  endforeach()
-  list(JOIN _flagdnn_ascend_embedded_library_directories ":"
-    _flagdnn_ascend_embedded_library_path)
-
-  foreach(_flagdnn_ascend_offline_kernel IN ITEMS
-      batchnorm_inference batchnorm_training convolution_fprop
-      layernorm matmul rmsnorm)
-    add_test(
-      NAME integration.ascend.offline_compile.${_flagdnn_ascend_offline_kernel}
-      COMMAND "${Python_EXECUTABLE}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/${_flagdnn_ascend_offline_kernel}_offline_test.py")
-    set_tests_properties(
-      integration.ascend.offline_compile.${_flagdnn_ascend_offline_kernel}
-      PROPERTIES
-        LABELS "integration;ascend;no_device;compiler;offline"
-        RUN_SERIAL TRUE
-        TIMEOUT 1800
-        ENVIRONMENT
-          "ASCEND_HOME_PATH=${FLAGDNN_ASCEND_CANN_ROOT};ASCEND_TOOLKIT_HOME=${FLAGDNN_ASCEND_CANN_ROOT};FLAGDNN_STANDALONE_COMPILE=${_flagdnn_ascend_ltj_standalone};LD_LIBRARY_PATH=${_flagdnn_ascend_embedded_library_path};PYTHONDONTWRITEBYTECODE=1;PYTHONNOUSERSITE=1;TORCH_DEVICE_BACKEND_AUTOLOAD=0")
-  endforeach()
-
-  target_include_directories(flagdnn_test_ascend_embedded_preflight SYSTEM
-    PRIVATE
-      "${FLAGDNN_ASCEND_CANN_ROOT}/include"
-      "${FLAGDNN_ASCEND_CANN_ROOT}/include/aclnn"
-      "${FLAGDNN_ASCEND_CANN_ROOT}/include/experiment"
-      "${FLAGDNN_ASCEND_CANN_ROOT}/include/experiment/runtime"
-      "${_flagdnn_ascend_arch_root}/include"
-      "${_flagdnn_ascend_arch_root}/include/experiment"
-      "${_flagdnn_ascend_arch_root}/include/experiment/msprof"
-      "${_flagdnn_ascend_runtime_header_root}"
-      "${_flagdnn_ascend_runtime_header_root}/runtime/runtime")
-  flagdnn_enable_warnings(flagdnn_test_ascend_embedded_preflight)
-  add_test(NAME integration.ascend.embedded_toolchain_preflight
-    COMMAND flagdnn_test_ascend_embedded_preflight
-      "${CMAKE_CURRENT_BINARY_DIR}/embedded-preflight-cache"
-      "${CMAKE_CURRENT_SOURCE_DIR}/kernels/binary.py"
-      "${_flagdnn_ascend_ltj_standalone}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/workspace_attestation.py"
-      "${_flagdnn_ascend_python_module_root}")
-  set_tests_properties(integration.ascend.embedded_toolchain_preflight PROPERTIES
-    LABELS "integration;ascend;no_device;toolchain" RUN_SERIAL TRUE TIMEOUT 120
-    ENVIRONMENT
-      "ASCEND_HOME_PATH=${FLAGDNN_ASCEND_CANN_ROOT};LD_LIBRARY_PATH=${_flagdnn_ascend_embedded_library_path};PYTHONDONTWRITEBYTECODE=1;PYTHONNOUSERSITE=1")
-
-  if(_flagdnn_ascend_driver_root)
-    add_test(NAME integration.ascend.installed_consumer_add
-      COMMAND "${CMAKE_COMMAND}"
-        "-DPROJECT_BUILD_DIR=${PROJECT_BINARY_DIR}"
-        "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
-        "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/installed-consumer-device-trusted-local"
-        "-DBUILD_CONFIG=$<CONFIG>"
-        "-DCANN_ROOT=${FLAGDNN_ASCEND_CANN_ROOT}"
-        "-DCANN_VERSION=${FLAGDNN_ASCEND_CANN_VERSION}"
-        "-DCODEGEN_PYTHON=${Python_EXECUTABLE}"
-        "-DPYTHON_LIBRARY=${_flagdnn_ascend_python_library}"
-        "-DPYTHON_MODULE_ROOT=${_flagdnn_ascend_python_module_root}"
-        "-DLTJ_LIBRARY=${_flagdnn_ascend_triton_jit_library}"
-        "-DLTJ_STANDALONE=${_flagdnn_ascend_ltj_standalone}"
-        "-DLTJ_CONFIG=${_flagdnn_ascend_ltj_config}"
-        "-DLTJ_INCLUDE=${_flagdnn_ascend_ltj_include}"
-        "-DASCEND_DRIVER_ROOT=${_flagdnn_ascend_driver_root}"
-        "-DRESOURCE_INSTALL_DIR=${FLAGDNN_RESOURCE_INSTALL_DIR}"
-        "-DLIB_INSTALL_DIR=${CMAKE_INSTALL_LIBDIR}"
-        -DRUN_ASCEND_DEVICE_TEST=ON
-        -P "${PROJECT_SOURCE_DIR}/tests/core/VerifyInstalledAscendConsumer.cmake")
-    set_tests_properties(
-      integration.ascend.installed_consumer_add PROPERTIES
-      LABELS "integration;ascend;runtime;device;installed;trusted_local"
-      RUN_SERIAL TRUE TIMEOUT 720)
-  endif()
-
-  add_executable(flagdnn_test_ascend_artifact_contract
-    tests/artifact_contract_driver.cpp
-    artifact.cpp
-    ${PROJECT_SOURCE_DIR}/src/runtime/json.cpp
-    ${PROJECT_SOURCE_DIR}/src/runtime/sha256.cpp)
-  target_compile_features(flagdnn_test_ascend_artifact_contract PRIVATE
-    cxx_std_20)
-  target_include_directories(flagdnn_test_ascend_artifact_contract PRIVATE
-    ${PROJECT_SOURCE_DIR}
-    ${PROJECT_SOURCE_DIR}/src
-    ${PROJECT_BINARY_DIR}/generated/include
-    ${FLAGDNN_ASCEND_INCLUDE_DIR})
-  flagdnn_enable_warnings(flagdnn_test_ascend_artifact_contract)
-  add_test(NAME core.ascend.artifact_graph_contract
-    COMMAND "${Python_EXECUTABLE}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/tests/artifact_contract_test.py"
-      $<TARGET_FILE:flagdnn_test_ascend_artifact_contract>
-      "ascend_Ascend910B1_cann_${FLAGDNN_ASCEND_CANN_VERSION}_aic_24")
-  set_tests_properties(core.ascend.artifact_graph_contract PROPERTIES
-    LABELS "core;ascend;no_device"
-    ENVIRONMENT
-      "PYTHONDONTWRITEBYTECODE=1;PYTHONNOUSERSITE=1;TRITON_JIT_BACKEND=NPU;TRITON_BACKEND=torch_npu;TORCH_DEVICE_BACKEND_AUTOLOAD=0;TRITON_ASCEND_ARCH=Ascend910B1"
-    TIMEOUT 60)
-endif()

@@ -1585,16 +1585,35 @@ void test_environment_drift(
   require(::setenv("TRITON_ALL_BLOCKS_PARALLEL", "true", 1) == 0,
           "cannot inject frozen Ascend environment drift");
 
-  const auto bindings = buffers.bindings();
+  /*
+   * A prepared raw launch is intentionally independent of the compiler
+   * environment.  Scanning getenv/stat state on every execute would put
+   * control-plane work on the steady-state hot path.  Enter a
+   * configuration-sensitive operation instead: constructing another Ascend
+   * handle must observe the frozen-domain drift and latch the process before
+   * any further raw launch can start.
+   */
   marker("BEGIN_DRIFT_REJECT");
-  const fe::error_t first = program.execute(bindings, stream.opaque());
+  flagdnnHandle_t rejected = nullptr;
+  const flagdnnStatus_t create_status =
+      flagdnnCreateWithBackendName("ascend", 0, &rejected);
+  const std::string create_error = flagdnnGetLastErrorString();
+  if (rejected != nullptr) {
+    (void)flagdnnDestroy(rejected);
+  }
   marker("END_DRIFT_REJECT");
-  require(first.get_status() == FLAGDNN_STATUS_NOT_SUPPORTED,
-          "environment drift did not reject execute as not-supported: " +
-              first.get_message());
-  require(first.get_message().find("configuration changed") !=
+  require(create_status == FLAGDNN_STATUS_NOT_SUPPORTED &&
+              rejected == nullptr,
+          "environment drift allowed another handle: " + create_error);
+  require(create_error.find("configuration changed") !=
               std::string::npos,
           "environment drift returned an unrelated diagnostic: " +
+              create_error);
+
+  const auto bindings = buffers.bindings();
+  const fe::error_t first = program.execute(bindings, stream.opaque());
+  require(first.get_status() == FLAGDNN_STATUS_NOT_SUPPORTED,
+          "terminal environment drift did not reject execute: " +
               first.get_message());
   stream.synchronize();
   buffers.require_output_value(stream, kOutputSentinel);
@@ -1603,18 +1622,6 @@ void test_environment_drift(
   require(latched.get_status() == FLAGDNN_STATUS_NOT_SUPPORTED,
           "terminal environment drift was not latched for execute");
   buffers.require_output_value(stream, kOutputSentinel);
-
-  flagdnnHandle_t rejected = nullptr;
-  const flagdnnStatus_t create_status =
-      flagdnnCreateWithBackendName("ascend", 0, &rejected);
-  const std::string create_error = flagdnnGetLastErrorString();
-  if (rejected != nullptr) {
-    (void)flagdnnDestroy(rejected);
-  }
-  require(create_status == FLAGDNN_STATUS_NOT_SUPPORTED &&
-              rejected == nullptr,
-          "terminal environment drift allowed another handle: " +
-              create_error);
   std::cout << "ASCEND_DEVELOPMENT_ENVIRONMENT_DRIFT PASS "
                "raw_output_unchanged=1 terminal_latched=1\n";
 }

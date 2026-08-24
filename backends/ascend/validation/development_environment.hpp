@@ -172,7 +172,6 @@ class DevelopmentEnvironment {
     }
 
     set_environment("FLAGDNN_ASCEND_RESOURCE_CONTAINMENT", "development");
-    set_environment("FLAGDNN_ASCEND_RESOURCE_ROOT", root_.string());
     set_environment("ASCEND_HOME_PATH", cann_root.string());
     set_environment("ASCEND_TOOLKIT_HOME", cann_root.string());
     set_environment("TRITON_JIT_BACKEND", "NPU");
@@ -190,11 +189,6 @@ class DevelopmentEnvironment {
              "PYTHONHOME",
              "PYTHONPYCACHEPREFIX",
              "PYTHONUSERBASE",
-             "FLAGDNN_ASCEND_CGROUP_PARENT",
-             "FLAGDNN_ASCEND_PROVIDER_CGROUP",
-             "FLAGDNN_ASCEND_SANDBOX_SUPERVISOR",
-             "FLAGDNN_ASCEND_PROJECT_ID_RANGE",
-             "FLAGDNN_ASCEND_QUOTA_HELPER",
              "TRITON_ASCEND_ARCH",
              "TRITON_COMPILE_ONLY",
              "TRITON_ALWAYS_COMPILE",

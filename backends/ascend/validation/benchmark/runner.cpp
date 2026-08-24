@@ -1329,7 +1329,7 @@ void run_case(const BenchmarkCase& specification,
     if (before_samples != after_samples) {
       throw std::runtime_error(
           specification.name +
-          ": production cache changed during benchmark sample window");
+          ": Triton cache changed during benchmark sample window");
     }
     require_case_inputs_unchanged(buffers, stream);
 

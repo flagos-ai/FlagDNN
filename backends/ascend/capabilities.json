@@ -24,7 +24,7 @@
     "minimum_rank": 2,
     "maximum_rank": 8,
     "maximum_batch_rank": 6,
-    "block_sizes": [16, 32]
+    "block_sizes": [16, 32, 64, 128]
   },
   "convolution_fprop": {
     "data_types": ["float32", "float16", "bfloat16"],
@@ -92,7 +92,7 @@
     "num_warps": [4],
     "num_stages": [1]
   },
-  "block_sizes": [256, 128],
+  "block_sizes": [4096, 2048, 1024, 256, 128],
   "persistent_launch": {
     "minimum_ai_core_count": 1,
     "maximum_ai_core_count": 65535,

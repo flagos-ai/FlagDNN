@@ -175,7 +175,7 @@ struct ProcessConfigurationSnapshot {
 
   std::string containment_mode;
   std::vector<EnvironmentValue> environment;
-  PrivateDirectory production_cache;
+  PrivateDirectory cache;
   PrivateDirectory temporary_root;
   std::shared_ptr<const OwnedDirectories> owned_directories;
 };
@@ -207,24 +207,12 @@ enum class ContainmentMode {
   return "unknown";
 }
 
-[[nodiscard]] constexpr bool is_local_execution_mode(
-    ContainmentMode mode) noexcept {
-  return mode == ContainmentMode::kTrustedLocal ||
-         mode == ContainmentMode::kDevelopment;
-}
-
 static constexpr const char* kFrozenEnvironmentNames[] = {
     "ASCEND_HOME_PATH",
     "ASCEND_TOOLKIT_HOME",
     "ASCEND_AICPU_PATH",
     "ASCEND_OPP_PATH",
     "ASCEND_CUSTOM_OPP_PATH",
-    "FLAGDNN_ASCEND_RESOURCE_ROOT",
-    "FLAGDNN_ASCEND_CGROUP_PARENT",
-    "FLAGDNN_ASCEND_PROVIDER_CGROUP",
-    "FLAGDNN_ASCEND_SANDBOX_SUPERVISOR",
-    "FLAGDNN_ASCEND_PROJECT_ID_RANGE",
-    "FLAGDNN_ASCEND_QUOTA_HELPER",
     "TRITON_JIT_BACKEND",
     "TRITON_ASCEND_ARCH",
     "TRITON_NPU_COMPILER_PATH",
@@ -395,7 +383,7 @@ static constexpr PythonModulePin kPythonModules[] = {
 }
 
 struct LocalEnvironment {
-  fs::path production_cache_root;
+  fs::path cache_root;
   fs::path temporary_root;
   fs::path python_module_root;
   std::shared_ptr<const detail::ProcessConfigurationSnapshot::OwnedDirectories>
@@ -406,7 +394,7 @@ enum class FrozenConfigurationStatus {
   kValid,
   kContainmentModeChanged,
   kEnvironmentChanged,
-  kProductionCacheChanged,
+  kCacheChanged,
   kTemporaryRootChanged,
 };
 
@@ -598,7 +586,7 @@ freeze_private_directory(const fs::path& path, const char* description) {
     }
 
     LocalEnvironment result;
-    result.production_cache_root =
+    result.cache_root =
         freeze_private_directory(cache, "trusted-local TRITON_CACHE_DIR").path;
     result.temporary_root =
         freeze_private_directory(temporary, "trusted-local TMPDIR").path;
@@ -624,13 +612,13 @@ void replace_environment_path(const char* name, const fs::path& value) {
     std::string_view codegen_arch) {
   LocalEnvironment result;
   if (mode == ContainmentMode::kDevelopment) {
-    result.production_cache_root =
+    result.cache_root =
         require_canonical_private_directory("TRITON_CACHE_DIR");
     result.temporary_root = require_canonical_private_directory("TMPDIR");
   } else if (mode == ContainmentMode::kTrustedLocal) {
     result = create_trusted_local_directories();
     replace_environment_path("TRITON_CACHE_DIR",
-                             result.production_cache_root);
+                             result.cache_root);
     replace_environment_path("TMPDIR", result.temporary_root);
     if (::setenv("FLAGDNN_ASCEND_RESOURCE_CONTAINMENT",
                  containment_mode_name(mode),
@@ -644,7 +632,7 @@ void replace_environment_path(const char* name, const fs::path& value) {
     throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
                       "hardened Ascend environment preparation is disabled");
   }
-  if (result.production_cache_root == result.temporary_root) {
+  if (result.cache_root == result.temporary_root) {
     throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
                       "TRITON_CACHE_DIR and TMPDIR must be distinct private "
                       "directories");
@@ -705,8 +693,8 @@ freeze_process_configuration(ContainmentMode mode,
     }
     result->environment.push_back(std::move(frozen));
   }
-  result->production_cache = freeze_private_directory(
-      environment.production_cache_root, "TRITON_CACHE_DIR");
+  result->cache =
+      freeze_private_directory(environment.cache_root, "TRITON_CACHE_DIR");
   result->temporary_root =
       freeze_private_directory(environment.temporary_root, "TMPDIR");
   result->owned_directories = environment.owned_directories;
@@ -746,19 +734,13 @@ freeze_process_configuration(ContainmentMode mode,
       return FrozenConfigurationStatus::kEnvironmentChanged;
     }
   }
-  if (!private_directory_matches(frozen.production_cache)) {
-    return FrozenConfigurationStatus::kProductionCacheChanged;
+  if (!private_directory_matches(frozen.cache)) {
+    return FrozenConfigurationStatus::kCacheChanged;
   }
   if (!private_directory_matches(frozen.temporary_root)) {
     return FrozenConfigurationStatus::kTemporaryRootChanged;
   }
   return FrozenConfigurationStatus::kValid;
-}
-
-[[nodiscard]] bool snapshot_allows_local_execution(
-    const detail::ProcessConfigurationSnapshot& frozen) noexcept {
-  return frozen.containment_mode == "trusted-local" ||
-         frozen.containment_mode == "development";
 }
 
 [[nodiscard]] const char* frozen_configuration_error(
@@ -769,98 +751,12 @@ freeze_process_configuration(ContainmentMode mode,
     case FrozenConfigurationStatus::kContainmentModeChanged:
     case FrozenConfigurationStatus::kEnvironmentChanged:
       return "Ascend process configuration changed after the domain was bound";
-    case FrozenConfigurationStatus::kProductionCacheChanged:
-      return "Ascend production cache root changed after domain binding";
+    case FrozenConfigurationStatus::kCacheChanged:
+      return "Ascend Triton cache root changed after domain binding";
     case FrozenConfigurationStatus::kTemporaryRootChanged:
       return "Ascend temporary root changed after domain binding";
   }
   return "Ascend process configuration validation returned an unknown state";
-}
-
-[[nodiscard]] std::optional<std::string> production_preflight_error() {
-  std::error_code error;
-  const fs::path cgroup_root("/sys/fs/cgroup");
-  if (!fs::is_regular_file(cgroup_root / "cgroup.controllers", error) ||
-      error) {
-    return "Ascend production containment requires a cgroup v2 hierarchy "
-           "with cgroup.controllers; this host does not provide it";
-  }
-
-  std::string path_error;
-  const auto cgroup_parent = canonical_existing_path(
-      environment_value("FLAGDNN_ASCEND_CGROUP_PARENT"), true, &path_error);
-  if (!cgroup_parent.has_value()) {
-    return "invalid FLAGDNN_ASCEND_CGROUP_PARENT: " + path_error;
-  }
-  const fs::path canonical_cgroup_root = fs::canonical(cgroup_root, error);
-  if (error || !path_is_within(*cgroup_parent, canonical_cgroup_root)) {
-    return "FLAGDNN_ASCEND_CGROUP_PARENT is outside the cgroup v2 hierarchy";
-  }
-  if (::access(cgroup_parent->c_str(), W_OK | X_OK) != 0 ||
-      ::access((*cgroup_parent / "cgroup.kill").c_str(), W_OK) != 0) {
-    return "FLAGDNN_ASCEND_CGROUP_PARENT is not a writable delegated subtree "
-           "with cgroup.kill";
-  }
-
-  const auto resource_root = canonical_existing_path(
-      environment_value("FLAGDNN_ASCEND_RESOURCE_ROOT"), true, &path_error);
-  if (!resource_root.has_value()) {
-    return "invalid FLAGDNN_ASCEND_RESOURCE_ROOT: " + path_error;
-  }
-  const fs::path temporary_root = fs::canonical("/tmp", error);
-  if (!error && path_is_within(*resource_root, temporary_root)) {
-    return "FLAGDNN_ASCEND_RESOURCE_ROOT must not use shared /tmp";
-  }
-  for (const char* base : {"production", "provider"}) {
-    const fs::path control_base = *resource_root / "manager" / base;
-    if (!fs::is_regular_file(control_base / "CONTROL_BASE_READY", error) ||
-        error) {
-      return "missing immutable CONTROL_BASE_READY for Ascend " +
-             std::string(base) + " control base";
-    }
-  }
-
-  const auto provider_cgroup = canonical_existing_path(
-      environment_value("FLAGDNN_ASCEND_PROVIDER_CGROUP"), true, &path_error);
-  if (!provider_cgroup.has_value() ||
-      !path_is_within(*provider_cgroup, *cgroup_parent)) {
-    return "FLAGDNN_ASCEND_PROVIDER_CGROUP is missing or outside the "
-           "delegated subtree";
-  }
-
-  for (const char* variable : {"FLAGDNN_ASCEND_SANDBOX_SUPERVISOR",
-                               "FLAGDNN_ASCEND_QUOTA_HELPER"}) {
-    const auto executable = canonical_existing_path(
-        environment_value(variable), false, &path_error);
-    if (!executable.has_value()) {
-      return std::string("invalid ") + variable + ": " + path_error;
-    }
-    struct stat status {};
-    if (::stat(executable->c_str(), &status) != 0 || status.st_uid != 0 ||
-        (status.st_mode & (S_IWGRP | S_IWOTH)) != 0 ||
-        ::access(executable->c_str(), X_OK) != 0) {
-      return std::string(variable) +
-             " must name a root-owned, non-group/world-writable executable";
-    }
-  }
-
-  const std::string project_range =
-      environment_value("FLAGDNN_ASCEND_PROJECT_ID_RANGE");
-  const std::size_t separator = project_range.find(':');
-  if (separator == std::string::npos || separator == 0 ||
-      separator + 1 == project_range.size()) {
-    return "FLAGDNN_ASCEND_PROJECT_ID_RANGE must be '<first>:<last>'";
-  }
-
-  /*
-   * The Stage 1 skeleton intentionally stops here. A positive production
-   * decision additionally requires destructive disposable-child cgroup.kill,
-   * dedicated-UID supervisor, project-quota and reservation-ledger probes.
-   * Treating path presence as that proof would silently weaken Stage 3.
-   */
-  return "Ascend production resource attestation is not enabled in the "
-         "Stage 1 runtime skeleton; use explicit development mode only for "
-         "diagnostics";
 }
 
 [[nodiscard]] std::size_t align_note(std::size_t size) {
@@ -1484,11 +1380,10 @@ void verify_python_module_root(const fs::path& module_root) {
   }
 
   if (*mode == ContainmentMode::kHardened) {
-    const std::optional<std::string> failure = production_preflight_error();
-    if (failure.has_value()) {
-      return detail::DomainInitialization::retryable(
-          FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED, *failure);
-    }
+    return detail::DomainInitialization::retryable(
+        FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
+        "Ascend production/hardened containment is not implemented; use "
+        "trusted-local or development mode");
   }
 
   if (api.get_current_context == nullptr || api.get_device == nullptr ||
@@ -1724,9 +1619,7 @@ void verify_python_module_root(const fs::path& module_root) {
              << ";standalone_sha256=" << FLAGDNN_ASCEND_STANDALONE_SHA256
              << ';' << python_identity;
     binding.runtime_identity = identity.str();
-    binding.development_mode = is_local_execution_mode(*mode);
-    binding.production_cache_root =
-        local_environment.production_cache_root.string();
+    binding.cache_root = local_environment.cache_root.string();
     binding.configuration_identity = frozen_configuration;
     binding.configuration_snapshot = configuration_snapshot;
     if (detail::process_domain().terminal_failure_latched()) {
@@ -1855,7 +1748,7 @@ std::shared_ptr<const DomainBinding> DomainCoordinator::acquire(
           initialization.binding.ai_core_count == 0 ||
           initialization.binding.target_fingerprint.empty() ||
           initialization.binding.codegen_arch.empty() ||
-          initialization.binding.production_cache_root.empty() ||
+          initialization.binding.cache_root.empty() ||
           initialization.binding.configuration_identity.empty()) {
         mark_terminal(FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR,
                       "Ascend initializer returned an incomplete binding");
@@ -2155,8 +2048,7 @@ EngineBuildContext AscendContext::engine_build_context() const {
           binding_->target_fingerprint,
           binding_->codegen_arch,
           binding_->runtime_identity,
-          binding_->development_mode,
-          binding_->production_cache_root,
+          binding_->cache_root,
           binding_->configuration_identity,
           binding_->configuration_snapshot};
 }
@@ -2173,20 +2065,14 @@ void ensure_process_healthy() {
 void ensure_process_configuration(const EngineBuildContext& context) {
   ensure_process_healthy();
   try {
-    require(context.development_mode,
-            "Ascend hardened execution is not enabled",
-            FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED);
-    require(!context.production_cache_root.empty() &&
+    require(!context.cache_root.empty() &&
                 !context.configuration_identity.empty() &&
                 context.configuration_snapshot != nullptr &&
                 context.ai_core_count != 0 &&
                 context.ai_core_count <= kMaximumAiCoreCount,
             "Ascend engine context has no frozen process configuration",
             FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
-    require(snapshot_allows_local_execution(
-                *context.configuration_snapshot) == context.development_mode &&
-                context.configuration_snapshot->production_cache.path ==
-                    context.production_cache_root,
+    require(context.configuration_snapshot->cache.path == context.cache_root,
             "Ascend engine context differs from its process configuration",
             FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
     const FrozenConfigurationStatus status =
@@ -2207,16 +2093,12 @@ void ensure_process_configuration(const EngineBuildContext& context) {
 
 bool process_configuration_matches(
     const EngineBuildContext& context) noexcept {
-  return context.development_mode &&
-         !context.production_cache_root.empty() &&
+  return !context.cache_root.empty() &&
          !context.configuration_identity.empty() &&
          context.configuration_snapshot != nullptr &&
          context.ai_core_count != 0 &&
          context.ai_core_count <= kMaximumAiCoreCount &&
-         snapshot_allows_local_execution(*context.configuration_snapshot) ==
-             context.development_mode &&
-         context.configuration_snapshot->production_cache.path ==
-             context.production_cache_root &&
+         context.configuration_snapshot->cache.path == context.cache_root &&
          frozen_configuration_status(*context.configuration_snapshot) ==
              FrozenConfigurationStatus::kValid;
 }

@@ -378,11 +378,9 @@ std::optional<std::string> run_case(const AscendPointwiseCase& ascend_case,
   const PointwiseTestCase& test_case = ascend_case.specification;
   validate_pointwise_case(test_case);
   (void)operation_name(test_case.mode);
-  if (test_case.mode == FLAGDNN_POINTWISE_MOD &&
-      ascend_case.strict_zero_signbit &&
-      !ascend_case.explicit_inputs.empty()) {
-    return "ACLNN Mod signed-zero semantics are not an exact reference";
-  }
+  const bool strict_mod = test_case.mode == FLAGDNN_POINTWISE_MOD &&
+                          ascend_case.strict_zero_signbit &&
+                          !ascend_case.explicit_inputs.empty();
   const PointwiseReferencePlan reference_plan =
       make_reference_plan(test_case);
   std::unique_ptr<PointwiseExecutable> flagdnn =
@@ -492,14 +490,31 @@ std::optional<std::string> run_case(const AscendPointwiseCase& ascend_case,
         tensor_io::gather(flagdnn_physical, test_case.output);
     const std::vector<float> reference_logical =
         tensor_io::gather(reference_physical, reference_plan.output);
-    compare_provider_outputs(flagdnn_logical,
-                             reference_logical,
-                             test_case,
-                             ascend_case.strict_zero_signbit);
-    std::cout << test_case.name
-              << ": FlagDNN Graph/libtriton_jit vs ACLNN "
-              << operation_name(test_case.mode)
-              << " PASS exact_reference=ACLNN_POINTWISE\n";
+    if (strict_mod) {
+      const mod::SemanticInputs semantic_inputs{
+          ascend_case.explicit_inputs[0], ascend_case.explicit_inputs[1]};
+      const std::vector<float> host_reference = mod::host_reference(
+          semantic_inputs, test_case.inputs.front().data_type);
+      compare_provider_outputs(
+          flagdnn_logical, host_reference, test_case, true);
+      const mod::AclnnReferenceObservation observation =
+          mod::classify_aclnn_reference(reference_logical, host_reference);
+      std::cout << test_case.name
+                << ": FlagDNN Graph/libtriton_jit vs std::fmod PASS "
+                << "exact_reference=HOST_FMOD aclnn_matched="
+                << observation.matched << " aclnn_differed="
+                << observation.differed << " aclnn_nonfinite="
+                << observation.nonfinite << '\n';
+    } else {
+      compare_provider_outputs(flagdnn_logical,
+                               reference_logical,
+                               test_case,
+                               ascend_case.strict_zero_signbit);
+      std::cout << test_case.name
+                << ": FlagDNN Graph/libtriton_jit vs ACLNN "
+                << operation_name(test_case.mode)
+                << " PASS exact_reference=ACLNN_POINTWISE\n";
+    }
   } catch (...) {
     try {
       stream.synchronize();

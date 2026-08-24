@@ -22,6 +22,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -46,23 +47,23 @@ constexpr std::size_t kGraphWorkspaceAlignment = 256;
 constexpr std::uint32_t kMaximumAiCoreCount = 65535;
 constexpr std::uint32_t kWorkersPerAiCore = 2;
 constexpr std::string_view kTuningSourceSha256 =
-    "b49dbf0a30577f5ecba859ec87b0e03b257eaeca945a8b58dd956f265ecb586a";
+    FLAGDNN_ASCEND_TUNING_SOURCE_SHA256;
 constexpr std::string_view kBinarySourceSha256 =
-    "69870b56ec804b91d7708269397c96ea5aecfc95927a8eb1fb70080d31a0353a";
+    FLAGDNN_ASCEND_BINARY_SOURCE_SHA256;
 constexpr std::string_view kUnarySourceSha256 =
-    "1f588dcbd3a177a0df0fe18797d6dbb56447086f6c72229db1f326e74a1abd91";
+    FLAGDNN_ASCEND_UNARY_SOURCE_SHA256;
 constexpr std::string_view kTernarySourceSha256 =
-    "68dae321206acdb0a09a3765e78ce965002793e7a837dbb6023107412676f069";
+    FLAGDNN_ASCEND_TERNARY_SOURCE_SHA256;
 constexpr std::string_view kLayoutSourceSha256 =
-    "1b64789d35ccfe1b557c302e2bc3f97a368ebcfa076eb437a95279d942505bb3";
+    FLAGDNN_ASCEND_LAYOUT_SOURCE_SHA256;
 constexpr std::string_view kReductionSourceSha256 =
-    "d761a68764de9e699e1d26593318a7c3c58117498cd59f1ab8039ebe7a101f7b";
+    FLAGDNN_ASCEND_REDUCTION_SOURCE_SHA256;
 constexpr std::string_view kMatmulSourceSha256 =
-    "1525995a3c65abc560dce34390084c192b7c9aafd5413d9f201c1546edcba133";
+    FLAGDNN_ASCEND_MATMUL_SOURCE_SHA256;
 constexpr std::string_view kConvolutionSourceSha256 =
-    "08341d09bc537408ecf3036064f39c954be1591001cd342522d87ab7232ab3ca";
+    FLAGDNN_ASCEND_CONVOLUTION_SOURCE_SHA256;
 constexpr std::string_view kNormalizationSourceSha256 =
-    "dd80b397bbfce739d6a55721d8a02f76b3fbe4427df01c8e494572dc342efda9";
+    FLAGDNN_ASCEND_NORMALIZATION_SOURCE_SHA256;
 constexpr unsigned int kAutotuneWarmup = 5;
 constexpr unsigned int kAutotuneRepetitions = 10;
 
@@ -75,12 +76,48 @@ struct AllowedTuningConfiguration {
 constexpr std::array<AllowedTuningConfiguration, 2>
     kAllowedTuningConfigurations = {{{256, 4, 1}, {128, 4, 1}}};
 constexpr std::array<AllowedTuningConfiguration, 2>
-    kAllowedMatmulTuningConfigurations = {{{16, 4, 1}, {32, 4, 1}}};
+    kAllowedPointwiseTuningConfigurations = {{{1024, 4, 1}, {256, 4, 1}}};
+constexpr std::array<AllowedTuningConfiguration, 2>
+    kAllowedMatmulTuningConfigurations = {{{128, 4, 1}, {64, 4, 1}}};
+constexpr std::array<AllowedTuningConfiguration, 2>
+    kAllowedBatchNormTuningConfigurations = {{{1024, 4, 1}, {256, 4, 1}}};
+constexpr std::array<AllowedTuningConfiguration, 2>
+    kAllowedBatchNormInferenceTuningConfigurations =
+        {{{4096, 4, 1}, {1024, 4, 1}}};
+constexpr std::array<AllowedTuningConfiguration, 3>
+    kAllowedNormalizationTuningConfigurations =
+        {{{4096, 4, 1}, {2048, 4, 1}, {1024, 4, 1}}};
 
-[[nodiscard]] constexpr const std::array<AllowedTuningConfiguration, 2>&
+[[nodiscard]] constexpr bool uses_pointwise_tuning(
+    KernelFamily family) noexcept {
+  return family == KernelFamily::kBinary || family == KernelFamily::kUnary ||
+         family == KernelFamily::kTernary || family == KernelFamily::kLayout;
+}
+
+[[nodiscard]] constexpr bool uses_wide_normalization_tuning(
+    KernelFamily family) noexcept {
+  return family == KernelFamily::kRmsNorm ||
+         family == KernelFamily::kLayerNorm;
+}
+
+[[nodiscard]] constexpr std::span<const AllowedTuningConfiguration>
 allowed_tuning_configurations(KernelFamily family) noexcept {
-  return family == KernelFamily::kMatMul ? kAllowedMatmulTuningConfigurations
-                                         : kAllowedTuningConfigurations;
+  if (family == KernelFamily::kMatMul) {
+    return kAllowedMatmulTuningConfigurations;
+  }
+  if (family == KernelFamily::kBatchNorm) {
+    return kAllowedBatchNormTuningConfigurations;
+  }
+  if (family == KernelFamily::kBatchNormInference) {
+    return kAllowedBatchNormInferenceTuningConfigurations;
+  }
+  if (uses_pointwise_tuning(family)) {
+    return kAllowedPointwiseTuningConfigurations;
+  }
+  if (uses_wide_normalization_tuning(family)) {
+    return kAllowedNormalizationTuningConfigurations;
+  }
+  return kAllowedTuningConfigurations;
 }
 
 [[nodiscard]] constexpr std::size_t tuning_configuration_count(
@@ -398,7 +435,7 @@ std::size_t tuning_configuration_index(KernelFamily family,
                                        unsigned int block_size,
                                        unsigned int num_warps,
                                        unsigned int num_stages) {
-  const auto& configurations = allowed_tuning_configurations(family);
+  const auto configurations = allowed_tuning_configurations(family);
   for (std::size_t index = 0; index < configurations.size(); ++index) {
     const AllowedTuningConfiguration& allowed =
         configurations[index];
@@ -692,7 +729,8 @@ std::vector<std::string> expected_meta_names(std::string_view entry_point) {
                    "BLOCK_SIZE", "WORKER_COUNT"});
     return result;
   }
-  if (entry_point == "convolution_fprop_persistent_kernel") {
+  if (entry_point == "convolution_fprop_persistent_kernel" ||
+      entry_point == "convolution_fprop_im2col_kernel") {
     result = {"SPATIAL_RANK", "GROUPS", "INPUT_CHANNELS",
               "OUTPUT_CHANNELS", "CHANNELS_PER_GROUP"};
     for (const std::string_view prefix :
@@ -856,8 +894,10 @@ void validate_meta_and_signature(const Value& meta,
           (name == "HAS_UPPER_CLIP" && expected != 0 && expected != 1) ||
           (name == "BLOCK_SIZE" &&
            (entry_point == "matmul_strided_kernel"
-                ? expected != 16 && expected != 32
-                : expected != 128 && expected != 256)) ||
+                ? expected != 16 && expected != 32 && expected != 64 &&
+                      expected != 128
+                : expected != 128 && expected != 256 && expected != 1024 &&
+                      expected != 2048 && expected != 4096)) ||
           (name == "WORKER_COUNT" &&
            expected != static_cast<std::int64_t>(expected_worker_count)) ||
           ((name.starts_with("DIM_") ||
@@ -866,7 +906,7 @@ void validate_meta_and_signature(const Value& meta,
            expected <= 0) ||
           ((name == "M" || name == "N" || name == "K") && expected <= 0) ||
           (name == "INPUT_IS_FLOAT32" && expected != 0 && expected != 1) ||
-          (name == "GROUP_M" && expected != 1) ||
+          (name == "GROUP_M" && expected != 1 && expected != 8) ||
           (name == "INPUT_BASE" && expected < 0) ||
           (name == "ELEMENT_SIZE_BYTES" && expected != 2 && expected != 4) ||
           (name == "LAYOUT_MODE" && (expected < 0 || expected > 2)) ||
@@ -996,6 +1036,7 @@ struct ExpectedStage {
 struct ExpectedGraph {
   std::vector<ExpectedStage> stages;
   std::size_t workspace_size = 0;
+  std::size_t node_count = 0;
   bool autotune_requested = false;
 };
 
@@ -1666,24 +1707,13 @@ ExpectedGraph parse_expected_graph(const Value& request) {
     }
   }
 
-  std::size_t workspace_end = 0;
   bool has_external_binding = false;
-  for (auto& [uid, tensor] : tensors) {
+  for (const auto& [uid, tensor] : tensors) {
     (void)uid;
     if (!tensor.is_virtual) {
       has_external_binding = true;
-      continue;
     }
-    workspace_end = align_graph_workspace(workspace_end);
-    tensor.workspace_offset = workspace_end;
-    if (tensor.storage_size >
-        std::numeric_limits<std::size_t>::max() - workspace_end) {
-      artifact_failure("Graph workspace size overflows");
-    }
-    workspace_end += tensor.storage_size;
   }
-  result.workspace_size =
-      workspace_end == 0 ? 0 : align_graph_workspace(workspace_end);
 
   const auto& raw_nodes = graph.at("nodes").as_array();
   const std::size_t node_count = graph_positive_size(
@@ -1691,6 +1721,7 @@ ExpectedGraph parse_expected_graph(const Value& request) {
   if (node_count != raw_nodes.size()) {
     artifact_failure("Graph node count differs from its node array");
   }
+  result.node_count = node_count;
   struct ParsedNode {
     std::size_t node_id = 0;
     std::string operation;
@@ -1766,6 +1797,7 @@ ExpectedGraph parse_expected_graph(const Value& request) {
     std::int64_t layernorm_rows = 0;
     std::int64_t layernorm_normalized_elements = 0;
     double layernorm_epsilon = 0.0;
+    bool convolution_im2col = false;
   };
   std::vector<ParsedNode> parsed_nodes;
   parsed_nodes.reserve(node_count);
@@ -2868,7 +2900,8 @@ ExpectedGraph parse_expected_graph(const Value& request) {
                             rmsnorm_epsilon,
                             layernorm_rows,
                             layernorm_normalized_elements,
-                            layernorm_epsilon});
+                            layernorm_epsilon,
+                            false});
   }
   if (!has_external_binding || !has_external_output) {
     artifact_failure("Graph pointwise has no external binding or output");
@@ -2884,10 +2917,294 @@ ExpectedGraph parse_expected_graph(const Value& request) {
     }
   }
 
+  std::uint64_t next_internal_uid =
+      static_cast<std::uint64_t>(tensors.rbegin()->first) + 1U;
+  const auto make_dense_virtual_tensor = [](
+                                             std::int64_t uid,
+                                             const std::string& data_type,
+                                             std::vector<std::int64_t> dimensions) {
+    ExpectedTensor tensor;
+    tensor.uid = uid;
+    tensor.data_type = data_type;
+    tensor.dimensions = std::move(dimensions);
+    tensor.strides.resize(tensor.dimensions.size(), 1);
+    std::int64_t stride = 1;
+    for (std::size_t axis = tensor.dimensions.size(); axis-- > 0;) {
+      tensor.strides[axis] = stride;
+      if (axis != 0) {
+        if (stride > std::numeric_limits<std::int64_t>::max() /
+                         tensor.dimensions[axis]) {
+          artifact_failure("internal convolution tensor stride overflows");
+        }
+        stride *= tensor.dimensions[axis];
+      }
+    }
+    tensor.alignment = 16;
+    tensor.is_virtual = true;
+    tensor.storage_size =
+        dense_element_count(tensor) * element_size(tensor.data_type);
+    return tensor;
+  };
+
+  std::vector<ParsedNode> execution_nodes;
+  execution_nodes.reserve(parsed_nodes.size() * 2);
+  for (const ParsedNode& node : parsed_nodes) {
+    const bool im2col_fits_i32 = [&node]() {
+      std::uint64_t elements = 1U;
+      constexpr std::uint64_t kLimit =
+          static_cast<std::uint64_t>(
+              std::numeric_limits<std::int32_t>::max());
+      const auto include = [&elements](std::int64_t factor) {
+        constexpr std::uint64_t kInnerLimit =
+            static_cast<std::uint64_t>(
+                std::numeric_limits<std::int32_t>::max());
+        if (factor <= 0 ||
+            static_cast<std::uint64_t>(factor) > kInnerLimit / elements) {
+          return false;
+        }
+        elements *= static_cast<std::uint64_t>(factor);
+        return true;
+      };
+      if (node.kernel_family != KernelFamily::kConvolutionFprop ||
+          !include(node.inputs[0]->dimensions[0])) {
+        return false;
+      }
+      for (std::size_t axis = 2; axis < node.output->dimensions.size(); ++axis) {
+        if (!include(node.output->dimensions[axis])) {
+          return false;
+        }
+      }
+      return include(node.convolution_channels_per_group) &&
+             include(node.convolution_filter_dimensions[3]) &&
+             include(node.convolution_filter_dimensions[4]) &&
+             elements <= kLimit;
+    }();
+    const bool im2col_block_offsets_fit_i32 = [&node]() {
+      if (node.kernel_family != KernelFamily::kConvolutionFprop) {
+        return false;
+      }
+      const auto as_u64 = [](std::int64_t value) {
+        return static_cast<std::uint64_t>(value);
+      };
+      const std::uint64_t output_width =
+          as_u64(node.convolution_output_dimensions[4]);
+      const std::uint64_t filter_width =
+          as_u64(node.convolution_filter_dimensions[4]);
+      const std::uint64_t width_extent =
+          (output_width - 1U) * as_u64(node.convolution_stride[2]) +
+          (filter_width - 1U) * as_u64(node.convolution_dilation[2]) + 255U;
+      const std::uint64_t maximum_offset =
+          static_cast<std::uint64_t>(
+              std::numeric_limits<std::int32_t>::max()) +
+          as_u64(node.convolution_pre_padding[2]);
+      return width_extent <= maximum_offset;
+    }();
+    const bool use_1d_im2col =
+        node.kernel_family == KernelFamily::kConvolutionFprop &&
+        im2col_fits_i32 && im2col_block_offsets_fit_i32 &&
+        next_internal_uid <= static_cast<std::uint64_t>(
+                                 std::numeric_limits<std::int64_t>::max()) &&
+        node.convolution_spatial_rank == 1 && node.convolution_groups == 1 &&
+        is_row_major_tensor(*node.inputs[0]) &&
+        is_row_major_tensor(*node.inputs[1]) &&
+        node.output->dimensions.size() == 3 &&
+        is_physically_dense(*node.output) &&
+        node.output->strides ==
+            std::vector<std::int64_t>{
+                node.output->dimensions[1] * node.output->dimensions[2],
+                1,
+                node.output->dimensions[1]};
+    const bool use_2d_im2col =
+        node.kernel_family == KernelFamily::kConvolutionFprop &&
+        im2col_fits_i32 && im2col_block_offsets_fit_i32 &&
+        next_internal_uid <= static_cast<std::uint64_t>(
+                                 std::numeric_limits<std::int64_t>::max()) &&
+        node.convolution_spatial_rank == 2 && node.convolution_groups == 1 &&
+        (node.output->dimensions.back() % 32 == 0 ||
+         node.n_elements >= 65536) &&
+        is_row_major_tensor(*node.inputs[0]) &&
+        is_row_major_tensor(*node.inputs[1]) &&
+        is_row_major_tensor(*node.output);
+    if (!use_1d_im2col && !use_2d_im2col) {
+      execution_nodes.push_back(node);
+      continue;
+    }
+
+    const std::int64_t batch = node.inputs[0]->dimensions[0];
+    std::int64_t output_spatial = 1;
+    for (std::size_t axis = 2; axis < node.output->dimensions.size(); ++axis) {
+      if (output_spatial > std::numeric_limits<std::int64_t>::max() /
+                               node.output->dimensions[axis]) {
+        artifact_failure("internal convolution output spatial size overflows");
+      }
+      output_spatial *= node.output->dimensions[axis];
+    }
+    const std::int64_t output_channels = node.output->dimensions[1];
+
+    // Dense group-one 1x1 convolution is already [O, C] x [N, C, HW].
+    // Mirror add_plan.py exactly and bypass the otherwise identical im2col
+    // workspace for shapes selected by the 2D im2col policy.
+    const bool use_2d_pointwise_matmul =
+        use_2d_im2col && node.convolution_filter_dimensions[3] == 1 &&
+        node.convolution_filter_dimensions[4] == 1 &&
+        node.convolution_pre_padding[1] == 0 &&
+        node.convolution_pre_padding[2] == 0 &&
+        node.convolution_post_padding[1] == 0 &&
+        node.convolution_post_padding[2] == 0 &&
+        node.convolution_stride[1] == 1 &&
+        node.convolution_stride[2] == 1 &&
+        node.convolution_dilation[1] == 1 &&
+        node.convolution_dilation[2] == 1;
+    if (use_2d_pointwise_matmul) {
+      ParsedNode matmul_node = node;
+      matmul_node.operation = "matmul";
+      matmul_node.kernel_family = KernelFamily::kMatMul;
+      matmul_node.pointwise_mode = 0;
+      matmul_node.inputs = {node.inputs[1], node.inputs[0]};
+      matmul_node.output = node.output;
+      matmul_node.second_output = nullptr;
+      matmul_node.third_output = nullptr;
+      matmul_node.fourth_output = nullptr;
+      matmul_node.fifth_output = nullptr;
+      matmul_node.n_elements = node.n_elements;
+      matmul_node.matmul_batch = batch;
+      matmul_node.matmul_m = output_channels;
+      matmul_node.matmul_n = output_spatial;
+      matmul_node.matmul_k = node.inputs[0]->dimensions[1];
+      matmul_node.matmul_batch_dimensions.fill(1);
+      matmul_node.matmul_batch_dimensions.back() = batch;
+      matmul_node.matmul_a_batch_strides.fill(0);
+      matmul_node.matmul_b_batch_strides.fill(0);
+      if (batch != 1) {
+        matmul_node.matmul_b_batch_strides.back() =
+            node.inputs[0]->strides[0];
+      }
+      matmul_node.matmul_output_batch_strides.fill(0);
+      matmul_node.matmul_output_batch_strides.back() =
+          node.output->strides[0];
+      matmul_node.matmul_a_stride_m = node.inputs[1]->strides[0];
+      matmul_node.matmul_a_stride_k = node.inputs[1]->strides[1];
+      matmul_node.matmul_b_stride_k = node.inputs[0]->strides[1];
+      matmul_node.matmul_b_stride_n = 1;
+      matmul_node.matmul_output_stride_m = node.output->strides[1];
+      matmul_node.matmul_output_stride_n = 1;
+      matmul_node.convolution_im2col = false;
+      execution_nodes.push_back(std::move(matmul_node));
+      continue;
+    }
+
+    if (node.convolution_channels_per_group >
+        std::numeric_limits<std::int64_t>::max() /
+            node.convolution_filter_dimensions[3]) {
+      artifact_failure("internal convolution reduction extent overflows");
+    }
+    const std::int64_t channel_filter_height =
+        node.convolution_channels_per_group *
+        node.convolution_filter_dimensions[3];
+    if (channel_filter_height >
+        std::numeric_limits<std::int64_t>::max() /
+            node.convolution_filter_dimensions[4]) {
+      artifact_failure("internal convolution reduction extent overflows");
+    }
+    const std::int64_t reduction_extent = channel_filter_height *
+        node.convolution_filter_dimensions[4];
+    ExpectedTensor columns = make_dense_virtual_tensor(
+        static_cast<std::int64_t>(next_internal_uid++),
+        node.inputs[0]->data_type,
+        {batch, output_spatial, reduction_extent});
+    columns.strides = {
+        output_spatial * reduction_extent, 1, output_spatial};
+    const auto columns_inserted =
+        tensors.emplace(columns.uid, std::move(columns));
+    if (!columns_inserted.second) {
+      artifact_failure("internal convolution columns UID is duplicated");
+    }
+    const ExpectedTensor* columns_tensor = &columns_inserted.first->second;
+
+    ParsedNode im2col_node = node;
+    im2col_node.output = columns_tensor;
+    im2col_node.second_output = nullptr;
+    im2col_node.third_output = nullptr;
+    im2col_node.fourth_output = nullptr;
+    im2col_node.fifth_output = nullptr;
+    im2col_node.n_elements = static_cast<std::int32_t>(
+        dense_element_count(*columns_tensor));
+    im2col_node.convolution_im2col = true;
+    execution_nodes.push_back(std::move(im2col_node));
+
+    ParsedNode matmul_node = node;
+    matmul_node.operation = "matmul";
+    matmul_node.kernel_family = KernelFamily::kMatMul;
+    matmul_node.pointwise_mode = 0;
+    matmul_node.output = node.output;
+    matmul_node.second_output = nullptr;
+    matmul_node.third_output = nullptr;
+    matmul_node.fourth_output = nullptr;
+    matmul_node.fifth_output = nullptr;
+    matmul_node.n_elements = node.n_elements;
+    matmul_node.matmul_batch = batch;
+    matmul_node.matmul_k = reduction_extent;
+    matmul_node.matmul_batch_dimensions.fill(1);
+    matmul_node.matmul_batch_dimensions.back() = batch;
+    matmul_node.matmul_a_batch_strides.fill(0);
+    matmul_node.matmul_b_batch_strides.fill(0);
+    matmul_node.matmul_output_batch_strides.fill(0);
+    matmul_node.matmul_output_batch_strides.back() = node.output->strides[0];
+    if (use_2d_im2col) {
+      matmul_node.inputs = {node.inputs[1], columns_tensor};
+      matmul_node.matmul_m = output_channels;
+      matmul_node.matmul_n = output_spatial;
+      if (batch != 1) {
+        matmul_node.matmul_b_batch_strides.back() =
+            columns_tensor->strides[0];
+      }
+      matmul_node.matmul_a_stride_m = reduction_extent;
+      matmul_node.matmul_a_stride_k = 1;
+      matmul_node.matmul_b_stride_k = output_spatial;
+      matmul_node.matmul_b_stride_n = 1;
+      matmul_node.matmul_output_stride_m = node.output->strides[1];
+      matmul_node.matmul_output_stride_n = node.output->strides.back();
+    } else {
+      matmul_node.inputs = {columns_tensor, node.inputs[1]};
+      matmul_node.matmul_m = output_spatial;
+      matmul_node.matmul_n = output_channels;
+      if (batch != 1) {
+        matmul_node.matmul_a_batch_strides.back() =
+            columns_tensor->strides[0];
+      }
+      matmul_node.matmul_a_stride_m = columns_tensor->strides[1];
+      matmul_node.matmul_a_stride_k = columns_tensor->strides[2];
+      matmul_node.matmul_b_stride_k = 1;
+      matmul_node.matmul_b_stride_n = reduction_extent;
+      matmul_node.matmul_output_stride_m = node.output->strides.back();
+      matmul_node.matmul_output_stride_n = node.output->strides[1];
+    }
+    matmul_node.convolution_im2col = false;
+    execution_nodes.push_back(std::move(matmul_node));
+  }
+
+  std::size_t workspace_end = 0;
+  for (auto& [uid, tensor] : tensors) {
+    (void)uid;
+    if (!tensor.is_virtual) {
+      continue;
+    }
+    workspace_end = align_graph_workspace(workspace_end);
+    tensor.workspace_offset = workspace_end;
+    if (tensor.storage_size >
+        std::numeric_limits<std::size_t>::max() - workspace_end) {
+      artifact_failure("Graph workspace size overflows");
+    }
+    workspace_end += tensor.storage_size;
+  }
+  result.workspace_size =
+      workspace_end == 0 ? 0 : align_graph_workspace(workspace_end);
+
   std::map<std::int64_t, std::size_t> tensor_to_stage;
-  result.stages.reserve(parsed_nodes.size());
-  for (std::size_t stage_id = 0; stage_id < parsed_nodes.size(); ++stage_id) {
-    const ParsedNode& node = parsed_nodes[stage_id];
+  result.stages.reserve(execution_nodes.size());
+  for (std::size_t stage_id = 0; stage_id < execution_nodes.size();
+       ++stage_id) {
+    const ParsedNode& node = execution_nodes[stage_id];
     ExpectedStage stage;
     stage.stage_id = stage_id;
     stage.source_node_id = node.node_id;
@@ -2912,7 +3229,10 @@ ExpectedGraph parse_expected_graph(const Value& request) {
     }
     switch (node.kernel_family) {
       case KernelFamily::kConvolutionFprop:
-        stage.entry_point = "convolution_fprop_persistent_kernel";
+        stage.entry_point =
+            node.convolution_im2col
+                ? "convolution_fprop_im2col_kernel"
+                : "convolution_fprop_persistent_kernel";
         break;
       case KernelFamily::kMatMul:
         stage.entry_point = "matmul_strided_kernel";
@@ -3157,8 +3477,18 @@ void validate_payload_graph_contract(const Value& payload,
   const auto& grid = payload.at("grid").as_array();
   const std::int64_t block_size = payload.at("meta").at("BLOCK_SIZE").as_int();
   if (expected.kernel_family == KernelFamily::kMatMul
-          ? block_size != 16 && block_size != 32
-          : block_size != 128 && block_size != 256) {
+          ? block_size != 16 && block_size != 32 && block_size != 64 &&
+                block_size != 128
+          : uses_pointwise_tuning(expected.kernel_family)
+                ? block_size != 256 && block_size != 1024
+                : expected.kernel_family == KernelFamily::kBatchNorm
+                      ? block_size != 256 && block_size != 1024
+                : expected.kernel_family == KernelFamily::kBatchNormInference
+                      ? block_size != 1024 && block_size != 4096
+                : uses_wide_normalization_tuning(expected.kernel_family)
+                      ? block_size != 1024 && block_size != 2048 &&
+                            block_size != 4096
+                : block_size != 128 && block_size != 256) {
     artifact_failure(
         "Ascend pointwise BLOCK_SIZE is outside its tuning whitelist");
   }
@@ -3177,6 +3507,30 @@ void validate_payload_graph_contract(const Value& payload,
   }
   if (expected.kernel_family == KernelFamily::kLayerNorm) {
     work_items = static_cast<std::uint64_t>(expected.layernorm_rows);
+  }
+  if (expected.kernel_family == KernelFamily::kBatchNormInference &&
+      expected.entry_point ==
+          "batchnorm_inference_strided_persistent_kernel" &&
+      expected.batchnorm_rank == 5) {
+    const std::uint64_t channels =
+        static_cast<std::uint64_t>(expected.batchnorm_channels);
+    const std::uint64_t spatial =
+        static_cast<std::uint64_t>(expected.batchnorm_spatial);
+    const std::uint64_t batch_elements = channels * spatial;
+    if (batch_elements == 0U ||
+        static_cast<std::uint64_t>(expected.n_elements) % batch_elements !=
+            0U) {
+      artifact_failure("Ascend BatchNorm inference dimensions are inconsistent");
+    }
+    const std::uint64_t batches =
+        static_cast<std::uint64_t>(expected.n_elements) / batch_elements;
+    const std::uint64_t block_spatial =
+        static_cast<std::uint64_t>(block_size) / 128U;
+    if (block_spatial == 0U) {
+      artifact_failure("Ascend BatchNorm inference block size is invalid");
+    }
+    work_items = batches * ((channels + 1U) / 2U) *
+                 ((spatial + block_spatial - 1U) / block_spatial);
   }
   if (expected.kernel_family == KernelFamily::kLayout &&
       expected.layout_mode == 2) {
@@ -3303,7 +3657,8 @@ void validate_payload_graph_contract(const Value& payload,
         meta.at("INPUT_IS_FLOAT32").as_int() !=
             static_cast<std::int64_t>(expected.tensor_data_types.front() ==
                                       "float32") ||
-        meta.at("GROUP_M").as_int() != 1) {
+        meta.at("GROUP_M").as_int() !=
+            (expected.matmul_m >= 2048 ? 8 : 1)) {
       artifact_failure("Ascend matmul metadata differs from Graph");
     }
     for (const auto& [prefix, values] :
@@ -3711,8 +4066,51 @@ LtjNpuRawCandidate parse_candidate(
                                     result.num_warps,
                                     result.num_stages)
           : "default";
+  std::size_t expected_fixed_configuration_index = 0;
+  if (expected.kernel_family == KernelFamily::kUnary &&
+      (expected.operation == "log" || expected.operation == "rsqrt") &&
+      expected.entry_point == "unary_pointwise_contiguous_kernel" &&
+      expected.n_elements < 1024) {
+    for (std::size_t index = 0;
+         index < kAllowedPointwiseTuningConfigurations.size(); ++index) {
+      if (kAllowedPointwiseTuningConfigurations[index].block_size == 256) {
+        expected_fixed_configuration_index = index;
+        break;
+      }
+    }
+  } else if (uses_wide_normalization_tuning(expected.kernel_family)) {
+    const std::int64_t normalized_elements =
+        expected.kernel_family == KernelFamily::kLayerNorm
+            ? expected.layernorm_normalized_elements
+            : expected.rmsnorm_normalized_elements;
+    std::uint32_t preferred_block_size = 0;
+    for (std::size_t index = 0;
+         index < kAllowedNormalizationTuningConfigurations.size(); ++index) {
+      const std::uint32_t candidate_block_size =
+          kAllowedNormalizationTuningConfigurations[index].block_size;
+      if (candidate_block_size >= normalized_elements &&
+          (preferred_block_size == 0 ||
+           candidate_block_size < preferred_block_size)) {
+        preferred_block_size = candidate_block_size;
+        expected_fixed_configuration_index = index;
+      }
+    }
+    if (preferred_block_size == 0) {
+      for (std::size_t index = 0;
+           index < kAllowedNormalizationTuningConfigurations.size();
+           ++index) {
+        const std::uint32_t candidate_block_size =
+            kAllowedNormalizationTuningConfigurations[index].block_size;
+        if (candidate_block_size > preferred_block_size) {
+          preferred_block_size = candidate_block_size;
+          expected_fixed_configuration_index = index;
+        }
+      }
+    }
+  }
   if (result.candidate_id != expected_candidate_id ||
-      (!stage.autotune && configuration_index != 0)) {
+      (!stage.autotune &&
+       configuration_index != expected_fixed_configuration_index)) {
     artifact_failure(
         "Ascend pointwise candidate identity differs from tuning data");
   }
@@ -4556,7 +4954,12 @@ AscendStageArtifact parse_stage(
       runtime_names = {"a_ptr", "b_ptr", "output_ptr", "n_elements"};
       break;
     case KernelFamily::kConvolutionFprop:
-      runtime_names = {"input_ptr", "filter_ptr", "output_ptr", "n_elements"};
+      runtime_names =
+          expected.entry_point == "convolution_fprop_im2col_kernel"
+              ? std::vector<std::string_view>{
+                    "input_ptr", "filter_ptr", "columns_ptr", "n_elements"}
+              : std::vector<std::string_view>{
+                    "input_ptr", "filter_ptr", "output_ptr", "n_elements"};
       break;
     case KernelFamily::kBatchNorm:
       runtime_names = {
@@ -4621,7 +5024,7 @@ AscendStageArtifact parse_stage(
     artifact_failure("Ascend candidate set disagrees with autotune policy");
   }
   if (result.autotune) {
-    const auto& allowed_configurations =
+    const auto allowed_configurations =
         allowed_tuning_configurations(result.kernel_family);
     std::set<std::size_t> configuration_indices;
     for (const LtjNpuRawCandidate& actual : result.candidates) {
@@ -4728,7 +5131,7 @@ AscendArtifact parse_ascend_artifact(
         manifest.at("request_sha256").as_string() != request_hash ||
         manifest.at("compiler").at("identity_sha256").as_string() !=
             compiler_identity ||
-        graph_node_count != expected_graph.stages.size() ||
+        graph_node_count != expected_graph.node_count ||
         !is_sha256(manifest.at("source_sha256").as_string())) {
       artifact_failure("Ascend artifact target or version differs");
     }
@@ -4770,6 +5173,8 @@ AscendArtifact parse_ascend_artifact(
     for (std::size_t index = 0; index < result.stages.size(); ++index) {
       const bool expected_autotune =
           expected_graph.autotune_requested &&
+          expected_graph.stages[index].entry_point !=
+              "convolution_fprop_im2col_kernel" &&
           tuning_configuration_count(
               expected_graph.stages[index].kernel_family) > 1U;
       if (result.stages[index].autotune != expected_autotune) {

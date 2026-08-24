@@ -772,7 +772,7 @@ void run_case(const BenchmarkCase& specification,
     if (before != snapshot_cache(cache)) {
       throw std::runtime_error(
           specification.name +
-          ": production cache changed during layout sample window");
+          ": Triton cache changed during layout sample window");
     }
     verify_results(specification,
                    flagdnn_input,

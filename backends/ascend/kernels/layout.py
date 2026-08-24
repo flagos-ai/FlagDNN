@@ -64,58 +64,120 @@ def layout_copy_kernel(
     program_id = tl.program_id(0).to(tl.int64)
     start = program_id * BLOCK_SIZE
     if LAYOUT_MODE == 1:
-        linear_start = start
+        copy_block_size: tl.constexpr = BLOCK_SIZE * 8
+        linear_start = program_id * copy_block_size
+        worker_stride = WORKER_COUNT * copy_block_size
         while linear_start < n_elements:
-            logical = linear_start + tl.arange(0, BLOCK_SIZE)
+            logical = linear_start + tl.arange(0, copy_block_size)
             active = logical < n_elements
             value = tl.load(
                 input_ptr + INPUT_BASE + logical, mask=active, other=0
             )
             tl.store(output_ptr + logical, value, mask=active)
-            linear_start += WORKER_COUNT * BLOCK_SIZE
+            linear_start += worker_stride
 
     if LAYOUT_MODE == 2:
-        outer_rows = n_elements // OUTPUT_DIM_7
-        row = program_id
-        while row < outer_rows:
-            output_remaining = row
-            output_row_offset = row * 0
-            coordinate = output_remaining % OUTPUT_DIM_6
-            output_remaining = output_remaining // OUTPUT_DIM_6
-            output_row_offset += coordinate * OUTPUT_STRIDE_6
-            coordinate = output_remaining % OUTPUT_DIM_5
-            output_remaining = output_remaining // OUTPUT_DIM_5
-            output_row_offset += coordinate * OUTPUT_STRIDE_5
-            coordinate = output_remaining % OUTPUT_DIM_4
-            output_remaining = output_remaining // OUTPUT_DIM_4
-            output_row_offset += coordinate * OUTPUT_STRIDE_4
-            coordinate = output_remaining % OUTPUT_DIM_3
-            output_remaining = output_remaining // OUTPUT_DIM_3
-            output_row_offset += coordinate * OUTPUT_STRIDE_3
-            coordinate = output_remaining % OUTPUT_DIM_2
-            output_remaining = output_remaining // OUTPUT_DIM_2
-            output_row_offset += coordinate * OUTPUT_STRIDE_2
-            coordinate = output_remaining % OUTPUT_DIM_1
-            output_remaining = output_remaining // OUTPUT_DIM_1
-            output_row_offset += coordinate * OUTPUT_STRIDE_1
-            output_row_offset += (
-                output_remaining % OUTPUT_DIM_0
-            ) * OUTPUT_STRIDE_0
+        if OUTPUT_DIM_7 >= 16:
+            outer_rows = n_elements // OUTPUT_DIM_7
+            row = program_id
+            while row < outer_rows:
+                output_remaining = row
+                output_row_offset = row * 0
+                coordinate = output_remaining % OUTPUT_DIM_6
+                output_remaining = output_remaining // OUTPUT_DIM_6
+                output_row_offset += coordinate * OUTPUT_STRIDE_6
+                coordinate = output_remaining % OUTPUT_DIM_5
+                output_remaining = output_remaining // OUTPUT_DIM_5
+                output_row_offset += coordinate * OUTPUT_STRIDE_5
+                coordinate = output_remaining % OUTPUT_DIM_4
+                output_remaining = output_remaining // OUTPUT_DIM_4
+                output_row_offset += coordinate * OUTPUT_STRIDE_4
+                coordinate = output_remaining % OUTPUT_DIM_3
+                output_remaining = output_remaining // OUTPUT_DIM_3
+                output_row_offset += coordinate * OUTPUT_STRIDE_3
+                coordinate = output_remaining % OUTPUT_DIM_2
+                output_remaining = output_remaining // OUTPUT_DIM_2
+                output_row_offset += coordinate * OUTPUT_STRIDE_2
+                coordinate = output_remaining % OUTPUT_DIM_1
+                output_remaining = output_remaining // OUTPUT_DIM_1
+                output_row_offset += coordinate * OUTPUT_STRIDE_1
+                output_row_offset += (
+                    output_remaining % OUTPUT_DIM_0
+                ) * OUTPUT_STRIDE_0
 
-            column_start = row * 0
-            while column_start < OUTPUT_DIM_7:
-                column = column_start + tl.arange(0, BLOCK_SIZE)
-                active = column < OUTPUT_DIM_7
-                output_offsets = (
-                    output_row_offset + column * OUTPUT_STRIDE_7
+                column_start = row * 0
+                while column_start < OUTPUT_DIM_7:
+                    column = column_start + tl.arange(0, BLOCK_SIZE)
+                    active = column < OUTPUT_DIM_7
+                    output_offsets = (
+                        output_row_offset + column * OUTPUT_STRIDE_7
+                    )
+                    input_offsets = INPUT_BASE + output_offsets
+                    value = tl.load(
+                        input_ptr + input_offsets, mask=active, other=0
+                    )
+                    tl.store(
+                        output_ptr + output_offsets, value, mask=active
+                    )
+                    column_start += BLOCK_SIZE
+                row += WORKER_COUNT
+        else:
+            # Short rows leave almost every lane idle when the full tuning
+            # block is used for columns.  Keep row coordinates scalar, use
+            # i32 division, and widen only the final tensor offsets.
+            column_block: tl.constexpr = 16
+            outer_rows = (n_elements // OUTPUT_DIM_7).to(tl.int64)
+            row = tl.program_id(0).to(tl.int64)
+            while row < outer_rows:
+                row_i32 = row.to(tl.int32)
+                output_remaining_i32 = row_i32
+                coordinate_i32 = output_remaining_i32 % OUTPUT_DIM_6
+                output_remaining_i32 //= OUTPUT_DIM_6
+                output_row_offset = (
+                    coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_6
                 )
-                input_offsets = INPUT_BASE + output_offsets
+                coordinate_i32 = output_remaining_i32 % OUTPUT_DIM_5
+                output_remaining_i32 //= OUTPUT_DIM_5
+                output_row_offset += (
+                    coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_5
+                )
+                coordinate_i32 = output_remaining_i32 % OUTPUT_DIM_4
+                output_remaining_i32 //= OUTPUT_DIM_4
+                output_row_offset += (
+                    coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_4
+                )
+                coordinate_i32 = output_remaining_i32 % OUTPUT_DIM_3
+                output_remaining_i32 //= OUTPUT_DIM_3
+                output_row_offset += (
+                    coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_3
+                )
+                coordinate_i32 = output_remaining_i32 % OUTPUT_DIM_2
+                output_remaining_i32 //= OUTPUT_DIM_2
+                output_row_offset += (
+                    coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_2
+                )
+                coordinate_i32 = output_remaining_i32 % OUTPUT_DIM_1
+                output_remaining_i32 //= OUTPUT_DIM_1
+                output_row_offset += (
+                    coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_1
+                )
+                coordinate_i32 = output_remaining_i32 % OUTPUT_DIM_0
+                output_row_offset += (
+                    coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_0
+                )
+
+                columns = tl.arange(0, column_block)
+                active = columns < OUTPUT_DIM_7
+                output_offsets = (
+                    output_row_offset + columns * OUTPUT_STRIDE_7
+                )
                 value = tl.load(
-                    input_ptr + input_offsets, mask=active, other=0
+                    input_ptr + INPUT_BASE + output_offsets,
+                    mask=active,
+                    other=0,
                 )
                 tl.store(output_ptr + output_offsets, value, mask=active)
-                column_start += BLOCK_SIZE
-            row += WORKER_COUNT
+                row += WORKER_COUNT
 
     if LAYOUT_MODE != 0:
         start = n_elements

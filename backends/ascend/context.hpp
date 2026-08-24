@@ -29,8 +29,7 @@ struct EngineBuildContext {
   std::string target_fingerprint;
   std::string codegen_arch;
   std::string runtime_identity;
-  bool development_mode = false;
-  std::string production_cache_root;
+  std::string cache_root;
   std::string configuration_identity;
   std::shared_ptr<const detail::ProcessConfigurationSnapshot>
       configuration_snapshot;
@@ -52,8 +51,7 @@ struct DomainBinding {
   std::string target_fingerprint;
   std::string codegen_arch;
   std::string runtime_identity;
-  bool development_mode = false;
-  std::string production_cache_root;
+  std::string cache_root;
   std::string configuration_identity;
   std::shared_ptr<const ProcessConfigurationSnapshot> configuration_snapshot;
 };

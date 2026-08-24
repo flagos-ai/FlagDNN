@@ -161,6 +161,7 @@ class PointwiseStagePlan:
 class PointwiseGraphPlan:
     stages: tuple[PointwiseStagePlan, ...]
     workspace_size: int
+    node_count: int
 
 
 def require_object(value: object, name: str) -> dict[str, Any]:
@@ -335,7 +336,7 @@ def _matmul_meta(
         "N": n,
         "K": k,
         "INPUT_IS_FLOAT32": 1 if a.data_type == "float32" else 0,
-        "GROUP_M": 1,
+        "GROUP_M": 8 if m >= 2048 else 1,
     }
     leading = 6 - batch_rank
     padded_dimensions = [1] * leading + list(batch_dimensions)
@@ -1169,7 +1170,6 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
     ):
         raise ValueError("graph.node_count is invalid")
 
-    workspace_layout, workspace_size = _workspace_layout(tensors)
     node_positions: set[int] = set()
     producer_stages: dict[int, int] = {}
     parsed: list[dict[str, Any]] = []
@@ -1619,16 +1619,30 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
             groups = require_integer(attributes, "groups")
             n_outputs = require_integer(attributes, "n_outputs")
             pre_padding = require_integer_list(
-                attributes, "pre_padding", spatial_rank
+                attributes,
+                "pre_padding",
+                spatial_rank,
+                maximum=MAX_I32,
             )
             post_padding = require_integer_list(
-                attributes, "post_padding", spatial_rank
+                attributes,
+                "post_padding",
+                spatial_rank,
+                maximum=MAX_I32,
             )
             convolution_stride = require_integer_list(
-                attributes, "stride", spatial_rank, minimum=1
+                attributes,
+                "stride",
+                spatial_rank,
+                minimum=1,
+                maximum=MAX_I32,
             )
             dilation = require_integer_list(
-                attributes, "dilation", spatial_rank, minimum=1
+                attributes,
+                "dilation",
+                spatial_rank,
+                minimum=1,
+                maximum=MAX_I32,
             )
             input_tensor, filter_tensor = input_tensors
             tensor_rank = spatial_rank + 2
@@ -2165,6 +2179,8 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 raise ValueError(
                     "parameters.n_elements does not match output"
                 )
+        if n_elements < 1 or n_elements > MAX_I32:
+            raise ValueError("operation element count must fit the LTJ i32 ABI")
         alpha = 1.0
         negative_slope = 0.0
         lower_clip = 0.0
@@ -2263,9 +2279,307 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
     if not has_external_output:
         raise ValueError("pointwise graph has no external output")
 
+    next_internal_uid = max(tensors) + 1
+    execution_nodes: list[dict[str, Any]] = []
+    for node in parsed:
+        inputs = node["inputs"]
+        output = node["output"]
+        convolution_meta = node["convolution_meta"]
+        im2col_fits_i32 = False
+        im2col_block_offsets_fit_i32 = False
+        if node["kernel_family"] == "convolution_fprop":
+            im2col_elements = (
+                inputs[0].dimensions[0]
+                * math.prod(output.dimensions[2:])
+                * int(convolution_meta["CHANNELS_PER_GROUP"])
+                * int(convolution_meta["FILTER_DIM_3"])
+                * int(convolution_meta["FILTER_DIM_4"])
+            )
+            # The raw LTJ ABI carries n_elements as i32. A direct convolution
+            # can still represent a graph whose expanded columns tensor cannot,
+            # so keep that graph valid and decline only the im2col rewrite.
+            im2col_fits_i32 = im2col_elements <= MAX_I32
+            # Ascend Triton's block-pointer offsets are signed i32 even though
+            # task arithmetic is intentionally i64. Include the largest fixed
+            # block overread used by this kernel and keep extreme, but valid,
+            # convolutions on the direct implementation.
+            width_extent = (
+                (int(convolution_meta["OUTPUT_DIM_4"]) - 1)
+                * int(convolution_meta["CONV_STRIDE_2"])
+                + (int(convolution_meta["FILTER_DIM_4"]) - 1)
+                * int(convolution_meta["DILATION_2"])
+                + 255
+            )
+            im2col_block_offsets_fit_i32 = width_extent <= (
+                MAX_I32 + int(convolution_meta["PRE_PADDING_2"])
+            )
+        use_1d_im2col = (
+            node["kernel_family"] == "convolution_fprop"
+            and im2col_fits_i32
+            and im2col_block_offsets_fit_i32
+            and next_internal_uid <= MAX_I64
+            and int(convolution_meta["SPATIAL_RANK"]) == 1
+            and int(convolution_meta["GROUPS"]) == 1
+            and _is_row_major_tensor(inputs[0])
+            and _is_row_major_tensor(inputs[1])
+            and len(output.dimensions) == 3
+            and _is_physically_dense(output)
+            and output.strides
+            == (
+                output.dimensions[1] * output.dimensions[2],
+                1,
+                output.dimensions[1],
+            )
+        )
+        use_2d_im2col = (
+            node["kernel_family"] == "convolution_fprop"
+            and im2col_fits_i32
+            and im2col_block_offsets_fit_i32
+            and next_internal_uid <= MAX_I64
+            and int(convolution_meta["SPATIAL_RANK"]) == 2
+            and int(convolution_meta["GROUPS"]) == 1
+            and (
+                output.dimensions[-1] % 32 == 0
+                or int(node["n_elements"]) >= 65536
+            )
+            and _is_row_major_tensor(inputs[0])
+            and _is_row_major_tensor(inputs[1])
+            and _is_row_major_tensor(output)
+        )
+        if not (use_1d_im2col or use_2d_im2col):
+            execution_nodes.append({**node, "convolution_im2col": False})
+            continue
+
+        input_tensor = inputs[0]
+        filter_tensor = inputs[1]
+        batch = input_tensor.dimensions[0]
+        output_spatial = math.prod(output.dimensions[2:])
+        output_channels = output.dimensions[1]
+
+        # A dense group-one 1x1 convolution with unit stride and no padding is
+        # already an [O, C] x [N, C, HW] matrix multiplication.  Do not copy
+        # the input into an identical im2col workspace before invoking the
+        # dedicated Ascend MatMul kernel.  Keep small convolutions on the
+        # direct convolution kernel; this rewrite is intentionally limited to
+        # shapes which would otherwise enter the 2D im2col pipeline.
+        use_2d_pointwise_matmul = (
+            use_2d_im2col
+            and int(convolution_meta["FILTER_DIM_3"]) == 1
+            and int(convolution_meta["FILTER_DIM_4"]) == 1
+            and int(convolution_meta["PRE_PADDING_1"]) == 0
+            and int(convolution_meta["PRE_PADDING_2"]) == 0
+            and int(convolution_meta["POST_PADDING_1"]) == 0
+            and int(convolution_meta["POST_PADDING_2"]) == 0
+            and int(convolution_meta["CONV_STRIDE_1"]) == 1
+            and int(convolution_meta["CONV_STRIDE_2"]) == 1
+            and int(convolution_meta["DILATION_1"]) == 1
+            and int(convolution_meta["DILATION_2"]) == 1
+        )
+        if use_2d_pointwise_matmul:
+            left_view = TensorPlan(
+                uid=filter_tensor.uid,
+                data_type=filter_tensor.data_type,
+                dimensions=(output_channels, input_tensor.dimensions[1]),
+                strides=(filter_tensor.strides[0], filter_tensor.strides[1]),
+                alignment=filter_tensor.alignment,
+                virtual=filter_tensor.virtual,
+                storage_size=filter_tensor.storage_size,
+            )
+            right_view = TensorPlan(
+                uid=input_tensor.uid,
+                data_type=input_tensor.data_type,
+                dimensions=(
+                    batch,
+                    input_tensor.dimensions[1],
+                    output_spatial,
+                ),
+                strides=(
+                    input_tensor.strides[0],
+                    input_tensor.strides[1],
+                    1,
+                ),
+                alignment=input_tensor.alignment,
+                virtual=input_tensor.virtual,
+                storage_size=input_tensor.storage_size,
+            )
+            output_view = TensorPlan(
+                uid=output.uid,
+                data_type=output.data_type,
+                dimensions=(batch, output_channels, output_spatial),
+                strides=(output.strides[0], output.strides[1], 1),
+                alignment=output.alignment,
+                virtual=output.virtual,
+                storage_size=output.storage_size,
+            )
+            execution_nodes.append(
+                {
+                    **node,
+                    "operation": "matmul",
+                    "kernel_family": "matmul",
+                    "pointwise_mode": 0,
+                    "inputs": (left_view, right_view),
+                    "outputs": (output_view,),
+                    "output": output_view,
+                    "n_elements": math.prod(output_view.dimensions),
+                    "matmul_meta": _matmul_meta(
+                        left_view,
+                        right_view,
+                        output_view,
+                        batch=batch,
+                        m=output_channels,
+                        n=output_spatial,
+                        k=input_tensor.dimensions[1],
+                    ),
+                    "convolution_im2col": False,
+                }
+            )
+            continue
+
+        def dense_virtual_tensor(
+            uid: int, dimensions: tuple[int, ...]
+        ) -> TensorPlan:
+            strides = [1] * len(dimensions)
+            for axis in range(len(dimensions) - 2, -1, -1):
+                strides[axis] = strides[axis + 1] * dimensions[axis + 1]
+            elements = math.prod(dimensions)
+            element_size = ELEMENT_SIZES[input_tensor.data_type]
+            if elements > MAX_I64 // element_size:
+                raise ValueError(
+                    "internal convolution workspace exceeds int64"
+                )
+            return TensorPlan(
+                uid=uid,
+                data_type=input_tensor.data_type,
+                dimensions=dimensions,
+                strides=tuple(strides),
+                alignment=16,
+                virtual=True,
+                storage_size=elements * element_size,
+            )
+
+        reduction_extent = (
+            int(convolution_meta["CHANNELS_PER_GROUP"])
+            * int(convolution_meta["FILTER_DIM_3"])
+            * int(convolution_meta["FILTER_DIM_4"])
+        )
+        dense_columns = dense_virtual_tensor(
+            next_internal_uid,
+            (batch, output_spatial, reduction_extent),
+        )
+        columns = TensorPlan(
+            uid=dense_columns.uid,
+            data_type=dense_columns.data_type,
+            dimensions=dense_columns.dimensions,
+            strides=(
+                output_spatial * reduction_extent,
+                1,
+                output_spatial,
+            ),
+            alignment=dense_columns.alignment,
+            virtual=True,
+            storage_size=dense_columns.storage_size,
+        )
+        tensors[columns.uid] = columns
+        next_internal_uid += 1
+
+        # The physical columns layout is [batch, K, spatial].  For dense NCHW
+        # outputs, compute [O, K] x [K, spatial] so MatMul writes the output
+        # contiguously.  The 1D channels-last path keeps [spatial, K] x [K, O].
+        if use_2d_im2col:
+            left_view = TensorPlan(
+                uid=filter_tensor.uid,
+                data_type=filter_tensor.data_type,
+                dimensions=(output_channels, reduction_extent),
+                strides=(reduction_extent, 1),
+                alignment=filter_tensor.alignment,
+                virtual=filter_tensor.virtual,
+                storage_size=filter_tensor.storage_size,
+            )
+            right_view = TensorPlan(
+                uid=columns.uid,
+                data_type=columns.data_type,
+                dimensions=(batch, reduction_extent, output_spatial),
+                strides=(
+                    output_spatial * reduction_extent,
+                    output_spatial,
+                    1,
+                ),
+                alignment=columns.alignment,
+                virtual=True,
+                storage_size=columns.storage_size,
+            )
+            matmul_m = output_channels
+            matmul_n = output_spatial
+            output_view = TensorPlan(
+                uid=output.uid,
+                data_type=output.data_type,
+                dimensions=(batch, output_channels, output_spatial),
+                strides=(output.strides[0], output.strides[1], 1),
+                alignment=output.alignment,
+                virtual=output.virtual,
+                storage_size=output.storage_size,
+            )
+        else:
+            left_view = columns
+            right_view = TensorPlan(
+                uid=filter_tensor.uid,
+                data_type=filter_tensor.data_type,
+                dimensions=(reduction_extent, output_channels),
+                strides=(1, reduction_extent),
+                alignment=filter_tensor.alignment,
+                virtual=filter_tensor.virtual,
+                storage_size=filter_tensor.storage_size,
+            )
+            matmul_m = output_spatial
+            matmul_n = output_channels
+            output_view = TensorPlan(
+                uid=output.uid,
+                data_type=output.data_type,
+                dimensions=(batch, output_spatial, output_channels),
+                strides=(
+                    output.strides[0],
+                    output.strides[-1],
+                    output.strides[1],
+                ),
+                alignment=output.alignment,
+                virtual=output.virtual,
+                storage_size=output.storage_size,
+            )
+        im2col_node = {
+            **node,
+            "outputs": (columns,),
+            "output": columns,
+            "n_elements": math.prod(columns.dimensions),
+            "convolution_im2col": True,
+        }
+        matmul_node = {
+            **node,
+            "operation": "matmul",
+            "kernel_family": "matmul",
+            "pointwise_mode": 0,
+            "inputs": (left_view, right_view),
+            "outputs": (output_view,),
+            "output": output_view,
+            "n_elements": math.prod(output_view.dimensions),
+            "matmul_meta": _matmul_meta(
+                left_view,
+                right_view,
+                output_view,
+                batch=batch,
+                m=matmul_m,
+                n=matmul_n,
+                k=reduction_extent,
+            ),
+            "convolution_im2col": False,
+        }
+        execution_nodes.extend((im2col_node, matmul_node))
+
+    workspace_layout, workspace_size = _workspace_layout(tensors)
+
     stages: list[PointwiseStagePlan] = []
     tensor_to_stage: dict[int, int] = {}
-    for stage_id, node in enumerate(parsed):
+    for node in execution_nodes:
+        stage_id = len(stages)
         inputs = node["inputs"]
         output = node["output"]
         outputs = node["outputs"]
@@ -2284,9 +2598,21 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
             meta = {**node["matmul_meta"], "BLOCK_SIZE": 16}
             argument_names = ("a_ptr", "b_ptr", "output_ptr")
         elif node["kernel_family"] == "convolution_fprop":
-            function_name = "convolution_fprop_persistent_kernel"
+            function_name = (
+                "convolution_fprop_im2col_kernel"
+                if node["convolution_im2col"]
+                else "convolution_fprop_persistent_kernel"
+            )
             meta = {**node["convolution_meta"], "BLOCK_SIZE": 256}
-            argument_names = ("input_ptr", "filter_ptr", "output_ptr")
+            argument_names = (
+                (
+                    "input_ptr",
+                    "filter_ptr",
+                    "columns_ptr",
+                )
+                if node["convolution_im2col"]
+                else ("input_ptr", "filter_ptr", "output_ptr")
+            )
         elif node["kernel_family"] == "batchnorm":
             function_name = "batchnorm_training_persistent_kernel"
             meta = {**node["batchnorm_training_meta"], "BLOCK_SIZE": 256}
@@ -2497,7 +2823,7 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
         )
         for produced in outputs:
             tensor_to_stage[produced.uid] = stage_id
-    return PointwiseGraphPlan(tuple(stages), workspace_size)
+    return PointwiseGraphPlan(tuple(stages), workspace_size, node_count)
 
 
 # Kept for installed clients built against the initial Ascend provider module.

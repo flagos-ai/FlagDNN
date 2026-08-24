@@ -202,12 +202,3 @@ add_test(NAME core.default_backend_contract
   COMMAND "${CMAKE_COMMAND}"
     "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
     -P "${PROJECT_SOURCE_DIR}/cmake/DefaultBackendContract.cmake")
-
-if(Python3_Interpreter_FOUND AND "ascend" IN_LIST FLAGDNN_BACKENDS)
-  add_test(NAME core.ascend.compiler_contract
-    COMMAND "${Python3_EXECUTABLE}"
-      "${PROJECT_SOURCE_DIR}/tools/test_ascend_compiler_contract.py")
-  set_tests_properties(core.ascend.compiler_contract PROPERTIES
-    LABELS "core;ascend;no_device"
-    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
-endif()

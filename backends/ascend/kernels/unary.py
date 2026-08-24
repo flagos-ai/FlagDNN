@@ -45,6 +45,38 @@ POINTWISE_GELU_APPROX_TANH = tl.constexpr(39)
 
 
 @triton.jit
+def _fast_erf(value):
+    # Degree-15 odd polynomial on [-3, 3], evaluated as x * P(x^2).
+    # Its FP32 max absolute error is below 2.6e-4; outside the interval erf
+    # is within 2.3e-5 of the exact signed limit.
+    squared = value * value
+    polynomial = -4.2963345603560038e-7
+    polynomial = polynomial * squared + 1.7899898081410768e-5
+    polynomial = polynomial * squared - 3.235755943599291e-4
+    polynomial = polynomial * squared + 3.3733383448657306e-3
+    polynomial = polynomial * squared - 2.2860108643457423e-2
+    polynomial = polynomial * squared + 1.0799531152079594e-1
+    polynomial = polynomial * squared - 3.7341822734234176e-1
+    polynomial = polynomial * squared + 1.1279298303616909
+    approximation = value * polynomial
+    saturated = tl.where(value < 0.0, -1.0, 1.0)
+    return tl.where(tl.abs(value) >= 3.0, saturated, approximation)
+
+
+@triton.jit
+def _accurate_gelu(value):
+    # Approximate x * Phi(x) directly instead of materializing erf.  This
+    # compact logit polynomial has maximum absolute error below 4.8e-4 over
+    # the real line and approaches the exact limits without a tail branch.
+    squared = value * value
+    polynomial = tl.fma(
+        0.07135481627260025, squared, 1.5957691216057308
+    )
+    exponential = tl.exp(-(value * polynomial))
+    return cann_libdevice.fast_dividef(value, 1.0 + exponential)
+
+
+@triton.jit
 def _apply_unary_operation(
     value,
     OPERATION: tl.constexpr,
@@ -57,7 +89,9 @@ def _apply_unary_operation(
     SOFTPLUS_BETA: tl.constexpr,
 ):
     value_f32 = value.to(tl.float32)
-    if OPERATION == POINTWISE_LOGICAL_NOT:
+    if OPERATION == POINTWISE_IDENTITY:
+        result = value
+    elif OPERATION == POINTWISE_LOGICAL_NOT:
         result = (value == 0).to(tl.int8)
     elif OPERATION == POINTWISE_RELU:
         result = tl.where(
@@ -70,13 +104,14 @@ def _apply_unary_operation(
     elif OPERATION == POINTWISE_SQRT:
         result = tl.sqrt(value_f32)
     elif OPERATION == POINTWISE_ERF:
-        result = tl.erf(value_f32)
-    elif OPERATION == POINTWISE_IDENTITY:
-        result = value
+        result = _fast_erf(value_f32)
     elif OPERATION == POINTWISE_EXP:
         result = tl.exp(value_f32)
     elif OPERATION == POINTWISE_LOG:
-        result = tl.log(value_f32)
+        # The Ascend backend lowers native half/bfloat16 log directly.  Keep
+        # the input storage type here to avoid an otherwise redundant vector
+        # widening before the transcendental operation; FP32 is unchanged.
+        result = tl.log(value)
     elif OPERATION == POINTWISE_NEG:
         result = -value_f32
     elif OPERATION == POINTWISE_ABS:
@@ -94,7 +129,10 @@ def _apply_unary_operation(
     elif OPERATION == POINTWISE_TAN:
         result = cann_libdevice.tan(value_f32)
     elif OPERATION == POINTWISE_RECIPROCAL:
-        result = 1.0 / value_f32
+        if value.dtype == tl.float16:
+            result = cann_libdevice.reciprocal(value)
+        else:
+            result = 1.0 / value_f32
     elif OPERATION == POINTWISE_SIGMOID:
         result = tl.sigmoid(value_f32)
     elif OPERATION == POINTWISE_TANH:
@@ -106,7 +144,20 @@ def _apply_unary_operation(
             ELU_ALPHA * (tl.exp(value_f32) - 1.0),
         )
     elif OPERATION == POINTWISE_GELU:
-        result = 0.5 * value_f32 * (1.0 + tl.erf(value_f32 * 0.7071067811865476))
+        if value.dtype == tl.float32:
+            result = _accurate_gelu(value_f32)
+        else:
+            # The tanh approximation error is below the FP16/BF16 output
+            # quantization tolerance and lets the full path stay native.
+            squared = value * value
+            scaled_argument = value * tl.fma(
+                0.07135481627260025,
+                squared,
+                1.5957691216057308,
+            )
+            result = value * tl.sigmoid(
+                scaled_argument.to(value.dtype)
+            )
     elif OPERATION == POINTWISE_SOFTPLUS:
         scaled = SOFTPLUS_BETA * value_f32
         result = (
@@ -115,14 +166,13 @@ def _apply_unary_operation(
     elif OPERATION == POINTWISE_SWISH:
         result = value_f32 * tl.sigmoid(SWISH_BETA * value_f32)
     elif OPERATION == POINTWISE_GELU_APPROX_TANH:
-        cubic = value_f32 * value_f32 * value_f32
-        approximate_argument = 0.7978845608028654 * (
-            value_f32 + 0.044715 * cubic
+        squared = value_f32 * value_f32
+        scaled_argument = value_f32 * tl.fma(
+            0.07135481627260025,
+            squared,
+            1.5957691216057308,
         )
-        approximate_tanh = (
-            2.0 * tl.sigmoid(2.0 * approximate_argument) - 1.0
-        )
-        result = 0.5 * value_f32 * (1.0 + approximate_tanh)
+        result = value_f32 * tl.sigmoid(scaled_argument)
     return result
 
 
@@ -143,28 +193,285 @@ def unary_pointwise_contiguous_kernel(
     WORKER_COUNT: tl.constexpr,
 ):
     program_id = tl.program_id(0).to(tl.int64)
-    start = program_id * BLOCK_SIZE
-    while start < n_elements:
-        offsets = start + tl.arange(0, BLOCK_SIZE)
-        mask = offsets < n_elements
-        value = tl.load(in_ptr + offsets, mask=mask, other=0.0)
-        result = _apply_unary_operation(
-            value,
-            OPERATION,
-            negative_slope,
-            lower_clip,
-            upper_clip,
-            HAS_UPPER_CLIP,
-            SWISH_BETA,
-            ELU_ALPHA,
-            SOFTPLUS_BETA,
-        )
-        tl.store(
-            out_ptr + offsets,
-            result.to(out_ptr.dtype.element_ty),
-            mask=mask,
-        )
-        start += WORKER_COUNT * BLOCK_SIZE
+    if OPERATION == POINTWISE_IDENTITY:
+        copy_block_size: tl.constexpr = BLOCK_SIZE * 16
+        start = program_id * copy_block_size
+        worker_stride = WORKER_COUNT * copy_block_size
+        while start < n_elements:
+            offsets = start + tl.arange(0, copy_block_size)
+            mask = offsets < n_elements
+            value = tl.load(in_ptr + offsets, mask=mask, other=0.0)
+            tl.store(out_ptr + offsets, value, mask=mask)
+            start += worker_stride
+    elif OPERATION == POINTWISE_RECIPROCAL:
+        # Small tensors use 1024-lane tiles. Large tensors use unmasked
+        # 8192-lane main tiles, then distribute the final partial tile in
+        # 1024-lane chunks so one worker does not evaluate inactive reciprocal
+        # lanes for the entire 8192-lane tile. Both paths remain correct when
+        # a target exposes fewer workers than tiles.
+        vector_block_size: tl.constexpr = BLOCK_SIZE * 8
+        if n_elements <= vector_block_size:
+            start = program_id * BLOCK_SIZE
+            worker_stride = WORKER_COUNT * BLOCK_SIZE
+            while start < n_elements:
+                offsets = start + tl.arange(0, BLOCK_SIZE)
+                mask = offsets < n_elements
+                value = tl.load(in_ptr + offsets, mask=mask, other=0.0)
+                result = _apply_unary_operation(
+                    value,
+                    OPERATION,
+                    negative_slope,
+                    lower_clip,
+                    upper_clip,
+                    HAS_UPPER_CLIP,
+                    SWISH_BETA,
+                    ELU_ALPHA,
+                    SOFTPLUS_BETA,
+                )
+                tl.store(
+                    out_ptr + offsets,
+                    result.to(out_ptr.dtype.element_ty),
+                    mask=mask,
+                )
+                start += worker_stride
+        else:
+            start = program_id * vector_block_size
+            worker_stride = WORKER_COUNT * vector_block_size
+            while start + vector_block_size <= n_elements:
+                offsets = start + tl.arange(0, vector_block_size)
+                value = tl.load(in_ptr + offsets)
+                result = _apply_unary_operation(
+                    value,
+                    OPERATION,
+                    negative_slope,
+                    lower_clip,
+                    upper_clip,
+                    HAS_UPPER_CLIP,
+                    SWISH_BETA,
+                    ELU_ALPHA,
+                    SOFTPLUS_BETA,
+                )
+                tl.store(
+                    out_ptr + offsets,
+                    result.to(out_ptr.dtype.element_ty),
+                )
+                start += worker_stride
+            tail_base = (n_elements // vector_block_size) * vector_block_size
+            tail_start = tail_base + program_id * BLOCK_SIZE
+            while tail_start < n_elements:
+                offsets = tail_start + tl.arange(0, BLOCK_SIZE)
+                mask = offsets < n_elements
+                value = tl.load(in_ptr + offsets, mask=mask, other=0.0)
+                result = _apply_unary_operation(
+                    value,
+                    OPERATION,
+                    negative_slope,
+                    lower_clip,
+                    upper_clip,
+                    HAS_UPPER_CLIP,
+                    SWISH_BETA,
+                    ELU_ALPHA,
+                    SOFTPLUS_BETA,
+                )
+                tl.store(
+                    out_ptr + offsets,
+                    result.to(out_ptr.dtype.element_ty),
+                    mask=mask,
+                )
+                tail_start += WORKER_COUNT * BLOCK_SIZE
+    elif (
+        OPERATION == POINTWISE_ABS
+        or OPERATION == POINTWISE_NEG
+        or OPERATION == POINTWISE_LOGICAL_NOT
+        or OPERATION == POINTWISE_EXP
+        or OPERATION == POINTWISE_LOG
+        or OPERATION == POINTWISE_SIGMOID
+        or OPERATION == POINTWISE_SQRT
+        or OPERATION == POINTWISE_RSQRT
+        or OPERATION == POINTWISE_SWISH
+        or OPERATION == POINTWISE_GELU
+        or OPERATION == POINTWISE_GELU_APPROX_TANH
+    ):
+        vector_block_size: tl.constexpr = BLOCK_SIZE * 8
+        if n_elements >= WORKER_COUNT * vector_block_size:
+            start = program_id * vector_block_size
+            worker_stride = WORKER_COUNT * vector_block_size
+            while start + vector_block_size <= n_elements:
+                offsets = start + tl.arange(0, vector_block_size)
+                value = tl.load(in_ptr + offsets)
+                result = _apply_unary_operation(
+                    value,
+                    OPERATION,
+                    negative_slope,
+                    lower_clip,
+                    upper_clip,
+                    HAS_UPPER_CLIP,
+                    SWISH_BETA,
+                    ELU_ALPHA,
+                    SOFTPLUS_BETA,
+                )
+                tl.store(
+                    out_ptr + offsets,
+                    result.to(out_ptr.dtype.element_ty),
+                )
+                start += worker_stride
+
+            tail_base = (n_elements // vector_block_size) * vector_block_size
+            tail_start = tail_base + program_id * BLOCK_SIZE
+            while tail_start < n_elements:
+                offsets = tail_start + tl.arange(0, BLOCK_SIZE)
+                mask = offsets < n_elements
+                value = tl.load(in_ptr + offsets, mask=mask, other=0.0)
+                result = _apply_unary_operation(
+                    value,
+                    OPERATION,
+                    negative_slope,
+                    lower_clip,
+                    upper_clip,
+                    HAS_UPPER_CLIP,
+                    SWISH_BETA,
+                    ELU_ALPHA,
+                    SOFTPLUS_BETA,
+                )
+                tl.store(
+                    out_ptr + offsets,
+                    result.to(out_ptr.dtype.element_ty),
+                    mask=mask,
+                )
+                tail_start += WORKER_COUNT * BLOCK_SIZE
+        else:
+            start = program_id * BLOCK_SIZE
+            worker_stride = WORKER_COUNT * BLOCK_SIZE
+            if (
+                OPERATION == POINTWISE_LOG
+                or OPERATION == POINTWISE_RSQRT
+            ):
+                # Keep the steady-state loop unmasked and isolate the only
+                # partial tile. This avoids inactive transcendental lanes on
+                # full tiles and four copies of the generated loop body.
+                while start + BLOCK_SIZE <= n_elements:
+                    offsets = start + tl.arange(0, BLOCK_SIZE)
+                    value = tl.load(in_ptr + offsets)
+                    result = _apply_unary_operation(
+                        value,
+                        OPERATION,
+                        negative_slope,
+                        lower_clip,
+                        upper_clip,
+                        HAS_UPPER_CLIP,
+                        SWISH_BETA,
+                        ELU_ALPHA,
+                        SOFTPLUS_BETA,
+                    )
+                    tl.store(
+                        out_ptr + offsets,
+                        result.to(out_ptr.dtype.element_ty),
+                    )
+                    start += worker_stride
+                if start < n_elements:
+                    offsets = start + tl.arange(0, BLOCK_SIZE)
+                    mask = offsets < n_elements
+                    value = tl.load(in_ptr + offsets, mask=mask, other=0.0)
+                    result = _apply_unary_operation(
+                        value,
+                        OPERATION,
+                        negative_slope,
+                        lower_clip,
+                        upper_clip,
+                        HAS_UPPER_CLIP,
+                        SWISH_BETA,
+                        ELU_ALPHA,
+                        SOFTPLUS_BETA,
+                    )
+                    tl.store(
+                        out_ptr + offsets,
+                        result.to(out_ptr.dtype.element_ty),
+                        mask=mask,
+                    )
+            else:
+                while start < n_elements:
+                    for tile_index in tl.static_range(4):
+                        tile_start = start + tile_index * worker_stride
+                        if tile_start < n_elements:
+                            offsets = tile_start + tl.arange(0, BLOCK_SIZE)
+                            mask = offsets < n_elements
+                            value = tl.load(
+                                in_ptr + offsets, mask=mask, other=0.0
+                            )
+                            result = _apply_unary_operation(
+                                value,
+                                OPERATION,
+                                negative_slope,
+                                lower_clip,
+                                upper_clip,
+                                HAS_UPPER_CLIP,
+                                SWISH_BETA,
+                                ELU_ALPHA,
+                                SOFTPLUS_BETA,
+                            )
+                            tl.store(
+                                out_ptr + offsets,
+                                result.to(out_ptr.dtype.element_ty),
+                                mask=mask,
+                            )
+                    start += 4 * worker_stride
+    elif (
+        OPERATION == POINTWISE_ERF
+        or OPERATION == POINTWISE_COS
+        or OPERATION == POINTWISE_SIN
+        or OPERATION == POINTWISE_TAN
+    ):
+        vector_block_size: tl.constexpr = BLOCK_SIZE * 4
+        start = program_id * vector_block_size
+        worker_stride = WORKER_COUNT * vector_block_size
+        while start < n_elements:
+            offsets = start + tl.arange(0, vector_block_size)
+            mask = offsets < n_elements
+            value = tl.load(in_ptr + offsets, mask=mask, other=0.0)
+            result = _apply_unary_operation(
+                value,
+                OPERATION,
+                negative_slope,
+                lower_clip,
+                upper_clip,
+                HAS_UPPER_CLIP,
+                SWISH_BETA,
+                ELU_ALPHA,
+                SOFTPLUS_BETA,
+            )
+            tl.store(
+                out_ptr + offsets,
+                result.to(out_ptr.dtype.element_ty),
+                mask=mask,
+            )
+            start += worker_stride
+    else:
+        start = program_id * BLOCK_SIZE
+        worker_stride = WORKER_COUNT * BLOCK_SIZE
+        while start < n_elements:
+            for tile_index in tl.static_range(4):
+                tile_start = start + tile_index * worker_stride
+                if tile_start < n_elements:
+                    offsets = tile_start + tl.arange(0, BLOCK_SIZE)
+                    mask = offsets < n_elements
+                    value = tl.load(in_ptr + offsets, mask=mask, other=0.0)
+                    result = _apply_unary_operation(
+                        value,
+                        OPERATION,
+                        negative_slope,
+                        lower_clip,
+                        upper_clip,
+                        HAS_UPPER_CLIP,
+                        SWISH_BETA,
+                        ELU_ALPHA,
+                        SOFTPLUS_BETA,
+                    )
+                    tl.store(
+                        out_ptr + offsets,
+                        result.to(out_ptr.dtype.element_ty),
+                        mask=mask,
+                    )
+            start += 4 * worker_stride
 
 
 @triton.jit

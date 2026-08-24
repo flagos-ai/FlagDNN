@@ -16,6 +16,7 @@ inline constexpr double kFlagdnnAbsoluteTolerance = 2.0e-5;
 inline constexpr double kFlagdnnRelativeTolerance = 2.0e-5;
 inline constexpr double kAclnnExactAbsoluteTolerance = 5.0e-4;
 inline constexpr double kAclnnExactRelativeTolerance = 5.0e-4;
+inline constexpr double kAccurateLogitMaximumAbsoluteError = 5.0e-6;
 
 inline constexpr std::size_t kScaledSentinelIndex = 21;
 inline constexpr std::size_t kScaledElementCount = 24;
@@ -33,6 +34,20 @@ inline constexpr std::size_t kScaledElementCount = 24;
   return 0.5F * value *
          (1.0F + std::tanh(kSqrtTwoOverPi *
                            (value + kCubicScale * cubic)));
+}
+
+[[nodiscard]] inline float accurate_logit(float value) noexcept {
+  const float squared = value * value;
+  float polynomial = 2.454685183586082e-6F;
+  polynomial = std::fma(polynomial, squared, -6.585686530333067e-5F);
+  polynomial = std::fma(polynomial, squared, -2.1926247170679162e-4F);
+  polynomial = std::fma(polynomial, squared, 7.286941707962942e-2F);
+  polynomial = std::fma(polynomial, squared, 1.5957015276323492F);
+  const float argument = value * polynomial;
+  const float sigmoid = argument >= 0.0F
+      ? 1.0F / (1.0F + std::exp(-argument))
+      : std::exp(argument) / (1.0F + std::exp(argument));
+  return value * sigmoid;
 }
 
 [[nodiscard]] inline float scaled_input(std::size_t index) noexcept {

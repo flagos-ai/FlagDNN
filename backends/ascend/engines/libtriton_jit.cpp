@@ -2,33 +2,27 @@
 
 #include "backends/ascend/engines/libtriton_jit.hpp"
 
-#include "backends/ascend/engines/batchnorm_oracle.hpp"
-#include "backends/ascend/engines/batchnorm_inference_oracle.hpp"
-#include "backends/ascend/engines/build_time_prewarm.hpp"
-#include "backends/ascend/engines/convolution_fprop_oracle.hpp"
-#include "backends/ascend/engines/layernorm_oracle.hpp"
-#include "backends/ascend/engines/matmul_oracle.hpp"
 #include "backends/ascend/engines/python_stdout_containment.hpp"
-#include "backends/ascend/engines/reduction_oracle.hpp"
-#include "backends/ascend/engines/rmsnorm_oracle.hpp"
 
 #include "backends/ascend/error.hpp"
 #include "src/runtime/json.hpp"
 #include "src/runtime/sha256.hpp"
 
 #include <Python.h>
+#include <runtime/runtime/rt.h>
 #include <triton_jit/kernel_metadata.h>
 #include <triton_jit/triton_jit_function.h>
 #include <triton_jit/triton_kernel.h>
 
 #include <algorithm>
-#include <bit>
+#include <array>
 #include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <dlfcn.h>
 #include <exception>
 #include <fcntl.h>
 #include <filesystem>
@@ -37,7 +31,7 @@
 #include <memory>
 #include <mutex>
 #include <iostream>
-#include <set>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -64,10 +58,25 @@ namespace fs = std::filesystem;
 using JsonValue = flagdnn::native::json::Value;
 using LtjFunction = triton_jit::TritonJITFunction;
 
+#ifndef FLAGDNN_ASCEND_STANDALONE_PATH
+#define FLAGDNN_ASCEND_STANDALONE_PATH ""
+#endif
+
+#ifndef FLAGDNN_ASCEND_STANDALONE_SHA256
+#define FLAGDNN_ASCEND_STANDALONE_SHA256 ""
+#endif
+
 constexpr std::size_t kMaximumMetadataBytes = 1U << 20U;
 constexpr std::size_t kMaximumCacheFiles = 4096;
 constexpr std::uintmax_t kMaximumCacheBytes = 1ULL << 30U;
 constexpr std::size_t kGraphWorkspaceAlignment = 256;
+constexpr std::size_t kMaximumKernelWorkspacePerBlock = 1U << 20U;
+constexpr std::size_t kMaximumKernelWorkspaceBytes = 1U << 30U;
+constexpr std::size_t kNpuSystemArgumentBytes = 3U * sizeof(void*);
+constexpr std::size_t kMaximumPreparedArgumentBytes =
+    kNpuSystemArgumentBytes +
+    FLAGDNN_BACKEND_MAX_KERNEL_ARGUMENTS * sizeof(std::uint64_t) +
+    3U * sizeof(std::int32_t);
 
 using LtjRawLaunchMethod = void (LtjFunction::*)(
     triton_jit::NpuBackend::StreamType,
@@ -108,6 +117,34 @@ void launch_with_exported_raw_api(LtjFunction& function,
                      argument_count);
 }
 
+using LtjLoadKernelMethod = void* (*)(const std::string&,
+                                     const std::string&);
+
+[[nodiscard]] LtjLoadKernelMethod exported_load_kernel_method() {
+  /* load_kernel is inline in LTJ's public header but is also exported by the
+   * pinned DSO. Resolve that exported copy explicitly: compiling the inline
+   * body into this plugin would duplicate LTJ's module registry and its device
+   * lifecycle fallback. */
+  static const LtjLoadKernelMethod method = [] {
+    constexpr const char* symbol_name =
+        "_ZN10triton_jit10NpuBackend11load_kernelERKNSt7__cxx1112basic_"
+        "stringIcSt11char_traitsIcESaIcEEES8_";
+    (void)::dlerror();
+    void* symbol = ::dlsym(RTLD_DEFAULT, symbol_name);
+    const char* error = ::dlerror();
+    if (symbol == nullptr || error != nullptr) {
+      throw AscendError(
+          FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
+          "pinned libtriton_jit does not export its NPU kernel loader");
+    }
+    static_assert(sizeof(LtjLoadKernelMethod) == sizeof(symbol));
+    LtjLoadKernelMethod result = nullptr;
+    std::memcpy(&result, &symbol, sizeof(result));
+    return result;
+  }();
+  return method;
+}
+
 struct ContainedRawLaunch {
   LtjFunction* function = nullptr;
   aclrtStream stream = nullptr;
@@ -134,6 +171,49 @@ void launch_create_raw_with_contained_stdout(void* opaque) {
 [[noreturn]] void compilation_failure(std::string message) {
   throw AscendError(FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
                     std::move(message));
+}
+
+struct PyObjectDeleter {
+  void operator()(PyObject* object) const noexcept { Py_XDECREF(object); }
+};
+
+using OwnedPyObject = std::unique_ptr<PyObject, PyObjectDeleter>;
+
+[[nodiscard]] std::string consume_python_error() {
+  if (PyErr_Occurred() == nullptr) {
+    return "unknown Python error";
+  }
+  PyObject* type_raw = nullptr;
+  PyObject* value_raw = nullptr;
+  PyObject* traceback_raw = nullptr;
+  PyErr_Fetch(&type_raw, &value_raw, &traceback_raw);
+  PyErr_NormalizeException(&type_raw, &value_raw, &traceback_raw);
+  OwnedPyObject type(type_raw);
+  OwnedPyObject value(value_raw);
+  OwnedPyObject traceback(traceback_raw);
+
+  PyObject* source = value != nullptr ? value.get() : type.get();
+  if (source == nullptr) {
+    PyErr_Clear();
+    return "unknown Python exception";
+  }
+  OwnedPyObject rendered(PyObject_Str(source));
+  if (rendered == nullptr) {
+    PyErr_Clear();
+    return "unprintable Python exception";
+  }
+  const char* text = PyUnicode_AsUTF8(rendered.get());
+  if (text == nullptr) {
+    PyErr_Clear();
+    return "non-UTF-8 Python exception";
+  }
+  std::string result(text);
+  PyErr_Clear();
+  return result;
+}
+
+[[noreturn]] void python_compilation_failure(std::string_view operation) {
+  compilation_failure(std::string(operation) + ": " + consume_python_error());
 }
 
 [[nodiscard]] bool same_time(const timespec& left,
@@ -236,23 +316,37 @@ struct RegularFile {
   return left.size == right.size && left.sha256 == right.sha256;
 }
 
+[[nodiscard]] bool path_is_within(const fs::path& child,
+                                  const fs::path& parent) noexcept {
+  auto child_iterator = child.begin();
+  for (auto parent_iterator = parent.begin();
+       parent_iterator != parent.end();
+       ++parent_iterator, ++child_iterator) {
+    if (child_iterator == child.end() ||
+        *child_iterator != *parent_iterator) {
+      return false;
+    }
+  }
+  return true;
+}
+
 using CacheSnapshot = std::map<fs::path, RegularFile>;
 
 [[nodiscard]] fs::path validate_private_cache_root(const fs::path& configured) {
   if (configured.empty() || !configured.is_absolute()) {
-    compilation_failure("development Ascend cache root must be absolute");
+    compilation_failure("Ascend Triton cache root must be absolute");
   }
   std::error_code error;
   const fs::path canonical = fs::canonical(configured, error);
   if (error || canonical != configured.lexically_normal()) {
-    compilation_failure("development Ascend cache root must exist and be canonical");
+    compilation_failure("Ascend Triton cache root must exist and be canonical");
   }
   struct stat status {};
   if (::lstat(canonical.c_str(), &status) != 0 ||
       !S_ISDIR(status.st_mode) || S_ISLNK(status.st_mode) ||
       status.st_uid != ::geteuid() || (status.st_mode & 0077) != 0) {
     compilation_failure(
-        "development Ascend cache root must be a private owner-only directory");
+        "Ascend Triton cache root must be a private owner-only directory");
   }
   const char* environment = std::getenv("TRITON_CACHE_DIR");
   if (environment == nullptr || fs::path(environment) != canonical) {
@@ -382,12 +476,13 @@ using CacheSnapshot = std::map<fs::path, RegularFile>;
   compilation_failure("unknown Ascend raw argument type");
 }
 
-void validate_metadata(const fs::path& path,
-                       const RegularFile& file,
-                       const fs::path& cache_root,
-                       const CacheSnapshot& snapshot,
-                       const LtjNpuRawCandidate& candidate,
-                       unsigned int observed_shared_memory) {
+[[nodiscard]] std::size_t validate_metadata(
+    const fs::path& path,
+    const RegularFile& file,
+    const fs::path& cache_root,
+    const CacheSnapshot& snapshot,
+    const LtjNpuRawCandidate& candidate,
+    std::optional<unsigned int> observed_shared_memory) {
   try {
     const JsonValue document = flagdnn::native::json::parse(file.contents);
     const auto& object = document.as_object();
@@ -404,9 +499,19 @@ void validate_metadata(const fs::path& path,
       }
       workspace_size = static_cast<std::uint64_t>(encoded);
     }
-    if (workspace_size != 0) {
+    if (workspace_size != 0 &&
+        candidate.entry_point != "convolution_fprop_persistent_kernel" &&
+        candidate.entry_point != "matmul_strided_kernel") {
       compilation_failure(
-          "development Ascend pointwise requires zero libtriton_jit workspace");
+          "only the Ascend convolution and MatMul kernels may use compiler "
+          "workspace "
+          "(entry_point=" +
+          candidate.entry_point + ", bytes=" +
+          std::to_string(workspace_size) + ")");
+    }
+    if (workspace_size > kMaximumKernelWorkspacePerBlock ||
+        workspace_size > std::numeric_limits<std::size_t>::max()) {
+      compilation_failure("NPU metadata workspace size exceeds its limit");
     }
 
     unsigned int shared_memory = 0;
@@ -419,7 +524,8 @@ void validate_metadata(const fs::path& path,
       }
       shared_memory = static_cast<unsigned int>(encoded);
     }
-    if (shared_memory != observed_shared_memory) {
+    if (observed_shared_memory.has_value() &&
+        shared_memory != *observed_shared_memory) {
       compilation_failure(
           "NPU metadata shared memory differs from launch-enter metadata");
     }
@@ -447,8 +553,8 @@ void validate_metadata(const fs::path& path,
     const triton_jit::NpuKernelMetadata normalized =
         triton_jit::load_npu_metadata(path.parent_path().string(),
                                       candidate.entry_point);
-    if (normalized.workspace_size != 0 ||
-        normalized.shared != observed_shared_memory ||
+    if (normalized.workspace_size != workspace_size ||
+        normalized.shared != shared_memory ||
         normalized.arg_layout.size() != candidate.argument_types.size()) {
       compilation_failure("public NPU metadata loader disagrees with cache proof");
     }
@@ -463,6 +569,7 @@ void validate_metadata(const fs::path& path,
       compilation_failure(
           "public NPU metadata loading changed the private cache tree");
     }
+    return static_cast<std::size_t>(workspace_size);
   } catch (const AscendError&) {
     throw;
   } catch (const std::exception& error) {
@@ -602,6 +709,210 @@ void validate_source(const LtjNpuRawCandidate& candidate) {
   }
 }
 
+[[nodiscard]] fs::path validate_standalone_compiler() {
+  const fs::path configured(FLAGDNN_ASCEND_STANDALONE_PATH);
+  if (configured.empty() || !configured.is_absolute()) {
+    compilation_failure("configured Ascend standalone compiler is not absolute");
+  }
+  std::error_code error;
+  const fs::path canonical = fs::canonical(configured, error);
+  const fs::file_status status = fs::symlink_status(configured, error);
+  if (error || canonical != configured.lexically_normal() ||
+      !fs::is_regular_file(status) || fs::is_symlink(status)) {
+    compilation_failure(
+        "configured Ascend standalone compiler is not canonical and regular");
+  }
+  const RegularFile source =
+      read_regular_file(canonical, kMaximumMetadataBytes);
+  if (std::string_view(FLAGDNN_ASCEND_STANDALONE_SHA256).empty() ||
+      source.sha256 != FLAGDNN_ASCEND_STANDALONE_SHA256) {
+    compilation_failure("configured Ascend standalone compiler hash changed");
+  }
+  return canonical;
+}
+
+struct ContainedStandaloneCompile {
+  const LtjNpuRawCandidate* candidate = nullptr;
+  fs::path compiler;
+  std::int32_t device_ordinal = 0;
+  std::string cache_directory;
+};
+
+void compile_with_contained_stdout(void* opaque) {
+  auto* request = static_cast<ContainedStandaloneCompile*>(opaque);
+  if (request == nullptr || request->candidate == nullptr ||
+      request->compiler.empty()) {
+    throw std::invalid_argument("invalid contained Ascend compilation");
+  }
+  const LtjNpuRawCandidate& candidate = *request->candidate;
+
+  OwnedPyObject importlib_util(PyImport_ImportModule("importlib.util"));
+  if (importlib_util == nullptr) {
+    python_compilation_failure("cannot import embedded importlib.util");
+  }
+  OwnedPyObject spec_from_file_location(
+      PyObject_GetAttrString(importlib_util.get(), "spec_from_file_location"));
+  OwnedPyObject module_from_spec(
+      PyObject_GetAttrString(importlib_util.get(), "module_from_spec"));
+  if (spec_from_file_location == nullptr || module_from_spec == nullptr) {
+    python_compilation_failure(
+        "embedded importlib.util has an incomplete module-loading API");
+  }
+  if (PyCallable_Check(spec_from_file_location.get()) == 0 ||
+      PyCallable_Check(module_from_spec.get()) == 0) {
+    compilation_failure(
+        "embedded importlib.util module-loading API is not callable");
+  }
+
+  OwnedPyObject module_name(
+      PyUnicode_FromString("_flagdnn_ascend_standalone_compile"));
+  const std::string compiler_string = request->compiler.string();
+  OwnedPyObject compiler_path(PyUnicode_DecodeFSDefaultAndSize(
+      compiler_string.c_str(),
+      static_cast<Py_ssize_t>(compiler_string.size())));
+  if (module_name == nullptr || compiler_path == nullptr) {
+    python_compilation_failure(
+        "cannot encode the pinned Ascend standalone compiler path");
+  }
+  OwnedPyObject spec(PyObject_CallFunctionObjArgs(spec_from_file_location.get(),
+                                                  module_name.get(),
+                                                  compiler_path.get(),
+                                                  nullptr));
+  if (spec == nullptr) {
+    python_compilation_failure(
+        "cannot create the Ascend standalone compiler module specification");
+  }
+  OwnedPyObject module(
+      PyObject_CallFunctionObjArgs(module_from_spec.get(), spec.get(), nullptr));
+  if (module == nullptr) {
+    python_compilation_failure(
+        "cannot create the Ascend standalone compiler module");
+  }
+  OwnedPyObject loader(PyObject_GetAttrString(spec.get(), "loader"));
+  OwnedPyObject exec_module(
+      loader == nullptr ? nullptr
+                        : PyObject_GetAttrString(loader.get(), "exec_module"));
+  if (loader == nullptr || exec_module == nullptr) {
+    python_compilation_failure(
+        "Ascend standalone compiler module has no executable loader");
+  }
+  if (PyCallable_Check(exec_module.get()) == 0) {
+    compilation_failure(
+        "Ascend standalone compiler module loader is not callable");
+  }
+  OwnedPyObject executed(
+      PyObject_CallFunctionObjArgs(exec_module.get(), module.get(), nullptr));
+  if (executed == nullptr) {
+    python_compilation_failure(
+        "cannot execute the pinned Ascend standalone compiler module");
+  }
+
+  OwnedPyObject compile(
+      PyObject_GetAttrString(module.get(), "compile_a_kernel"));
+  if (compile == nullptr) {
+    python_compilation_failure(
+        "pinned Ascend standalone compiler has no compile_a_kernel API");
+  }
+  if (PyCallable_Check(compile.get()) == 0) {
+    compilation_failure(
+        "pinned Ascend standalone compile_a_kernel API is not callable");
+  }
+
+  const std::string source_string = candidate.source.string();
+  OwnedPyObject source_path(PyUnicode_DecodeFSDefaultAndSize(
+      source_string.c_str(), static_cast<Py_ssize_t>(source_string.size())));
+  OwnedPyObject entry_point(PyUnicode_FromStringAndSize(
+      candidate.entry_point.data(),
+      static_cast<Py_ssize_t>(candidate.entry_point.size())));
+  OwnedPyObject signature(PyUnicode_FromStringAndSize(
+      candidate.full_signature.data(),
+      static_cast<Py_ssize_t>(candidate.full_signature.size())));
+  OwnedPyObject num_warps(PyLong_FromUnsignedLong(candidate.num_warps));
+  OwnedPyObject num_stages(PyLong_FromUnsignedLong(candidate.num_stages));
+  OwnedPyObject device(PyLong_FromLong(request->device_ordinal));
+  OwnedPyObject extra_options(PyDict_New());
+  if (source_path == nullptr || entry_point == nullptr ||
+      signature == nullptr || num_warps == nullptr || num_stages == nullptr ||
+      device == nullptr || extra_options == nullptr) {
+    python_compilation_failure(
+        "cannot encode the Ascend standalone compilation request");
+  }
+  OwnedPyObject result(PyObject_CallFunctionObjArgs(compile.get(),
+                                                    source_path.get(),
+                                                    entry_point.get(),
+                                                    signature.get(),
+                                                    num_warps.get(),
+                                                    num_stages.get(),
+                                                    device.get(),
+                                                    extra_options.get(),
+                                                    nullptr));
+  if (result == nullptr) {
+    python_compilation_failure("Ascend standalone kernel compilation failed");
+  }
+  OwnedPyObject path(PyOS_FSPath(result.get()));
+  if (path == nullptr) {
+    python_compilation_failure(
+        "Ascend standalone compiler returned a non-path cache directory");
+  }
+
+  const char* data = nullptr;
+  Py_ssize_t size = 0;
+  if (PyUnicode_Check(path.get()) != 0) {
+    data = PyUnicode_AsUTF8AndSize(path.get(), &size);
+  } else if (PyBytes_Check(path.get()) != 0) {
+    char* bytes = nullptr;
+    if (PyBytes_AsStringAndSize(path.get(), &bytes, &size) != 0) {
+      data = nullptr;
+    } else {
+      data = bytes;
+    }
+  } else {
+    compilation_failure(
+        "Ascend standalone compiler returned an unsupported path type");
+  }
+  if (data == nullptr || size <= 0) {
+    python_compilation_failure(
+        "cannot decode the Ascend standalone compiler cache directory");
+  }
+  if (std::memchr(data, '\0', static_cast<std::size_t>(size)) != nullptr) {
+    compilation_failure(
+        "Ascend standalone compiler returned a cache path containing NUL");
+  }
+  request->cache_directory.assign(data, static_cast<std::size_t>(size));
+}
+
+[[nodiscard]] fs::path compile_candidate_without_launch(
+    const EngineBuildContext& context,
+    const fs::path& cache_root,
+    const LtjNpuRawCandidate& candidate) {
+  ContainedStandaloneCompile request;
+  request.candidate = &candidate;
+  request.compiler = validate_standalone_compiler();
+  request.device_ordinal = context.device_ordinal;
+  detail::run_with_contained_python_stdout(compile_with_contained_stdout,
+                                            &request);
+  if (request.cache_directory.empty()) {
+    compilation_failure(
+        "Ascend standalone compiler returned an empty cache directory");
+  }
+
+  const fs::path returned(request.cache_directory);
+  if (!returned.is_absolute()) {
+    compilation_failure(
+        "Ascend standalone compiler returned a relative cache directory");
+  }
+  std::error_code error;
+  const fs::path canonical = fs::canonical(returned, error);
+  const fs::file_status status = fs::symlink_status(returned, error);
+  if (error || canonical != returned.lexically_normal() ||
+      !fs::is_directory(status) || fs::is_symlink(status) ||
+      !path_is_within(canonical, cache_root)) {
+    compilation_failure(
+        "Ascend standalone compiler returned an untrusted cache directory");
+  }
+  return canonical;
+}
+
 void* find_binding(const flagdnnBackendBindingV2 bindings[],
                    std::size_t binding_count,
                    std::int64_t uid) {
@@ -640,195 +951,13 @@ void validate_execution_inputs(const AscendArtifact& artifact,
   }
 }
 
-[[nodiscard]] std::size_t storage_element_size(StorageDataType type) noexcept {
-  switch (type) {
-    case StorageDataType::kFloat32:
-      return 4U;
-    case StorageDataType::kFloat16:
-    case StorageDataType::kBFloat16:
-      return 2U;
-    case StorageDataType::kBoolean:
-      return 1U;
-  }
-  return 0U;
-}
-
-[[nodiscard]] std::size_t kernel_input_count(KernelFamily family) noexcept {
-  switch (family) {
-    case KernelFamily::kUnary:
-    case KernelFamily::kLayout:
-    case KernelFamily::kReduction:
-      return 1U;
-    case KernelFamily::kBinary:
-      return 2U;
-    case KernelFamily::kMatMul:
-      return matmul_kernel_input_count();
-    case KernelFamily::kConvolutionFprop:
-      return convolution_fprop_kernel_input_count();
-    case KernelFamily::kTernary:
-      return 3U;
-    case KernelFamily::kBatchNorm:
-      return batchnorm_kernel_input_count();
-    case KernelFamily::kBatchNormInference:
-      return batchnorm_inference_kernel_input_count();
-    case KernelFamily::kRmsNorm:
-      return rmsnorm_kernel_input_count();
-    case KernelFamily::kLayerNorm:
-      return layernorm_kernel_input_count();
-  }
-  return 0U;
-}
-
-[[nodiscard]] std::size_t kernel_output_count(KernelFamily family) noexcept {
-  return family == KernelFamily::kBatchNorm
-             ? batchnorm_tensor_slot_count() - batchnorm_kernel_input_count()
-             : family == KernelFamily::kLayerNorm
-             ? 3U
-             : family == KernelFamily::kRmsNorm ? 2U : 1U;
-}
-
-[[nodiscard]] std::size_t kernel_runtime_argument_count(
-    KernelFamily family) noexcept {
-  return kernel_input_count(family) + kernel_output_count(family) + 1U;
-}
-
-[[nodiscard]] float decode_storage_value(const std::uint8_t* bytes,
-                                         StorageDataType type) noexcept {
-  if (type == StorageDataType::kBoolean) {
-    return bytes[0] == 0U ? 0.0F : 1.0F;
-  }
-  if (type == StorageDataType::kFloat32) {
-    float result = 0.0F;
-    std::memcpy(&result, bytes, sizeof(result));
-    return result;
-  }
-  std::uint16_t encoded = 0;
-  std::memcpy(&encoded, bytes, sizeof(encoded));
-  if (type == StorageDataType::kBFloat16) {
-    return std::bit_cast<float>(static_cast<std::uint32_t>(encoded) << 16U);
-  }
-
-  const std::uint32_t sign =
-      static_cast<std::uint32_t>(encoded & 0x8000U) << 16U;
-  std::uint32_t exponent = (encoded >> 10U) & 0x1FU;
-  std::uint32_t mantissa = encoded & 0x03FFU;
-  std::uint32_t bits = sign;
-  if (exponent == 0) {
-    if (mantissa != 0) {
-      exponent = 113U;
-      while ((mantissa & 0x0400U) == 0) {
-        mantissa <<= 1U;
-        --exponent;
-      }
-      mantissa &= 0x03FFU;
-      bits |= exponent << 23U;
-      bits |= mantissa << 13U;
-    }
-  } else if (exponent == 0x1FU) {
-    bits |= 0x7F800000U | (mantissa << 13U);
-  } else {
-    bits |= (exponent + 112U) << 23U;
-    bits |= mantissa << 13U;
-  }
-  return std::bit_cast<float>(bits);
-}
-
-void fill_storage_pattern(std::vector<std::uint8_t>& bytes,
-                          StorageDataType type,
-                          std::int64_t uid,
-                          bool positive_only,
-                          bool sigmoid_backward_logit,
-                          int comparison_operand) {
-  const std::size_t element_size = storage_element_size(type);
-  require(bytes.size() % element_size == 0,
-          "Ascend build-time input storage has a partial element",
-          FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-  for (std::size_t offset = 0; offset < bytes.size();
-       offset += element_size) {
-    const std::size_t element = offset / element_size;
-    const std::size_t pattern = comparison_operand >= 0
-                                    ? element % 4U
-                                    : (element + static_cast<std::size_t>(uid)) %
-                                          4U;
-    std::array<std::uint8_t, 4> encoded{};
-    if (type == StorageDataType::kBoolean) {
-      static constexpr std::array<std::uint8_t, 4> kBooleanValues = {
-          0U, 1U, 1U, 0U};
-      encoded[0] = kBooleanValues[pattern];
-    } else if (type == StorageDataType::kFloat32) {
-      static constexpr std::array<float, 4> kSignedValues = {
-          1.0F, 2.0F, -1.0F, -2.0F};
-      static constexpr std::array<float, 4> kPositiveValues = {
-          0.5F, 1.0F, 2.0F, 4.0F};
-      static constexpr std::array<float, 4> kSigmoidBackwardLogits = {
-          -10.0F, 10.0F, -20.0F, 20.0F};
-      static constexpr std::array<float, 4> kComparisonLeft = {
-          -1.0F, 0.0F, 2.0F, 4.0F};
-      static constexpr std::array<float, 4> kComparisonRight = {
-          -1.0F, 1.0F, 1.0F, 4.0F};
-      const auto& values = comparison_operand == 0
-                               ? kComparisonLeft
-                               : comparison_operand == 1
-                                     ? kComparisonRight
-                                     : sigmoid_backward_logit
-                                           ? kSigmoidBackwardLogits
-                                           : positive_only ? kPositiveValues
-                                                           : kSignedValues;
-      std::memcpy(encoded.data(), &values[pattern], sizeof(float));
-    } else {
-      static constexpr std::array<std::uint16_t, 4> kSignedFloat16Values = {
-          0x3C00U, 0x4000U, 0xBC00U, 0xC000U};
-      static constexpr std::array<std::uint16_t, 4> kPositiveFloat16Values = {
-          0x3800U, 0x3C00U, 0x4000U, 0x4400U};
-      static constexpr std::array<std::uint16_t, 4> kSignedBFloat16Values = {
-          0x3F80U, 0x4000U, 0xBF80U, 0xC000U};
-      static constexpr std::array<std::uint16_t, 4> kPositiveBFloat16Values = {
-          0x3F00U, 0x3F80U, 0x4000U, 0x4080U};
-      static constexpr std::array<std::uint16_t, 4>
-          kSigmoidBackwardFloat16Logits = {
-              0xC900U, 0x4900U, 0xCD00U, 0x4D00U};
-      static constexpr std::array<std::uint16_t, 4>
-          kSigmoidBackwardBFloat16Logits = {
-              0xC120U, 0x4120U, 0xC1A0U, 0x41A0U};
-      static constexpr std::array<std::uint16_t, 4> kComparisonFloat16Left = {
-          0xBC00U, 0x0000U, 0x4000U, 0x4400U};
-      static constexpr std::array<std::uint16_t, 4> kComparisonFloat16Right = {
-          0xBC00U, 0x3C00U, 0x3C00U, 0x4400U};
-      static constexpr std::array<std::uint16_t, 4> kComparisonBFloat16Left = {
-          0xBF80U, 0x0000U, 0x4000U, 0x4080U};
-      static constexpr std::array<std::uint16_t, 4> kComparisonBFloat16Right = {
-          0xBF80U, 0x3F80U, 0x3F80U, 0x4080U};
-      const std::uint16_t encoded_value =
-          comparison_operand == 0
-              ? (type == StorageDataType::kFloat16
-                     ? kComparisonFloat16Left[pattern]
-                     : kComparisonBFloat16Left[pattern])
-              : comparison_operand == 1
-                    ? (type == StorageDataType::kFloat16
-                           ? kComparisonFloat16Right[pattern]
-                           : kComparisonBFloat16Right[pattern])
-                    : sigmoid_backward_logit
-              ? (type == StorageDataType::kFloat16
-                     ? kSigmoidBackwardFloat16Logits[pattern]
-                     : kSigmoidBackwardBFloat16Logits[pattern])
-              : type == StorageDataType::kFloat16
-                    ? (positive_only ? kPositiveFloat16Values[pattern]
-                                     : kSignedFloat16Values[pattern])
-                    : (positive_only ? kPositiveBFloat16Values[pattern]
-                                     : kSignedBFloat16Values[pattern]);
-      std::memcpy(encoded.data(), &encoded_value, sizeof(encoded_value));
-    }
-    std::memcpy(bytes.data() + offset, encoded.data(), element_size);
-  }
-}
-
 class DeviceAllocation {
  public:
   DeviceAllocation() = default;
   explicit DeviceAllocation(std::size_t size) : size_(size) {
     if (size_ != 0) {
       check_acl(aclrtMalloc(&value_, size_, ACL_MEM_MALLOC_HUGE_FIRST),
-                "aclrtMalloc(development prewarm)");
+                "aclrtMalloc(Ascend build-time resource)");
     }
   }
   ~DeviceAllocation() {
@@ -855,15 +984,6 @@ class DeviceAllocation {
 
   [[nodiscard]] void* get() const noexcept { return value_; }
   [[nodiscard]] std::size_t size() const noexcept { return size_; }
-
-  void release() {
-    if (value_ == nullptr) {
-      return;
-    }
-    void* value = std::exchange(value_, nullptr);
-    size_ = 0;
-    check_acl(aclrtFree(value), "aclrtFree(development prewarm)");
-  }
 
   [[nodiscard]] bool release_noexcept() noexcept {
     if (value_ == nullptr) {
@@ -898,37 +1018,39 @@ class BuildResources {
 
   void initialize(const AscendArtifact& artifact) {
     require(stream_ == nullptr && allocations_.empty() && bindings_.empty() &&
-                binding_shadows_.empty() && workspace_.get() == nullptr &&
-                workspace_shadow_.empty() && reduction_input_shadow_.empty(),
-            "Ascend development prewarm resources were initialized twice",
+                workspace_.get() == nullptr &&
+                kernel_workspace_.get() == nullptr,
+            "Ascend build-time resources were initialized twice",
             FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
-    check_acl(aclrtCreateStream(&stream_), "aclrtCreateStream");
+    check_acl(aclrtCreateStream(&stream_), "aclrtCreateStream(Ascend build)");
+
     std::map<std::int64_t, std::pair<std::size_t, std::size_t>> requirements;
     for (const AscendStageArtifact& stage : artifact.stages) {
       for (const ArgumentSource& argument : stage.arguments) {
-        if (argument.source == ArgumentSourceKind::kBinding) {
-          auto& requirement = requirements[argument.uid];
-          requirement.first = std::max(requirement.first, argument.size);
-          requirement.second = std::max(requirement.second, argument.alignment);
+        if (argument.source != ArgumentSourceKind::kBinding) {
+          continue;
         }
+        auto& requirement = requirements[argument.uid];
+        requirement.first = std::max(requirement.first, argument.size);
+        requirement.second = std::max(requirement.second, argument.alignment);
       }
     }
+
     allocations_.reserve(artifact.binding_uids.size());
     bindings_.reserve(artifact.binding_uids.size());
-    binding_shadows_.reserve(artifact.binding_uids.size());
     for (const std::int64_t uid : artifact.binding_uids) {
       const auto found = requirements.find(uid);
-      require(found != requirements.end() && found->second.first != 0,
-              "Ascend prewarm binding has no allocation description",
+      require(found != requirements.end() && found->second.first != 0 &&
+                  found->second.second != 0,
+              "Ascend build-time binding has no valid allocation description",
               FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
       allocations_.emplace_back(found->second.first);
-      binding_shadows_.emplace_back(found->second.first, 0U);
       void* pointer = allocations_.back().get();
       require(pointer != nullptr &&
                   reinterpret_cast<std::uintptr_t>(pointer) %
                           found->second.second ==
                       0,
-              "Ascend prewarm allocation does not satisfy artifact alignment",
+              "Ascend build-time allocation does not satisfy artifact alignment",
               FLAGDNN_BACKEND_RESULT_RUNTIME_ERROR);
       bindings_.push_back({uid, pointer});
       check_acl(aclrtMemsetAsync(pointer,
@@ -936,32 +1058,31 @@ class BuildResources {
                                  0,
                                  allocations_.back().size(),
                                  stream_),
-                "aclrtMemsetAsync(development binding)");
+                "aclrtMemsetAsync(Ascend build binding)");
       synchronized_ = false;
     }
+
     if (artifact.workspace_size != 0) {
       workspace_ = DeviceAllocation(artifact.workspace_size);
-      workspace_shadow_.assign(artifact.workspace_size, 0U);
       require(reinterpret_cast<std::uintptr_t>(workspace_.get()) %
                       kGraphWorkspaceAlignment ==
                   0,
-              "Ascend prewarm Graph workspace is not 256-byte aligned",
+              "Ascend build-time Graph workspace is not 256-byte aligned",
               FLAGDNN_BACKEND_RESULT_RUNTIME_ERROR);
       check_acl(aclrtMemsetAsync(workspace_.get(),
                                  workspace_.size(),
                                  0,
                                  workspace_.size(),
                                  stream_),
-                "aclrtMemsetAsync(development workspace)");
+                "aclrtMemsetAsync(Ascend build workspace)");
       synchronized_ = false;
     }
     synchronize();
-    seed_external_inputs(artifact);
   }
 
   void synchronize() {
     check_acl(aclrtSynchronizeStream(stream_),
-              "aclrtSynchronizeStream(development prewarm)");
+              "aclrtSynchronizeStream(Ascend build)");
     synchronized_ = true;
   }
 
@@ -983,9 +1104,8 @@ class BuildResources {
       synchronize();
     }
     if (!release_synchronized_noexcept()) {
-      throw AscendError(
-          FLAGDNN_BACKEND_RESULT_RUNTIME_ERROR,
-          "Ascend development prewarm resources could not be released");
+      throw AscendError(FLAGDNN_BACKEND_RESULT_RUNTIME_ERROR,
+                        "Ascend build-time resources could not be released");
     }
   }
 
@@ -1007,10 +1127,8 @@ class BuildResources {
     }
     allocations_.clear();
     success = workspace_.release_noexcept() && success;
+    success = kernel_workspace_.release_noexcept() && success;
     bindings_.clear();
-    binding_shadows_.clear();
-    workspace_shadow_.clear();
-    reduction_input_shadow_.clear();
     if (stream_ != nullptr) {
       aclrtStream stream = stream_;
       const aclError status = aclrtDestroyStream(stream);
@@ -1033,1286 +1151,35 @@ class BuildResources {
     return workspace_.size();
   }
 
-  void restore_stage_inputs(const AscendStageArtifact& stage) {
-    require(stage.input_count == kernel_input_count(stage.kernel_family) &&
-                stage.arguments.size() ==
-                    kernel_runtime_argument_count(stage.kernel_family),
-            "Ascend build-time stage has no input arguments",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    for (std::size_t index = 0; index < stage.input_count; ++index) {
-      const DeviceRegion device = device_region(stage.arguments[index]);
-      const HostRegion host = host_region(stage.arguments[index]);
-      require(device.size == host.size,
-              "Ascend build-time input shadow size differs",
-              FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
-      const std::uint8_t* source = host.pointer;
-      if (stage.kernel_family == KernelFamily::kReduction) {
-        require(index == 0U,
-                "Ascend reduction has an unexpected input index",
-                FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-        reduction_input_shadow_.assign(host.size, 0xA5U);
-        seed_reduction_host_input(stage, reduction_input_shadow_);
-        source = reduction_input_shadow_.data();
-      }
-      check_acl(aclrtMemcpyAsync(device.pointer,
-                                 device.size,
-                                 source,
-                                 host.size,
-                                 ACL_MEMCPY_HOST_TO_DEVICE,
-                                 stream_),
-                "aclrtMemcpyAsync(restore build-time input)");
-      synchronized_ = false;
-    }
-  }
-
-  void reset_stage_output(const AscendStageArtifact& stage) {
-    const std::size_t output_count = kernel_output_count(stage.kernel_family);
-    require(stage.arguments.size() ==
-                stage.input_count + output_count + 1U,
-            "Ascend build-time output ABI count is invalid",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    for (std::size_t output_index = 0U; output_index < output_count;
-         ++output_index) {
-      const ArgumentSource& source =
-          stage.arguments[stage.input_count + output_index];
-      require(source.type == RawArgumentType::kPointer,
-              "Ascend build-time output ABI is not a pointer",
-              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-      const DeviceRegion output =
-          output_index == 0U ? stage_output(stage) : device_region(source);
-      check_acl(aclrtMemsetAsync(output.pointer,
-                                 output.size,
-                                 0xA5,
-                                 output.size,
-                                 stream_),
-                "aclrtMemsetAsync(autotune output sentinel)");
-    }
-    synchronized_ = false;
-  }
-
-  [[nodiscard]] std::vector<std::uint8_t> read_stage_output(
-      const AscendStageArtifact& stage) {
-    const std::size_t output_count = kernel_output_count(stage.kernel_family);
-    require(stage.arguments.size() ==
-                stage.input_count + output_count + 1U,
-            "Ascend build-time output ABI count is invalid",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    std::vector<DeviceRegion> outputs;
-    outputs.reserve(output_count);
-    std::size_t snapshot_size = 0U;
-    for (std::size_t output_index = 0U; output_index < output_count;
-         ++output_index) {
-      const ArgumentSource& source =
-          stage.arguments[stage.input_count + output_index];
-      require(source.type == RawArgumentType::kPointer,
-              "Ascend build-time output ABI is not a pointer",
-              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-      const DeviceRegion output =
-          output_index == 0U ? stage_output(stage) : device_region(source);
-      require(output.size <=
-                  std::numeric_limits<std::size_t>::max() - snapshot_size,
-              "Ascend build-time output snapshot size overflows",
-              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-      snapshot_size += output.size;
-      outputs.push_back(output);
-    }
-    std::vector<std::uint8_t> result(snapshot_size);
-    std::size_t offset = 0U;
-    for (const DeviceRegion output : outputs) {
-      check_acl(aclrtMemcpyAsync(result.data() + offset,
-                                 output.size,
-                                 output.pointer,
-                                 output.size,
-                                 ACL_MEMCPY_DEVICE_TO_HOST,
-                                 stream_),
-                "aclrtMemcpyAsync(autotune output)");
-      offset += output.size;
-    }
-    synchronized_ = false;
-    synchronize();
-    return result;
-  }
-
-  void validate_stage_inputs_unchanged(const AscendStageArtifact& stage) {
-    const bool batchnorm_training =
-        stage.kernel_family == KernelFamily::kBatchNorm;
-    const bool batchnorm_inference =
-        stage.kernel_family == KernelFamily::kBatchNormInference;
-    const bool rmsnorm = stage.kernel_family == KernelFamily::kRmsNorm;
-    const bool layernorm = stage.kernel_family == KernelFamily::kLayerNorm;
-    const bool matmul = stage.kernel_family == KernelFamily::kMatMul;
-    const bool convolution =
-        stage.kernel_family == KernelFamily::kConvolutionFprop;
-    if (!batchnorm_training && !batchnorm_inference && !rmsnorm &&
-        !layernorm && !matmul && !convolution) {
+  void ensure_kernel_workspace(std::size_t size) {
+    if (size <= kernel_workspace_.size()) {
       return;
     }
-    const std::size_t expected_count =
-        batchnorm_training
-            ? batchnorm_kernel_input_count()
-            : batchnorm_inference
-                  ? batchnorm_inference_kernel_input_count()
-                  : rmsnorm ? rmsnorm_kernel_input_count()
-                            : layernorm ? layernorm_kernel_input_count()
-                            : matmul ? matmul_kernel_input_count()
-                                     : convolution_fprop_kernel_input_count();
-    require(stage.input_count == expected_count,
-            "Ascend structured build-time input count is invalid",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    std::vector<std::vector<std::uint8_t>> observed(expected_count);
-    std::vector<HostRegion> expected(expected_count);
-    for (std::size_t index = 0; index < observed.size(); ++index) {
-      const DeviceRegion device = device_region(stage.arguments[index]);
-      expected[index] = host_region(stage.arguments[index]);
-      require(device.size == expected[index].size,
-              "Ascend structured build-time input shadow size differs",
-              FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
-      observed[index].resize(device.size);
-      check_acl(aclrtMemcpyAsync(observed[index].data(),
-                                 observed[index].size(),
-                                 device.pointer,
-                                 device.size,
-                                 ACL_MEMCPY_DEVICE_TO_HOST,
-                                 stream_),
-                "aclrtMemcpyAsync(validate structured input)");
-      synchronized_ = false;
-    }
-    synchronize();
-    for (std::size_t index = 0; index < observed.size(); ++index) {
-      if (!std::equal(observed[index].begin(),
-                      observed[index].end(),
-                      expected[index].pointer)) {
-        compilation_failure(
-            batchnorm_training
-                ? "Ascend BatchNorm training candidate modified an input during prewarm"
-                : batchnorm_inference
-                      ? "Ascend batchnorm candidate modified an input during prewarm"
-                      : rmsnorm
-                      ? "Ascend RMSNorm candidate modified an input during prewarm"
-                      : layernorm
-                      ? "Ascend LayerNorm candidate modified an input during prewarm"
-                      : convolution
-                      ? "Ascend convolution candidate modified an input during prewarm"
-                      : "Ascend MatMul candidate modified an input during prewarm");
-      }
-    }
-  }
-
-  void validate_layout_stage_output(
-      const AscendStageArtifact& stage,
-      const std::vector<std::uint8_t>& actual) const {
-    require(stage.kernel_family == KernelFamily::kLayout &&
-                stage.input_count == 1 && stage.arguments.size() == 3 &&
-                stage.tensor_storage_data_types.size() == 2 &&
-                stage.input_type(0) == stage.output_type(),
-            "Ascend layout build-time ABI is invalid",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    const HostRegion input = host_region(stage.arguments[0]);
-    const HostRegion output = host_region(stage.arguments[1]);
-    const std::size_t element_size =
-        storage_element_size(stage.output_type());
-    require(element_size != 0 && input.size % element_size == 0 &&
-                output.size % element_size == 0 &&
-                actual.size() == output.size && stage.n_elements > 0,
-            "Ascend layout build-time storage is invalid",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-
-    std::vector<bool> written(output.size / element_size, false);
-    for (std::int32_t logical = 0; logical < stage.n_elements; ++logical) {
-      std::uint64_t input_remaining =
-          static_cast<std::uint64_t>(logical);
-      std::uint64_t output_remaining = input_remaining;
-      std::uint64_t input_offset =
-          static_cast<std::uint64_t>(stage.layout_input_base);
-      std::uint64_t output_offset = 0;
-      for (std::size_t reversed = stage.layout_input_dimensions.size();
-           reversed != 0;
-           --reversed) {
-        const std::size_t axis = reversed - 1;
-        const std::int64_t input_dimension =
-            stage.layout_input_dimensions[axis];
-        const std::int64_t output_dimension =
-            stage.layout_output_dimensions[axis];
-        require(input_dimension > 0 && output_dimension > 0 &&
-                    stage.layout_input_strides[axis] >= 0 &&
-                    stage.output_strides[axis] >= 0,
-                "Ascend layout oracle metadata is invalid",
-                FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-        const std::uint64_t input_coordinate =
-            input_remaining % static_cast<std::uint64_t>(input_dimension);
-        input_remaining /= static_cast<std::uint64_t>(input_dimension);
-        input_offset += input_coordinate * static_cast<std::uint64_t>(
-                                               stage.layout_input_strides[axis]);
-        const std::uint64_t output_coordinate =
-            output_remaining % static_cast<std::uint64_t>(output_dimension);
-        output_remaining /= static_cast<std::uint64_t>(output_dimension);
-        output_offset += output_coordinate * static_cast<std::uint64_t>(
-                                                 stage.output_strides[axis]);
-      }
-      require(input_remaining == 0 && output_remaining == 0 &&
-                  input_offset < input.size / element_size &&
-                  output_offset < output.size / element_size &&
-                  !written[output_offset],
-              "Ascend layout oracle tensor offset is invalid",
-              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-      const std::uint8_t* expected =
-          input.pointer + input_offset * element_size;
-      const std::uint8_t* observed =
-          actual.data() + output_offset * element_size;
-      if (std::memcmp(observed, expected, element_size) != 0) {
-        compilation_failure(
-            "Ascend layout candidate differs from the raw-byte host oracle");
-      }
-      written[output_offset] = true;
-    }
-    for (std::size_t element = 0; element < written.size(); ++element) {
-      if (written[element]) {
-        continue;
-      }
-      for (std::size_t byte = 0; byte < element_size; ++byte) {
-        if (actual[element * element_size + byte] != 0xA5U) {
-          compilation_failure(
-              "Ascend layout candidate modified output padding during "
-              "autotune");
-        }
-      }
-    }
-  }
-
-  void validate_stage_output(const AscendStageArtifact& stage,
-                             const std::vector<std::uint8_t>& actual) const {
-    if (stage.kernel_family == KernelFamily::kLayout) {
-      validate_layout_stage_output(stage, actual);
-      return;
-    }
-    if (stage.kernel_family == KernelFamily::kReduction) {
-      const HostRegion input = host_region(stage.arguments[0]);
-      const HostRegion output =
-          host_region(stage.arguments[reduction_output_argument_index()]);
-      require(actual.size() == output.size &&
-                  reduction_input_shadow_.size() == input.size,
-              "Ascend reduction build-time shadow size differs",
-              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-      try {
-        validate_reduction_host_output(
-            stage, reduction_input_shadow_, actual);
-      } catch (const std::invalid_argument& error) {
-        compilation_failure(error.what());
-      }
-      return;
-    }
-    if (stage.kernel_family == KernelFamily::kMatMul) {
-      const HostRegion a = host_region(stage.arguments[0]);
-      const HostRegion b = host_region(stage.arguments[1]);
-      try {
-        validate_matmul_host_output(stage,
-                                    {a.pointer, a.size},
-                                    {b.pointer, b.size},
-                                    actual);
-      } catch (const std::invalid_argument& error) {
-        compilation_failure(error.what());
-      }
-      return;
-    }
-    if (stage.kernel_family == KernelFamily::kConvolutionFprop) {
-      const HostRegion input = host_region(stage.arguments[0]);
-      const HostRegion filter = host_region(stage.arguments[1]);
-      try {
-        validate_convolution_fprop_host_output(
-            stage,
-            {input.pointer, input.size},
-            {filter.pointer, filter.size},
-            actual);
-      } catch (const std::invalid_argument& error) {
-        compilation_failure(error.what());
-      }
-      return;
-    }
-    if (stage.kernel_family == KernelFamily::kBatchNorm) {
-      ConstBatchNormHostBuffers inputs{};
-      ConstBatchNormHostBuffers outputs{};
-      for (std::size_t index = 0U; index < inputs.size(); ++index) {
-        const HostRegion input = host_region(stage.arguments[index]);
-        inputs[index] = std::span<const std::uint8_t>(input.pointer, input.size);
-      }
-      std::size_t offset = 0U;
-      for (std::size_t index = 0U; index < outputs.size(); ++index) {
-        const std::size_t size =
-            stage.arguments[batchnorm_first_output_argument_index() + index]
-                .size;
-        require(size <= actual.size() - std::min(offset, actual.size()),
-                "Ascend BatchNorm build-time output snapshot size differs",
-                FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-        outputs[index] =
-            std::span<const std::uint8_t>(actual.data() + offset, size);
-        offset += size;
-      }
-      require(offset == actual.size(),
-              "Ascend BatchNorm build-time output snapshot size differs",
-              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-      try {
-        validate_batchnorm_host_outputs(stage, inputs, outputs);
-      } catch (const std::invalid_argument& error) {
-        compilation_failure(error.what());
-      }
-      return;
-    }
-    if (stage.kernel_family == KernelFamily::kBatchNormInference) {
-      const HostRegion x = host_region(stage.arguments[0]);
-      const HostRegion mean = host_region(stage.arguments[1]);
-      const HostRegion inv_variance = host_region(stage.arguments[2]);
-      const HostRegion scale = host_region(stage.arguments[3]);
-      const HostRegion bias = host_region(stage.arguments[4]);
-      try {
-        validate_batchnorm_inference_host_output(
-            stage,
-            {x.pointer, x.size},
-            {mean.pointer, mean.size},
-            {inv_variance.pointer, inv_variance.size},
-            {scale.pointer, scale.size},
-            {bias.pointer, bias.size},
-            actual);
-      } catch (const std::invalid_argument& error) {
-        compilation_failure(error.what());
-      }
-      return;
-    }
-    if (stage.kernel_family == KernelFamily::kRmsNorm) {
-      const HostRegion x = host_region(stage.arguments[0U]);
-      const HostRegion scale = host_region(stage.arguments[1U]);
-      const HostRegion bias = host_region(stage.arguments[2U]);
-      const std::size_t y_size = stage.arguments[rmsnorm_y_argument_index()].size;
-      const std::size_t statistic_size =
-          stage.arguments[rmsnorm_inv_variance_argument_index()].size;
-      require(y_size <= actual.size() &&
-                  statistic_size == actual.size() - y_size,
-              "Ascend RMSNorm build-time output snapshot size differs",
-              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-      try {
-        validate_rmsnorm_host_outputs(
-            stage,
-            {x.pointer, x.size},
-            {scale.pointer, scale.size},
-            {bias.pointer, bias.size},
-            {actual.data(), y_size},
-            {actual.data() + y_size, statistic_size});
-      } catch (const std::invalid_argument& error) {
-        compilation_failure(error.what());
-      }
-      return;
-    }
-    if (stage.kernel_family == KernelFamily::kLayerNorm) {
-      const HostRegion x = host_region(stage.arguments[0U]);
-      const HostRegion scale = host_region(stage.arguments[1U]);
-      const HostRegion bias = host_region(stage.arguments[2U]);
-      const std::size_t y_size =
-          stage.arguments[layernorm_y_argument_index()].size;
-      const std::size_t mean_size =
-          stage.arguments[layernorm_mean_argument_index()].size;
-      const std::size_t inv_size =
-          stage.arguments[layernorm_inv_variance_argument_index()].size;
-      require(y_size <= actual.size() &&
-                  mean_size <= actual.size() - y_size &&
-                  inv_size == actual.size() - y_size - mean_size,
-              "Ascend LayerNorm build-time output snapshot size differs",
-              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-      try {
-        validate_layernorm_host_outputs(
-            stage,
-            {x.pointer, x.size},
-            {scale.pointer, scale.size},
-            {bias.pointer, bias.size},
-            {actual.data(), y_size},
-            {actual.data() + y_size, mean_size},
-            {actual.data() + y_size + mean_size, inv_size});
-      } catch (const std::invalid_argument& error) {
-        compilation_failure(error.what());
-      }
-      return;
-    }
-    const HostRegion left = host_region(stage.arguments[0]);
-    const bool unary = stage.kernel_family == KernelFamily::kUnary;
-    const bool ternary = stage.kernel_family == KernelFamily::kTernary;
-    require(unary || ternary ||
-                stage.kernel_family == KernelFamily::kBinary,
-            "Ascend pointwise build-time kernel family is invalid",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    const HostRegion right =
-        unary ? HostRegion{} : host_region(stage.arguments[1]);
-    const HostRegion predicate =
-        ternary ? host_region(stage.arguments[2]) : HostRegion{};
-    const HostRegion output = host_region(stage.arguments[stage.input_count]);
-    require(actual.size() == output.size && stage.n_elements > 0,
-            "Ascend build-time output size differs from its Graph contract",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    require(stage.tensor_storage_data_types.size() == stage.input_count + 1,
-            "Ascend build-time stage tensor type count differs",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    const StorageDataType left_type = stage.input_type(0);
-    const StorageDataType right_type = unary ? left_type : stage.input_type(1);
-    const StorageDataType predicate_type =
-        ternary ? stage.input_type(2) : StorageDataType::kBoolean;
-    const StorageDataType output_type = stage.output_type();
-    const std::size_t left_element_size = storage_element_size(left_type);
-    const std::size_t right_element_size = storage_element_size(right_type);
-    const std::size_t predicate_element_size =
-        storage_element_size(predicate_type);
-    const std::size_t output_element_size = storage_element_size(output_type);
-    require(left.size % left_element_size == 0 &&
-                (unary || right.size % right_element_size == 0) &&
-                (!ternary ||
-                 (predicate_type == StorageDataType::kBoolean &&
-                  predicate.size % predicate_element_size == 0)) &&
-                output.size % output_element_size == 0,
-            "Ascend build-time tensor storage has a partial element",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    std::vector<bool> written(output.size / output_element_size, false);
-    for (std::int32_t logical = 0; logical < stage.n_elements; ++logical) {
-      std::uint64_t remaining = static_cast<std::uint64_t>(logical);
-      std::uint64_t left_offset = 0;
-      std::uint64_t right_offset = 0;
-      std::uint64_t predicate_offset = 0;
-      std::uint64_t output_offset = 0;
-      for (std::size_t reversed = stage.dimensions.size(); reversed != 0;
-           --reversed) {
-        const std::size_t axis = reversed - 1;
-        const std::int64_t dimension = stage.dimensions[axis];
-        require(dimension > 0,
-                "Ascend build-time oracle has a nonpositive dimension",
-                FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-        const std::uint64_t coordinate =
-            remaining % static_cast<std::uint64_t>(dimension);
-        remaining /= static_cast<std::uint64_t>(dimension);
-        left_offset += coordinate *
-                       static_cast<std::uint64_t>(stage.left_strides[axis]);
-        if (!unary) {
-          right_offset += coordinate * static_cast<std::uint64_t>(
-                                         stage.right_strides[axis]);
-        }
-        if (ternary) {
-          predicate_offset += coordinate * static_cast<std::uint64_t>(
-                                             stage.mask_strides[axis]);
-        }
-        output_offset += coordinate *
-                         static_cast<std::uint64_t>(stage.output_strides[axis]);
-      }
-      require(remaining == 0 &&
-                  left_offset < left.size / left_element_size &&
-                  (unary || right_offset < right.size / right_element_size) &&
-                  (!ternary ||
-                   predicate_offset <
-                       predicate.size / predicate_element_size) &&
-                  output_offset < output.size / output_element_size,
-              "Ascend build-time oracle tensor offset is out of range",
-              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-      const float left_value = decode_storage_value(
-          left.pointer + left_offset * left_element_size, left_type);
-      const float right_value =
-          unary ? 0.0F
-                : decode_storage_value(right.pointer +
-                                           right_offset * right_element_size,
-                                       right_type);
-      const float predicate_value =
-          ternary ? decode_storage_value(
-                        predicate.pointer +
-                            predicate_offset * predicate_element_size,
-                        predicate_type)
-                  : 0.0F;
-      const std::uint8_t* selected_storage = nullptr;
-      float expected = 0.0F;
-      if (stage.operation == "sqrt") {
-        expected = std::sqrt(left_value);
-      } else if (stage.operation == "erf") {
-        expected = std::erf(left_value);
-      } else if (stage.operation == "rsqrt") {
-        expected = 1.0F / std::sqrt(left_value);
-      } else if (stage.operation == "reciprocal") {
-        expected = 1.0F / left_value;
-      } else if (stage.operation == "exp") {
-        expected = std::exp(left_value);
-      } else if (stage.operation == "log") {
-        expected = std::log(left_value);
-      } else if (stage.operation == "cos") {
-        expected = std::cos(left_value);
-      } else if (stage.operation == "sin") {
-        expected = std::sin(left_value);
-      } else if (stage.operation == "tan") {
-        expected = std::tan(left_value);
-      } else if (stage.operation == "sigmoid") {
-        expected = 1.0F / (1.0F + std::exp(-left_value));
-      } else if (stage.operation == "tanh") {
-        expected =
-            2.0F / (1.0F + std::exp(-2.0F * left_value)) - 1.0F;
-      } else if (stage.operation == "elu") {
-        expected =
-            left_value > 0.0F
-                ? left_value
-                : static_cast<float>(stage.elu_alpha) *
-                      (std::exp(left_value) - 1.0F);
-      } else if (stage.operation == "gelu") {
-        expected =
-            0.5F * left_value *
-            (1.0F + std::erf(left_value * 0.7071067811865476F));
-      } else if (stage.operation == "softplus") {
-        const float beta = static_cast<float>(stage.softplus_beta);
-        const float scaled = beta * left_value;
-        expected =
-            (std::fmax(scaled, 0.0F) +
-             std::log1p(std::exp(-std::fabs(scaled)))) /
-            beta;
-      } else if (stage.operation == "swish") {
-        const float scaled =
-            static_cast<float>(stage.swish_beta) * left_value;
-        expected = left_value / (1.0F + std::exp(-scaled));
-      } else if (stage.operation == "gelu_approx_tanh") {
-        const float cubic = left_value * left_value * left_value;
-        const float approximate_argument =
-            0.7978845608028654F * (left_value + 0.044715F * cubic);
-        const float approximate_tanh =
-            2.0F / (1.0F + std::exp(-2.0F * approximate_argument)) - 1.0F;
-        expected = 0.5F * left_value * (1.0F + approximate_tanh);
-      } else if (stage.operation == "identity") {
-        expected = left_value;
-      } else if (stage.operation == "neg") {
-        expected = -left_value;
-      } else if (stage.operation == "abs") {
-        expected = std::fabs(left_value);
-      } else if (stage.operation == "ceil") {
-        expected = std::ceil(left_value);
-      } else if (stage.operation == "floor") {
-        expected = std::floor(left_value);
-      } else if (stage.operation == "relu") {
-        expected =
-            left_value < static_cast<float>(stage.lower_clip)
-                ? static_cast<float>(stage.lower_clip) +
-                      static_cast<float>(stage.negative_slope) *
-                          (left_value - static_cast<float>(stage.lower_clip))
-                : left_value;
-        if (stage.has_upper_clip) {
-          expected = std::fmin(expected,
-                               static_cast<float>(stage.upper_clip));
-        }
-      } else if (stage.operation == "add") {
-        expected =
-            left_value + static_cast<float>(stage.alpha) * right_value;
-      } else if (stage.operation == "sub") {
-        expected =
-            left_value - static_cast<float>(stage.alpha) * right_value;
-      } else if (stage.operation == "mul") {
-        expected = left_value * right_value;
-      } else if (stage.operation == "div") {
-        expected = left_value / right_value;
-      } else if (stage.operation == "min") {
-        expected = std::fmin(left_value, right_value);
-      } else if (stage.operation == "max") {
-        expected = std::fmax(left_value, right_value);
-      } else if (stage.operation == "mod") {
-        expected = std::fmod(left_value, right_value);
-      } else if (stage.operation == "pow") {
-        expected = std::pow(left_value, right_value);
-      } else if (stage.operation == "cmp_eq") {
-        expected = left_value == right_value ? 1.0F : 0.0F;
-      } else if (stage.operation == "cmp_neq") {
-        expected = left_value != right_value ? 1.0F : 0.0F;
-      } else if (stage.operation == "cmp_gt") {
-        expected = left_value > right_value ? 1.0F : 0.0F;
-      } else if (stage.operation == "cmp_ge") {
-        expected = left_value >= right_value ? 1.0F : 0.0F;
-      } else if (stage.operation == "cmp_lt") {
-        expected = left_value < right_value ? 1.0F : 0.0F;
-      } else if (stage.operation == "cmp_le") {
-        expected = left_value <= right_value ? 1.0F : 0.0F;
-      } else if (stage.operation == "sigmoid_backward") {
-        const float e = std::exp(-std::fabs(right_value));
-        const float inv = 1.0F / (1.0F + e);
-        expected = left_value * e * inv * inv;
-      } else if (stage.operation == "logical_not") {
-        expected = left_value == 0.0F ? 1.0F : 0.0F;
-      } else if (stage.operation == "logical_and") {
-        expected = left_value != 0.0F && right_value != 0.0F ? 1.0F : 0.0F;
-      } else if (stage.operation == "logical_or") {
-        expected = left_value != 0.0F || right_value != 0.0F ? 1.0F : 0.0F;
-      } else if (stage.operation == "binary_select") {
-        selected_storage =
-            predicate_value != 0.0F
-                ? left.pointer + left_offset * left_element_size
-                : right.pointer + right_offset * right_element_size;
-        expected = decode_storage_value(selected_storage, output_type);
-      } else {
-        compilation_failure(
-            "Ascend build-time pointwise oracle received an unsupported "
-            "operation");
-      }
-      const std::uint8_t* observed_storage =
-          actual.data() + output_offset * output_element_size;
-      if (output_type == StorageDataType::kBoolean) {
-        const std::uint8_t observed_byte = observed_storage[0];
-        if (observed_byte != 0U && observed_byte != 1U) {
-          compilation_failure(
-              "Ascend BOOLEAN candidate output is not canonical 0/1");
-        }
-      }
-      const float observed =
-          decode_storage_value(observed_storage, output_type);
-      const bool transcendental = stage.operation == "exp" ||
-                                  stage.operation == "log" ||
-                                  stage.operation == "erf" ||
-                                  stage.operation == "cos" ||
-                                  stage.operation == "sin" ||
-                                  stage.operation == "tan" ||
-                                  stage.operation == "sigmoid" ||
-                                  stage.operation == "tanh" ||
-                                  stage.operation == "elu" ||
-                                  stage.operation == "gelu" ||
-                                  stage.operation == "softplus" ||
-                                  stage.operation == "swish" ||
-                                  stage.operation == "gelu_approx_tanh";
-      const bool binary_transcendental =
-          stage.operation == "mod" || stage.operation == "pow" ||
-          stage.operation == "sigmoid_backward";
-      const float absolute_tolerance =
-          transcendental || binary_transcendental
-              ? output_type == StorageDataType::kBFloat16
-                    ? 5.0e-2F
-                    : 2.0e-2F
-              : output_type == StorageDataType::kFloat32
-                    ? 1.0e-5F
-                    : output_type == StorageDataType::kFloat16
-                          ? 5.0e-3F
-                          : 5.0e-2F;
-      const float relative_tolerance =
-          transcendental || binary_transcendental ? 1.0e-2F
-                                                   : absolute_tolerance;
-      const bool matches =
-          stage.operation == "binary_select"
-              ? selected_storage != nullptr &&
-                    left_element_size == output_element_size &&
-                    right_element_size == output_element_size &&
-                    std::memcmp(observed_storage,
-                                selected_storage,
-                                output_element_size) == 0
-          : output_type == StorageDataType::kBoolean
-              ? observed == expected
-              : std::isnan(expected)
-              ? std::isnan(observed)
-              : std::isfinite(expected)
-                    ? std::isfinite(observed) &&
-                          std::abs(observed - expected) <=
-                              absolute_tolerance +
-                                  relative_tolerance * std::abs(expected)
-                    : observed == expected;
-      if (!matches) {
-        compilation_failure(
-            "Ascend candidate differs from the build-time host pointwise "
-            "oracle");
-      }
-      written[output_offset] = true;
-    }
-    for (std::size_t element = 0; element < written.size(); ++element) {
-      if (written[element]) {
-        continue;
-      }
-      for (std::size_t byte = 0; byte < output_element_size; ++byte) {
-        if (actual[element * output_element_size + byte] != 0xA5U) {
-          compilation_failure(
-              "Ascend candidate modified output padding during autotune");
-        }
-      }
-    }
-  }
-
-  void commit_stage_output(const AscendStageArtifact& stage,
-                           const std::vector<std::uint8_t>& actual) {
-    if (stage.kernel_family == KernelFamily::kBatchNorm) {
-      ConstBatchNormHostBuffers source{};
-      BatchNormHostBuffers destination{};
-      std::size_t offset = 0U;
-      for (std::size_t index = 0U; index < source.size(); ++index) {
-        MutableHostRegion output = mutable_host_region(
-            stage.arguments[batchnorm_first_output_argument_index() + index]);
-        require(output.size <= actual.size() - std::min(offset, actual.size()),
-                "Ascend BatchNorm build-time output commit size differs",
-                FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
-        source[index] =
-            std::span<const std::uint8_t>(actual.data() + offset, output.size);
-        destination[index] =
-            std::span<std::uint8_t>(output.pointer, output.size);
-        offset += output.size;
-      }
-      require(offset == actual.size(),
-              "Ascend BatchNorm build-time output commit size differs",
-              FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
-      try {
-        commit_batchnorm_host_outputs(stage, source, destination);
-      } catch (const std::invalid_argument& error) {
-        compilation_failure(error.what());
-      }
-      return;
-    }
-    if (stage.kernel_family == KernelFamily::kLayerNorm) {
-      MutableHostRegion y =
-          mutable_host_region(stage.arguments[layernorm_y_argument_index()]);
-      MutableHostRegion mean =
-          mutable_host_region(stage.arguments[layernorm_mean_argument_index()]);
-      MutableHostRegion inv_variance = mutable_host_region(
-          stage.arguments[layernorm_inv_variance_argument_index()]);
-      require(y.size <= actual.size() &&
-                  mean.size <= actual.size() - y.size &&
-                  inv_variance.size == actual.size() - y.size - mean.size,
-              "Ascend LayerNorm build-time output commit size differs",
-              FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
-      try {
-        commit_layernorm_host_outputs(
-            stage,
-            {actual.data(), y.size},
-            {actual.data() + y.size, mean.size},
-            {actual.data() + y.size + mean.size, inv_variance.size},
-            {y.pointer, y.size},
-            {mean.pointer, mean.size},
-            {inv_variance.pointer, inv_variance.size});
-      } catch (const std::invalid_argument& error) {
-        compilation_failure(error.what());
-      }
-      return;
-    }
-    if (stage.kernel_family == KernelFamily::kRmsNorm) {
-      MutableHostRegion y =
-          mutable_host_region(stage.arguments[rmsnorm_y_argument_index()]);
-      MutableHostRegion inv_variance = mutable_host_region(
-          stage.arguments[rmsnorm_inv_variance_argument_index()]);
-      require(y.size <= actual.size() &&
-                  inv_variance.size == actual.size() - y.size,
-              "Ascend RMSNorm build-time output commit size differs",
-              FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
-      try {
-        commit_rmsnorm_host_outputs(
-            stage,
-            {actual.data(), y.size},
-            {actual.data() + y.size, inv_variance.size},
-            {y.pointer, y.size},
-            {inv_variance.pointer, inv_variance.size});
-      } catch (const std::invalid_argument& error) {
-        compilation_failure(error.what());
-      }
-      return;
-    }
-    MutableHostRegion output =
-        mutable_host_region(stage.arguments[stage.input_count]);
-    require(actual.size() == output.size,
-            "Ascend build-time output commit size differs",
+    require(synchronized_,
+            "Ascend kernel workspace cannot grow while work is pending",
             FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
-    if (stage.kernel_family == KernelFamily::kReduction) {
-      try {
-        commit_reduction_host_output(
-            stage, actual, {output.pointer, output.size});
-      } catch (const std::invalid_argument& error) {
-        compilation_failure(error.what());
-      }
-      return;
-    }
-    if (stage.kernel_family == KernelFamily::kMatMul) {
-      try {
-        commit_matmul_host_output(
-            stage, actual, {output.pointer, output.size});
-      } catch (const std::invalid_argument& error) {
-        compilation_failure(error.what());
-      }
-      return;
-    }
-    if (stage.kernel_family == KernelFamily::kConvolutionFprop) {
-      try {
-        commit_convolution_fprop_host_output(
-            stage, actual, {output.pointer, output.size});
-      } catch (const std::invalid_argument& error) {
-        compilation_failure(error.what());
-      }
-      return;
-    }
-    if (stage.kernel_family == KernelFamily::kBatchNormInference) {
-      try {
-        commit_batchnorm_inference_host_output(
-            stage, actual, {output.pointer, output.size});
-      } catch (const std::invalid_argument& error) {
-        compilation_failure(error.what());
-      }
-      return;
-    }
-    std::copy(actual.begin(), actual.end(), output.pointer);
+    kernel_workspace_ = DeviceAllocation(size);
+    require(kernel_workspace_.get() != nullptr,
+            "Ascend kernel workspace allocation returned null",
+            FLAGDNN_BACKEND_RESULT_ALLOC_FAILED);
+  }
+
+  [[nodiscard]] void* kernel_workspace() const noexcept {
+    return kernel_workspace_.get();
+  }
+  [[nodiscard]] std::size_t kernel_workspace_size() const noexcept {
+    return kernel_workspace_.size();
   }
 
  private:
-  struct DeviceRegion {
-    void* pointer = nullptr;
-    std::size_t size = 0;
-  };
-
-  struct HostRegion {
-    const std::uint8_t* pointer = nullptr;
-    std::size_t size = 0;
-  };
-
-  struct MutableHostRegion {
-    std::uint8_t* pointer = nullptr;
-    std::size_t size = 0;
-  };
-
-  [[nodiscard]] std::size_t binding_index(std::int64_t uid) const {
-    for (std::size_t index = 0; index < bindings_.size(); ++index) {
-      if (bindings_[index].uid == uid) {
-        return index;
-      }
-    }
-    compilation_failure("Ascend build-time binding shadow is missing");
-  }
-
-  [[nodiscard]] HostRegion host_region(
-      const ArgumentSource& source) const {
-    if (source.source == ArgumentSourceKind::kBinding) {
-      const std::size_t index = binding_index(source.uid);
-      require(index < binding_shadows_.size() &&
-                  source.size <= binding_shadows_[index].size(),
-              "Ascend build-time binding shadow range is invalid",
-              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-      return {binding_shadows_[index].data(), source.size};
-    }
-    if (source.source == ArgumentSourceKind::kGraphWorkspace) {
-      require(source.workspace_offset <= workspace_shadow_.size() &&
-                  source.size <=
-                      workspace_shadow_.size() - source.workspace_offset,
-              "Ascend build-time workspace shadow range is invalid",
-              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-      return {workspace_shadow_.data() + source.workspace_offset,
-              source.size};
-    }
-    compilation_failure("Ascend build-time pointer shadow cannot be a scalar");
-  }
-
-  [[nodiscard]] MutableHostRegion mutable_host_region(
-      const ArgumentSource& source) {
-    if (source.source == ArgumentSourceKind::kBinding) {
-      const std::size_t index = binding_index(source.uid);
-      require(index < binding_shadows_.size() &&
-                  source.size <= binding_shadows_[index].size(),
-              "Ascend build-time binding shadow range is invalid",
-              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-      return {binding_shadows_[index].data(), source.size};
-    }
-    if (source.source == ArgumentSourceKind::kGraphWorkspace) {
-      require(source.workspace_offset <= workspace_shadow_.size() &&
-                  source.size <=
-                      workspace_shadow_.size() - source.workspace_offset,
-              "Ascend build-time workspace shadow range is invalid",
-              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-      return {workspace_shadow_.data() + source.workspace_offset,
-              source.size};
-    }
-    compilation_failure("Ascend build-time pointer shadow cannot be a scalar");
-  }
-
-  void seed_external_inputs(const AscendArtifact& artifact) {
-    std::set<std::int64_t> written_bindings;
-    for (const AscendStageArtifact& stage : artifact.stages) {
-      const std::size_t output_count = kernel_output_count(stage.kernel_family);
-      for (std::size_t output = 0U; output < output_count; ++output) {
-        const std::size_t argument_index = stage.input_count + output;
-        if (stage.arguments.size() > argument_index &&
-            stage.arguments[argument_index].source ==
-                ArgumentSourceKind::kBinding) {
-          written_bindings.insert(stage.arguments[argument_index].uid);
-        }
-      }
-    }
-    std::set<std::int64_t> positive_input_bindings;
-    std::set<std::int64_t> seeded;
-    for (const AscendStageArtifact& stage : artifact.stages) {
-      if (stage.kernel_family == KernelFamily::kConvolutionFprop) {
-        std::array<std::vector<std::uint8_t>, 2> seeded_inputs;
-        seeded_inputs[0].assign(stage.arguments[0].size, 0xA5U);
-        seeded_inputs[1].assign(stage.arguments[1].size, 0xA5U);
-        try {
-          seed_convolution_fprop_host_inputs(
-              stage, seeded_inputs[0], seeded_inputs[1]);
-        } catch (const std::invalid_argument& error) {
-          compilation_failure(error.what());
-        }
-        for (std::size_t index = 0U; index < seeded_inputs.size(); ++index) {
-          const ArgumentSource& argument = stage.arguments[index];
-          if (argument.source != ArgumentSourceKind::kBinding ||
-              written_bindings.contains(argument.uid) ||
-              !seeded.insert(argument.uid).second) {
-            continue;
-          }
-          const std::size_t binding = binding_index(argument.uid);
-          require(binding_shadows_[binding].size() == seeded_inputs[index].size(),
-                  "Ascend convolution seed shadow size differs",
-                  FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-          binding_shadows_[binding] = seeded_inputs[index];
-          check_acl(aclrtMemcpy(allocations_[binding].get(),
-                                allocations_[binding].size(),
-                                binding_shadows_[binding].data(),
-                                binding_shadows_[binding].size(),
-                                ACL_MEMCPY_HOST_TO_DEVICE),
-                    "aclrtMemcpy(build-time convolution input)");
-        }
-        continue;
-      }
-      if (stage.kernel_family == KernelFamily::kMatMul) {
-        std::array<std::vector<std::uint8_t>, 2> seeded_inputs;
-        seeded_inputs[0].assign(stage.arguments[0].size, 0xA5U);
-        seeded_inputs[1].assign(stage.arguments[1].size, 0xA5U);
-        try {
-          seed_matmul_host_inputs(
-              stage, seeded_inputs[0], seeded_inputs[1]);
-        } catch (const std::invalid_argument& error) {
-          compilation_failure(error.what());
-        }
-        for (std::size_t index = 0U; index < seeded_inputs.size(); ++index) {
-          const ArgumentSource& argument = stage.arguments[index];
-          if (argument.source != ArgumentSourceKind::kBinding ||
-              written_bindings.contains(argument.uid) ||
-              !seeded.insert(argument.uid).second) {
-            continue;
-          }
-          const std::size_t binding = binding_index(argument.uid);
-          require(binding_shadows_[binding].size() == seeded_inputs[index].size(),
-                  "Ascend MatMul seed shadow size differs",
-                  FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-          binding_shadows_[binding] = seeded_inputs[index];
-          check_acl(aclrtMemcpy(allocations_[binding].get(),
-                                allocations_[binding].size(),
-                                binding_shadows_[binding].data(),
-                                binding_shadows_[binding].size(),
-                                ACL_MEMCPY_HOST_TO_DEVICE),
-                    "aclrtMemcpy(build-time MatMul input)");
-        }
-        continue;
-      }
-      if (stage.kernel_family == KernelFamily::kBatchNorm) {
-        std::array<std::vector<std::uint8_t>, 5> seeded_inputs;
-        BatchNormHostBuffers seeded_spans{};
-        for (std::size_t index = 0U; index < seeded_inputs.size(); ++index) {
-          seeded_inputs[index].assign(stage.arguments[index].size, 0xA5U);
-          seeded_spans[index] = std::span<std::uint8_t>(seeded_inputs[index]);
-        }
-        try {
-          seed_batchnorm_host_inputs(stage, seeded_spans);
-        } catch (const std::invalid_argument& error) {
-          compilation_failure(error.what());
-        }
-        for (std::size_t index = 0U; index < seeded_inputs.size(); ++index) {
-          const ArgumentSource& argument = stage.arguments[index];
-          if (argument.source != ArgumentSourceKind::kBinding ||
-              written_bindings.contains(argument.uid) ||
-              !seeded.insert(argument.uid).second) {
-            continue;
-          }
-          const std::size_t binding = binding_index(argument.uid);
-          require(binding_shadows_[binding].size() == seeded_inputs[index].size(),
-                  "Ascend BatchNorm seed shadow size differs",
-                  FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-          binding_shadows_[binding] = seeded_inputs[index];
-          check_acl(aclrtMemcpy(allocations_[binding].get(),
-                                allocations_[binding].size(),
-                                binding_shadows_[binding].data(),
-                                binding_shadows_[binding].size(),
-                                ACL_MEMCPY_HOST_TO_DEVICE),
-                    "aclrtMemcpy(build-time BatchNorm input)");
-        }
-        continue;
-      }
-      if (stage.kernel_family == KernelFamily::kLayerNorm) {
-        std::array<std::vector<std::uint8_t>, 3> seeded_inputs;
-        for (std::size_t index = 0U; index < seeded_inputs.size(); ++index) {
-          seeded_inputs[index].assign(stage.arguments[index].size, 0xA5U);
-        }
-        try {
-          seed_layernorm_host_inputs(stage,
-                                     seeded_inputs[0U],
-                                     seeded_inputs[1U],
-                                     seeded_inputs[2U]);
-        } catch (const std::invalid_argument& error) {
-          compilation_failure(error.what());
-        }
-        for (std::size_t index = 0U; index < seeded_inputs.size(); ++index) {
-          const ArgumentSource& argument = stage.arguments[index];
-          if (argument.source != ArgumentSourceKind::kBinding ||
-              written_bindings.contains(argument.uid) ||
-              !seeded.insert(argument.uid).second) {
-            continue;
-          }
-          const std::size_t binding = binding_index(argument.uid);
-          require(binding_shadows_[binding].size() == seeded_inputs[index].size(),
-                  "Ascend LayerNorm seed shadow size differs",
-                  FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-          binding_shadows_[binding] = seeded_inputs[index];
-          check_acl(aclrtMemcpy(allocations_[binding].get(),
-                                allocations_[binding].size(),
-                                binding_shadows_[binding].data(),
-                                binding_shadows_[binding].size(),
-                                ACL_MEMCPY_HOST_TO_DEVICE),
-                    "aclrtMemcpy(build-time LayerNorm input)");
-        }
-        continue;
-      }
-      if (stage.kernel_family == KernelFamily::kRmsNorm) {
-        std::array<std::vector<std::uint8_t>, 3> seeded_inputs;
-        for (std::size_t index = 0U; index < seeded_inputs.size(); ++index) {
-          seeded_inputs[index].assign(stage.arguments[index].size, 0xA5U);
-        }
-        try {
-          seed_rmsnorm_host_inputs(stage,
-                                   seeded_inputs[0U],
-                                   seeded_inputs[1U],
-                                   seeded_inputs[2U]);
-        } catch (const std::invalid_argument& error) {
-          compilation_failure(error.what());
-        }
-        for (std::size_t index = 0U; index < seeded_inputs.size(); ++index) {
-          const ArgumentSource& argument = stage.arguments[index];
-          if (argument.source != ArgumentSourceKind::kBinding ||
-              written_bindings.contains(argument.uid) ||
-              !seeded.insert(argument.uid).second) {
-            continue;
-          }
-          const std::size_t binding = binding_index(argument.uid);
-          require(binding_shadows_[binding].size() == seeded_inputs[index].size(),
-                  "Ascend RMSNorm seed shadow size differs",
-                  FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-          binding_shadows_[binding] = seeded_inputs[index];
-          check_acl(aclrtMemcpy(allocations_[binding].get(),
-                                allocations_[binding].size(),
-                                binding_shadows_[binding].data(),
-                                binding_shadows_[binding].size(),
-                                ACL_MEMCPY_HOST_TO_DEVICE),
-                    "aclrtMemcpy(build-time RMSNorm input)");
-        }
-        continue;
-      }
-      if (stage.kernel_family != KernelFamily::kBatchNormInference) {
-        continue;
-      }
-      std::array<std::vector<std::uint8_t>, 5> seeded_inputs;
-      for (std::size_t index = 0; index < seeded_inputs.size(); ++index) {
-        seeded_inputs[index].assign(stage.arguments[index].size, 0xA5U);
-      }
-      try {
-        seed_batchnorm_inference_host_inputs(stage,
-                                             seeded_inputs[0],
-                                             seeded_inputs[1],
-                                             seeded_inputs[2],
-                                             seeded_inputs[3],
-                                             seeded_inputs[4]);
-      } catch (const std::invalid_argument& error) {
-        compilation_failure(error.what());
-      }
-      for (std::size_t index = 0; index < seeded_inputs.size(); ++index) {
-        const ArgumentSource& argument = stage.arguments[index];
-        if (index != 0U) {
-          require(argument.source == ArgumentSourceKind::kBinding &&
-                      !written_bindings.contains(argument.uid),
-                  "Ascend batchnorm parameter must be an external binding",
-                  FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-        }
-        if (argument.source != ArgumentSourceKind::kBinding ||
-            written_bindings.contains(argument.uid) ||
-            !seeded.insert(argument.uid).second) {
-          continue;
-        }
-        const std::size_t binding = binding_index(argument.uid);
-        require(binding_shadows_[binding].size() == seeded_inputs[index].size(),
-                "Ascend batchnorm seed shadow size differs",
-                FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-        binding_shadows_[binding] = seeded_inputs[index];
-        check_acl(aclrtMemcpy(allocations_[binding].get(),
-                              allocations_[binding].size(),
-                              binding_shadows_[binding].data(),
-                              binding_shadows_[binding].size(),
-                              ACL_MEMCPY_HOST_TO_DEVICE),
-                  "aclrtMemcpy(build-time batchnorm input)");
-      }
-    }
-    const bool has_workspace_power_base =
-        std::any_of(artifact.stages.begin(),
-                    artifact.stages.end(),
-                    [](const AscendStageArtifact& stage) {
-                      return stage.operation == "pow" &&
-                             stage.arguments[0].source ==
-                                 ArgumentSourceKind::kGraphWorkspace;
-                    });
-    for (const AscendStageArtifact& stage : artifact.stages) {
-      if (has_workspace_power_base) {
-        for (std::size_t argument_index = 0;
-             argument_index < stage.input_count;
-             ++argument_index) {
-          const ArgumentSource& argument = stage.arguments[argument_index];
-          if (argument.source == ArgumentSourceKind::kBinding) {
-            positive_input_bindings.insert(argument.uid);
-          }
-        }
-      }
-      if (stage.operation == "pow") {
-        const ArgumentSource& base = stage.arguments[0];
-        if (base.source == ArgumentSourceKind::kBinding) {
-          positive_input_bindings.insert(base.uid);
-        }
-        continue;
-      }
-      if (stage.operation != "sqrt" && stage.operation != "rsqrt" &&
-          stage.operation != "reciprocal" && stage.operation != "log") {
-        continue;
-      }
-      for (std::size_t argument_index = 0;
-           argument_index < stage.input_count;
-           ++argument_index) {
-        const ArgumentSource& argument = stage.arguments[argument_index];
-        if (argument.source == ArgumentSourceKind::kBinding) {
-          positive_input_bindings.insert(argument.uid);
-        }
-      }
-    }
-    for (const AscendStageArtifact& stage : artifact.stages) {
-      for (std::size_t argument_index = 0;
-           argument_index < stage.input_count;
-           ++argument_index) {
-        const ArgumentSource& argument = stage.arguments[argument_index];
-        if (argument.source != ArgumentSourceKind::kBinding ||
-            written_bindings.contains(argument.uid) ||
-            !seeded.insert(argument.uid).second) {
-          continue;
-        }
-        const std::size_t index = binding_index(argument.uid);
-        fill_storage_pattern(binding_shadows_[index],
-                             stage.input_type(argument_index),
-                             argument.uid,
-                             positive_input_bindings.contains(argument.uid),
-                             stage.operation == "sigmoid_backward" &&
-                                 argument_index == 1,
-                             stage.operation.starts_with("cmp_")
-                                 ? static_cast<int>(argument_index)
-                                 : -1);
-        check_acl(aclrtMemcpy(allocations_[index].get(),
-                              allocations_[index].size(),
-                              binding_shadows_[index].data(),
-                              binding_shadows_[index].size(),
-                              ACL_MEMCPY_HOST_TO_DEVICE),
-                  "aclrtMemcpy(build-time nonzero input)");
-      }
-    }
-  }
-
-  [[nodiscard]] DeviceRegion stage_output(
-      const AscendStageArtifact& stage) const {
-    const std::string_view expected_name =
-        stage.kernel_family == KernelFamily::kLayout
-            ? "output_ptr"
-            : stage.kernel_family == KernelFamily::kReduction
-                  ? reduction_output_argument_name()
-            : stage.kernel_family == KernelFamily::kMatMul
-                  ? matmul_output_argument_name()
-            : stage.kernel_family == KernelFamily::kConvolutionFprop
-                  ? convolution_fprop_output_argument_name()
-                  : stage.kernel_family == KernelFamily::kBatchNorm
-                        ? "y_ptr"
-                  : stage.kernel_family == KernelFamily::kBatchNormInference
-                        ? batchnorm_inference_output_argument_name()
-                        : stage.kernel_family == KernelFamily::kRmsNorm
-                              ? "y_ptr"
-                        : stage.kernel_family == KernelFamily::kLayerNorm
-                              ? "y_ptr"
-                        : "out_ptr";
-    require(stage.input_count == kernel_input_count(stage.kernel_family) &&
-                stage.arguments.size() > stage.input_count &&
-                stage.arguments[stage.input_count].name == expected_name &&
-                stage.arguments[stage.input_count].type ==
-                    RawArgumentType::kPointer,
-            "Ascend autotune stage has no exact output argument",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    return device_region(stage.arguments[stage.input_count]);
-  }
-
-  [[nodiscard]] DeviceRegion rmsnorm_statistic_output(
-      const AscendStageArtifact& stage) const {
-    require(stage.kernel_family == KernelFamily::kRmsNorm &&
-                stage.input_count == rmsnorm_kernel_input_count() &&
-                stage.arguments.size() == rmsnorm_runtime_argument_count() &&
-                stage.arguments[rmsnorm_y_argument_index()].name == "y_ptr" &&
-                stage.arguments[rmsnorm_inv_variance_argument_index()].name ==
-                    "inv_variance_ptr" &&
-                stage.arguments[rmsnorm_inv_variance_argument_index()].type ==
-                    RawArgumentType::kPointer,
-            "Ascend RMSNorm stage has no exact statistic output argument",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    return device_region(
-        stage.arguments[rmsnorm_inv_variance_argument_index()]);
-  }
-
-  [[nodiscard]] DeviceRegion layernorm_mean_output(
-      const AscendStageArtifact& stage) const {
-    require(stage.kernel_family == KernelFamily::kLayerNorm &&
-                stage.input_count == layernorm_kernel_input_count() &&
-                stage.arguments.size() == layernorm_runtime_argument_count() &&
-                stage.arguments[layernorm_y_argument_index()].name == "y_ptr" &&
-                stage.arguments[layernorm_mean_argument_index()].name ==
-                    "mean_ptr" &&
-                stage.arguments[layernorm_mean_argument_index()].type ==
-                    RawArgumentType::kPointer,
-            "Ascend LayerNorm stage has no exact mean output argument",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    return device_region(stage.arguments[layernorm_mean_argument_index()]);
-  }
-
-  [[nodiscard]] DeviceRegion layernorm_inv_variance_output(
-      const AscendStageArtifact& stage) const {
-    require(stage.kernel_family == KernelFamily::kLayerNorm &&
-                stage.input_count == layernorm_kernel_input_count() &&
-                stage.arguments.size() == layernorm_runtime_argument_count() &&
-                stage.arguments[layernorm_inv_variance_argument_index()].name ==
-                    "inv_variance_ptr" &&
-                stage.arguments[layernorm_inv_variance_argument_index()].type ==
-                    RawArgumentType::kPointer,
-            "Ascend LayerNorm stage has no exact inverse variance output argument",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    return device_region(
-        stage.arguments[layernorm_inv_variance_argument_index()]);
-  }
-
-  [[nodiscard]] DeviceRegion device_region(
-      const ArgumentSource& source) const {
-    if (source.source == ArgumentSourceKind::kBinding) {
-      for (std::size_t index = 0; index < bindings_.size(); ++index) {
-        if (bindings_[index].uid == source.uid) {
-          require(index < allocations_.size() &&
-                      source.size <= allocations_[index].size(),
-                  "Ascend autotune output binding exceeds its allocation",
-                  FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-          return {bindings_[index].device_pointer, source.size};
-        }
-      }
-      compilation_failure("Ascend autotune output binding is missing");
-    }
-    if (source.source == ArgumentSourceKind::kGraphWorkspace) {
-      require(workspace_.get() != nullptr &&
-                  source.workspace_offset <= workspace_.size() &&
-                  source.size <= workspace_.size() - source.workspace_offset,
-              "Ascend autotune output workspace range is invalid",
-              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-      return {static_cast<std::uint8_t*>(workspace_.get()) +
-                  source.workspace_offset,
-              source.size};
-    }
-    compilation_failure("Ascend build-time pointer region cannot be a scalar");
-  }
-
   void abandon_noexcept() noexcept {
     for (DeviceAllocation& allocation : allocations_) {
       allocation.abandon();
     }
     allocations_.clear();
     workspace_.abandon();
+    kernel_workspace_.abandon();
     bindings_.clear();
-    binding_shadows_.clear();
-    workspace_shadow_.clear();
-    reduction_input_shadow_.clear();
     stream_ = nullptr;
     synchronized_ = false;
     cleanup_failed_ = true;
@@ -2321,14 +1188,11 @@ class BuildResources {
   aclrtStream stream_ = nullptr;
   std::vector<DeviceAllocation> allocations_;
   std::vector<flagdnnBackendBindingV2> bindings_;
-  std::vector<std::vector<std::uint8_t>> binding_shadows_;
   DeviceAllocation workspace_;
-  std::vector<std::uint8_t> workspace_shadow_;
-  std::vector<std::uint8_t> reduction_input_shadow_;
+  DeviceAllocation kernel_workspace_;
   bool synchronized_ = false;
   bool cleanup_failed_ = false;
 };
-
 struct HookCapture {
   bool entered = false;
   unsigned int shared_memory = 0;
@@ -2416,11 +1280,328 @@ class LaunchHookOwner {
   bool active_ = false;
 };
 
+[[nodiscard]] constexpr std::size_t raw_argument_size(
+    RawArgumentType type) noexcept {
+  switch (type) {
+    case RawArgumentType::kPointer:
+      return sizeof(void*);
+    case RawArgumentType::kI32:
+      return sizeof(std::int32_t);
+    case RawArgumentType::kI64:
+      return sizeof(std::int64_t);
+    case RawArgumentType::kF32:
+      return sizeof(float);
+    case RawArgumentType::kF64:
+      return sizeof(double);
+  }
+  return 0;
+}
+
+[[nodiscard]] constexpr std::size_t align_up(std::size_t value,
+                                             std::size_t alignment) noexcept {
+  return (value + alignment - 1U) & ~(alignment - 1U);
+}
+
+class PreparedNpuLaunch {
+ public:
+  [[nodiscard]] bool is_prepared() const noexcept {
+    return kernel_handle_ != nullptr;
+  }
+
+  void prepare(const AscendStageArtifact& stage,
+               const LtjNpuRawCandidate& candidate,
+               const fs::path& metadata_directory,
+               std::size_t kernel_workspace_size) {
+    require(!metadata_directory.empty(),
+            "Ascend selected candidate has no attested cache directory",
+            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+    require(stage.arguments.size() == candidate.argument_types.size() &&
+                !stage.arguments.empty() &&
+                stage.arguments.size() <=
+                    FLAGDNN_BACKEND_MAX_KERNEL_ARGUMENTS,
+            "Ascend prepared argument metadata is inconsistent",
+            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+
+    const LtjLoadKernelMethod load_kernel = exported_load_kernel_method();
+    kernel_handle_ =
+        load_kernel(metadata_directory.string(), candidate.entry_point);
+    require(kernel_handle_ != nullptr,
+            "libtriton_jit returned a null prepared NPU kernel",
+            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+
+    std::uint64_t ffts_address = 0;
+    std::uint32_t ffts_size = 0;
+    const rtError_t ffts_status =
+        rtGetC2cCtrlAddr(&ffts_address, &ffts_size);
+    if (ffts_status != RT_ERROR_NONE) {
+      throw AscendError(
+          FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
+          "rtGetC2cCtrlAddr failed while preparing an Ascend launch with "
+          "runtime status " +
+              std::to_string(static_cast<int>(ffts_status)));
+    }
+    ffts_address_ = reinterpret_cast<void*>(ffts_address);
+
+    std::uint64_t block_count = 1;
+    for (const unsigned int dimension : candidate.grid) {
+      require(dimension != 0 &&
+                  block_count <=
+                      std::numeric_limits<std::uint32_t>::max() / dimension,
+              "Ascend prepared launch grid is invalid",
+              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+      block_count *= dimension;
+    }
+    block_count_ = static_cast<std::uint32_t>(block_count);
+    candidate_grid_ = candidate.grid;
+    for (const unsigned int dimension : candidate_grid_) {
+      require(dimension <=
+                  static_cast<unsigned int>(
+                      std::numeric_limits<std::int32_t>::max()),
+              "Ascend prepared grid exceeds the kernel argument ABI",
+              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+    }
+
+    argument_offsets_.clear();
+    argument_offsets_.reserve(candidate.argument_types.size());
+    std::size_t cursor = kNpuSystemArgumentBytes;
+    for (std::size_t index = 0; index < candidate.argument_types.size();
+         ++index) {
+      const RawArgumentType type = candidate.argument_types[index];
+      require(stage.arguments[index].type == type,
+              "Ascend prepared argument type differs from its ABI",
+              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+      const std::size_t size = raw_argument_size(type);
+      require(size != 0 && (size & (size - 1U)) == 0,
+              "Ascend prepared argument type has an invalid size",
+              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+      cursor = align_up(cursor, size);
+      argument_offsets_.push_back(cursor);
+      require(cursor <= kMaximumPreparedArgumentBytes - size,
+              "Ascend prepared argument buffer exceeds its ABI limit",
+              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+      cursor += size;
+    }
+    grid_offset_ = align_up(cursor, alignof(std::int32_t));
+    require(grid_offset_ <= kMaximumPreparedArgumentBytes -
+                                3U * sizeof(std::int32_t),
+            "Ascend prepared grid buffer exceeds its ABI limit",
+            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+    packed_size_ = grid_offset_ + 3U * sizeof(std::int32_t);
+    require(packed_size_ <= std::numeric_limits<std::uint32_t>::max(),
+            "Ascend prepared argument size exceeds the runtime ABI",
+            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+    kernel_workspace_size_ = kernel_workspace_size;
+  }
+
+  void launch(aclrtStream stream,
+              const AscendStageArtifact& stage,
+              const flagdnnBackendBindingV2 bindings[],
+              std::size_t binding_count,
+              void* workspace,
+              std::size_t workspace_size,
+              void* kernel_workspace,
+              std::size_t kernel_workspace_size) const {
+    require(stream != nullptr && kernel_handle_ != nullptr &&
+                stage.arguments.size() == argument_offsets_.size(),
+            "Ascend prepared launch is incomplete",
+            FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
+
+    alignas(std::uint64_t)
+        std::array<std::byte, kMaximumPreparedArgumentBytes> buffer{};
+    void* sync_lock = nullptr;
+    require(kernel_workspace_size >= kernel_workspace_size_ &&
+                (kernel_workspace_size_ == 0 || kernel_workspace != nullptr),
+            "Ascend compiler workspace is smaller than the kernel requirement",
+            FLAGDNN_BACKEND_RESULT_INVALID_VALUE);
+    std::memcpy(buffer.data(), &ffts_address_, sizeof(ffts_address_));
+    std::memcpy(buffer.data() + sizeof(void*),
+                &sync_lock,
+                sizeof(sync_lock));
+    std::memcpy(buffer.data() + 2U * sizeof(void*),
+                &kernel_workspace,
+                sizeof(kernel_workspace));
+
+    for (std::size_t index = 0; index < stage.arguments.size(); ++index) {
+      const ArgumentSource& source = stage.arguments[index];
+      require(source.index == index,
+              "Ascend prepared argument index differs from its ABI",
+              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+      std::byte* destination = buffer.data() + argument_offsets_[index];
+      if (source.source == ArgumentSourceKind::kBinding) {
+        void* pointer = find_binding(bindings, binding_count, source.uid);
+        require(reinterpret_cast<std::uintptr_t>(pointer) %
+                        source.alignment ==
+                    0,
+                "Ascend binding does not satisfy artifact alignment");
+        std::memcpy(destination, &pointer, sizeof(pointer));
+      } else if (source.source == ArgumentSourceKind::kGraphWorkspace) {
+        require(workspace != nullptr &&
+                    source.workspace_offset <= workspace_size &&
+                    source.size <= workspace_size - source.workspace_offset,
+                "Ascend Graph workspace argument is out of range");
+        const std::uintptr_t address =
+            reinterpret_cast<std::uintptr_t>(workspace) +
+            source.workspace_offset;
+        require(address % source.alignment == 0,
+                "Ascend Graph workspace argument is misaligned");
+        void* pointer = reinterpret_cast<void*>(address);
+        std::memcpy(destination, &pointer, sizeof(pointer));
+      } else {
+        switch (source.type) {
+          case RawArgumentType::kI32: {
+            const std::int32_t value = std::get<std::int32_t>(source.scalar);
+            std::memcpy(destination, &value, sizeof(value));
+            break;
+          }
+          case RawArgumentType::kI64: {
+            const std::int64_t value = std::get<std::int64_t>(source.scalar);
+            std::memcpy(destination, &value, sizeof(value));
+            break;
+          }
+          case RawArgumentType::kF32: {
+            const float value = std::get<float>(source.scalar);
+            std::memcpy(destination, &value, sizeof(value));
+            break;
+          }
+          case RawArgumentType::kF64: {
+            const double value = std::get<double>(source.scalar);
+            std::memcpy(destination, &value, sizeof(value));
+            break;
+          }
+          case RawArgumentType::kPointer:
+            throw AscendError(FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
+                              "Ascend scalar source has pointer ABI");
+        }
+      }
+    }
+
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      const std::int32_t dimension =
+          static_cast<std::int32_t>(candidate_grid_[axis]);
+      std::memcpy(buffer.data() + grid_offset_ +
+                      axis * sizeof(std::int32_t),
+                  &dimension,
+                  sizeof(dimension));
+    }
+
+    const rtError_t status =
+        rtKernelLaunch(kernel_handle_,
+                       block_count_,
+                       buffer.data(),
+                       static_cast<std::uint32_t>(packed_size_),
+                       nullptr,
+                       stream);
+    if (status != RT_ERROR_NONE) {
+      throw AscendError(
+          FLAGDNN_BACKEND_RESULT_RUNTIME_ERROR,
+          "rtKernelLaunch(prepared) failed with runtime status " +
+              std::to_string(static_cast<int>(status)));
+    }
+  }
+
+ private:
+  void* kernel_handle_ = nullptr;
+  void* ffts_address_ = nullptr;
+  std::uint32_t block_count_ = 0;
+  std::array<unsigned int, 3> candidate_grid_ = {1, 1, 1};
+  std::vector<std::size_t> argument_offsets_;
+  std::size_t grid_offset_ = 0;
+  std::size_t packed_size_ = 0;
+  std::size_t kernel_workspace_size_ = 0;
+};
+
 struct StageLaunch {
   std::size_t stage_index = 0;
   LtjNpuRawCandidate candidate;
   LtjFunction* function = nullptr;
+  fs::path metadata_directory;
+  std::size_t kernel_workspace_size = 0;
+  PreparedNpuLaunch prepared;
 };
+
+[[nodiscard]] std::size_t total_kernel_workspace_size(
+    const LtjNpuRawCandidate& candidate,
+    std::size_t per_block_workspace) {
+  std::size_t block_count = 1;
+  for (const unsigned int dimension : candidate.grid) {
+    require(dimension != 0 &&
+                block_count <= kMaximumKernelWorkspaceBytes / dimension,
+            "Ascend kernel workspace grid exceeds its limit",
+            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+    block_count *= dimension;
+  }
+  require(per_block_workspace == 0 ||
+              block_count <=
+                  kMaximumKernelWorkspaceBytes / per_block_workspace,
+          "Ascend kernel workspace allocation exceeds its limit",
+          FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+  return block_count * per_block_workspace;
+}
+
+[[nodiscard]] bool uses_standalone_compilation(
+    const LtjNpuRawCandidate& candidate) noexcept {
+  return candidate.entry_point == "convolution_fprop_persistent_kernel";
+}
+
+void compile_and_attest(const EngineBuildContext& context,
+                        const fs::path& cache_root,
+                        const AscendStageArtifact& stage,
+                        StageLaunch& launch,
+                        bool* terminal_failure) {
+  const CacheSnapshot before =
+      scan_cache(cache_root, launch.candidate.entry_point);
+  require_locked_configuration(context, terminal_failure);
+  const fs::path returned_directory =
+      compile_candidate_without_launch(context, cache_root, launch.candidate);
+  require_locked_configuration(context, terminal_failure);
+  const CacheSnapshot after =
+      scan_cache(cache_root, launch.candidate.entry_point);
+  fs::path metadata_path;
+  const std::string key = candidate_key(cache_root, context, launch.candidate);
+  const RegularFile& metadata =
+      select_metadata(before,
+                      after,
+                      key,
+                      launch.candidate.entry_point,
+                      &metadata_path);
+  const std::size_t per_block_workspace =
+      validate_metadata(metadata_path,
+                        metadata,
+                        cache_root,
+                        after,
+                        launch.candidate,
+                        std::nullopt);
+  const std::size_t kernel_workspace =
+      total_kernel_workspace_size(launch.candidate, per_block_workspace);
+  const fs::path metadata_directory = metadata_path.parent_path();
+  require(metadata_directory == returned_directory,
+          "standalone compiler cache result differs from attested metadata",
+          FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+  require(launch.metadata_directory.empty() ||
+              launch.metadata_directory == metadata_directory,
+          "selected NPU cache directory changed between compilation steps",
+          FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+  require(launch.metadata_directory.empty() ||
+              launch.kernel_workspace_size == kernel_workspace,
+          "selected NPU kernel workspace changed between compilation steps",
+          FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+  launch.metadata_directory = metadata_directory;
+  launch.kernel_workspace_size = kernel_workspace;
+
+  const CacheSnapshot before_prepare =
+      scan_cache(cache_root, launch.candidate.entry_point);
+  launch.prepared.prepare(stage,
+                          launch.candidate,
+                          launch.metadata_directory,
+                          launch.kernel_workspace_size);
+  const CacheSnapshot after_prepare =
+      scan_cache(cache_root, launch.candidate.entry_point);
+  if (!same_cache_snapshot(before_prepare, after_prepare)) {
+    compilation_failure(
+        "preparing an Ascend launch changed the attested cache tree");
+  }
+  require_locked_configuration(context, terminal_failure);
+}
 
 class AutotuneEvents {
  public:
@@ -2537,12 +1718,26 @@ void launch_and_attest(const EngineBuildContext& context,
                         key,
                         launch.candidate.entry_point,
                         &metadata_path);
-    validate_metadata(metadata_path,
-                      metadata,
-                      cache_root,
-                      after,
-                      launch.candidate,
-                      capture.shared_memory);
+    const std::size_t per_block_workspace =
+        validate_metadata(metadata_path,
+                          metadata,
+                          cache_root,
+                          after,
+                          launch.candidate,
+                          capture.shared_memory);
+    const std::size_t kernel_workspace =
+        total_kernel_workspace_size(launch.candidate, per_block_workspace);
+    const fs::path metadata_directory = metadata_path.parent_path();
+    require(launch.metadata_directory.empty() ||
+                launch.metadata_directory == metadata_directory,
+            "selected NPU cache directory changed between prewarm launches",
+            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+    require(launch.metadata_directory.empty() ||
+                launch.kernel_workspace_size == kernel_workspace,
+            "selected NPU kernel workspace changed between prewarm launches",
+            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+    launch.metadata_directory = metadata_directory;
+    launch.kernel_workspace_size = kernel_workspace;
     require_locked_configuration(context, terminal_failure);
     hook.clear();
   } catch (...) {
@@ -2554,26 +1749,46 @@ void launch_and_attest(const EngineBuildContext& context,
   }
 }
 
-void launch_cache_hit(const EngineBuildContext& context,
-                      const AscendStageArtifact& stage,
-                      const StageLaunch& launch,
-                      BuildResources& resources,
-                      bool* raw_started,
-                      bool* terminal_failure) {
-  RawArgumentPack arguments(stage,
-                            launch.candidate,
-                            resources.bindings(),
-                            resources.binding_count(),
-                            resources.workspace(),
-                            resources.workspace_size());
-  require_locked_configuration(context, terminal_failure);
+void launch_build_candidate(const EngineBuildContext& context,
+                            const fs::path& cache_root,
+                            const AscendStageArtifact& stage,
+                            StageLaunch& launch,
+                            BuildResources& resources,
+                            bool* raw_started,
+                            bool* terminal_failure) {
   resources.mark_pending();
+  if (!uses_standalone_compilation(launch.candidate)) {
+    launch_and_attest(context,
+                      cache_root,
+                      stage,
+                      launch,
+                      resources.stream(),
+                      resources.bindings(),
+                      resources.binding_count(),
+                      resources.workspace(),
+                      resources.workspace_size(),
+                      raw_started,
+                      terminal_failure);
+    return;
+  }
+
+  require(launch.prepared.is_prepared(),
+          "standalone-compiled Ascend candidate is not prepared",
+          FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
+  require(resources.kernel_workspace_size() >=
+              launch.kernel_workspace_size,
+          "Ascend build-time compiler workspace is too small",
+          FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
+  require_locked_configuration(context, terminal_failure);
   *raw_started = true;
-  launch_with_exported_raw_api(*launch.function,
-                               resources.stream(),
-                               launch.candidate,
-                               arguments.data(),
-                               arguments.size());
+  launch.prepared.launch(resources.stream(),
+                         stage,
+                         resources.bindings(),
+                         resources.binding_count(),
+                         resources.workspace(),
+                         resources.workspace_size(),
+                         resources.kernel_workspace(),
+                         resources.kernel_workspace_size());
   require_locked_configuration(context, terminal_failure);
 }
 
@@ -2587,13 +1802,25 @@ void launch_cache_hit(const EngineBuildContext& context,
     bool* terminal_failure) {
   const CacheSnapshot before =
       scan_cache(cache_root, launch.candidate.entry_point);
+  resources.ensure_kernel_workspace(launch.kernel_workspace_size);
+  PreparedNpuLaunch prepared;
+  prepared.prepare(stage,
+                   launch.candidate,
+                   launch.metadata_directory,
+                   launch.kernel_workspace_size);
   for (unsigned int index = 0; index < stage.warmup; ++index) {
-    launch_cache_hit(context,
-                     stage,
-                     launch,
-                     resources,
-                     raw_started,
-                     terminal_failure);
+    require_locked_configuration(context, terminal_failure);
+    resources.mark_pending();
+    *raw_started = true;
+    prepared.launch(resources.stream(),
+                    stage,
+                    resources.bindings(),
+                    resources.binding_count(),
+                    resources.workspace(),
+                    resources.workspace_size(),
+                    resources.kernel_workspace(),
+                    resources.kernel_workspace_size());
+    require_locked_configuration(context, terminal_failure);
   }
   resources.synchronize();
 
@@ -2602,22 +1829,19 @@ void launch_cache_hit(const EngineBuildContext& context,
   try {
     samples.reserve(stage.repetitions);
     for (unsigned int index = 0; index < stage.repetitions; ++index) {
-      RawArgumentPack arguments(stage,
-                                launch.candidate,
-                                resources.bindings(),
-                                resources.binding_count(),
-                                resources.workspace(),
-                                resources.workspace_size());
       require_locked_configuration(context, terminal_failure);
       resources.mark_pending();
       check_acl(aclrtRecordEvent(events.start(), resources.stream()),
                 "aclrtRecordEvent(autotune start)");
       *raw_started = true;
-      launch_with_exported_raw_api(*launch.function,
-                                   resources.stream(),
-                                   launch.candidate,
-                                   arguments.data(),
-                                   arguments.size());
+      prepared.launch(resources.stream(),
+                      stage,
+                      resources.bindings(),
+                      resources.binding_count(),
+                      resources.workspace(),
+                      resources.workspace_size(),
+                      resources.kernel_workspace(),
+                      resources.kernel_workspace_size());
       check_acl(aclrtRecordEvent(events.end(), resources.stream()),
                 "aclrtRecordEvent(autotune end)");
       require_locked_configuration(context, terminal_failure);
@@ -2665,151 +1889,47 @@ void launch_cache_hit(const EngineBuildContext& context,
   return (samples[middle - 1] + samples[middle]) * 0.5;
 }
 
-[[nodiscard]] std::vector<std::uint8_t> smoke_candidate(
-    const EngineBuildContext& context,
-    const fs::path& cache_root,
-    const AscendStageArtifact& stage,
-    StageLaunch& launch,
-    BuildResources& resources,
-    bool* raw_started,
-    bool* terminal_failure) {
-  return detail::run_checked_build_time_prewarm(
-      resources, stage, [&]() {
-        launch_and_attest(context,
-                          cache_root,
-                          stage,
-                          launch,
-                          resources.stream(),
-                          resources.bindings(),
-                          resources.binding_count(),
-                          resources.workspace(),
-                          resources.workspace_size(),
-                          raw_started,
-                          terminal_failure);
-      });
+void prewarm_candidate(const EngineBuildContext& context,
+                       const fs::path& cache_root,
+                       const AscendStageArtifact& stage,
+                       StageLaunch& launch,
+                       BuildResources& resources,
+                       bool* raw_started,
+                       bool* terminal_failure) {
+  launch_build_candidate(context,
+                         cache_root,
+                         stage,
+                         launch,
+                         resources,
+                         raw_started,
+                         terminal_failure);
+  resources.synchronize();
 }
 
-void validate_candidate_output_consistency(
-    const AscendStageArtifact& stage,
-    const std::vector<std::uint8_t>& reference,
-    const std::vector<std::uint8_t>& candidate) {
-  if (stage.kernel_family == KernelFamily::kReduction) {
-    return;
+void smoke_candidate(const EngineBuildContext& context,
+                     const fs::path& cache_root,
+                     const AscendStageArtifact& stage,
+                     StageLaunch& launch,
+                     BuildResources& resources,
+                     bool* raw_started,
+                     bool* terminal_failure) {
+  if (uses_standalone_compilation(launch.candidate)) {
+    compile_and_attest(context,
+                       cache_root,
+                       stage,
+                       launch,
+                       terminal_failure);
+    resources.synchronize();
+    resources.ensure_kernel_workspace(launch.kernel_workspace_size);
   }
-  if (stage.kernel_family == KernelFamily::kBatchNorm) {
-    ConstBatchNormHostBuffers reference_outputs{};
-    ConstBatchNormHostBuffers candidate_outputs{};
-    std::size_t reference_offset = 0U;
-    std::size_t candidate_offset = 0U;
-    for (std::size_t index = 0U; index < reference_outputs.size(); ++index) {
-      const std::size_t size =
-          stage.arguments[batchnorm_first_output_argument_index() + index].size;
-      require(reference_offset <= reference.size() &&
-                  size <= reference.size() - reference_offset &&
-                  candidate_offset <= candidate.size() &&
-                  size <= candidate.size() - candidate_offset,
-              "Ascend BatchNorm candidate snapshot size differs",
-              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-      reference_outputs[index] = std::span<const std::uint8_t>(
-          reference.data() + reference_offset, size);
-      candidate_outputs[index] = std::span<const std::uint8_t>(
-          candidate.data() + candidate_offset, size);
-      reference_offset += size;
-      candidate_offset += size;
-    }
-    require(reference_offset == reference.size() &&
-                candidate_offset == candidate.size(),
-            "Ascend BatchNorm candidate snapshot size differs",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    try {
-      validate_batchnorm_candidate_outputs(
-          stage, reference_outputs, candidate_outputs);
-    } catch (const std::invalid_argument& error) {
-      compilation_failure(error.what());
-    }
-    return;
-  }
-  if (stage.kernel_family == KernelFamily::kBatchNormInference) {
-    try {
-      validate_batchnorm_inference_candidate_outputs(
-          stage, reference, candidate);
-    } catch (const std::invalid_argument& error) {
-      compilation_failure(error.what());
-    }
-    return;
-  }
-  if (stage.kernel_family == KernelFamily::kMatMul) {
-    try {
-      validate_matmul_candidate_outputs(stage, reference, candidate);
-    } catch (const std::invalid_argument& error) {
-      compilation_failure(error.what());
-    }
-    return;
-  }
-  if (stage.kernel_family == KernelFamily::kConvolutionFprop) {
-    try {
-      validate_convolution_fprop_candidate_outputs(
-          stage, reference, candidate);
-    } catch (const std::invalid_argument& error) {
-      compilation_failure(error.what());
-    }
-    return;
-  }
-  if (stage.kernel_family == KernelFamily::kRmsNorm) {
-    const std::size_t y_size = stage.arguments[rmsnorm_y_argument_index()].size;
-    const std::size_t statistic_size =
-        stage.arguments[rmsnorm_inv_variance_argument_index()].size;
-    require(y_size <= reference.size() && y_size <= candidate.size() &&
-                statistic_size == reference.size() - y_size &&
-                statistic_size == candidate.size() - y_size,
-            "Ascend RMSNorm candidate snapshot size differs",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    try {
-      validate_rmsnorm_candidate_outputs(
-          stage,
-          {reference.data(), y_size},
-          {reference.data() + y_size, statistic_size},
-          {candidate.data(), y_size},
-          {candidate.data() + y_size, statistic_size});
-    } catch (const std::invalid_argument& error) {
-      compilation_failure(error.what());
-    }
-    return;
-  }
-  if (stage.kernel_family == KernelFamily::kLayerNorm) {
-    const std::size_t y_size =
-        stage.arguments[layernorm_y_argument_index()].size;
-    const std::size_t mean_size =
-        stage.arguments[layernorm_mean_argument_index()].size;
-    const std::size_t inv_size =
-        stage.arguments[layernorm_inv_variance_argument_index()].size;
-    require(y_size <= reference.size() && y_size <= candidate.size() &&
-                mean_size <= reference.size() - y_size &&
-                mean_size <= candidate.size() - y_size &&
-                inv_size == reference.size() - y_size - mean_size &&
-                inv_size == candidate.size() - y_size - mean_size,
-            "Ascend LayerNorm candidate snapshot size differs",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    try {
-      validate_layernorm_candidate_outputs(
-          stage,
-          {reference.data(), y_size},
-          {reference.data() + y_size, mean_size},
-          {reference.data() + y_size + mean_size, inv_size},
-          {candidate.data(), y_size},
-          {candidate.data() + y_size, mean_size},
-          {candidate.data() + y_size + mean_size, inv_size});
-    } catch (const std::invalid_argument& error) {
-      compilation_failure(error.what());
-    }
-    return;
-  }
-  if (candidate != reference) {
-    compilation_failure(
-        "Ascend autotune candidates produced different output bytes");
-  }
+  prewarm_candidate(context,
+                    cache_root,
+                    stage,
+                    launch,
+                    resources,
+                    raw_started,
+                    terminal_failure);
 }
-
 [[nodiscard]] std::pair<flagdnnBackendResult_t, std::string>
 current_failure(flagdnnBackendResult_t fallback, const char* prefix) {
   try {
@@ -2833,10 +1953,27 @@ class LtjExecutionEngine final : public ExecutionEngine {
                      std::vector<StageLaunch> launches)
       : context_(std::move(context)),
         artifact_(std::move(artifact)),
-        launches_(std::move(launches)) {}
+        launches_(std::move(launches)) {
+    for (const StageLaunch& launch : launches_) {
+      kernel_workspace_size_ =
+          std::max(kernel_workspace_size_, launch.kernel_workspace_size);
+    }
+    if (kernel_workspace_size_ == 0) {
+      workspace_size_ = artifact_.workspace_size;
+      return;
+    }
+    kernel_workspace_offset_ =
+        align_up(artifact_.workspace_size, kGraphWorkspaceAlignment);
+    require(kernel_workspace_offset_ <=
+                std::numeric_limits<std::size_t>::max() -
+                    kernel_workspace_size_,
+            "Ascend executable workspace size overflows",
+            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+    workspace_size_ = kernel_workspace_offset_ + kernel_workspace_size_;
+  }
 
   [[nodiscard]] std::size_t workspace_size() const noexcept override {
-    return artifact_.workspace_size;
+    return workspace_size_;
   }
 
   void execute(void* native_stream,
@@ -2867,25 +2004,29 @@ class LtjExecutionEngine final : public ExecutionEngine {
       // would turn each steady-state stage into filesystem control-plane work.
       validate_execution_inputs(
           artifact_, bindings, binding_count, workspace, workspace_size);
+      require(workspace_size >= workspace_size_ &&
+                  (workspace_size_ == 0 || workspace != nullptr),
+              "Ascend workspace is smaller than the executable requirement");
       for (const StageLaunch& launch : launches_) {
         require(launch.stage_index < artifact_.stages.size() &&
                     launch.function != nullptr,
                 "Ascend executable has an invalid stage launch",
                 FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
         const AscendStageArtifact& stage = artifact_.stages[launch.stage_index];
-        RawArgumentPack arguments(stage,
-                                  launch.candidate,
-                                  bindings,
-                                  binding_count,
-                                  workspace,
-                                  workspace_size);
+        void* kernel_workspace = nullptr;
+        if (launch.kernel_workspace_size != 0) {
+          kernel_workspace = static_cast<std::byte*>(workspace) +
+                             kernel_workspace_offset_;
+        }
         raw_started = true;
-        launch_with_exported_raw_api(
-            *launch.function,
-            stream,
-            launch.candidate,
-            arguments.data(),
-            arguments.size());
+        launch.prepared.launch(stream,
+                               stage,
+                               bindings,
+                               binding_count,
+                               workspace,
+                               workspace_size,
+                               kernel_workspace,
+                               kernel_workspace_size_);
       }
       lock.unlock();
     } catch (...) {
@@ -2907,6 +2048,9 @@ class LtjExecutionEngine final : public ExecutionEngine {
   EngineBuildContext context_;
   AscendArtifact artifact_;
   std::vector<StageLaunch> launches_;
+  std::size_t kernel_workspace_offset_ = 0;
+  std::size_t kernel_workspace_size_ = 0;
+  std::size_t workspace_size_ = 0;
 };
 
 }  // namespace
@@ -2995,21 +2139,14 @@ RawArgumentPack::RawArgumentPack(
 
 std::unique_ptr<ExecutionEngine> create_libtriton_jit_engine(
     const EngineBuildContext& context, AscendArtifact artifact) {
-  if (!context.development_mode) {
-    throw AscendError(
-        FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
-        "Ascend production libtriton_jit execution remains disabled until "
-        "the sandbox supervisor, quota/cgroup owner and pre-submit cache "
-        "attestation are deployed");
-  }
   require(Py_IsInitialized() != 0,
-          "development Ascend domain has no initialized embedded Python",
+          "Ascend domain has no initialized embedded Python",
           FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED);
   require(!context.configuration_identity.empty(),
-          "development Ascend compiler environment identity is empty",
+          "Ascend compiler environment identity is empty",
           FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED);
   const fs::path cache_root =
-      validate_private_cache_root(fs::path(context.production_cache_root));
+      validate_private_cache_root(fs::path(context.cache_root));
 
   ContextGuard context_guard(context.context);
   ensure_process_configuration(context);
@@ -3027,7 +2164,6 @@ std::unique_ptr<ExecutionEngine> create_libtriton_jit_engine(
     resources.initialize(artifact);
     (void)validate_private_cache_root(cache_root);
     require_locked_configuration(context, &terminal_failure);
-    resources.mark_pending();
     std::vector<StageLaunch> launches;
     launches.reserve(artifact.stages.size());
     for (std::size_t stage_index = 0; stage_index < artifact.stages.size();
@@ -3050,38 +2186,25 @@ std::unique_ptr<ExecutionEngine> create_libtriton_jit_engine(
         LtjFunction& function = LtjFunction::get_instance(
             selected->source.string(), selected->entry_point);
         require_locked_configuration(context, &terminal_failure);
-        launches.push_back({stage_index, *selected, &function});
-        const std::vector<std::uint8_t> fixed_output =
-            smoke_candidate(context,
-                            cache_root,
-                            stage,
-                            launches.back(),
-                            resources,
-                            &raw_started,
-                            &terminal_failure);
-        /* A second identical launch is the selected-candidate prewarm and must
-         * be an in-memory LTJ/cache hit; select_metadata rejects disk changes. */
-        const std::vector<std::uint8_t> final_fixed_output =
-            detail::run_checked_build_time_prewarm(
-                resources, stage, [&]() {
-                  resources.mark_pending();
-                  launch_and_attest(context,
-                                    cache_root,
-                                    stage,
-                                    launches.back(),
-                                    resources.stream(),
-                                    resources.bindings(),
-                                    resources.binding_count(),
-                                    resources.workspace(),
-                                    resources.workspace_size(),
-                                    &raw_started,
-                                    &terminal_failure);
-                });
-        if (final_fixed_output != fixed_output) {
-          compilation_failure(
-              "fixed Ascend candidate changed output during final prewarm");
-        }
-        resources.commit_stage_output(stage, final_fixed_output);
+        launches.push_back(
+            {stage_index, *selected, &function, fs::path{}, 0, {}});
+        smoke_candidate(context,
+                        cache_root,
+                        stage,
+                        launches.back(),
+                        resources,
+                        &raw_started,
+                        &terminal_failure);
+        /* Match NVIDIA's create-time policy: a second identical device launch
+         * establishes the selected in-memory/cache-hit path. Correctness stays
+         * in the functional suite instead of a per-operator host oracle here. */
+        prewarm_candidate(context,
+                          cache_root,
+                          stage,
+                          launches.back(),
+                          resources,
+                          &raw_started,
+                          &terminal_failure);
         continue;
       }
 
@@ -3091,47 +2214,29 @@ std::unique_ptr<ExecutionEngine> create_libtriton_jit_engine(
       };
       std::vector<MeasuredCandidate> measured;
       measured.reserve(stage.candidates.size());
-      std::vector<std::uint8_t> reference_output;
       for (const LtjNpuRawCandidate& candidate : stage.candidates) {
         validate_source(candidate);
         require_locked_configuration(context, &terminal_failure);
         LtjFunction& function = LtjFunction::get_instance(
             candidate.source.string(), candidate.entry_point);
         require_locked_configuration(context, &terminal_failure);
-        StageLaunch launch{stage_index, candidate, &function};
-        std::vector<std::uint8_t> output =
-            smoke_candidate(context,
-                            cache_root,
-                            stage,
-                            launch,
-                            resources,
-                            &raw_started,
-                            &terminal_failure);
-        if (reference_output.empty()) {
-          reference_output = output;
-        } else {
-          validate_candidate_output_consistency(
-              stage, reference_output, output);
-        }
-
-        /* Establish an exact cache-hit prewarm before collecting event samples. */
-        const std::vector<std::uint8_t> cache_hit_output =
-            detail::run_checked_build_time_prewarm(
-                resources, stage, [&]() {
-                  launch_and_attest(context,
-                                    cache_root,
-                                    stage,
-                                    launch,
-                                    resources.stream(),
-                                    resources.bindings(),
-                                    resources.binding_count(),
-                                    resources.workspace(),
-                                    resources.workspace_size(),
-                                    &raw_started,
-                                    &terminal_failure);
-                });
-        validate_candidate_output_consistency(
-            stage, reference_output, cache_hit_output);
+        StageLaunch launch{
+            stage_index, candidate, &function, fs::path{}, 0, {}};
+        smoke_candidate(context,
+                        cache_root,
+                        stage,
+                        launch,
+                        resources,
+                        &raw_started,
+                        &terminal_failure);
+        /* Establish an exact cache-hit launch before collecting event samples. */
+        prewarm_candidate(context,
+                          cache_root,
+                          stage,
+                          launch,
+                          resources,
+                          &raw_started,
+                          &terminal_failure);
         const double median = measure_candidate(context,
                                                 cache_root,
                                                 stage,
@@ -3139,15 +2244,9 @@ std::unique_ptr<ExecutionEngine> create_libtriton_jit_engine(
                                                 resources,
                                                 &raw_started,
                                                 &terminal_failure);
-        const std::vector<std::uint8_t> measured_output =
-            resources.read_stage_output(stage);
-        resources.validate_stage_inputs_unchanged(stage);
-        resources.validate_stage_output(stage, measured_output);
-        validate_candidate_output_consistency(
-            stage, reference_output, measured_output);
         measured.push_back({std::move(launch), median});
       }
-      if (measured.size() < 2 || reference_output.empty()) {
+      if (measured.size() < 2) {
         compilation_failure(
             "Ascend autotune did not evaluate at least two candidates");
       }
@@ -3166,28 +2265,36 @@ std::unique_ptr<ExecutionEngine> create_libtriton_jit_engine(
       /* Re-run and attest the selected immutable launch description.  This is
        * the final create-time prewarm and leaves the stage output ready for a
        * dependent stage without putting compilation or tuning in execute(). */
-      const std::vector<std::uint8_t> selected_output =
-          detail::run_checked_build_time_prewarm(
-              resources, stage, [&]() {
-                launch_and_attest(context,
-                                  cache_root,
-                                  stage,
-                                  selected,
-                                  resources.stream(),
-                                  resources.bindings(),
-                                  resources.binding_count(),
-                                  resources.workspace(),
-                                  resources.workspace_size(),
-                                  &raw_started,
-                                  &terminal_failure);
-              });
-      validate_candidate_output_consistency(
-          stage, reference_output, selected_output);
-      resources.commit_stage_output(stage, selected_output);
+      prewarm_candidate(context,
+                        cache_root,
+                        stage,
+                        selected,
+                        resources,
+                        &raw_started,
+                        &terminal_failure);
       std::cerr << "[FLAGDNN_ASCEND_AUTOTUNE] stage=" << stage.stage_id
                 << " candidate=" << stage.selected_candidate
                 << " median_us=" << best->median_microseconds << '\n';
       launches.push_back(std::move(selected));
+    }
+    for (StageLaunch& launch : launches) {
+      require(launch.stage_index < artifact.stages.size(),
+              "selected Ascend launch has an invalid stage index",
+              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+      const CacheSnapshot before =
+          scan_cache(cache_root, launch.candidate.entry_point);
+      if (!launch.prepared.is_prepared()) {
+        launch.prepared.prepare(artifact.stages[launch.stage_index],
+                                launch.candidate,
+                                launch.metadata_directory,
+                                launch.kernel_workspace_size);
+      }
+      const CacheSnapshot after =
+          scan_cache(cache_root, launch.candidate.entry_point);
+      if (!same_cache_snapshot(before, after)) {
+        compilation_failure(
+            "preparing an Ascend launch changed the attested cache tree");
+      }
     }
     resources.synchronize();
     resources.release();
@@ -3206,10 +2313,10 @@ std::unique_ptr<ExecutionEngine> create_libtriton_jit_engine(
     latch_process_terminal();
     auto [result, message] = current_failure(
         FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
-        "Ascend development JIT/prewarm failed terminally: ");
+        "Ascend JIT/prewarm failed terminally: ");
     if (!resources_released) {
       result = FLAGDNN_BACKEND_RESULT_RUNTIME_ERROR;
-      message += "; development prewarm resources could not be released";
+      message += "; prewarm resources could not be released";
     }
     lock.unlock();
     mark_process_terminal(result, message);

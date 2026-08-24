@@ -42,6 +42,64 @@ def reduction_3d_persistent_kernel(
     BLOCK_SIZE: tl.constexpr,
     WORKER_COUNT: tl.constexpr,
 ):
+    if REDUCTION_SIZE <= 8:
+        output_block: tl.constexpr = 64
+        output_base = tl.program_id(0).to(tl.int64) * output_block
+        output_lanes = tl.arange(0, output_block).to(tl.int64)
+        while output_base < n_elements:
+            output_indices = output_base + output_lanes
+            output_mask = output_indices < n_elements
+            if INNER % output_block == 0:
+                outer_indices = output_base // INNER
+                inner_indices = output_base % INNER + output_lanes
+            else:
+                outer_indices = output_indices // INNER
+                inner_indices = output_indices % INNER
+            if (
+                REDUCTION_MODE == REDUCTION_MUL
+                or input_ptr.dtype.element_ty == tl.float32
+            ):
+                if REDUCTION_MODE == REDUCTION_MUL:
+                    result = tl.full((output_block,), 1.0, tl.float32)
+                else:
+                    result = tl.zeros((output_block,), tl.float32)
+                for reduction_index in tl.static_range(0, REDUCTION_SIZE):
+                    values = tl.load(
+                        input_ptr
+                        + outer_indices * REDUCTION_SIZE * INNER
+                        + inner_indices
+                        + reduction_index * INNER,
+                        mask=output_mask,
+                        other=(
+                            1.0 if REDUCTION_MODE == REDUCTION_MUL else 0.0
+                        ),
+                    ).to(tl.float32)
+                    if REDUCTION_MODE == REDUCTION_MUL:
+                        result *= values
+                    else:
+                        result += values
+            else:
+                reduction_lanes = tl.arange(0, 8).to(tl.int64)
+                reduction_active = reduction_lanes < REDUCTION_SIZE
+                values = tl.load(
+                    input_ptr
+                    + outer_indices[:, None] * REDUCTION_SIZE * INNER
+                    + inner_indices[:, None]
+                    + reduction_lanes[None, :] * INNER,
+                    mask=output_mask[:, None] & reduction_active[None, :],
+                    other=0.0,
+                ).to(tl.float32)
+                result = tl.sum(values, axis=1)
+            if REDUCTION_MODE == REDUCTION_AVG:
+                result /= REDUCTION_SIZE
+            tl.store(
+                output_ptr + output_indices,
+                result.to(output_ptr.dtype.element_ty),
+                mask=output_mask,
+            )
+            output_base += output_block * WORKER_COUNT
+        return
+
     output_index = tl.program_id(0).to(tl.int64)
     while output_index < n_elements:
         outer_index = output_index // INNER

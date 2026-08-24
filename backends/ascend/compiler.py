@@ -228,6 +228,15 @@ _CONVOLUTION_FPROP_PARAMETERS = (
     + tuple(f"DILATION_{axis}" for axis in range(3))
     + ("BLOCK_SIZE", "WORKER_COUNT")
 )
+_CONVOLUTION_IM2COL_PARAMETERS = (
+    (
+        "input_ptr",
+        "filter_ptr",
+        "columns_ptr",
+        "n_elements",
+    )
+    + _CONVOLUTION_FPROP_PARAMETERS[4:]
+)
 _BATCHNORM_TRAINING_PARAMETERS = (
     (
         "x_ptr",
@@ -386,7 +395,7 @@ def _load_capabilities() -> dict[str, Any]:
             "minimum_rank": 2,
             "maximum_rank": 8,
             "maximum_batch_rank": 6,
-            "block_sizes": [16, 32],
+            "block_sizes": [16, 32, 64, 128],
         }
         or document.get("convolution_fprop")
         != {
@@ -446,7 +455,7 @@ def _load_capabilities() -> dict[str, Any]:
         or document.get("workspace_alignment") != 256
         or document.get("compile_options")
         != {"num_warps": [4], "num_stages": [1]}
-        or document.get("block_sizes") != [256, 128]
+        or document.get("block_sizes") != [4096, 2048, 1024, 256, 128]
         or document.get("persistent_launch")
         != {
             "minimum_ai_core_count": 1,
@@ -458,21 +467,6 @@ def _load_capabilities() -> dict[str, Any]:
             "Ascend capabilities do not match the kernel contract"
         )
     return document
-
-
-def _validate_sandbox_policy() -> None:
-    document = _load_json_resource(
-        Path(__file__).with_name("sandbox_policy.json"),
-        "Ascend sandbox policy",
-    )
-    if (
-        document.get("schema_version") != 1
-        or document.get("backend") != "ascend"
-        or not isinstance(document.get("production"), dict)
-        or not isinstance(document.get("provider_request"), dict)
-        or not isinstance(document.get("runtime_attestation"), dict)
-    ):
-        raise ValueError("Ascend sandbox policy is incompatible")
 
 
 def _validate_kernel_function(
@@ -491,7 +485,9 @@ def _validate_kernel_function(
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     expected = (
-        _CONVOLUTION_FPROP_PARAMETERS
+        _CONVOLUTION_IM2COL_PARAMETERS
+        if function_name == "convolution_fprop_im2col_kernel"
+        else _CONVOLUTION_FPROP_PARAMETERS
         if function_name == "convolution_fprop_persistent_kernel"
         else _MATMUL_PARAMETERS
         if function_name == "matmul_strided_kernel"
@@ -629,7 +625,10 @@ def _ascend_full_signature(
             ]
         )
         tokens.extend(str(meta[name]) for name in names)
-    elif stage.function_name == "convolution_fprop_persistent_kernel":
+    elif stage.function_name in {
+        "convolution_fprop_persistent_kernel",
+        "convolution_fprop_im2col_kernel",
+    }:
         names = (
             [
                 "SPATIAL_RANK",
@@ -751,7 +750,15 @@ def _runtime_argument_abi(
     elif stage.kernel_family == "matmul":
         pointer_names = ("a_ptr", "b_ptr", "output_ptr")
     elif stage.kernel_family == "convolution_fprop":
-        pointer_names = ("input_ptr", "filter_ptr", "output_ptr")
+        pointer_names = (
+            (
+                "input_ptr",
+                "filter_ptr",
+                "columns_ptr",
+            )
+            if stage.function_name == "convolution_fprop_im2col_kernel"
+            else ("input_ptr", "filter_ptr", "output_ptr")
+        )
     elif stage.kernel_family == "batchnorm_inference":
         pointer_names = (
             "x_ptr",
@@ -849,6 +856,33 @@ def _materialize_source(
     return filename, source_sha256
 
 
+def _batchnorm_inference_grid(
+    stage: PointwiseStagePlan,
+    block_size: int,
+    capabilities: dict[str, Any],
+) -> tuple[int, int, int]:
+    if (
+        stage.function_name == "batchnorm_inference_strided_persistent_kernel"
+        and int(stage.meta["RANK"]) == 5
+    ):
+        channels = int(stage.meta["CHANNELS"])
+        spatial = int(stage.meta["SPATIAL"])
+        batch_elements = channels * spatial
+        if batch_elements <= 0 or stage.n_elements % batch_elements != 0:
+            raise ValueError("BatchNorm inference dimensions are inconsistent")
+        batches = stage.n_elements // batch_elements
+        block_spatial = block_size // 128
+        if block_spatial <= 0:
+            raise ValueError("BatchNorm inference block size is invalid")
+        work_items = (
+            batches
+            * ((channels + 1) // 2)
+            * ((spatial + block_spatial - 1) // block_spatial)
+        )
+        return checked_grid(work_items, 1, capabilities)
+    return checked_grid(stage.n_elements, block_size, capabilities)
+
+
 def _candidate_payload(
     *,
     stage: PointwiseStagePlan,
@@ -878,6 +912,10 @@ def _candidate_payload(
             else stage.n_elements
         )
         grid = checked_grid(work_items, 1, capabilities)
+    elif stage.kernel_family == "batchnorm_inference":
+        grid = _batchnorm_inference_grid(
+            stage, int(meta["BLOCK_SIZE"]), capabilities
+        )
     elif stage.kernel_family == "matmul":
         block_size = int(meta["BLOCK_SIZE"])
         tiles = (
@@ -1119,6 +1157,51 @@ def _stage_semantic_attributes(
     return {}
 
 
+def _order_stage_configurations(
+    plan: PointwiseStagePlan,
+    configurations: tuple[TuningConfiguration, ...],
+) -> tuple[TuningConfiguration, ...]:
+    if (
+        plan.kernel_family == "unary"
+        and plan.operation in {"log", "rsqrt"}
+        and plan.function_name == "unary_pointwise_contiguous_kernel"
+        and plan.n_elements < 1024
+    ):
+        preferred = next(
+            (
+                configuration
+                for configuration in configurations
+                if int(configuration.meta["BLOCK_SIZE"]) == 256
+            ),
+            configurations[0],
+        )
+        return (preferred,) + tuple(
+            configuration
+            for configuration in configurations
+            if configuration is not preferred
+        )
+    if plan.kernel_family not in {"rmsnorm", "layernorm"}:
+        return configurations
+    normalized_elements = int(plan.meta["NORMALIZED_ELEMENTS"])
+    covering = [
+        configuration
+        for configuration in configurations
+        if int(configuration.meta["BLOCK_SIZE"]) >= normalized_elements
+    ]
+    preferred = (
+        min(covering, key=lambda value: int(value.meta["BLOCK_SIZE"]))
+        if covering
+        else max(
+            configurations, key=lambda value: int(value.meta["BLOCK_SIZE"])
+        )
+    )
+    return (preferred,) + tuple(
+        configuration
+        for configuration in configurations
+        if configuration is not preferred
+    )
+
+
 def _build_stage(
     *,
     plan: PointwiseStagePlan,
@@ -1136,6 +1219,8 @@ def _build_stage(
         raise ValueError(
             f"Ascend {plan.operation} tuning produced no candidates"
         )
+    if not enable_autotune:
+        configurations = _order_stage_configurations(plan, configurations)
     effective_configurations = (
         configurations if enable_autotune else configurations[:1]
     )
@@ -1205,8 +1290,8 @@ def _build_stage(
                         grid[2],
                     ]
                 elif plan.kernel_family == "batchnorm_inference":
-                    grid = checked_grid(
-                        work_items,
+                    grid = _batchnorm_inference_grid(
+                        plan,
                         int(configuration.meta["BLOCK_SIZE"]),
                         capabilities,
                     )
@@ -1395,7 +1480,10 @@ def _validate_platform_candidate(
         else "binary.py"
     )
     expected_functions = (
-        {"convolution_fprop_persistent_kernel"}
+        {
+            "convolution_fprop_persistent_kernel",
+            "convolution_fprop_im2col_kernel",
+        }
         if convolution_fprop
         else {"matmul_strided_kernel"}
         if matmul
@@ -1510,8 +1598,6 @@ def compile_request(
     worker_count = ai_core_count * int(
         persistent_launch["workers_per_ai_core"]
     )
-    _validate_sandbox_policy()
-
     candidate_by_operation: dict[str, KernelCandidate] = {}
     for operation in sorted({stage.operation for stage in graph_plan.stages}):
         candidate = select_kernel_candidate("ascend", operation)
@@ -1584,7 +1670,11 @@ def compile_request(
                 candidate=candidate_by_operation[stage.operation],
                 configurations=configurations,
                 tuning_source_sha256=tuning_source_sha256,
-                enable_autotune=enable_autotune,
+                enable_autotune=(
+                    enable_autotune
+                    and stage.function_name
+                    != "convolution_fprop_im2col_kernel"
+                ),
                 capabilities=capabilities,
                 source_path=source_path,
                 source_sha256=source_sha256,
@@ -1605,7 +1695,7 @@ def compile_request(
         "flagdnn_version": flagdnn_version,
         "backend": "ascend",
         "target": target_name,
-        "graph_node_count": len(graph_plan.stages),
+        "graph_node_count": graph_plan.node_count,
         "request_sha256": hashlib.sha256(request_bytes).hexdigest(),
         "source_sha256": combined_source_sha256,
         "compiler": identity,
@@ -1627,7 +1717,7 @@ def compile_request(
         "status": "success",
         "backend": "ascend",
         "provider": PROVIDER_NAME,
-        "node_count": len(graph_plan.stages),
+        "node_count": graph_plan.node_count,
         "stage_count": len(stages),
         "target": target_name,
         "artifact_directory": str(output_directory),

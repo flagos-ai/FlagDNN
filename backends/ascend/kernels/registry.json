@@ -114,7 +114,8 @@
       "provider": "ascend_triton",
       "source": "convolution.py",
       "functions": [
-        "convolution_fprop_persistent_kernel"
+        "convolution_fprop_persistent_kernel",
+        "convolution_fprop_im2col_kernel"
       ],
       "tuning": {
         "source": "common.yaml",
