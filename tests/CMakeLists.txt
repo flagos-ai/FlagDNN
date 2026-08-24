@@ -194,7 +194,7 @@ add_test(NAME core.test_architecture
 if(FLAGDNN_CODEGEN_PYTHON)
   add_test(NAME core.run_tests_contract
     COMMAND "${FLAGDNN_CODEGEN_PYTHON}"
-      "${PROJECT_SOURCE_DIR}/cmake/VerifyRunTestsContract.py"
+      "${PROJECT_SOURCE_DIR}/tests/core/run_tests_contract.py"
       "${PROJECT_SOURCE_DIR}/tools/run_tests.py")
 endif()
 

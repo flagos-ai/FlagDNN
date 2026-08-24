@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Configure-time-safe contracts for tools/run_tests.py result validation."""
+"""Core contracts for tools/run_tests.py result validation."""
 
 from __future__ import annotations
 
@@ -71,17 +71,22 @@ def invoke_main(runner, arguments: list[str]) -> tuple[int, str, str]:
 
 def main() -> int:
     if len(sys.argv) != 2:
-        raise RuntimeError("usage: VerifyRunTestsContract.py RUN_TESTS_PY")
+        raise RuntimeError("usage: run_tests_contract.py RUN_TESTS_PY")
     runner = load_runner(Path(sys.argv[1]).resolve())
     hygon = runner.load_platform_adapter("hygon")
     ascend = runner.load_platform_adapter("ascend")
     nvidia = runner.load_platform_adapter("nvidia")
+    iluvatar = runner.load_platform_adapter("iluvatar")
     require(
-        hygon is not None and ascend is not None and nvidia is not None,
+        hygon is not None
+        and ascend is not None
+        and nvidia is not None
+        and iluvatar is not None,
         "repository platform test adapters are incomplete",
     )
     require(
         hygon.PREFLIGHT_BY_DEFAULT
+        and iluvatar.PREFLIGHT_BY_DEFAULT
         and not ascend.PREFLIGHT_BY_DEFAULT
         and not nvidia.PREFLIGHT_BY_DEFAULT
         and ascend.DEFAULT_TIMEOUT == 7200,
@@ -95,6 +100,9 @@ def main() -> int:
         "aclnn",
         "hip_visible_devices",
         "npu_visible_devices",
+        "iluvatar",
+        "corex",
+        "cuda_visible_devices",
     ):
         require(
             platform_detail not in runner_source,
