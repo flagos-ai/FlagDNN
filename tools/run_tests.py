@@ -46,6 +46,14 @@ CTEST_DISABLED_PATTERN = re.compile(
     r"(?:\*\*\*Not Run|\(Disabled\))",
     flags=re.IGNORECASE,
 )
+CTEST_AGGREGATE_SKIPPED_PATTERN = re.compile(
+    r"^\s*\d+/\d+\s+Test\s+#\d+:.*(?:\*\*\*Skipped|\(Skipped\))",
+    flags=re.IGNORECASE | re.MULTILINE,
+)
+CTEST_AGGREGATE_DISABLED_PATTERN = re.compile(
+    r"^\s*\d+/\d+\s+Test\s+#\d+:.*(?:\*\*\*Not Run|\(Disabled\))",
+    flags=re.IGNORECASE | re.MULTILINE,
+)
 PROCESS_TERMINATION_GRACE_SECONDS = 5.0
 PROCESS_KILL_GRACE_SECONDS = 5.0
 PROCESS_CLEANUP_POLL_SECONDS = 0.05
@@ -552,6 +560,19 @@ def ctest_status(exit_code: int, output: str) -> str:
     return "passed"
 
 
+def ctest_aggregate_status(exit_code: int, output: str) -> str:
+    """Classify an outer CTest run without consuming nested test output."""
+    if "No tests were found" in output:
+        return "not_found"
+    if exit_code != 0:
+        return "failed"
+    if CTEST_AGGREGATE_DISABLED_PATTERN.search(output) is not None:
+        return "failed"
+    if CTEST_AGGREGATE_SKIPPED_PATTERN.search(output) is not None:
+        return "skipped"
+    return "passed"
+
+
 def verbose_ctest_command(
     build_dir: Path,
     expression: str,
@@ -1045,7 +1066,7 @@ def run_preflight(
     status = (
         "timeout"
         if timed_out
-        else ctest_status(exit_code, stdout + "\n" + stderr)
+        else ctest_aggregate_status(exit_code, stdout + "\n" + stderr)
     )
     duration = time.monotonic() - started
     if verbose or status != "passed":
@@ -1438,6 +1459,30 @@ def _run_main() -> int:
         return validation_error(
             "operator selection produced zero operator/suite runs"
         )
+
+    prepare_run = (
+        None if adapter is None else getattr(adapter, "prepare_run", None)
+    )
+    try:
+        run_state = (
+            {}
+            if prepare_run is None
+            else prepare_run(
+                environment=environment,
+                verbose=arguments.verbose,
+            )
+        )
+    except (OSError, RuntimeError, ValueError) as error:
+        return validation_error(str(error))
+    if not isinstance(run_state, dict):
+        return validation_error("platform adapter returned invalid run state")
+    duplicate_state = set(platform_state).intersection(run_state)
+    if duplicate_state:
+        return validation_error(
+            "platform adapter returned duplicate state fields: "
+            + ", ".join(sorted(duplicate_state))
+        )
+    platform_state.update(run_state)
 
     results: dict[str, dict[str, Any]] = {}
     failed = False

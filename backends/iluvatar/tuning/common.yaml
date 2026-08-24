@@ -1,0 +1,268 @@
+# Copyright 2026 FlagOS Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Wave64-safe search space shared by the common pointwise kernels. The largest
+# launch uses eight CoreX warps (512 work-items), leaving room for the compiler
+# to trade occupancy against per-program vector width.
+binary: &pointwise
+  - gen: true
+    param_map:
+      META:
+        BLOCK_SIZE: block_size
+      num_warps: warps
+      num_stages: stages
+    block_size:
+      - 128
+      - 256
+      - 512
+      - 1024
+    warps:
+      - 4
+      - 8
+    stages:
+      - 2
+      - 3
+
+# The common unary registry names its pointwise table "relu"; all unary modes
+# use the same launch-shape dimensions and are keyed by n_elements.
+relu: *pointwise
+
+# Conservative wave64 reduction space. BLOCK_N is the reduction tile and
+# BLOCK_M controls independent output rows per program.
+reduction:
+  - META:
+      BLOCK_M: 1
+      BLOCK_N: 64
+    num_warps: 1
+    num_stages: 1
+  - META:
+      BLOCK_M: 2
+      BLOCK_N: 128
+    num_warps: 2
+    num_stages: 1
+  - META:
+      BLOCK_M: 4
+      BLOCK_N: 256
+    num_warps: 4
+    num_stages: 1
+  - META:
+      BLOCK_M: 8
+      BLOCK_N: 512
+    num_warps: 8
+    num_stages: 2
+  - META:
+      BLOCK_M: 64
+      BLOCK_N: 8
+    num_warps: 1
+    num_stages: 1
+  - META:
+      BLOCK_M: 128
+      BLOCK_N: 8
+    num_warps: 2
+    num_stages: 1
+  - META:
+      BLOCK_M: 256
+      BLOCK_N: 8
+    num_warps: 4
+    num_stages: 1
+  - META:
+      BLOCK_M: 512
+      BLOCK_N: 8
+    num_warps: 8
+    num_stages: 1
+
+# corex_71/warp64-safe starting space for the common strided MatMul kernel. It uses
+# strict IEEE input precision; no CUDA TF32 policy is inherited.
+matmul:
+  - META:
+      BLOCK_M: 16
+      BLOCK_N: 16
+      BLOCK_K: 16
+      GROUP_M: 4
+    num_warps: 2
+    num_stages: 1
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_K: 16
+      GROUP_M: 4
+    num_warps: 4
+    num_stages: 1
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 64
+      BLOCK_K: 32
+      GROUP_M: 4
+    num_warps: 4
+    num_stages: 2
+  - META:
+      BLOCK_M: 64
+      BLOCK_N: 32
+      BLOCK_K: 32
+      GROUP_M: 8
+    num_warps: 4
+    num_stages: 2
+
+# Layer/RMS kernels have both a single-block path and a tiled fallback when
+# BLOCK_SIZE is smaller than the normalized row. ROWS_PER_PROGRAM provides a
+# second wave64-safe search dimension.
+layer_norm:
+  - META: {BLOCK_SIZE: 256, ROWS_PER_PROGRAM: 1}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_SIZE: 256, ROWS_PER_PROGRAM: 2}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_SIZE: 512, ROWS_PER_PROGRAM: 1}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_SIZE: 512, ROWS_PER_PROGRAM: 2}
+    num_warps: 8
+    num_stages: 1
+  - META: {BLOCK_SIZE: 1024, ROWS_PER_PROGRAM: 1}
+    num_warps: 8
+    num_stages: 1
+  - META: {BLOCK_SIZE: 1024, ROWS_PER_PROGRAM: 2}
+    num_warps: 8
+    num_stages: 2
+  - META: {BLOCK_SIZE: 2048, ROWS_PER_PROGRAM: 1}
+    num_warps: 8
+    num_stages: 1
+  - META: {BLOCK_SIZE: 2048, ROWS_PER_PROGRAM: 2}
+    num_warps: 8
+    num_stages: 2
+  - META: {BLOCK_SIZE: 4096, ROWS_PER_PROGRAM: 1}
+    num_warps: 8
+    num_stages: 1
+  - META: {BLOCK_SIZE: 4096, ROWS_PER_PROGRAM: 2}
+    num_warps: 8
+    num_stages: 2
+
+rms_norm:
+  - META: {BLOCK_SIZE: 256, ROWS_PER_PROGRAM: 1}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_SIZE: 256, ROWS_PER_PROGRAM: 2}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_SIZE: 512, ROWS_PER_PROGRAM: 1}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_SIZE: 512, ROWS_PER_PROGRAM: 2}
+    num_warps: 8
+    num_stages: 1
+  - META: {BLOCK_SIZE: 1024, ROWS_PER_PROGRAM: 1}
+    num_warps: 8
+    num_stages: 1
+  - META: {BLOCK_SIZE: 1024, ROWS_PER_PROGRAM: 2}
+    num_warps: 8
+    num_stages: 2
+  - META: {BLOCK_SIZE: 2048, ROWS_PER_PROGRAM: 1}
+    num_warps: 8
+    num_stages: 1
+  - META: {BLOCK_SIZE: 2048, ROWS_PER_PROGRAM: 2}
+    num_warps: 8
+    num_stages: 2
+  - META: {BLOCK_SIZE: 4096, ROWS_PER_PROGRAM: 1}
+    num_warps: 8
+    num_stages: 1
+  - META: {BLOCK_SIZE: 4096, ROWS_PER_PROGRAM: 2}
+    num_warps: 8
+    num_stages: 2
+
+batch_norm:
+  - META: {BLOCK_SIZE: 128}
+    num_warps: 2
+    num_stages: 1
+  - META: {BLOCK_SIZE: 256}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_SIZE: 512}
+    num_warps: 4
+    num_stages: 2
+  - META: {BLOCK_SIZE: 1024}
+    num_warps: 8
+    num_stages: 2
+
+sdpa:
+  - META: {BLOCK_M: 16, BLOCK_N: 16}
+    num_warps: 2
+    num_stages: 1
+  - META: {BLOCK_M: 32, BLOCK_N: 16}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_M: 32, BLOCK_N: 32}
+    num_warps: 4
+    num_stages: 2
+  - META: {BLOCK_M: 64, BLOCK_N: 32}
+    num_warps: 8
+    num_stages: 2
+
+sdpa_backward_dq:
+  - META:
+      BLOCK_M: 16
+      BLOCK_N: 16
+      BLOCK_D_OUT: 16
+      BLOCK_DV_OUT: 16
+    num_warps: 2
+    num_stages: 1
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 16
+      BLOCK_D_OUT: 16
+      BLOCK_DV_OUT: 16
+    num_warps: 4
+    num_stages: 1
+  - META:
+      BLOCK_M: 32
+      BLOCK_N: 32
+      BLOCK_D_OUT: 32
+      BLOCK_DV_OUT: 32
+    num_warps: 4
+    num_stages: 2
+  - META:
+      BLOCK_M: 64
+      BLOCK_N: 32
+      BLOCK_D_OUT: 32
+      BLOCK_DV_OUT: 32
+    num_warps: 8
+    num_stages: 2
+
+sdpa_fp8:
+  - META: {BLOCK_M: 16, BLOCK_N: 16}
+    num_warps: 2
+    num_stages: 1
+  - META: {BLOCK_M: 32, BLOCK_N: 16}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_M: 32, BLOCK_N: 32}
+    num_warps: 4
+    num_stages: 2
+  - META: {BLOCK_M: 64, BLOCK_N: 32}
+    num_warps: 8
+    num_stages: 2
+
+sdpa_fp8_backward_dq:
+  - META: {BLOCK_M: 16, BLOCK_N: 16}
+    num_warps: 2
+    num_stages: 1
+  - META: {BLOCK_M: 32, BLOCK_N: 16}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_M: 32, BLOCK_N: 32}
+    num_warps: 4
+    num_stages: 2
+  - META: {BLOCK_M: 64, BLOCK_N: 32}
+    num_warps: 8
+    num_stages: 2

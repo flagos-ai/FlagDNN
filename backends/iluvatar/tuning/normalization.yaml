@@ -1,0 +1,26 @@
+# Copyright 2026 FlagOS Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+# corex_71/warp64 BatchNorm search space.  The larger logical vector widths are
+# intentional: one program owns one NCHW channel and reuses its statistics,
+# while eight CoreX warps cover multiple elements per lane.  Autotuning keeps
+# small-spatial cases on the narrower candidates.
+batch_norm:
+  - META: {BLOCK_SIZE: 256}
+    num_warps: 2
+    num_stages: 1
+  - META: {BLOCK_SIZE: 512}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_SIZE: 1024}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_SIZE: 1024}
+    num_warps: 8
+    num_stages: 1
+  - META: {BLOCK_SIZE: 2048}
+    num_warps: 8
+    num_stages: 1
+  - META: {BLOCK_SIZE: 4096}
+    num_warps: 8
+    num_stages: 1
