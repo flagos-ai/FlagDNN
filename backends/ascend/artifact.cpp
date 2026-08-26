@@ -2975,6 +2975,7 @@ ExpectedGraph parse_expected_graph(const Value& request) {
         }
       }
       return include(node.convolution_channels_per_group) &&
+             include(node.convolution_filter_dimensions[2]) &&
              include(node.convolution_filter_dimensions[3]) &&
              include(node.convolution_filter_dimensions[4]) &&
              elements <= kLimit;
@@ -3025,7 +3026,16 @@ ExpectedGraph parse_expected_graph(const Value& request) {
         is_row_major_tensor(*node.inputs[0]) &&
         is_row_major_tensor(*node.inputs[1]) &&
         is_row_major_tensor(*node.output);
-    if (!use_1d_im2col && !use_2d_im2col) {
+    const bool use_3d_im2col =
+        node.kernel_family == KernelFamily::kConvolutionFprop &&
+        im2col_fits_i32 && im2col_block_offsets_fit_i32 &&
+        next_internal_uid <= static_cast<std::uint64_t>(
+                                 std::numeric_limits<std::int64_t>::max()) &&
+        node.convolution_spatial_rank == 3 && node.convolution_groups == 1 &&
+        is_row_major_tensor(*node.inputs[0]) &&
+        is_row_major_tensor(*node.inputs[1]) &&
+        is_row_major_tensor(*node.output);
+    if (!use_1d_im2col && !use_2d_im2col && !use_3d_im2col) {
       execution_nodes.push_back(node);
       continue;
     }
@@ -3095,11 +3105,19 @@ ExpectedGraph parse_expected_graph(const Value& request) {
 
     if (node.convolution_channels_per_group >
         std::numeric_limits<std::int64_t>::max() /
+            node.convolution_filter_dimensions[2]) {
+      artifact_failure("internal convolution reduction extent overflows");
+    }
+    const std::int64_t channel_filter_depth =
+        node.convolution_channels_per_group *
+        node.convolution_filter_dimensions[2];
+    if (channel_filter_depth >
+        std::numeric_limits<std::int64_t>::max() /
             node.convolution_filter_dimensions[3]) {
       artifact_failure("internal convolution reduction extent overflows");
     }
     const std::int64_t channel_filter_height =
-        node.convolution_channels_per_group *
+        channel_filter_depth *
         node.convolution_filter_dimensions[3];
     if (channel_filter_height >
         std::numeric_limits<std::int64_t>::max() /
@@ -3150,7 +3168,7 @@ ExpectedGraph parse_expected_graph(const Value& request) {
     matmul_node.matmul_b_batch_strides.fill(0);
     matmul_node.matmul_output_batch_strides.fill(0);
     matmul_node.matmul_output_batch_strides.back() = node.output->strides[0];
-    if (use_2d_im2col) {
+    if (use_2d_im2col || use_3d_im2col) {
       matmul_node.inputs = {node.inputs[1], columns_tensor};
       matmul_node.matmul_m = output_channels;
       matmul_node.matmul_n = output_spatial;

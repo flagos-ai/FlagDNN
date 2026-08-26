@@ -2292,6 +2292,7 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 inputs[0].dimensions[0]
                 * math.prod(output.dimensions[2:])
                 * int(convolution_meta["CHANNELS_PER_GROUP"])
+                * int(convolution_meta["FILTER_DIM_2"])
                 * int(convolution_meta["FILTER_DIM_3"])
                 * int(convolution_meta["FILTER_DIM_4"])
             )
@@ -2346,7 +2347,18 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
             and _is_row_major_tensor(inputs[1])
             and _is_row_major_tensor(output)
         )
-        if not (use_1d_im2col or use_2d_im2col):
+        use_3d_im2col = (
+            node["kernel_family"] == "convolution_fprop"
+            and im2col_fits_i32
+            and im2col_block_offsets_fit_i32
+            and next_internal_uid <= MAX_I64
+            and int(convolution_meta["SPATIAL_RANK"]) == 3
+            and int(convolution_meta["GROUPS"]) == 1
+            and _is_row_major_tensor(inputs[0])
+            and _is_row_major_tensor(inputs[1])
+            and _is_row_major_tensor(output)
+        )
+        if not (use_1d_im2col or use_2d_im2col or use_3d_im2col):
             execution_nodes.append({**node, "convolution_im2col": False})
             continue
 
@@ -2459,6 +2471,7 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
 
         reduction_extent = (
             int(convolution_meta["CHANNELS_PER_GROUP"])
+            * int(convolution_meta["FILTER_DIM_2"])
             * int(convolution_meta["FILTER_DIM_3"])
             * int(convolution_meta["FILTER_DIM_4"])
         )
@@ -2485,7 +2498,7 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
         # The physical columns layout is [batch, K, spatial].  For dense NCHW
         # outputs, compute [O, K] x [K, spatial] so MatMul writes the output
         # contiguously.  The 1D channels-last path keeps [spatial, K] x [K, O].
-        if use_2d_im2col:
+        if use_2d_im2col or use_3d_im2col:
             left_view = TensorPlan(
                 uid=filter_tensor.uid,
                 data_type=filter_tensor.data_type,

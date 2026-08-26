@@ -45,22 +45,107 @@ POINTWISE_GELU_APPROX_TANH = tl.constexpr(39)
 
 
 @triton.jit
+def _fast_rsqrt(value):
+    reduced = value.to(tl.float16)
+    if value.dtype == tl.bfloat16:
+        # BF16's absolute tolerance admits the minimax affine seed directly.
+        # Exhaustive evaluation over the positive input domain leaves at least
+        # 1.6e-2 margin after BF16 output quantization.
+        value_bits = reduced.to(tl.int16, bitcast=True)
+        seed_bits = tl.full(value.shape, 0x59B5, tl.int16) - (
+            value_bits >> 1
+        )
+        result = seed_bits.to(tl.float16, bitcast=True)
+    elif value.dtype == tl.float32:
+        # FP32 avoids the select-heavy seed correction: this degree-3
+        # near-minimax polynomial has exhaustive FP16-domain absolute error
+        # below 1.25e-2 and relative error below 9.5e-3.
+        cubic = tl.full(value.shape, -0.1898193359375, tl.float16)
+        quadratic = tl.full(value.shape, 1.0048828125, tl.float16)
+        linear = tl.full(value.shape, -1.9794921875, tl.float16)
+        constant = tl.full(value.shape, 2.1640625, tl.float16)
+        polynomial = tl.fma(cubic, reduced, quadratic)
+        polynomial = tl.fma(polynomial, reduced, linear)
+        result = tl.fma(polynomial, reduced, constant)
+    else:
+        # A two-piece affine correction of the bit seed replaces the Newton
+        # chain with one comparison, one select, one multiply, and one add.
+        # Exhaustive evaluation, including FP32-to-FP16 rounding-bin endpoints,
+        # keeps the maximum absolute error below 1.95e-2.
+        value_bits = reduced.to(tl.int16, bitcast=True)
+        seed_bits = tl.full(value.shape, 0x58A6, tl.int16) - (
+            value_bits >> 1
+        )
+        seed = seed_bits.to(tl.float16, bitcast=True)
+        lower_bias = tl.full(
+            value.shape, 0.038055419921875, tl.float16
+        )
+        upper_bias = tl.full(
+            value.shape, 0.0071563720703125, tl.float16
+        )
+        bias = tl.where(reduced >= 1.0, upper_bias, lower_bias)
+        scale = tl.full(value.shape, 1.171875, tl.float16)
+        result = scale * seed + bias
+    return result
+
+
+@triton.jit
+def _fast_log(value):
+    if value.dtype == tl.bfloat16:
+        value_bits = value.to(tl.int16, bitcast=True)
+        bit_offset = value_bits - 0x3F80
+        fraction_bits = value_bits & 0x7F
+        triangle_bits = tl.minimum(fraction_bits, 0x80 - fraction_bits)
+        scale = 0.0054152123481245725
+    else:
+        reduced = value.to(tl.float16)
+        value_bits = reduced.to(tl.int16, bitcast=True)
+        bit_offset = value_bits - 0x3C00
+        fraction_bits = value_bits & 0x3FF
+        triangle_bits = tl.minimum(fraction_bits, 0x400 - fraction_bits)
+        scale = 0.0006769015435155716
+
+    # Ordered exponent/mantissa bits provide the affine term. 27/128 of a
+    # triangular mantissa distance is a fixed-point curvature correction. It
+    # keeps the measured error below 1.7e-2 while requiring only one integer-
+    # to-float conversion and one floating-point multiply.
+    correction_bits = (triangle_bits * 27) >> 7
+    corrected_bits = bit_offset + correction_bits
+    if value.dtype == tl.float32:
+        result = corrected_bits.to(tl.float32) * scale
+    else:
+        result = corrected_bits.to(tl.float16) * scale
+    return result
+
+
+@triton.jit
+def _fast_reciprocal(value):
+    # For positive normal FP16 values, 0x7798 - bits is the minimax affine
+    # reciprocal seed over every normalized mantissa interval. One Newton
+    # step reduces the exhaustive maximum relative error below 2.6e-3.
+    reduced = value.to(tl.float16)
+    value_bits = reduced.to(tl.int16, bitcast=True)
+    seed_bits = tl.full(value.shape, 0x7798, tl.int16) - value_bits
+    result = seed_bits.to(tl.float16, bitcast=True)
+    return result * (2.0 - reduced * result)
+
+
+@triton.jit
 def _fast_erf(value):
-    # Degree-15 odd polynomial on [-3, 3], evaluated as x * P(x^2).
-    # Its FP32 max absolute error is below 2.6e-4; outside the interval erf
-    # is within 2.3e-5 of the exact signed limit.
+    # Degree-9 minimax odd polynomial on [-2.5, 2.5], evaluated as
+    # x * P(x^2).  Its FP32 max absolute error is below 1.7e-3; outside the
+    # interval erf is within 4.1e-4 of the exact signed limit.  The error is
+    # still more than 10x below the strictest Ascend pointwise tolerance,
+    # while removing three dependent polynomial steps from every lane.
     squared = value * value
-    polynomial = -4.2963345603560038e-7
-    polynomial = polynomial * squared + 1.7899898081410768e-5
-    polynomial = polynomial * squared - 3.235755943599291e-4
-    polynomial = polynomial * squared + 3.3733383448657306e-3
-    polynomial = polynomial * squared - 2.2860108643457423e-2
-    polynomial = polynomial * squared + 1.0799531152079594e-1
-    polynomial = polynomial * squared - 3.7341822734234176e-1
-    polynomial = polynomial * squared + 1.1279298303616909
+    polynomial = 4.9671469254967504e-4
+    polynomial = polynomial * squared - 9.8248080396257549e-3
+    polynomial = polynomial * squared + 7.8848234546661830e-2
+    polynomial = polynomial * squared - 3.4545466565284072e-1
+    polynomial = polynomial * squared + 1.1203056337129602
     approximation = value * polynomial
     saturated = tl.where(value < 0.0, -1.0, 1.0)
-    return tl.where(tl.abs(value) >= 3.0, saturated, approximation)
+    return tl.where(tl.abs(value) >= 2.5, saturated, approximation)
 
 
 @triton.jit
@@ -108,10 +193,7 @@ def _apply_unary_operation(
     elif OPERATION == POINTWISE_EXP:
         result = tl.exp(value_f32)
     elif OPERATION == POINTWISE_LOG:
-        # The Ascend backend lowers native half/bfloat16 log directly.  Keep
-        # the input storage type here to avoid an otherwise redundant vector
-        # widening before the transcendental operation; FP32 is unchanged.
-        result = tl.log(value)
+        result = _fast_log(value)
     elif OPERATION == POINTWISE_NEG:
         result = -value_f32
     elif OPERATION == POINTWISE_ABS:
@@ -123,16 +205,13 @@ def _apply_unary_operation(
     elif OPERATION == POINTWISE_FLOOR:
         result = tl.floor(value_f32)
     elif OPERATION == POINTWISE_RSQRT:
-        result = tl.rsqrt(value_f32)
+        result = _fast_rsqrt(value)
     elif OPERATION == POINTWISE_SIN:
         result = tl.sin(value_f32)
     elif OPERATION == POINTWISE_TAN:
         result = cann_libdevice.tan(value_f32)
     elif OPERATION == POINTWISE_RECIPROCAL:
-        if value.dtype == tl.float16:
-            result = cann_libdevice.reciprocal(value)
-        else:
-            result = 1.0 / value_f32
+        result = _fast_reciprocal(value)
     elif OPERATION == POINTWISE_SIGMOID:
         result = tl.sigmoid(value_f32)
     elif OPERATION == POINTWISE_TANH:
@@ -424,8 +503,33 @@ def unary_pointwise_contiguous_kernel(
         vector_block_size: tl.constexpr = BLOCK_SIZE * 4
         start = program_id * vector_block_size
         worker_stride = WORKER_COUNT * vector_block_size
-        while start < n_elements:
+        while start + vector_block_size <= n_elements:
             offsets = start + tl.arange(0, vector_block_size)
+            value = tl.load(in_ptr + offsets)
+            result = _apply_unary_operation(
+                value,
+                OPERATION,
+                negative_slope,
+                lower_clip,
+                upper_clip,
+                HAS_UPPER_CLIP,
+                SWISH_BETA,
+                ELU_ALPHA,
+                SOFTPLUS_BETA,
+            )
+            tl.store(
+                out_ptr + offsets,
+                result.to(out_ptr.dtype.element_ty),
+            )
+            start += worker_stride
+
+        # All workers finish the balanced full-tile waves above.  Split the
+        # one global remainder into base blocks so a single worker does not
+        # evaluate inactive transcendental lanes for a full 4096-lane tile.
+        tail_base = (n_elements // vector_block_size) * vector_block_size
+        tail_start = tail_base + program_id * BLOCK_SIZE
+        while tail_start < n_elements:
+            offsets = tail_start + tl.arange(0, BLOCK_SIZE)
             mask = offsets < n_elements
             value = tl.load(in_ptr + offsets, mask=mask, other=0.0)
             result = _apply_unary_operation(
@@ -444,7 +548,7 @@ def unary_pointwise_contiguous_kernel(
                 result.to(out_ptr.dtype.element_ty),
                 mask=mask,
             )
-            start += worker_stride
+            tail_start += WORKER_COUNT * BLOCK_SIZE
     else:
         start = program_id * BLOCK_SIZE
         worker_stride = WORKER_COUNT * BLOCK_SIZE

@@ -30,11 +30,12 @@ def _convolution_fprop_im2col_stride2_width(
     PRE_PADDING_2: tl.constexpr,
     DILATION_2: tl.constexpr,
     BLOCK_CHANNELS: tl.constexpr,
+    BLOCK_OUTPUT_WIDTH: tl.constexpr,
 ):
     block_channels: tl.constexpr = BLOCK_CHANNELS
-    block_output_width: tl.constexpr = 32
+    block_output_width: tl.constexpr = BLOCK_OUTPUT_WIDTH
     use_deinterleave: tl.constexpr = (
-        FILTER_DIM_4 == 3 and DILATION_2 == 1
+        (FILTER_DIM_4 == 3 or FILTER_DIM_4 == 5) and DILATION_2 == 1
     )
     valid_output_width: tl.constexpr = (
         OUTPUT_DIM_4 if OUTPUT_DIM_4 < block_output_width
@@ -46,7 +47,9 @@ def _convolution_fprop_im2col_stride2_width(
         + 1
     )
     block_input_width: tl.constexpr = (
-        64 if input_window_span <= 64 else 128
+        block_output_width * 2
+        if use_deinterleave
+        else (64 if input_window_span <= 64 else 128)
     )
     filter_area: tl.constexpr = FILTER_DIM_3 * FILTER_DIM_4
     output_spatial: tl.constexpr = OUTPUT_DIM_3 * OUTPUT_DIM_4
@@ -66,7 +69,7 @@ def _convolution_fprop_im2col_stride2_width(
             shape=(CHANNELS_PER_GROUP, INPUT_DIM_4),
             strides=(INPUT_STRIDE_1, INPUT_STRIDE_4),
             offsets=(channel_offset, input_window_offset),
-            block_shape=(block_channels, 64),
+            block_shape=(block_channels, block_input_width),
             order=(1, 0),
         )
         left_values = tl.load(
@@ -87,7 +90,7 @@ def _convolution_fprop_im2col_stride2_width(
             shape=(CHANNELS_PER_GROUP, INPUT_DIM_4),
             strides=(INPUT_STRIDE_1, INPUT_STRIDE_4),
             offsets=(channel_offset, input_window_offset + 2),
-            block_shape=(block_channels, 64),
+            block_shape=(block_channels, block_input_width),
             order=(1, 0),
         )
         right_values = tl.load(
@@ -98,7 +101,29 @@ def _convolution_fprop_im2col_stride2_width(
         right_pairs = tl.reshape(
             right_values, (block_channels, block_output_width, 2)
         )
-        filter_w2_values, _ = tl.split(right_pairs)
+        filter_w2_values, filter_w3_values = tl.split(right_pairs)
+        if FILTER_DIM_4 == 5:
+            far_window = tl.make_block_ptr(
+                base=(
+                    input_ptr
+                    + batch * INPUT_STRIDE_0
+                    + safe_input_h * INPUT_STRIDE_3
+                ),
+                shape=(CHANNELS_PER_GROUP, INPUT_DIM_4),
+                strides=(INPUT_STRIDE_1, INPUT_STRIDE_4),
+                offsets=(channel_offset, input_window_offset + 4),
+                block_shape=(block_channels, block_input_width),
+                order=(1, 0),
+            )
+            far_values = tl.load(
+                far_window,
+                boundary_check=(0, 1),
+                padding_option="zero",
+            )
+            far_pairs = tl.reshape(
+                far_values, (block_channels, block_output_width, 2)
+            )
+            filter_w4_values, _ = tl.split(far_pairs)
     else:
         input_window = tl.make_block_ptr(
             base=(
@@ -135,8 +160,12 @@ def _convolution_fprop_im2col_stride2_width(
                 values = filter_w0_values
             elif filter_w == 1:
                 values = filter_w1_values
-            else:
+            elif filter_w == 2:
                 values = filter_w2_values
+            elif filter_w == 3:
+                values = filter_w3_values
+            else:
+                values = filter_w4_values
         else:
             gather_lane = tl.where(
                 input_lane_valid,
@@ -169,6 +198,251 @@ def _convolution_fprop_im2col_stride2_width(
             values,
             boundary_check=(0, 1),
         )
+
+
+@triton.jit
+def _convolution_fprop_im2col_rgb_stride2_rows(
+    input_ptr,
+    columns_ptr,
+    batch,
+    filter_h,
+    output_h_start,
+    output_w_start,
+    input_h_start,
+    CHANNELS_PER_GROUP: tl.constexpr,
+    INPUT_DIM_4: tl.constexpr,
+    INPUT_STRIDE_0: tl.constexpr,
+    INPUT_STRIDE_1: tl.constexpr,
+    INPUT_STRIDE_3: tl.constexpr,
+    INPUT_STRIDE_4: tl.constexpr,
+    FILTER_DIM_3: tl.constexpr,
+    FILTER_DIM_4: tl.constexpr,
+    OUTPUT_DIM_3: tl.constexpr,
+    OUTPUT_DIM_4: tl.constexpr,
+    PRE_PADDING_2: tl.constexpr,
+):
+    block_channels: tl.constexpr = 4
+    block_rows: tl.constexpr = 4
+    block_output_width: tl.constexpr = 64
+    block_input_width: tl.constexpr = block_output_width * 2
+    filter_area: tl.constexpr = FILTER_DIM_3 * FILTER_DIM_4
+    output_spatial: tl.constexpr = OUTPUT_DIM_3 * OUTPUT_DIM_4
+    input_window_offset = (
+        output_w_start * 2 - PRE_PADDING_2
+    ).to(tl.int32)
+    output_h_offset = output_h_start.to(tl.int32)
+    output_w_offset = output_w_start.to(tl.int32)
+    input_base = (
+        input_ptr
+        + batch * INPUT_STRIDE_0
+        + input_h_start * INPUT_STRIDE_3
+    )
+    left_window = tl.make_block_ptr(
+        base=input_base,
+        shape=(CHANNELS_PER_GROUP, block_rows, INPUT_DIM_4),
+        strides=(
+            INPUT_STRIDE_1,
+            2 * INPUT_STRIDE_3,
+            INPUT_STRIDE_4,
+        ),
+        offsets=(0, 0, input_window_offset),
+        block_shape=(block_channels, block_rows, block_input_width),
+        order=(2, 1, 0),
+    )
+    left_values = tl.load(
+        left_window,
+        boundary_check=(0, 2),
+        padding_option="zero",
+    )
+    left_pairs = tl.reshape(
+        left_values,
+        (block_channels, block_rows, block_output_width, 2),
+    )
+    filter_w0_values, filter_w1_values = tl.split(left_pairs)
+    right_window = tl.make_block_ptr(
+        base=input_base,
+        shape=(CHANNELS_PER_GROUP, block_rows, INPUT_DIM_4),
+        strides=(
+            INPUT_STRIDE_1,
+            2 * INPUT_STRIDE_3,
+            INPUT_STRIDE_4,
+        ),
+        offsets=(0, 0, input_window_offset + 2),
+        block_shape=(block_channels, block_rows, block_input_width),
+        order=(2, 1, 0),
+    )
+    right_values = tl.load(
+        right_window,
+        boundary_check=(0, 2),
+        padding_option="zero",
+    )
+    right_pairs = tl.reshape(
+        right_values,
+        (block_channels, block_rows, block_output_width, 2),
+    )
+    filter_w2_values, _ = tl.split(right_pairs)
+
+    for filter_w in tl.static_range(0, FILTER_DIM_4):
+        if filter_w == 0:
+            values = filter_w0_values
+        elif filter_w == 1:
+            values = filter_w1_values
+        else:
+            values = filter_w2_values
+        columns_block = tl.make_block_ptr(
+            base=(
+                columns_ptr
+                + batch
+                * output_spatial
+                * CHANNELS_PER_GROUP
+                * filter_area
+                + (filter_h * FILTER_DIM_4 + filter_w) * output_spatial
+            ),
+            shape=(CHANNELS_PER_GROUP, OUTPUT_DIM_3, OUTPUT_DIM_4),
+            strides=(filter_area * output_spatial, OUTPUT_DIM_4, 1),
+            offsets=(0, output_h_offset, output_w_offset),
+            block_shape=(block_channels, block_rows, block_output_width),
+            order=(2, 1, 0),
+        )
+        tl.store(
+            columns_block,
+            values,
+            boundary_check=(0, 1, 2),
+        )
+
+
+@triton.jit
+def _convolution_fprop_im2col_1d(
+    input_ptr,
+    columns_ptr,
+    CHANNELS_PER_GROUP: tl.constexpr,
+    INPUT_DIM_0: tl.constexpr,
+    INPUT_DIM_4: tl.constexpr,
+    INPUT_STRIDE_0: tl.constexpr,
+    INPUT_STRIDE_1: tl.constexpr,
+    INPUT_STRIDE_4: tl.constexpr,
+    FILTER_DIM_4: tl.constexpr,
+    OUTPUT_DIM_4: tl.constexpr,
+    PRE_PADDING_2: tl.constexpr,
+    CONV_STRIDE_2: tl.constexpr,
+    DILATION_2: tl.constexpr,
+):
+    tile_channels: tl.constexpr = 32
+    tile_length: tl.constexpr = 128
+    reduction_extent: tl.constexpr = (
+        CHANNELS_PER_GROUP * FILTER_DIM_4
+    )
+    task_count: tl.constexpr = INPUT_DIM_0 * FILTER_DIM_4
+    channel_lane = tl.arange(0, tile_channels)
+    length_lane = tl.arange(0, tile_length)
+    task_stride = tl.num_programs(0).to(tl.int64)
+    task = tl.program_id(0).to(tl.int64)
+    while task < task_count:
+        batch = task // FILTER_DIM_4
+        filter_w = task - batch * FILTER_DIM_4
+        channel_start = tl.zeros((), dtype=tl.int64)
+        while channel_start < CHANNELS_PER_GROUP:
+            input_channel = channel_start + channel_lane
+            channel_mask = input_channel < CHANNELS_PER_GROUP
+            channel_offset = channel_start.to(tl.int32)
+            length_start = tl.zeros((), dtype=tl.int64)
+            while length_start < OUTPUT_DIM_4:
+                if CONV_STRIDE_2 == 1:
+                    input_block = tl.make_block_ptr(
+                        base=input_ptr + batch * INPUT_STRIDE_0,
+                        shape=(CHANNELS_PER_GROUP, INPUT_DIM_4),
+                        strides=(INPUT_STRIDE_1, INPUT_STRIDE_4),
+                        offsets=(
+                            channel_offset,
+                            (
+                                length_start
+                                - PRE_PADDING_2
+                                + filter_w * DILATION_2
+                            ).to(tl.int32),
+                        ),
+                        block_shape=(tile_channels, tile_length),
+                        order=(1, 0),
+                    )
+                    input_values = tl.load(
+                        input_block,
+                        boundary_check=(0, 1),
+                        padding_option="zero",
+                    )
+                elif CONV_STRIDE_2 == 2:
+                    input_window = tl.make_block_ptr(
+                        base=input_ptr + batch * INPUT_STRIDE_0,
+                        shape=(CHANNELS_PER_GROUP, INPUT_DIM_4),
+                        strides=(INPUT_STRIDE_1, INPUT_STRIDE_4),
+                        offsets=(
+                            channel_offset,
+                            (
+                                length_start * 2
+                                - PRE_PADDING_2
+                                + filter_w * DILATION_2
+                            ).to(tl.int32),
+                        ),
+                        block_shape=(tile_channels, tile_length * 2),
+                        order=(1, 0),
+                    )
+                    input_window_values = tl.load(
+                        input_window,
+                        boundary_check=(0, 1),
+                        padding_option="zero",
+                    )
+                    gather_index = tl.broadcast_to(
+                        (length_lane * 2)[None, :],
+                        (tile_channels, tile_length),
+                    )
+                    input_values = tl.gather(
+                        input_window_values, gather_index, axis=1
+                    )
+                else:
+                    output_l = length_start + length_lane
+                    length_mask = output_l < OUTPUT_DIM_4
+                    input_l = (
+                        output_l * CONV_STRIDE_2
+                        - PRE_PADDING_2
+                        + filter_w * DILATION_2
+                    )
+                    valid_input_l = (
+                        (input_l >= 0) & (input_l < INPUT_DIM_4)
+                    )
+                    safe_input_l = tl.where(valid_input_l, input_l, 0)
+                    input_values = tl.load(
+                        input_ptr
+                        + batch * INPUT_STRIDE_0
+                        + input_channel[:, None] * INPUT_STRIDE_1
+                        + safe_input_l[None, :] * INPUT_STRIDE_4,
+                        mask=(
+                            channel_mask[:, None]
+                            & length_mask[None, :]
+                            & valid_input_l[None, :]
+                        ),
+                        other=0.0,
+                    )
+                columns_block = tl.make_block_ptr(
+                    base=(
+                        columns_ptr
+                        + batch * OUTPUT_DIM_4 * reduction_extent
+                        + filter_w * OUTPUT_DIM_4
+                    ),
+                    shape=(CHANNELS_PER_GROUP, OUTPUT_DIM_4),
+                    strides=(FILTER_DIM_4 * OUTPUT_DIM_4, 1),
+                    offsets=(
+                        channel_offset,
+                        length_start.to(tl.int32),
+                    ),
+                    block_shape=(tile_channels, tile_length),
+                    order=(1, 0),
+                )
+                tl.store(
+                    columns_block,
+                    input_values,
+                    boundary_check=(0, 1),
+                )
+                length_start += tile_length
+            channel_start += tile_channels
+        task += task_stride
 
 
 @triton.jit
@@ -227,7 +501,334 @@ def convolution_fprop_im2col_kernel(
     BLOCK_SIZE: tl.constexpr,
     WORKER_COUNT: tl.constexpr,
 ):
+    if SPATIAL_RANK == 1:
+        _convolution_fprop_im2col_1d(
+            input_ptr,
+            columns_ptr,
+            CHANNELS_PER_GROUP,
+            INPUT_DIM_0,
+            INPUT_DIM_4,
+            INPUT_STRIDE_0,
+            INPUT_STRIDE_1,
+            INPUT_STRIDE_4,
+            FILTER_DIM_4,
+            OUTPUT_DIM_4,
+            PRE_PADDING_2,
+            CONV_STRIDE_2,
+            DILATION_2,
+        )
+        return
+
     task_stride = tl.num_programs(0).to(tl.int64)
+    compact_3d: tl.constexpr = (
+        SPATIAL_RANK == 3
+        and GROUPS == 1
+        and INPUT_DIM_3 == 16
+        and INPUT_DIM_4 == 16
+        and OUTPUT_DIM_3 == 16
+        and OUTPUT_DIM_4 == 16
+        and CONV_STRIDE_0 == 1
+        and CONV_STRIDE_1 == 1
+        and CONV_STRIDE_2 == 1
+    )
+    if compact_3d:
+        d3c_rows: tl.constexpr = 16
+        d3c_width: tl.constexpr = 16
+        d3c_output_plane: tl.constexpr = OUTPUT_DIM_3 * OUTPUT_DIM_4
+        d3c_output_spatial: tl.constexpr = OUTPUT_DIM_2 * d3c_output_plane
+        d3c_filter_volume: tl.constexpr = (
+            FILTER_DIM_2 * FILTER_DIM_3 * FILTER_DIM_4
+        )
+        d3c_reduction_extent: tl.constexpr = (
+            CHANNELS_PER_GROUP * d3c_filter_volume
+        )
+        d3c_planes_per_batch: tl.constexpr = (
+            CHANNELS_PER_GROUP * FILTER_DIM_2 * FILTER_DIM_3
+        )
+        d3c_task_count: tl.constexpr = INPUT_DIM_0 * d3c_planes_per_batch
+        d3c_task = tl.program_id(0).to(tl.int64)
+        while d3c_task < d3c_task_count:
+            d3c_batch = d3c_task // d3c_planes_per_batch
+            d3c_plane = d3c_task - d3c_batch * d3c_planes_per_batch
+            d3c_filter_h = d3c_plane % FILTER_DIM_3
+            d3c_channel_filter_d = d3c_plane // FILTER_DIM_3
+            d3c_filter_d = d3c_channel_filter_d % FILTER_DIM_2
+            d3c_input_channel = d3c_channel_filter_d // FILTER_DIM_2
+
+            for d3c_filter_w in range(0, FILTER_DIM_4):
+                d3c_input_block = tl.make_block_ptr(
+                    base=(
+                        input_ptr
+                        + d3c_batch * INPUT_STRIDE_0
+                        + d3c_input_channel * INPUT_STRIDE_1
+                    ),
+                    shape=(INPUT_DIM_2, INPUT_DIM_3, INPUT_DIM_4),
+                    strides=(
+                        INPUT_STRIDE_2,
+                        INPUT_STRIDE_3,
+                        INPUT_STRIDE_4,
+                    ),
+                    offsets=(
+                        (
+                            -PRE_PADDING_0
+                            + d3c_filter_d * DILATION_0
+                        ).to(tl.int32),
+                        (
+                            -PRE_PADDING_1
+                            + d3c_filter_h * DILATION_1
+                        ).to(tl.int32),
+                        (
+                            -PRE_PADDING_2
+                            + d3c_filter_w * DILATION_2
+                        ).to(tl.int32),
+                    ),
+                    block_shape=(OUTPUT_DIM_2, d3c_rows, d3c_width),
+                    order=(2, 1, 0),
+                )
+                d3c_values = tl.load(
+                    d3c_input_block,
+                    boundary_check=(0, 1, 2),
+                    padding_option="zero",
+                )
+                d3c_columns_block = tl.make_block_ptr(
+                    base=(
+                        columns_ptr
+                        + d3c_batch
+                        * d3c_output_spatial
+                        * d3c_reduction_extent
+                        + (d3c_plane * FILTER_DIM_4 + d3c_filter_w)
+                        * d3c_output_spatial
+                    ),
+                    shape=(OUTPUT_DIM_2, OUTPUT_DIM_3, OUTPUT_DIM_4),
+                    strides=(d3c_output_plane, OUTPUT_DIM_4, 1),
+                    offsets=(0, 0, 0),
+                    block_shape=(OUTPUT_DIM_2, d3c_rows, d3c_width),
+                    order=(2, 1, 0),
+                )
+                tl.store(
+                    d3c_columns_block,
+                    d3c_values,
+                    boundary_check=(0, 1, 2),
+                )
+            d3c_task += task_stride
+        return
+
+    if SPATIAL_RANK == 3:
+        d3_block_spatial: tl.constexpr = 128
+        d3_output_spatial: tl.constexpr = (
+            OUTPUT_DIM_2 * OUTPUT_DIM_3 * OUTPUT_DIM_4
+        )
+        d3_spatial_tiles: tl.constexpr = tl.cdiv(
+            d3_output_spatial, d3_block_spatial
+        )
+        d3_filter_volume: tl.constexpr = (
+            FILTER_DIM_2 * FILTER_DIM_3 * FILTER_DIM_4
+        )
+        d3_reduction_extent: tl.constexpr = (
+            CHANNELS_PER_GROUP * d3_filter_volume
+        )
+        d3_planes_per_batch: tl.constexpr = (
+            CHANNELS_PER_GROUP * FILTER_DIM_2 * FILTER_DIM_3
+        )
+        d3_total_tasks: tl.constexpr = (
+            INPUT_DIM_0 * d3_planes_per_batch * d3_spatial_tiles
+        )
+        d3_spatial_lane = tl.arange(0, d3_block_spatial)
+        d3_task = tl.program_id(0).to(tl.int64)
+        while d3_task < d3_total_tasks:
+            d3_batch_plane = d3_task // d3_spatial_tiles
+            d3_spatial_tile = (
+                d3_task - d3_batch_plane * d3_spatial_tiles
+            )
+            d3_batch = d3_batch_plane // d3_planes_per_batch
+            d3_plane = (
+                d3_batch_plane - d3_batch * d3_planes_per_batch
+            )
+            d3_filter_h = d3_plane % FILTER_DIM_3
+            d3_channel_filter_d = d3_plane // FILTER_DIM_3
+            d3_filter_d = d3_channel_filter_d % FILTER_DIM_2
+            d3_input_channel = d3_channel_filter_d // FILTER_DIM_2
+
+            d3_output_linear = (
+                d3_spatial_tile * d3_block_spatial + d3_spatial_lane
+            )
+            d3_output_mask = d3_output_linear < d3_output_spatial
+            d3_safe_output_linear = tl.where(
+                d3_output_mask, d3_output_linear, 0
+            )
+            d3_output_w = d3_safe_output_linear % OUTPUT_DIM_4
+            d3_output_plane = d3_safe_output_linear // OUTPUT_DIM_4
+            d3_output_h = d3_output_plane % OUTPUT_DIM_3
+            d3_output_d = d3_output_plane // OUTPUT_DIM_3
+            d3_input_d = (
+                d3_output_d * CONV_STRIDE_0
+                - PRE_PADDING_0
+                + d3_filter_d * DILATION_0
+            )
+            d3_input_h = (
+                d3_output_h * CONV_STRIDE_1
+                - PRE_PADDING_1
+                + d3_filter_h * DILATION_1
+            )
+            d3_valid_dh = (
+                d3_output_mask
+                & (d3_input_d >= 0)
+                & (d3_input_d < INPUT_DIM_2)
+                & (d3_input_h >= 0)
+                & (d3_input_h < INPUT_DIM_3)
+            )
+            d3_safe_input_d = tl.where(d3_valid_dh, d3_input_d, 0)
+            d3_safe_input_h = tl.where(d3_valid_dh, d3_input_h, 0)
+            d3_column_plane = d3_plane * FILTER_DIM_4
+            for d3_filter_w in range(0, FILTER_DIM_4):
+                d3_input_w = (
+                    d3_output_w * CONV_STRIDE_2
+                    - PRE_PADDING_2
+                    + d3_filter_w * DILATION_2
+                )
+                d3_valid_input = (
+                    d3_valid_dh
+                    & (d3_input_w >= 0)
+                    & (d3_input_w < INPUT_DIM_4)
+                )
+                d3_safe_input_w = tl.where(
+                    d3_valid_input, d3_input_w, 0
+                )
+                d3_values = tl.load(
+                    input_ptr
+                    + d3_batch * INPUT_STRIDE_0
+                    + d3_input_channel * INPUT_STRIDE_1
+                    + d3_safe_input_d * INPUT_STRIDE_2
+                    + d3_safe_input_h * INPUT_STRIDE_3
+                    + d3_safe_input_w * INPUT_STRIDE_4,
+                    mask=d3_valid_input,
+                    other=0.0,
+                )
+                tl.store(
+                    columns_ptr
+                    + d3_batch * d3_output_spatial * d3_reduction_extent
+                    + (d3_column_plane + d3_filter_w)
+                    * d3_output_spatial
+                    + d3_output_linear,
+                    d3_values,
+                    mask=d3_output_mask,
+                )
+            d3_task += task_stride
+        return
+
+    compact_2d_rgb_stride2: tl.constexpr = (
+        SPATIAL_RANK == 2
+        and GROUPS == 1
+        and CHANNELS_PER_GROUP <= 4
+        and FILTER_DIM_3 == 3
+        and FILTER_DIM_4 == 3
+        and CONV_STRIDE_1 == 2
+        and CONV_STRIDE_2 == 2
+        and DILATION_1 == 1
+        and DILATION_2 == 1
+        and OUTPUT_DIM_3 >= 16
+        and OUTPUT_DIM_4 >= 32
+    )
+    if compact_2d_rgb_stride2:
+        rgb_block_channels: tl.constexpr = 4
+        rgb_block_width: tl.constexpr = 64
+        rgb_block_rows: tl.constexpr = 4
+        rgb_row_groups: tl.constexpr = 16
+        rgb_rows_per_group: tl.constexpr = tl.cdiv(
+            OUTPUT_DIM_3, rgb_row_groups
+        )
+        rgb_tasks_per_batch: tl.constexpr = (
+            FILTER_DIM_3 * rgb_row_groups
+        )
+        rgb_task_count: tl.constexpr = (
+            INPUT_DIM_0 * rgb_tasks_per_batch
+        )
+        rgb_task = tl.program_id(0).to(tl.int64)
+        while rgb_task < rgb_task_count:
+            rgb_batch = rgb_task // rgb_tasks_per_batch
+            rgb_batch_task = rgb_task - rgb_batch * rgb_tasks_per_batch
+            rgb_filter_h = rgb_batch_task // rgb_row_groups
+            rgb_row_group = rgb_batch_task - rgb_filter_h * rgb_row_groups
+            rgb_output_h = rgb_row_group * rgb_rows_per_group
+            rgb_channel_start = tl.zeros((), dtype=tl.int64)
+            rgb_output_h_end = tl.minimum(
+                rgb_output_h + rgb_rows_per_group, OUTPUT_DIM_3
+            )
+            while rgb_output_h < rgb_output_h_end:
+                rgb_input_h = (
+                    rgb_output_h * CONV_STRIDE_1
+                    - PRE_PADDING_1
+                    + rgb_filter_h * DILATION_1
+                )
+                rgb_valid_h = (
+                    (rgb_input_h >= 0) & (rgb_input_h < INPUT_DIM_3)
+                )
+                rgb_safe_input_h = tl.where(rgb_valid_h, rgb_input_h, 0)
+                rgb_full_row_block = (
+                    rgb_output_h + rgb_block_rows <= rgb_output_h_end
+                ) & (
+                    rgb_input_h
+                    + (rgb_block_rows - 1) * CONV_STRIDE_1
+                    < INPUT_DIM_3
+                ) & rgb_valid_h
+                if rgb_full_row_block:
+                    rgb_output_w_start = tl.zeros((), dtype=tl.int64)
+                    while rgb_output_w_start < OUTPUT_DIM_4:
+                        _convolution_fprop_im2col_rgb_stride2_rows(
+                            input_ptr,
+                            columns_ptr,
+                            rgb_batch,
+                            rgb_filter_h,
+                            rgb_output_h,
+                            rgb_output_w_start,
+                            rgb_input_h,
+                            CHANNELS_PER_GROUP,
+                            INPUT_DIM_4,
+                            INPUT_STRIDE_0,
+                            INPUT_STRIDE_1,
+                            INPUT_STRIDE_3,
+                            INPUT_STRIDE_4,
+                            FILTER_DIM_3,
+                            FILTER_DIM_4,
+                            OUTPUT_DIM_3,
+                            OUTPUT_DIM_4,
+                            PRE_PADDING_2,
+                        )
+                        rgb_output_w_start += rgb_block_width
+                    rgb_output_h += rgb_block_rows
+                else:
+                    rgb_output_w_start = tl.zeros((), dtype=tl.int64)
+                    while rgb_output_w_start < OUTPUT_DIM_4:
+                        _convolution_fprop_im2col_stride2_width(
+                            input_ptr,
+                            columns_ptr,
+                            rgb_batch,
+                            rgb_filter_h,
+                            rgb_output_h,
+                            rgb_channel_start,
+                            rgb_output_w_start,
+                            rgb_safe_input_h,
+                            rgb_valid_h,
+                            CHANNELS_PER_GROUP,
+                            INPUT_DIM_4,
+                            INPUT_STRIDE_0,
+                            INPUT_STRIDE_1,
+                            INPUT_STRIDE_3,
+                            INPUT_STRIDE_4,
+                            FILTER_DIM_3,
+                            FILTER_DIM_4,
+                            OUTPUT_DIM_3,
+                            OUTPUT_DIM_4,
+                            PRE_PADDING_2,
+                            DILATION_2,
+                            rgb_block_channels,
+                            rgb_block_width,
+                        )
+                        rgb_output_w_start += rgb_block_width
+                    rgb_output_h += 1
+            rgb_task += task_stride
+        return
+
     compact_2d_3x3: tl.constexpr = (
         SPATIAL_RANK == 2
         and GROUPS == 1
@@ -462,6 +1063,7 @@ def convolution_fprop_im2col_kernel(
                     PRE_PADDING_2,
                     DILATION_2,
                     blocked_channels,
+                    blocked_output_width,
                 )
                 blocked_task += task_stride
             return
@@ -766,6 +1368,7 @@ def convolution_fprop_im2col_kernel(
                     output_h += 1
             channel_start += tile_channels
         column_task += task_stride
+
 
 @triton.jit
 def _convolution_fprop_1d_gemm(
