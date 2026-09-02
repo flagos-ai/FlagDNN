@@ -1,5 +1,6 @@
-# Hygon validation deliberately has one reference SDK: hipDNN. Production
-# backend targets do not link any target from this directory.
+# Hygon validation deliberately has one vendor reference SDK: hipDNN. The
+# functional-only CPU semantic oracle is repository code and does not add a
+# vendor dependency. Production backend targets do not link validation targets.
 
 include("${PROJECT_SOURCE_DIR}/cmake/Operators.cmake")
 
@@ -39,6 +40,11 @@ set(_flagdnn_hygon_operators
   softplus sqrt swish tan tanh
   binary_select cmp_ge cmp_gt cmp_le cmp_lt cmp_neq logical_and
   logical_or scale sigmoid_backward)
+
+# These functional tests deliberately use the repository CPU semantic oracle.
+# Keep this Hygon routing policy separate from the set of operations that the
+# CPU reference library may implement now or in the future.
+set(_flagdnn_hygon_cpu_reference_operators div pow mod cmp_eq)
 
 set(_flagdnn_hygon_tensor_operators reshape transpose slice reduction matmul)
 
@@ -200,6 +206,7 @@ if(FLAGDNN_BUILD_TESTS)
     "${CMAKE_CURRENT_SOURCE_DIR}")
   target_link_libraries(flagdnn_test_hygon_adapter PUBLIC
     FlagDNN::flagdnn
+    flagdnn_validation_cpu_reference
     flagdnn_validation_hygon_platform
     flagdnn_validation_hygon_reference)
   flagdnn_enable_warnings(flagdnn_test_hygon_adapter)
@@ -220,6 +227,11 @@ if(FLAGDNN_BUILD_TESTS)
   foreach(operator IN LISTS FLAGDNN_FUNCTIONAL_OPERATORS)
     set_tests_properties("functional.hygon.${operator}" PROPERTIES
       SKIP_RETURN_CODE 77)
+  endforeach()
+
+  foreach(operator IN LISTS _flagdnn_hygon_cpu_reference_operators)
+    set_tests_properties("functional.hygon.${operator}" PROPERTIES
+      LABELS "functional;correctness;hygon;${operator};cpu-reference")
   endforeach()
 
   add_executable(flagdnn_test_hygon_normalization_stability
@@ -461,6 +473,7 @@ if(FLAGDNN_BUILD_BENCHMARKS)
 endif()
 
 unset(_flagdnn_hygon_operators)
+unset(_flagdnn_hygon_cpu_reference_operators)
 unset(_flagdnn_hygon_tensor_operators)
 unset(_flagdnn_hygon_convolution_operators)
 unset(_flagdnn_hygon_attention_operators)

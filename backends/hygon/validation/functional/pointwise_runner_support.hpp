@@ -10,6 +10,7 @@
 #include "hip_driver.hpp"
 #include "hipdnn_reference.hpp"
 #include "pointwise_reference.hpp"
+#include "reference/cpu/pointwise.hpp"
 #include "tensor_io.hpp"
 
 #include <flagdnn/flagdnn.hpp>
@@ -39,6 +40,7 @@ namespace flagdnn::testing::hygon_functional::pointwise {
 
 namespace hv = validation::hygon;
 namespace io = validation::hygon::tensor_io;
+namespace cpu_reference = ::flagdnn::reference::cpu;
 
 inline constexpr int kSkipReturnCode = 77;
 
@@ -183,28 +185,41 @@ inline std::vector<float> make_input(std::size_t count, std::size_t input_index,
 struct PreparedBuffers {
   std::vector<TestTensor> inputs;
   TestTensor output;
+  std::vector<std::vector<float>> logical_inputs;
   std::vector<std::unique_ptr<hv::DeviceBuffer>> buffers;
   std::vector<flagdnnBinding_t> bindings;
 };
 
+enum class LogicalInputCapture { kDisabled, kEnabled };
+
 inline PreparedBuffers
 prepare_buffers(std::span<const TestTensor> inputs, const TestTensor &output,
                 std::span<const PointwiseInputDomain> domains,
-                BindingAddress binding_address, hv::Stream &stream) {
+                BindingAddress binding_address,
+                LogicalInputCapture logical_input_capture,
+                hv::Stream &stream) {
   if (inputs.size() != domains.size()) {
     throw std::invalid_argument("functional input domains do not match arity");
   }
   PreparedBuffers result;
   result.inputs.assign(inputs.begin(), inputs.end());
   result.output = output;
+  if (logical_input_capture == LogicalInputCapture::kEnabled) {
+    result.logical_inputs.reserve(inputs.size());
+  }
   result.buffers.reserve(inputs.size() + 1);
   result.bindings.reserve(inputs.size() + 1);
   for (std::size_t index = 0; index < inputs.size(); ++index) {
     const TestTensor &tensor = inputs[index];
     const std::vector<float> logical =
         make_input(io::element_count(tensor), index, domains[index]);
+    const std::vector<float> physical = io::scatter(logical, tensor);
     const std::vector<std::uint8_t> encoded =
-        io::encode(io::scatter(logical, tensor), tensor.data_type);
+        io::encode(physical, tensor.data_type);
+    if (logical_input_capture == LogicalInputCapture::kEnabled) {
+      result.logical_inputs.push_back(io::gather(
+          io::decode(encoded, tensor.data_type, physical.size()), tensor));
+    }
     auto buffer = std::make_unique<hv::DeviceBuffer>(
         tensor.binding_byte_offset + encoded.size());
     buffer->copy_from_host_at(encoded.data(), encoded.size(),
@@ -228,6 +243,16 @@ prepare_buffers(std::span<const TestTensor> inputs, const TestTensor &output,
                                    binding_address)});
   result.buffers.push_back(std::move(buffer));
   return result;
+}
+
+inline std::vector<float>
+quantize_logical_output(std::span<const float> logical,
+                        const TestTensor &output) {
+  const std::vector<float> physical = io::scatter(logical, output);
+  const std::vector<std::uint8_t> encoded =
+      io::encode(physical, output.data_type);
+  return io::gather(
+      io::decode(encoded, output.data_type, physical.size()), output);
 }
 
 inline std::vector<float> read_output(const PreparedBuffers &prepared,
@@ -263,6 +288,66 @@ inline void emit_skip(std::string_view operation, std::string_view case_name,
 
 enum class CaseResult { kExecuted, kSkipped };
 
+inline constexpr bool
+uses_hygon_cpu_reference(flagdnnPointwiseMode_t mode) noexcept {
+  switch (mode) {
+  case FLAGDNN_POINTWISE_DIV:
+  case FLAGDNN_POINTWISE_POW:
+  case FLAGDNN_POINTWISE_MOD:
+  case FLAGDNN_POINTWISE_CMP_EQ:
+    return true;
+  default:
+    return false;
+  }
+}
+
+template <typename BuildFlagdnn>
+CaseResult run_cpu_case(
+    std::string_view operation, std::string_view case_name,
+    std::span<const TestTensor> inputs, const TestTensor &output,
+    std::span<const PointwiseInputDomain> domains,
+    flagdnnPointwiseMode_t mode, double absolute_tolerance,
+    double relative_tolerance,
+    const std::function<flagdnn::Handle &()> &get_handle, hv::Stream &stream,
+    BuildFlagdnn &&build_flagdnn) {
+  if (!uses_hygon_cpu_reference(mode) || inputs.size() != 2) {
+    throw std::invalid_argument(
+        "CPU pointwise reference requires a supported binary operation");
+  }
+  if (!cpu_reference::supports_binary_pointwise(mode)) {
+    throw std::logic_error(
+        "Hygon CPU-reference policy has no matching CPU implementation");
+  }
+
+  auto flagdnn = build_flagdnn(get_handle());
+  PreparedBuffers flagdnn_buffers = prepare_buffers(
+      inputs, output, domains, BindingAddress::kTensorEntrance,
+      LogicalInputCapture::kEnabled, stream);
+  if (flagdnn_buffers.logical_inputs.size() != 2) {
+    throw std::logic_error("CPU pointwise reference input preparation failed");
+  }
+  std::vector<float> expected = cpu_reference::evaluate_binary_pointwise(
+      mode, flagdnn_buffers.logical_inputs[0], inputs[0].dimensions,
+      flagdnn_buffers.logical_inputs[1], inputs[1].dimensions,
+      output.dimensions);
+  expected = quantize_logical_output(expected, output);
+
+  hv::DeviceBuffer flagdnn_workspace(flagdnn->workspace_size());
+  stream.synchronize();
+  execute(*flagdnn, flagdnn_buffers.bindings, flagdnn_workspace, stream);
+  stream.synchronize();
+
+  const Accuracy accuracy = compare_outputs(
+      read_output(flagdnn_buffers, stream, "FlagDNN"), expected,
+      absolute_tolerance, relative_tolerance, case_name,
+      "CPU semantic oracle");
+  std::cout << case_name << ": FlagDNN Graph vs CPU semantic oracle PASS"
+            << " op=" << operation
+            << " max_abs=" << accuracy.maximum_absolute
+            << " max_rel=" << accuracy.maximum_relative << std::endl;
+  return CaseResult::kExecuted;
+}
+
 template <typename BuildFlagdnn, typename BuildReference>
 CaseResult run_case(std::string_view operation, std::string_view case_name,
                     std::span<const TestTensor> inputs,
@@ -288,7 +373,8 @@ CaseResult run_case(std::string_view operation, std::string_view case_name,
   try {
     reference = build_reference();
     reference_buffers = prepare_buffers(inputs, output, domains,
-                                        BindingAddress::kStorageBase, stream);
+                                        BindingAddress::kStorageBase,
+                                        LogicalInputCapture::kDisabled, stream);
     hv::DeviceBuffer reference_workspace(reference->workspace_size());
     stream.synchronize();
     execute(*reference, reference_buffers.bindings, reference_workspace,
@@ -307,7 +393,8 @@ CaseResult run_case(std::string_view operation, std::string_view case_name,
 
   auto flagdnn = build_flagdnn(get_handle());
   PreparedBuffers flagdnn_buffers = prepare_buffers(
-      inputs, output, domains, BindingAddress::kTensorEntrance, stream);
+      inputs, output, domains, BindingAddress::kTensorEntrance,
+      LogicalInputCapture::kDisabled, stream);
   hv::DeviceBuffer flagdnn_workspace(flagdnn->workspace_size());
   stream.synchronize();
   execute(*flagdnn, flagdnn_buffers.bindings, flagdnn_workspace, stream);

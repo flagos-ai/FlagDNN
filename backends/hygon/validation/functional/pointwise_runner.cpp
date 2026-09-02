@@ -32,17 +32,30 @@ int run_pointwise_functional_test(int argc, char **argv,
           }
           ++matched;
           validate_pointwise_case(test_case);
-          const support::CaseResult result = support::run_case(
-              support::case_operation_name(test_case.name), test_case.name,
-              test_case.inputs, test_case.output, test_case.input_domains,
-              hv::make_hipdnn_pointwise_operation(
-                  test_case.mode, test_case.attributes, test_case.alpha),
-              test_case.absolute_tolerance, test_case.relative_tolerance,
-              get_handle, stream,
-              [&](flagdnn::Handle &value) {
-                return build_flagdnn_pointwise(value, test_case);
-              },
-              [&] { return build_pointwise_reference(test_case); });
+          const std::string operation =
+              support::case_operation_name(test_case.name);
+          support::CaseResult result;
+          if (support::uses_hygon_cpu_reference(test_case.mode)) {
+            result = support::run_cpu_case(
+                operation, test_case.name, test_case.inputs,
+                test_case.output, test_case.input_domains, test_case.mode,
+                test_case.absolute_tolerance, test_case.relative_tolerance,
+                get_handle, stream, [&](flagdnn::Handle &value) {
+                  return build_flagdnn_pointwise(value, test_case);
+                });
+          } else {
+            result = support::run_case(
+                operation, test_case.name, test_case.inputs,
+                test_case.output, test_case.input_domains,
+                hv::make_hipdnn_pointwise_operation(
+                    test_case.mode, test_case.attributes, test_case.alpha),
+                test_case.absolute_tolerance, test_case.relative_tolerance,
+                get_handle, stream,
+                [&](flagdnn::Handle &value) {
+                  return build_flagdnn_pointwise(value, test_case);
+                },
+                [&] { return build_pointwise_reference(test_case); });
+          }
           result == support::CaseResult::kExecuted ? ++executed : ++skipped;
         }
       });

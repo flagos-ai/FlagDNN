@@ -31,6 +31,10 @@ benchmark/
 ├── test_<op>.cpp           # 每个算子一个薄入口
 ├── common/                 # case/workload、provider 与 runner contract
 └── result.schema.json      # 稳定 JSONL 输出格式
+
+reference/
+├── cpu/                    # 无平台 SDK 依赖的受控 CPU 功能语义 oracle
+└── tests/                  # CPU oracle 的独立验证；可先保留 C++ 占位文件
 ```
 
 `tests/common` 只定义 shape、dtype、layout、tolerance、autotune case 和被测 FlagDNN
@@ -55,15 +59,18 @@ backends/nvidia/validation/
 开发者只有一个平台接入点。
 
 平台 reference 不支持某个 primitive 时，必须注册明确的 capability test，或使用
-经过审查的 host oracle，不能跳过 FlagDNN 的真实设备执行。当前 NVIDIA reference
-主要使用 cuDNN Frontend Graph API。
+经过审查且显式列入 allowlist 的 host oracle，不能跳过 FlagDNN 的真实设备执行。
+host oracle 只用于功能比较，不得生成 reference latency、speedup 或其他性能结论。
+当前 NVIDIA reference 主要使用 cuDNN Frontend Graph API；Hygon 的 `div`、`pow`、
+`mod`、`cmp_eq` 功能测试使用 `reference/cpu`，CTest 标记为 `cpu-reference`；其余
+Hygon vendor-reference 功能测试标记为 `hipdnn`，对应 benchmark 仍结构化 SKIP。
 
 ## 4. CMake 装配顺序
 
 根 `CMakeLists.txt` 的顺序固定为：
 
 1. 构建平台无关 core 和生产 backend。
-2. 按开关加载 `tests/`、`benchmark/`，定义公共 workload 和注册函数。
+2. 按开关加载 `reference/`、`tests/`、`benchmark/`，定义 oracle、公共 workload 和注册函数。
 3. 读取唯一的 `FLAGDNN_BACKENDS` 列表。
 4. 加载 `backends/<platform>/validation/CMakeLists.txt`。
 

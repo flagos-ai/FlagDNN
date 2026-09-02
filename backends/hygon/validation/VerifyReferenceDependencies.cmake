@@ -21,9 +21,10 @@ foreach(required IN ITEMS libflagdnn libgalaxyhip libhipdnn)
   endif()
 endforeach()
 
-# hipDNN is the only numerical reference library allowed in the Hygon suite.
-# Its transitive DTK dependencies remain vendor-owned and are not linked by the
-# validation target itself.
+# hipDNN is the only vendor numerical reference library allowed in the Hygon
+# suite. The functional-only CPU semantic oracle is linked statically and adds
+# no vendor dependency. hipDNN's transitive DTK dependencies remain
+# vendor-owned and are not linked by the validation target itself.
 foreach(forbidden IN ITEMS
     libMIOpen libmiopen librocblas libhipblas
     libcuda libcudnn libcublas libpython libtorch)
@@ -34,4 +35,4 @@ foreach(forbidden IN ITEMS
   endif()
 endforeach()
 
-message(STATUS "Native hipDNN-only reference dependency boundary verified")
+message(STATUS "Native Hygon reference dependency boundary verified")

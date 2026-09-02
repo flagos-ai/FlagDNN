@@ -9,6 +9,7 @@
 #include <span>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 
 namespace flagdnn::testing::hygon_functional {
@@ -22,9 +23,11 @@ inline Accuracy compare_outputs(std::span<const float> actual,
                                 std::span<const float> reference,
                                 double absolute_tolerance,
                                 double relative_tolerance,
-                                std::string_view case_name) {
+                                std::string_view case_name,
+                                std::string_view reference_name = "hipDNN") {
   if (actual.size() != reference.size()) {
-    throw std::runtime_error("FlagDNN and hipDNN output sizes differ");
+    throw std::runtime_error("FlagDNN and " + std::string(reference_name) +
+                             " output sizes differ");
   }
   Accuracy result;
   for (std::size_t index = 0; index < actual.size(); ++index) {
@@ -39,7 +42,8 @@ inline Accuracy compare_outputs(std::span<const float> actual,
         (absolute > absolute_tolerance && relative > relative_tolerance)) {
       std::ostringstream message;
       message << case_name << " differs at output element " << index
-              << ": FlagDNN=" << left << ", hipDNN=" << right
+              << ": FlagDNN=" << left << ", " << reference_name << '='
+              << right
               << ", abs=" << absolute << ", rel=" << relative
               << ", atol=" << absolute_tolerance
               << ", rtol=" << relative_tolerance;

@@ -5,6 +5,8 @@ if(NOT DEFINED SOURCE_ROOT)
 endif()
 
 foreach(required_directory IN ITEMS
+        reference/cpu
+        reference/tests
         tests/common
         tests/core
         benchmark/common
@@ -187,11 +189,27 @@ endforeach()
 
 file(GLOB_RECURSE python_test_sources
   "${SOURCE_ROOT}/tests/*.py"
+  "${SOURCE_ROOT}/reference/tests/*.py"
   "${SOURCE_ROOT}/benchmark/*.py")
 if(python_test_sources)
   message(FATAL_ERROR
     "Python tests and benchmarks are forbidden: ${python_test_sources}")
 endif()
+
+file(GLOB_RECURSE cpu_reference_sources
+  "${SOURCE_ROOT}/reference/cpu/*.c"
+  "${SOURCE_ROOT}/reference/cpu/*.cc"
+  "${SOURCE_ROOT}/reference/cpu/*.cpp"
+  "${SOURCE_ROOT}/reference/cpu/*.h"
+  "${SOURCE_ROOT}/reference/cpu/*.hpp")
+foreach(entry IN LISTS cpu_reference_sources)
+  file(READ "${entry}" source)
+  if(source MATCHES
+     "#[ \\t]*include[ \\t]*(<cuda|<cudnn|<hip|<hipdnn|<acl|\"(platforms|validation|backends)/)")
+    message(FATAL_ERROR
+      "Platform SDK/include leaked into CPU reference source: ${entry}")
+  endif()
+endforeach()
 
 file(GLOB benchmark_cpp_entries "${SOURCE_ROOT}/benchmark/test_*.cpp")
 set(actual_benchmark_operators)
