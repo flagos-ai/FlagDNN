@@ -15,7 +15,9 @@ benchmark/test_<op>.cpp
 包含 CUDA、cuDNN、CANN、ACL 或任何其他平台 SDK。
 
 `cmake/VerifyPerOperatorTestLayout.cmake` 检查入口数量、目录边界、平台依赖隔离，并
-禁止重新出现 Python 测试和旧平台目录。
+禁止重新出现 Python 功能测试、Python benchmark 和旧平台目录。
+`tests/core/run_tests_contract.py` 是唯一显式例外：它只验证同为 Python 的统一测试
+runner，不定义算子 case，也不执行算子。
 
 ## 2. 平台无关目录
 
@@ -34,7 +36,7 @@ benchmark/
 
 reference/
 ├── cpu/                    # 无平台 SDK 依赖的受控 CPU 功能语义 oracle
-└── tests/                  # CPU oracle 的独立验证；可先保留 C++ 占位文件
+└── tests/                  # 使用 cuDNN 独立验证 CPU oracle
 ```
 
 `tests/common` 只定义 shape、dtype、layout、tolerance、autotune case 和被测 FlagDNN
@@ -64,6 +66,9 @@ host oracle 只用于功能比较，不得生成 reference latency、speedup 或
 当前 NVIDIA reference 主要使用 cuDNN Frontend Graph API；Hygon 的 `div`、`pow`、
 `mod`、`cmp_eq` 功能测试使用 `reference/cpu`，CTest 标记为 `cpu-reference`；其余
 Hygon vendor-reference 功能测试标记为 `hipdnn`，对应 benchmark 仍结构化 SKIP。
+`reference/tests` 在 NVIDIA 构建中把这四个 CPU 算子分别注册为独立 CTest；每个算子
+使用 6 组相同形状、标量、右对齐和多轴广播 case 与 cuDNN Graph 对照。该 suite 只
+证明 CPU semantic oracle，不执行 FlagDNN 生产 backend，也不产生性能结论。
 
 ## 4. CMake 装配顺序
 
@@ -127,6 +132,16 @@ cmake --build /tmp/flagdnn-build-nvidia -j
 ```
 
 只构建平台无关 core contract 时设置 `-DFLAGDNN_BACKENDS=`。
+
+只构建并运行 CPU reference 的 cuDNN 独立验证：
+
+```bash
+reference/tests/build.sh
+reference/tests/run.sh
+```
+
+通过 `FLAGDNN_REFERENCE_BUILD_DIR` 选择构建目录，通过 `FLAGDNN_BUILD_TYPE` 选择
+单配置或多配置生成器中的配置。
 
 ## 7. 运行方法
 

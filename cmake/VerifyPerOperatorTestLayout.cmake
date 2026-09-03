@@ -191,9 +191,14 @@ file(GLOB_RECURSE python_test_sources
   "${SOURCE_ROOT}/tests/*.py"
   "${SOURCE_ROOT}/reference/tests/*.py"
   "${SOURCE_ROOT}/benchmark/*.py")
+# tools/run_tests.py is itself Python, so retain one explicitly named Python
+# contract test for that tool while rejecting Python functional tests and
+# benchmarks everywhere else.
+list(REMOVE_ITEM python_test_sources
+  "${SOURCE_ROOT}/tests/core/run_tests_contract.py")
 if(python_test_sources)
   message(FATAL_ERROR
-    "Python tests and benchmarks are forbidden: ${python_test_sources}")
+    "Unexpected Python tests or benchmarks: ${python_test_sources}")
 endif()
 
 file(GLOB_RECURSE cpu_reference_sources

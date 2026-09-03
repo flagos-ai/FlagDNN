@@ -96,10 +96,10 @@ reference/
 │   ├── CMakeLists.txt
 │   └── pointwise.cpp / pointwise.hpp
 └── tests/
-    └── cpu_pointwise_reference.cpp   # 独立验证占位；不进入当前 Hygon 功能结论
+    └── cpu_pointwise_reference.cpp   # div/pow/mod/cmp_eq 的 cuDNN 独立验证
 ```
 
-`reference/cpu` 不 include/link CUDA、cuDNN、HIP、hipDNN、MIOpen 或 BLAS；它只实现按右对齐规则广播的标量语义。`reference/tests` 负责未来独立证明该 CPU 实现，本阶段允许按项目约定只保留占位文件。
+`reference/cpu` 不 include/link CUDA、cuDNN、HIP、hipDNN、MIOpen 或 BLAS；它只实现按右对齐规则广播的标量语义。`reference/tests` 在 NVIDIA 构建中使用 cuDNN Graph，分别对 `div`、`pow`、`mod`、`cmp_eq` 的相同形状、标量和多轴广播语义做独立验证。
 
 允许复用的代码必须是真正的 platform-neutral contract 或 utility，例如：
 
@@ -462,7 +462,7 @@ functional supported case 的顺序：
 6. 比较数值、NaN/Inf 分类和 padding sentinel；
 7. 应用公共 case 的 atol/rtol。
 
-四个 CPU-oracle case 保持相同顺序与检查项，但第 1 至 3 步替换为：准备并保存实际 dtype 量化后的逻辑输入，在 host 上按算子语义和 broadcasting 计算期望值，再按 output dtype 量化。CPU oracle 与 DUT 不共享输出或实现代码；`reference/tests` 对 CPU oracle 的独立验证不属于本阶段交付。
+四个 CPU-oracle case 保持相同顺序与检查项，但第 1 至 3 步替换为：准备并保存实际 dtype 量化后的逻辑输入，在 host 上按算子语义和 broadcasting 计算期望值，再按 output dtype 量化。CPU oracle 与 DUT 不共享输出或实现代码；其语义另由 `reference/tests` 在 NVIDIA/cuDNN 进程中独立验证，不依赖 Hygon DUT。
 
 对 FlagDNN 合法、但 hipDNN OpTensor 无法直接接收相同物理 descriptor 的 strided/broadcast case，允许使用“逻辑等价 packed reference”，但必须满足以下边界：
 
@@ -1024,7 +1024,7 @@ Hygon 全量适配只有同时满足以下条件才能交付：
 - 正式 runner 的 suite/accounting/benchmark JSON 与 SKIP 记录相互闭合，不能以缺记录、重复记录或错误 CTest 状态形成 false green；
 - 在声明“全量通过”前，必须按本次单卡测试范围实际执行第 9.5 节 `tools/run_tests.py --platform hygon --ops all --suites all --device 0`，并满足 preflight、operator suite、可比 case 配对和零功能失败标准；不设置最低 speedup 阈值，默认 10 算子基线也不能替代该全量检查。该命令只证明 GPU 0 上的本次测试结果，不扩展为平台设备架构结论。
 
-对 hipDNN 无 reference 且未列入 CPU functional allowlist 的算子，结构化 SKIP 只代表在限定 reference 下无法做数值对比。四个 allowlist 算子的 PASS 只证明其输出与当前 CPU semantic oracle 一致；在 `reference/tests` 完成独立校验前，交付报告必须明确 CPU oracle 自身尚未由本仓库测试证明。
+对 hipDNN 无 reference 且未列入 CPU functional allowlist 的算子，结构化 SKIP 只代表在限定 reference 下无法做数值对比。四个 allowlist 算子的 Hygon PASS 证明其输出与当前 CPU semantic oracle 一致；`reference/tests` 的四项 NVIDIA/cuDNN CTest 另行证明该 oracle 的对应语义。交付报告必须记录这两层测试及其实际环境，不能用其中一层替代另一层。
 
 ## 11. 提交前审计清单
 
@@ -1042,7 +1042,7 @@ test ! -e tools/tests
 - Hygon production source 没有 include/import `backends/nvidia` 或 validation；
 - production CMake 没有查找/链接 hipDNN、MIOpen、hipBLAS、rocBLAS；
 - validation 没有直接 include/link/call MIOpen/BLAS；
-- `reference/cpu` 没有 include/link 任一平台 SDK，`reference/tests` 的独立校验状态被如实报告；
+- `reference/cpu` 没有 include/link 任一平台 SDK，四项 `reference/tests` NVIDIA/cuDNN 独立校验已执行并记录；
 - Hygon JIT CMake selector 只使用 `FLAGDNN_HYGON_TRITON_JIT_*`，没有复用全局 `TritonJIT_DIR`/`LIBTRITON_JIT_ROOT`；
 - 安装态 compiler、kernel/tuning、JIT library/scripts 与 environment identity 都来自同一 provenance；
 - HCU JIT 在 build/install tree 中分别位于 plugin 的 `flagdnn/hygon` 私有子目录，两个 plugin 的 RPATH 都精确为 `$ORIGIN/flagdnn/hygon`，JIT 实际 script directory 指向各自树中的私有资源；
@@ -1068,7 +1068,7 @@ test ! -e tools/tests
 | 非 `NOT_SUPPORTED` 错误被伪装为 capability SKIP | 严格 native status 分类；环境、参数、执行与版本错误一律 FAIL |
 | Hygon 误用 NVIDIA 私有实现 | Hygon 自有目录；双重 NVIDIA zero-diff gate |
 | common kernel 在 HCU 编译但不正确 | 所有有 reference 的 case 比较 selected variant；无 reference 时明确空白 |
-| CPU semantic oracle 自身实现错误 | allowlist 限定为四个 functional 算子；报告明确其独立测试状态，后续在 `reference/tests` 与 cuDNN 独立对照；不用于性能结论 |
+| CPU semantic oracle 自身实现错误 | allowlist 限定为四个 functional 算子；在 `reference/tests` 中逐算子与 cuDNN 独立对照，qualification 重跑并记录结果；不用于性能结论 |
 | DTK 升级改变 MIN/MAX 特殊值语义 | 每个 qualification stack 重跑 FP32/FP16 hipDNN NaN/signed-zero gate，私有 override 与 identity 同步失效 |
 | CUDA warp32/TF32 假设泄漏 | wave64 tuning、严格 IEEE matmul、HCU 实机 compile/launch |
 | runtime scalar 被错误 constexpr 特化 | 明确 scalar_i32/scalar_f32 ABI，校验 full/runtime signature |
