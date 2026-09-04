@@ -59,6 +59,14 @@ def matmul_strided_kernel(
     small_k_wide_n: tl.constexpr = (
         K <= 64 and M <= BLOCK_SIZE and N >= BLOCK_SIZE * 2
     )
+    # Keep the externally attested tuning configuration unchanged while
+    # avoiding mostly masked 128-wide tiles for genuinely tiny matrices.
+    tiny_matrix: tl.constexpr = M <= 64 and N <= 64 and K <= 128
+    # RGB stem im2col produces K=27 and a very wide spatial dimension. A wider
+    # N tile halves the persistent task waves without enlarging M past 64.
+    very_small_k_very_wide_n: tl.constexpr = (
+        K <= 32 and M <= 64 and N >= BLOCK_SIZE * 8
+    )
     narrow_n_tiles: tl.constexpr = BLOCK_SIZE == 128 and N <= 64
     narrow_m_tiles: tl.constexpr = (
         BLOCK_SIZE == 128 and M <= 64 and N >= 128 and K >= 128
@@ -107,74 +115,96 @@ def matmul_strided_kernel(
         K < 512 and A_STRIDE_M == 1 and B_STRIDE_K == 1
     )
     block_m: tl.constexpr = (
-        BLOCK_SIZE * 2
-        if fp32_tall_residual
+        (16 if M <= 16 else (32 if M <= 32 else 64))
+        if tiny_matrix
         else (
-            (
-                16
-                if M <= 16
-                else (32 if M <= 32 else (64 if M <= 64 else BLOCK_SIZE))
-            )
-            if small_k_wide_n
+            BLOCK_SIZE * 2
+            if fp32_tall_residual
             else (
-                BLOCK_SIZE
-                if medium_n_tiles
-                else (
-                    (
-                        16
-                        if M <= 16
-                        else (32 if M <= 32 else BLOCK_SIZE // 2)
+                (
+                    16
+                    if M <= 16
+                    else (
+                        32
+                        if M <= 32
+                        else (64 if M <= 64 else BLOCK_SIZE)
                     )
-                    if narrow_m_tiles
-                    else BLOCK_SIZE
+                )
+                if small_k_wide_n
+                else (
+                    BLOCK_SIZE
+                    if medium_n_tiles
+                    else (
+                        (
+                            16
+                            if M <= 16
+                            else (32 if M <= 32 else BLOCK_SIZE // 2)
+                        )
+                        if narrow_m_tiles
+                        else BLOCK_SIZE
+                    )
                 )
             )
         )
     )
     block_n: tl.constexpr = (
-        BLOCK_SIZE
-        if (
-            fp32_mid_tiles
-            or medium_n_tiles
-            or batched_medium_n_tiles
-        )
+        (16 if N <= 16 else (32 if N <= 32 else 64))
+        if tiny_matrix
         else (
-            BLOCK_SIZE * 2
-            if (
-                wide_tiles
-                or small_k_wide_n
-                or tiny_m_wide_n_tiles
+            BLOCK_SIZE * 4
+            if very_small_k_very_wide_n
+            else (
+                BLOCK_SIZE
+                if (
+                    fp32_mid_tiles
+                    or medium_n_tiles
+                    or batched_medium_n_tiles
+                )
+                else (
+                    BLOCK_SIZE * 2
+                    if (
+                        wide_tiles
+                        or small_k_wide_n
+                        or tiny_m_wide_n_tiles
+                    )
+                    else (
+                        BLOCK_SIZE // 2 if narrow_n_tiles else BLOCK_SIZE
+                    )
+                )
             )
-            else (BLOCK_SIZE // 2 if narrow_n_tiles else BLOCK_SIZE)
         )
     )
     reduction_block: tl.constexpr = (
-        (32 if K <= 32 else 64)
-        if small_k_wide_n
+        (32 if K <= 32 else (64 if K <= 64 else 128))
+        if tiny_matrix
         else (
-            (64 if K % 64 == 0 else 32)
-            if transposed_small_k
+            (32 if K <= 32 else 64)
+            if small_k_wide_n
             else (
-                128
-                if fp32_tall_residual
+                (64 if K % 64 == 0 else 32)
+                if transposed_small_k
                 else (
-                    256
-                    if fp32_mid_tiles
+                    128
+                    if fp32_tall_residual
                     else (
-                        (
-                            128
-                            if (
-                                K >= 512
-                                or narrow_n_tiles
-                                or narrow_m_tiles
-                            )
-                            else 64
-                        )
-                        if INPUT_IS_FLOAT32
+                        256
+                        if fp32_mid_tiles
                         else (
-                            128
-                            if medium_n_tiles and K % 512 != 0
-                            else 256
+                            (
+                                128
+                                if (
+                                    K >= 512
+                                    or narrow_n_tiles
+                                    or narrow_m_tiles
+                                )
+                                else 64
+                            )
+                            if INPUT_IS_FLOAT32
+                            else (
+                                128
+                                if medium_n_tiles and K % 512 != 0
+                                else 256
+                            )
                         )
                     )
                 )

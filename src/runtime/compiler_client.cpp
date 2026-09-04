@@ -2,6 +2,9 @@
 
 #include "runtime/compiler_client.hpp"
 
+#if defined(FLAGDNN_HAS_ASCEND_TARGET_POLICY)
+#include "backends/ascend/target_policy.hpp"
+#endif
 #include "error.hpp"
 #include "runtime/context.hpp"
 #include "runtime/json.hpp"
@@ -13,6 +16,10 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#if defined(FLAGDNN_HAS_ASCEND_TARGET_POLICY)
+#include <dlfcn.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -27,6 +34,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -55,11 +63,38 @@ extern char **environ;
 #ifndef FLAGDNN_ASCEND_DEFAULT_PYTHON_MODULE_ROOT
 #define FLAGDNN_ASCEND_DEFAULT_PYTHON_MODULE_ROOT ""
 #endif
+#ifndef FLAGDNN_ASCEND_PRIVATE_RUNTIME_RELATIVE
+#define FLAGDNN_ASCEND_PRIVATE_RUNTIME_RELATIVE ""
+#endif
+#ifndef FLAGDNN_ASCEND_COMPATIBILITY_ENVIRONMENT
+/* Core-only SDKs may load an external Ascend v3 plugin. Keep the current
+ * public compatibility switch available to that fallback without making
+ * unrelated builds parse or generate Ascend capability data. */
+#define FLAGDNN_ASCEND_COMPATIBILITY_ENVIRONMENT \
+  "FLAGDNN_ASCEND_910B4_1_COMPAT"
+#endif
 
 namespace flagdnn::native {
 namespace {
 
 std::atomic<std::uint64_t> identity_temporary_counter{0};
+#if defined(FLAGDNN_HAS_ASCEND_TARGET_POLICY)
+const int compiler_client_anchor = 0;
+
+bool path_is_within(const std::filesystem::path& child,
+                    const std::filesystem::path& parent) {
+  auto child_iterator = child.begin();
+  for (auto parent_iterator = parent.begin();
+       parent_iterator != parent.end();
+       ++parent_iterator, ++child_iterator) {
+    if (child_iterator == child.end() ||
+        *child_iterator != *parent_iterator) {
+      return false;
+    }
+  }
+  return true;
+}
+#endif
 
 constexpr int kIdentityTemporaryFailure = 75;
 constexpr std::size_t kIdentityQueryAttempts = 3;
@@ -306,13 +341,105 @@ std::string canonical_ascend_home() {
   return resolved.string();
 }
 
+#if defined(FLAGDNN_HAS_ASCEND_TARGET_POLICY)
+std::optional<std::filesystem::path> ascend_private_runtime_path(
+    std::string_view relative, bool directory) {
+  if (FLAGDNN_ASCEND_PRIVATE_RUNTIME_RELATIVE[0] == '\0' ||
+      relative.empty()) {
+    return std::nullopt;
+  }
+  Dl_info information{};
+  if (::dladdr(&compiler_client_anchor, &information) == 0 ||
+      information.dli_fname == nullptr) {
+    throw ApiError(FLAGDNN_STATUS_INTERNAL_ERROR,
+                   "cannot locate the loaded FlagDNN runtime");
+  }
+  const std::filesystem::path relative_path(relative);
+  if (relative_path.is_absolute() || relative_path.has_root_path()) {
+    throw ApiError(FLAGDNN_STATUS_INTERNAL_ERROR,
+                   "Ascend private runtime path is not relative");
+  }
+  std::error_code error;
+  const std::filesystem::path owner =
+      std::filesystem::canonical(information.dli_fname, error);
+  if (error) {
+    throw ApiError(FLAGDNN_STATUS_INTERNAL_ERROR,
+                   "cannot canonicalize the loaded FlagDNN runtime");
+  }
+  const std::filesystem::path lexical_root =
+      (owner.parent_path() / FLAGDNN_ASCEND_PRIVATE_RUNTIME_RELATIVE)
+          .lexically_normal();
+  const bool root_exists = std::filesystem::exists(lexical_root, error);
+  if (error) {
+    throw ApiError(FLAGDNN_STATUS_NOT_SUPPORTED,
+                   "cannot inspect the Ascend private runtime root");
+  }
+  if (!root_exists) {
+    return std::nullopt;
+  }
+  if (!std::filesystem::is_directory(lexical_root, error) || error) {
+    throw ApiError(FLAGDNN_STATUS_NOT_SUPPORTED,
+                   "Ascend private runtime root is not a directory");
+  }
+  const std::filesystem::file_status root_status =
+      std::filesystem::symlink_status(lexical_root, error);
+  if (error || std::filesystem::is_symlink(root_status)) {
+    throw ApiError(FLAGDNN_STATUS_NOT_SUPPORTED,
+                   "Ascend private runtime root is symlinked");
+  }
+  const std::filesystem::path root =
+      std::filesystem::canonical(lexical_root, error);
+  if (error || root != lexical_root ||
+      !path_is_within(root, owner.parent_path())) {
+    throw ApiError(FLAGDNN_STATUS_NOT_SUPPORTED,
+                   "Ascend private runtime root escapes the SDK library tree");
+  }
+  const std::filesystem::path candidate =
+      (root / relative_path).lexically_normal();
+  if (!path_is_within(candidate, root)) {
+    throw ApiError(FLAGDNN_STATUS_INTERNAL_ERROR,
+                   "Ascend private runtime path escapes its root");
+  }
+  const std::filesystem::file_status status =
+      std::filesystem::symlink_status(candidate, error);
+  if (error || !std::filesystem::exists(status)) {
+    throw ApiError(FLAGDNN_STATUS_NOT_SUPPORTED,
+                   "Ascend private runtime entry is missing");
+  }
+  const bool correct_type = directory
+                                ? std::filesystem::is_directory(status)
+                                : std::filesystem::is_regular_file(status);
+  if (!correct_type || std::filesystem::is_symlink(status)) {
+    throw ApiError(FLAGDNN_STATUS_NOT_SUPPORTED,
+                   "Ascend private runtime entry is not a regular path");
+  }
+  const std::filesystem::path canonical =
+      std::filesystem::canonical(candidate, error);
+  if (error || !path_is_within(canonical, root)) {
+    throw ApiError(FLAGDNN_STATUS_NOT_SUPPORTED,
+                   "Ascend private runtime entry escapes its root");
+  }
+  return canonical;
+}
+#else
+std::optional<std::filesystem::path> ascend_private_runtime_path(
+    std::string_view, bool) {
+  return std::nullopt;
+}
+#endif
+
 std::string canonical_identity_path(const char* environment_name,
                                     const char* configured_default,
+                                    std::string_view private_relative,
                                     bool directory) {
   const char* environment_value = std::getenv(environment_name);
+  const std::optional<std::filesystem::path> private_path =
+      ascend_private_runtime_path(private_relative, directory);
   const std::string selected =
       environment_value != nullptr && environment_value[0] != '\0'
           ? environment_value
+          : private_path.has_value()
+          ? private_path->string()
           : configured_default == nullptr ? std::string{}
                                           : std::string(configured_default);
   if (selected.empty()) {
@@ -329,10 +456,19 @@ std::string canonical_identity_path(const char* environment_name,
   }
   if (environment_value != nullptr && environment_value[0] != '\0' &&
       configured_default != nullptr && configured_default[0] != '\0') {
-    error.clear();
-    const std::filesystem::path expected =
-        std::filesystem::canonical(configured_default, error);
-    if (error || expected != resolved) {
+    std::vector<std::filesystem::path> expected_paths;
+    if (private_path.has_value()) {
+      expected_paths.push_back(*private_path);
+    } else {
+      error.clear();
+      const std::filesystem::path configured =
+          std::filesystem::canonical(configured_default, error);
+      if (!error) {
+        expected_paths.push_back(configured);
+      }
+    }
+    if (std::find(expected_paths.begin(), expected_paths.end(), resolved) ==
+        expected_paths.end()) {
       throw ApiError(FLAGDNN_STATUS_INVALID_VALUE,
                      std::string(environment_name) +
                          " differs from the configured Ascend toolchain");
@@ -341,7 +477,9 @@ std::string canonical_identity_path(const char* environment_name,
   return resolved.string();
 }
 
-std::string ascend_codegen_arch(std::string_view target_fingerprint) {
+#if defined(FLAGDNN_HAS_ASCEND_TARGET_POLICY)
+flagdnn::ascend::target_policy::Resolution ascend_codegen_target(
+    std::string_view target_fingerprint) {
   constexpr std::string_view kPrefix = "ascend_";
   constexpr std::string_view kVersionMarker = "_cann_";
   if (!target_fingerprint.starts_with(kPrefix)) {
@@ -357,13 +495,36 @@ std::string ascend_codegen_arch(std::string_view target_fingerprint) {
   const std::string_view encoded = target_fingerprint.substr(
       kPrefix.size(), marker - kPrefix.size());
   if (encoded.find_first_not_of(
-          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_") !=
+          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-") !=
       std::string_view::npos) {
     throw ApiError(FLAGDNN_STATUS_NOT_SUPPORTED,
                    "Ascend target contains an invalid code-generation arch");
   }
-  return std::string(encoded);
+  const char* compatibility = std::getenv(
+      flagdnn::ascend::target_policy::kCompatibilityEnvironment);
+  const flagdnn::ascend::target_policy::Resolution resolution =
+      flagdnn::ascend::target_policy::resolve_codegen_arch(
+          encoded, compatibility == nullptr ? std::string_view{}
+                                            : std::string_view(compatibility));
+  if (resolution.status ==
+      flagdnn::ascend::target_policy::ResolutionStatus::
+          kInvalidCompatibilitySetting) {
+    throw ApiError(
+        FLAGDNN_STATUS_INVALID_VALUE,
+        std::string(
+            flagdnn::ascend::target_policy::kCompatibilityEnvironment) +
+            " must be unset, '0', or '1', and '1' is valid only on " +
+            std::string(
+                flagdnn::ascend::target_policy::kCompatibilityRuntimeSoc));
+  }
+  if (resolution.status !=
+      flagdnn::ascend::target_policy::ResolutionStatus::kSupported) {
+    throw ApiError(FLAGDNN_STATUS_NOT_SUPPORTED,
+                   "Ascend target contains an unsupported SoC identity");
+  }
+  return resolution;
 }
+#endif
 
 std::vector<std::string> ascend_compiler_environment(
     const RuntimeContext& context,
@@ -372,8 +533,27 @@ std::vector<std::string> ascend_compiler_environment(
   std::vector<std::string> values;
   values.reserve(48);
   append_environment(values, "TRITON_JIT_BACKEND", "NPU");
-  append_environment(values, "TRITON_ASCEND_ARCH",
-                     ascend_codegen_arch(context.target_fingerprint()));
+#if defined(FLAGDNN_HAS_ASCEND_TARGET_POLICY)
+  const flagdnn::ascend::target_policy::Resolution target =
+      ascend_codegen_target(context.target_fingerprint());
+  if (!target.detects_codegen_arch_from_runtime) {
+    append_environment(values, "TRITON_ASCEND_ARCH",
+                       std::string(target.codegen_arch));
+  }
+  if (target.uses_compatibility_alias) {
+    append_environment(
+        values,
+        flagdnn::ascend::target_policy::kCompatibilityEnvironment,
+        "1");
+  }
+#else
+  /* An external Ascend plugin has already validated and frozen these values
+   * while creating its context. Mirror them into the sanitized compiler child
+   * so a core-only SDK remains extensible without embedding backend policy. */
+  (void)context;
+  copy_environment(values, "TRITON_ASCEND_ARCH");
+  copy_environment(values, FLAGDNN_ASCEND_COMPATIBILITY_ENVIRONMENT);
+#endif
   append_environment(values, "TRITON_BACKEND", "torch_npu");
   append_environment(values, "TORCH_DEVICE_BACKEND_AUTOLOAD", "0");
   append_environment(values, "FLAGDNN_ASCEND_REQUIRE_COMPILER_MODULES", "1");
@@ -389,6 +569,7 @@ std::vector<std::string> ascend_compiler_environment(
       canonical_identity_path(
           "FLAGDNN_LIBTRITON_JIT_LIBRARY",
           FLAGDNN_ASCEND_DEFAULT_LIBTRITON_JIT_LIBRARY,
+          "libtriton_jit.so",
           false));
   append_environment(
       values,
@@ -396,12 +577,14 @@ std::vector<std::string> ascend_compiler_environment(
       canonical_identity_path(
           "FLAGDNN_TRITON_JIT_STANDALONE_COMPILER",
           FLAGDNN_ASCEND_DEFAULT_TRITON_JIT_STANDALONE_COMPILER,
+          "standalone_compile.py",
           false));
   append_environment(
       values,
       "FLAGDNN_TRITON_JIT_CONFIG",
       canonical_identity_path("FLAGDNN_TRITON_JIT_CONFIG",
                               FLAGDNN_ASCEND_DEFAULT_TRITON_JIT_CONFIG,
+                              "TritonJITConfig.cmake",
                               false));
   append_environment(
       values,
@@ -409,12 +592,14 @@ std::vector<std::string> ascend_compiler_environment(
       canonical_identity_path(
           "FLAGDNN_TRITON_JIT_INCLUDE_DIRECTORY",
           FLAGDNN_ASCEND_DEFAULT_TRITON_JIT_INCLUDE_DIRECTORY,
+          "include",
           true));
   append_environment(
       values,
       "PYTHONPATH",
       canonical_identity_path("FLAGDNN_ASCEND_PYTHON_MODULE_ROOT",
                               FLAGDNN_ASCEND_DEFAULT_PYTHON_MODULE_ROOT,
+                              {},
                               true));
   append_environment(values, "TRITON_CACHE_DIR", scratch.cache().string());
   append_environment(values, "TMPDIR", scratch.temporary().string());

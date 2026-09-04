@@ -3,6 +3,8 @@
 #ifndef FLAGDNN_BACKENDS_ASCEND_VALIDATION_DEVELOPMENT_ENVIRONMENT_HPP_
 #define FLAGDNN_BACKENDS_ASCEND_VALIDATION_DEVELOPMENT_ENVIRONMENT_HPP_
 
+#include "target_policy.hpp"
+
 #include <sys/stat.h>
 
 #include <cerrno>
@@ -96,8 +98,23 @@ class DevelopmentEnvironment {
       throw std::logic_error(
           "Ascend validation target changed within one process");
     }
+    const char* compatibility = std::getenv(
+        ::flagdnn::ascend::target_policy::kCompatibilityEnvironment);
+    const ::flagdnn::ascend::target_policy::Resolution resolution =
+        ::flagdnn::ascend::target_policy::resolve_codegen_arch(
+            soc_name, compatibility == nullptr ? std::string_view{}
+                                               : std::string_view(compatibility));
+    if (resolution.status !=
+        ::flagdnn::ascend::target_policy::ResolutionStatus::kSupported) {
+      throw std::invalid_argument(
+          "Ascend validation codegen compatibility setting is invalid");
+    }
     target_ = soc_name;
-    set_environment("TRITON_ASCEND_ARCH", target_);
+    if (resolution.detects_codegen_arch_from_runtime) {
+      unset_environment("TRITON_ASCEND_ARCH");
+    } else {
+      set_environment("TRITON_ASCEND_ARCH", resolution.codegen_arch);
+    }
     target_prepared_ = true;
   }
 

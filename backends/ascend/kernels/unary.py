@@ -284,11 +284,11 @@ def unary_pointwise_contiguous_kernel(
             start += worker_stride
     elif OPERATION == POINTWISE_RECIPROCAL:
         # Small tensors use 1024-lane tiles. Large tensors use unmasked
-        # 8192-lane main tiles, then distribute the final partial tile in
+        # 4096-lane main tiles, then distribute the final partial tile in
         # 1024-lane chunks so one worker does not evaluate inactive reciprocal
-        # lanes for the entire 8192-lane tile. Both paths remain correct when
+        # lanes for the entire 4096-lane tile. Both paths remain correct when
         # a target exposes fewer workers than tiles.
-        vector_block_size: tl.constexpr = BLOCK_SIZE * 8
+        vector_block_size: tl.constexpr = BLOCK_SIZE * 4
         if n_elements <= vector_block_size:
             start = program_id * BLOCK_SIZE
             worker_stride = WORKER_COUNT * BLOCK_SIZE
@@ -500,7 +500,7 @@ def unary_pointwise_contiguous_kernel(
         or OPERATION == POINTWISE_SIN
         or OPERATION == POINTWISE_TAN
     ):
-        vector_block_size: tl.constexpr = BLOCK_SIZE * 4
+        vector_block_size: tl.constexpr = BLOCK_SIZE * 2
         start = program_id * vector_block_size
         worker_stride = WORKER_COUNT * vector_block_size
         while start + vector_block_size <= n_elements:
@@ -525,7 +525,7 @@ def unary_pointwise_contiguous_kernel(
 
         # All workers finish the balanced full-tile waves above.  Split the
         # one global remainder into base blocks so a single worker does not
-        # evaluate inactive transcendental lanes for a full 4096-lane tile.
+        # evaluate inactive transcendental lanes for a full vector tile.
         tail_base = (n_elements // vector_block_size) * vector_block_size
         tail_start = tail_base + program_id * BLOCK_SIZE
         while tail_start < n_elements:

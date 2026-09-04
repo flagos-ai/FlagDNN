@@ -12,7 +12,9 @@ import struct
 from typing import Any
 
 from .compiler_identity import (
+    COMPATIBILITY_ALIAS,
     MAXIMUM_AI_CORE_COUNT,
+    RUNTIME_DETECTED_CODEGEN_ARCHES,
     SUPPORTED_CODEGEN_ARCHES,
     aicore_count_from_target,
     build_compiler_identity,
@@ -372,6 +374,7 @@ def _load_capabilities() -> dict[str, Any]:
         "rmsnorm",
         "layernorm",
         "codegen_arches",
+        "target_policy",
         "max_rank",
         "workspace_alignment",
         "compile_options",
@@ -451,6 +454,13 @@ def _load_capabilities() -> dict[str, Any]:
             "statistic_count": 2,
         }
         or document.get("codegen_arches") != list(SUPPORTED_CODEGEN_ARCHES)
+        or document.get("target_policy")
+        != {
+            "runtime_detected_codegen_arches": list(
+                RUNTIME_DETECTED_CODEGEN_ARCHES
+            ),
+            "compatibility_alias": COMPATIBILITY_ALIAS,
+        }
         or document.get("max_rank") != 8
         or document.get("workspace_alignment") != 256
         or document.get("compile_options")
@@ -854,6 +864,37 @@ def _materialize_source(
         output_directory / filename, source_bytes, "materialized kernel source"
     )
     return filename, source_sha256
+
+
+def _validate_non_tle_kernel_source(source_bytes: bytes) -> None:
+    try:
+        source = source_bytes.decode("utf-8")
+        tree = ast.parse(source)
+    except (UnicodeDecodeError, SyntaxError) as error:
+        raise ValueError("Ascend kernel source is not valid UTF-8 Python") from error
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules = (alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module == "triton.experimental" and any(
+                alias.name in {"tle", "*"} for alias in node.names
+            ):
+                raise ValueError(
+                    "FlagDNN Ascend kernels must not depend on optional Triton TLE"
+                )
+            modules = (module,)
+        else:
+            continue
+        if any(
+            module == "triton.experimental.tle"
+            or module.startswith("triton.experimental.tle.")
+            for module in modules
+        ):
+            raise ValueError(
+                "FlagDNN Ascend kernels must not depend on optional Triton TLE"
+            )
 
 
 def _batchnorm_inference_grid(
@@ -1615,6 +1656,7 @@ def compile_request(
         source_bytes = materialize_kernel_source(kernel_source_path, candidate)
         if not source_bytes or len(source_bytes) > _MAX_KERNEL_SOURCE_SIZE:
             raise ValueError("Ascend pointwise kernel source size is invalid")
+        _validate_non_tle_kernel_source(source_bytes)
         for stage in graph_plan.stages:
             if stage.operation == operation:
                 _validate_kernel_function(

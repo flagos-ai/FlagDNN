@@ -5,6 +5,89 @@ if(NOT FLAGDNN_EXECUTION_ENGINE STREQUAL "libtriton_jit")
     "FlagDNN Ascend supports only FLAGDNN_EXECUTION_ENGINE=libtriton_jit")
 endif()
 
+# Keep the Ascend capability document as the only target-policy data source.
+# Materialize its constexpr C++ view only when this backend is selected so
+# platform-neutral and other-backend builds do not depend on Ascend resources.
+set(_flagdnn_ascend_capabilities
+  "${CMAKE_CURRENT_SOURCE_DIR}/capabilities.json")
+file(READ "${_flagdnn_ascend_capabilities}"
+  _flagdnn_ascend_capabilities_json)
+string(JSON _flagdnn_ascend_arch_count LENGTH
+  "${_flagdnn_ascend_capabilities_json}" codegen_arches)
+if(_flagdnn_ascend_arch_count LESS 1)
+  message(FATAL_ERROR "Ascend codegen_arches must not be empty")
+endif()
+math(EXPR _flagdnn_ascend_arch_last
+  "${_flagdnn_ascend_arch_count} - 1")
+set(_flagdnn_ascend_arch_initializers "")
+set(_flagdnn_ascend_arches "")
+foreach(index RANGE 0 ${_flagdnn_ascend_arch_last})
+  string(JSON arch GET "${_flagdnn_ascend_capabilities_json}"
+    codegen_arches ${index})
+  if(NOT arch MATCHES "^Ascend[0-9A-Za-z_-]+$")
+    message(FATAL_ERROR "Invalid Ascend codegen architecture: ${arch}")
+  endif()
+  if(arch IN_LIST _flagdnn_ascend_arches)
+    message(FATAL_ERROR "Duplicate Ascend codegen architecture: ${arch}")
+  endif()
+  list(APPEND _flagdnn_ascend_arches "${arch}")
+  string(APPEND _flagdnn_ascend_arch_initializers "    \"${arch}\",\n")
+endforeach()
+
+string(JSON _flagdnn_ascend_runtime_detected_count LENGTH
+  "${_flagdnn_ascend_capabilities_json}"
+  target_policy runtime_detected_codegen_arches)
+if(_flagdnn_ascend_runtime_detected_count LESS 1)
+  message(FATAL_ERROR
+    "Ascend runtime_detected_codegen_arches must not be empty")
+endif()
+math(EXPR _flagdnn_ascend_runtime_detected_last
+  "${_flagdnn_ascend_runtime_detected_count} - 1")
+set(_flagdnn_ascend_runtime_detected_initializers "")
+set(_flagdnn_ascend_runtime_detected_arches "")
+foreach(index RANGE 0 ${_flagdnn_ascend_runtime_detected_last})
+  string(JSON arch GET "${_flagdnn_ascend_capabilities_json}"
+    target_policy runtime_detected_codegen_arches ${index})
+  if(NOT arch MATCHES "^Ascend[0-9A-Za-z_-]+$")
+    message(FATAL_ERROR
+      "Invalid runtime-detected Ascend codegen architecture: ${arch}")
+  endif()
+  if(NOT arch IN_LIST _flagdnn_ascend_arches OR
+     arch IN_LIST _flagdnn_ascend_runtime_detected_arches)
+    message(FATAL_ERROR
+      "Invalid or duplicate runtime-detected Ascend architecture: ${arch}")
+  endif()
+  list(APPEND _flagdnn_ascend_runtime_detected_arches "${arch}")
+  string(APPEND _flagdnn_ascend_runtime_detected_initializers
+    "    \"${arch}\",\n")
+endforeach()
+
+foreach(field IN ITEMS environment runtime_soc codegen_arch)
+  string(JSON _flagdnn_ascend_compatibility_${field} GET
+    "${_flagdnn_ascend_capabilities_json}"
+    target_policy compatibility_alias ${field})
+endforeach()
+if(NOT _flagdnn_ascend_compatibility_environment MATCHES
+     "^[A-Z][A-Z0-9_]+$" OR
+   NOT _flagdnn_ascend_compatibility_runtime_soc MATCHES
+     "^Ascend[0-9A-Za-z_-]+$" OR
+   NOT _flagdnn_ascend_compatibility_codegen_arch MATCHES
+     "^Ascend[0-9A-Za-z_-]+$" OR
+   NOT _flagdnn_ascend_compatibility_runtime_soc IN_LIST
+     _flagdnn_ascend_runtime_detected_arches OR
+   NOT _flagdnn_ascend_compatibility_codegen_arch IN_LIST
+     _flagdnn_ascend_arches OR
+   _flagdnn_ascend_compatibility_runtime_soc STREQUAL
+     _flagdnn_ascend_compatibility_codegen_arch)
+  message(FATAL_ERROR "Ascend compatibility alias policy is invalid")
+endif()
+configure_file(
+  "${PROJECT_SOURCE_DIR}/cmake/ascend_target_policy_data.hpp.in"
+  "${PROJECT_BINARY_DIR}/generated/include/flagdnn/ascend_target_policy_data.hpp"
+  @ONLY)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${_flagdnn_ascend_capabilities}")
+
 set(CANN_ROOT "" CACHE PATH "Root of the CANN 9 installation")
 if(NOT CANN_ROOT)
   foreach(environment_name IN ITEMS ASCEND_HOME_PATH ASCEND_TOOLKIT_HOME)
@@ -201,6 +284,15 @@ if(NOT TritonJIT_BACKEND STREQUAL "NPU")
     "FlagDNN Ascend requires TritonJIT_BACKEND=NPU; found "
     "${TritonJIT_BACKEND}")
 endif()
+get_target_property(_flagdnn_ascend_torch_include_directories
+  Torch::Torch INTERFACE_INCLUDE_DIRECTORIES)
+if(NOT _flagdnn_ascend_torch_include_directories)
+  message(FATAL_ERROR "Torch::Torch exports no public include directories")
+endif()
+get_target_property(_flagdnn_ascend_torch_compile_options
+  Torch::Torch INTERFACE_COMPILE_OPTIONS)
+get_target_property(_flagdnn_ascend_torch_compile_definitions
+  Torch::Torch INTERFACE_COMPILE_DEFINITIONS)
 if(TARGET TritonJIT::triton_jit)
   set(_flagdnn_ascend_triton_jit_target TritonJIT::triton_jit)
 elseif(TARGET triton_jit)
@@ -397,7 +489,9 @@ set(_flagdnn_ascend_identity_definitions
 # than ambient shell variables) still gives the sanitized child the exact
 # ASCEND_HOME_PATH used to build the plugin.
 target_compile_definitions(flagdnn PRIVATE
+  FLAGDNN_HAS_ASCEND_TARGET_POLICY=1
   FLAGDNN_ASCEND_DEFAULT_CANN_ROOT="${FLAGDNN_ASCEND_CANN_ROOT}"
+  FLAGDNN_ASCEND_PRIVATE_RUNTIME_RELATIVE="flagdnn/ascend"
   FLAGDNN_ASCEND_DEFAULT_LIBTRITON_JIT_LIBRARY="${_flagdnn_ascend_triton_jit_library}"
   FLAGDNN_ASCEND_DEFAULT_TRITON_JIT_STANDALONE_COMPILER="${_flagdnn_ascend_ltj_standalone}"
   FLAGDNN_ASCEND_DEFAULT_TRITON_JIT_CONFIG="${_flagdnn_ascend_ltj_config}"
@@ -424,18 +518,32 @@ flagdnn_add_backend_plugin(ascend INSTALL ABI_VERSION 3
     engines/embedded_python.cpp
     engines/libtriton_jit.cpp
     engines/python_stdout_containment.cpp
+    engines/runtime_layout.cpp
     error.cpp
     ${PROJECT_SOURCE_DIR}/src/runtime/json.cpp
     ${PROJECT_SOURCE_DIR}/src/runtime/sha256.cpp
   LINK_LIBRARIES
     Ascend::ascendcl
     Ascend::runtime
-    ${_flagdnn_ascend_triton_jit_target}
+    "${_flagdnn_ascend_triton_jit_library}"
+    fmt::fmt-header-only
     Python::Python
     ${CMAKE_DL_LIBS})
 target_compile_definitions(flagdnn_backend_ascend PRIVATE
-  ${_flagdnn_ascend_identity_definitions})
+  BACKEND_NPU=1
+  ${_flagdnn_ascend_identity_definitions}
+  FLAGDNN_ASCEND_PRIVATE_RUNTIME_RELATIVE="flagdnn/ascend")
+if(_flagdnn_ascend_torch_compile_definitions)
+  target_compile_definitions(flagdnn_backend_ascend PRIVATE
+    ${_flagdnn_ascend_torch_compile_definitions})
+endif()
+if(_flagdnn_ascend_torch_compile_options)
+  target_compile_options(flagdnn_backend_ascend PRIVATE
+    ${_flagdnn_ascend_torch_compile_options})
+endif()
 target_include_directories(flagdnn_backend_ascend SYSTEM PRIVATE
+  "${_flagdnn_ascend_ltj_include}"
+  ${_flagdnn_ascend_torch_include_directories}
   "${FLAGDNN_ASCEND_CANN_ROOT}/include"
   "${FLAGDNN_ASCEND_CANN_ROOT}/include/aclnn"
   "${FLAGDNN_ASCEND_CANN_ROOT}/include/experiment"
@@ -447,8 +555,41 @@ target_include_directories(flagdnn_backend_ascend SYSTEM PRIVATE
   "${_flagdnn_ascend_runtime_header_root}"
   "${_flagdnn_ascend_runtime_header_root}/runtime/runtime")
 set_target_properties(flagdnn_backend_ascend PROPERTIES
-  INSTALL_RPATH "$ORIGIN"
-  INSTALL_RPATH_USE_LINK_PATH YES)
+  BUILD_WITH_INSTALL_RPATH YES
+  INSTALL_RPATH "$ORIGIN/flagdnn/ascend"
+  INSTALL_RPATH_USE_LINK_PATH NO)
+if(UNIX AND NOT APPLE)
+  # Prefer the plugin-private, hash-pinned JIT over ambient libraries. CANN,
+  # Python and Torch remain explicit platform prerequisites and are resolved
+  # from the target environment, not captured build-machine paths.
+  target_link_options(flagdnn_backend_ascend PRIVATE
+    "LINKER:--disable-new-dtags")
+endif()
+
+set(_flagdnn_ascend_private_runtime_install_directory
+  "${CMAKE_INSTALL_LIBDIR}/flagdnn/ascend")
+add_custom_command(TARGET flagdnn_backend_ascend POST_BUILD
+  COMMAND "${CMAKE_COMMAND}" -E make_directory
+    "$<TARGET_FILE_DIR:flagdnn_backend_ascend>/flagdnn/ascend"
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+    "${_flagdnn_ascend_triton_jit_library}"
+    "$<TARGET_FILE_DIR:flagdnn_backend_ascend>/flagdnn/ascend/libtriton_jit.so"
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+    "${_flagdnn_ascend_ltj_standalone}"
+    "$<TARGET_FILE_DIR:flagdnn_backend_ascend>/flagdnn/ascend/standalone_compile.py"
+  VERBATIM)
+
+install(FILES
+  "${_flagdnn_ascend_triton_jit_library}"
+  "${_flagdnn_ascend_ltj_standalone}"
+  "${_flagdnn_ascend_ltj_config}"
+  DESTINATION "${_flagdnn_ascend_private_runtime_install_directory}")
+install(DIRECTORY "${_flagdnn_ascend_ltj_include}/triton_jit"
+  DESTINATION
+    "${_flagdnn_ascend_private_runtime_install_directory}/include"
+  FILES_MATCHING
+    PATTERN "*.h"
+    PATTERN "*.hpp")
 
 install(FILES kernels/registry.json
   DESTINATION "${FLAGDNN_RESOURCE_INSTALL_DIR}/backends/ascend/kernels")

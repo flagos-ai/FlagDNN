@@ -75,6 +75,7 @@
     "Ascend910B2",
     "Ascend910B3",
     "Ascend910B4",
+    "Ascend910B4-1",
     "Ascend910_9362",
     "Ascend910_9372",
     "Ascend910_9381",
@@ -86,6 +87,14 @@
     "Ascend910_9589",
     "Ascend910_9599"
   ],
+  "target_policy": {
+    "runtime_detected_codegen_arches": ["Ascend910B4-1"],
+    "compatibility_alias": {
+      "environment": "FLAGDNN_ASCEND_910B4_1_COMPAT",
+      "runtime_soc": "Ascend910B4-1",
+      "codegen_arch": "Ascend910B4"
+    }
+  },
   "max_rank": 8,
   "workspace_alignment": 256,
   "compile_options": {

@@ -3,6 +3,7 @@
 #include "backends/ascend/engines/libtriton_jit.hpp"
 
 #include "backends/ascend/engines/python_stdout_containment.hpp"
+#include "backends/ascend/engines/runtime_layout.hpp"
 
 #include "backends/ascend/error.hpp"
 #include "src/runtime/json.hpp"
@@ -126,9 +127,14 @@ using LtjLoadKernelMethod = void* (*)(const std::string&,
    * body into this plugin would duplicate LTJ's module registry and its device
    * lifecycle fallback. */
   static const LtjLoadKernelMethod method = [] {
+#if defined(_GLIBCXX_USE_CXX11_ABI) && !_GLIBCXX_USE_CXX11_ABI
+    constexpr const char* symbol_name =
+        "_ZN10triton_jit10NpuBackend11load_kernelERKSsS2_";
+#else
     constexpr const char* symbol_name =
         "_ZN10triton_jit10NpuBackend11load_kernelERKNSt7__cxx1112basic_"
         "stringIcSt11char_traitsIcESaIcEEES8_";
+#endif
     (void)::dlerror();
     void* symbol = ::dlsym(RTLD_DEFAULT, symbol_name);
     const char* error = ::dlerror();
@@ -710,7 +716,18 @@ void validate_source(const LtjNpuRawCandidate& candidate) {
 }
 
 [[nodiscard]] fs::path validate_standalone_compiler() {
-  const fs::path configured(FLAGDNN_ASCEND_STANDALONE_PATH);
+  fs::path configured;
+  try {
+    const std::optional<fs::path> private_compiler =
+        detail::private_runtime_path("standalone_compile.py");
+    configured = private_compiler.has_value()
+                     ? *private_compiler
+                     : fs::path(FLAGDNN_ASCEND_STANDALONE_PATH);
+  } catch (const std::exception& error) {
+    compilation_failure(
+        "cannot resolve plugin-private Ascend standalone compiler: " +
+        std::string(error.what()));
+  }
   if (configured.empty() || !configured.is_absolute()) {
     compilation_failure("configured Ascend standalone compiler is not absolute");
   }

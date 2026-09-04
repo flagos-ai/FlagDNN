@@ -25,26 +25,73 @@ from .tuning_decoder import canonical_json_bytes
 
 _SAFE_TARGET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _VERSIONED_TARGET = re.compile(
-    r"^ascend_(?P<arch>Ascend(?:910|950)[A-Za-z0-9_]*)_cann_"
+    r"^ascend_(?P<arch>Ascend[A-Za-z0-9_-]*)_cann_"
     r"(?P<cann>[0-9][A-Za-z0-9_.-]*)_aic_(?P<aic>[1-9][0-9]{0,4})$"
 )
+_CODEGEN_ARCH = re.compile(r"^Ascend[A-Za-z0-9_-]*$")
+_ENVIRONMENT_NAME = re.compile(r"^[A-Z][A-Z0-9_]+$")
 MAXIMUM_AI_CORE_COUNT = 65535
 _FALSE_VALUES = {"", "0", "false", "off", "no"}
-SUPPORTED_CODEGEN_ARCHES = (
-    "Ascend910B1",
-    "Ascend910B2",
-    "Ascend910B3",
-    "Ascend910B4",
-    "Ascend910_9362",
-    "Ascend910_9372",
-    "Ascend910_9381",
-    "Ascend910_9382",
-    "Ascend910_9391",
-    "Ascend910_9392",
-    "Ascend910_9579",
-    "Ascend910_9581",
-    "Ascend910_9589",
-    "Ascend910_9599",
+
+
+def _load_target_policy() -> tuple[
+    tuple[str, ...], tuple[str, ...], dict[str, str]
+]:
+    path = Path(__file__).with_name("capabilities.json")
+    try:
+        encoded = path.read_bytes()
+        if not encoded or len(encoded) > (1 << 20):
+            raise ValueError("capability resource has an invalid size")
+        document = json.loads(encoded)
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("cannot load the Ascend target policy") from error
+    if not isinstance(document, dict):
+        raise ValueError("Ascend capabilities must be a JSON object")
+    arches = document.get("codegen_arches")
+    policy = document.get("target_policy")
+    if (
+        not isinstance(arches, list)
+        or not arches
+        or any(
+            not isinstance(arch, str)
+            or _CODEGEN_ARCH.fullmatch(arch) is None
+            for arch in arches
+        )
+        or len(set(arches)) != len(arches)
+        or not isinstance(policy, dict)
+        or set(policy)
+        != {"runtime_detected_codegen_arches", "compatibility_alias"}
+    ):
+        raise ValueError("Ascend target policy fields are invalid")
+    runtime_detected = policy.get("runtime_detected_codegen_arches")
+    compatibility = policy.get("compatibility_alias")
+    if (
+        not isinstance(runtime_detected, list)
+        or not runtime_detected
+        or any(arch not in arches for arch in runtime_detected)
+        or len(set(runtime_detected)) != len(runtime_detected)
+        or not isinstance(compatibility, dict)
+        or set(compatibility)
+        != {"environment", "runtime_soc", "codegen_arch"}
+        or not isinstance(compatibility.get("environment"), str)
+        or _ENVIRONMENT_NAME.fullmatch(compatibility["environment"]) is None
+        or compatibility.get("runtime_soc") not in arches
+        or compatibility.get("codegen_arch") not in arches
+        or compatibility["runtime_soc"] not in runtime_detected
+        or compatibility["runtime_soc"] == compatibility["codegen_arch"]
+    ):
+        raise ValueError("Ascend target compatibility policy is invalid")
+    return tuple(arches), tuple(runtime_detected), dict(compatibility)
+
+
+(
+    SUPPORTED_CODEGEN_ARCHES,
+    RUNTIME_DETECTED_CODEGEN_ARCHES,
+    COMPATIBILITY_ALIAS,
+) = _load_target_policy()
+SUPPORTED_TARGET_SOCS = SUPPORTED_CODEGEN_ARCHES
+_COMPATIBILITY_ENVIRONMENT = (
+    COMPATIBILITY_ALIAS["environment"]
 )
 
 _CODEGEN_ENVIRONMENT_KEYS = (
@@ -129,8 +176,8 @@ def validate_target_name(target_name: str) -> str:
         raise ValueError("Ascend target fingerprint is invalid")
     match = _VERSIONED_TARGET.fullmatch(target_name)
     assert match is not None
-    if match.group("arch") not in SUPPORTED_CODEGEN_ARCHES:
-        raise ValueError("Ascend target SoC is not supported by pinned Triton")
+    if match.group("arch") not in SUPPORTED_TARGET_SOCS:
+        raise ValueError("Ascend target SoC is not supported")
     if (
         "_aic_" in match.group("cann")
         or int(match.group("aic")) > MAXIMUM_AI_CORE_COUNT
@@ -143,7 +190,22 @@ def codegen_arch_from_target(target_name: str) -> str:
     validate_target_name(target_name)
     match = _VERSIONED_TARGET.fullmatch(target_name)
     assert match is not None
-    return match.group("arch")
+    target_soc = match.group("arch")
+    compatibility = os.environ.get(
+        _COMPATIBILITY_ENVIRONMENT
+    )
+    if compatibility not in {None, "", "0", "1"}:
+        raise ValueError(
+            f"{_COMPATIBILITY_ENVIRONMENT} must be unset, '0', or '1'"
+        )
+    if compatibility == "1":
+        if target_soc != COMPATIBILITY_ALIAS["runtime_soc"]:
+            raise ValueError(
+                f"{_COMPATIBILITY_ENVIRONMENT}=1 is valid "
+                f"only for {COMPATIBILITY_ALIAS['runtime_soc']}"
+            )
+        return COMPATIBILITY_ALIAS["codegen_arch"]
+    return target_soc
 
 
 def aicore_count_from_target(target_name: str) -> int:
@@ -202,15 +264,35 @@ def _effective_environment(target_name: str) -> dict[str, str]:
         raise ValueError("TRITON_ALL_BLOCKS_PARALLEL must be false")
 
     expected_arch = codegen_arch_from_target(target_name)
-    configured_arch = os.environ.get("TRITON_ASCEND_ARCH", expected_arch)
-    if configured_arch != expected_arch:
+    match = _VERSIONED_TARGET.fullmatch(target_name)
+    assert match is not None
+    target_soc = match.group("arch")
+    runtime_detected_arch = (
+        target_soc in RUNTIME_DETECTED_CODEGEN_ARCHES
+        and expected_arch == target_soc
+    )
+    configured_arch = os.environ.get("TRITON_ASCEND_ARCH")
+    if runtime_detected_arch:
+        if configured_arch is not None:
+            raise ValueError(
+                "TRITON_ASCEND_ARCH must be unset for exact "
+                f"{target_soc} runtime detection"
+            )
+    elif configured_arch not in {None, expected_arch}:
         raise ValueError(
             "TRITON_ASCEND_ARCH differs from the target SoC codegen arch"
         )
 
     result = {
         "TRITON_JIT_BACKEND": "NPU",
-        "TRITON_ASCEND_ARCH": expected_arch,
+        "TRITON_ASCEND_ARCH": (
+            f"<runtime-detected:{expected_arch}>"
+            if runtime_detected_arch
+            else expected_arch
+        ),
+        _COMPATIBILITY_ENVIRONMENT: (
+            "1" if expected_arch != target_soc else "<unset>"
+        ),
         "TRITON_BACKEND": "torch_npu",
         "TORCH_DEVICE_BACKEND_AUTOLOAD": "0",
         "PYTHONDONTWRITEBYTECODE": "1",
@@ -295,6 +377,10 @@ def _package_source_files() -> dict[str, dict[str, Any]]:
             triton_root / "runtime/driver.py",
             triton_root / "runtime/jit.py",
             triton_root / "compiler/compiler.py",
+            triton_root / "spec/ascend/compiler/code_generator.py",
+            triton_root / "spec/ascend/compiler/compiler.py",
+            triton_root / "spec/ascend/runtime/driver.py",
+            triton_root / "_C/libtriton.so",
         }
         ascend_backend = triton_root / "backends/ascend"
         if ascend_backend.is_dir():

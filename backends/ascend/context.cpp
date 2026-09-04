@@ -3,8 +3,10 @@
 #include "backends/ascend/context.hpp"
 
 #include "backends/ascend/engines/embedded_python.hpp"
+#include "backends/ascend/engines/runtime_layout.hpp"
 
 #include "backends/ascend/error.hpp"
+#include "backends/ascend/target_policy.hpp"
 #include "runtime/sha256.hpp"
 
 #include <Python.h>
@@ -215,6 +217,7 @@ static constexpr const char* kFrozenEnvironmentNames[] = {
     "ASCEND_CUSTOM_OPP_PATH",
     "TRITON_JIT_BACKEND",
     "TRITON_ASCEND_ARCH",
+    target_policy::kCompatibilityEnvironment,
     "TRITON_NPU_COMPILER_PATH",
     "MLIR_ROOT",
     "LLVM_ROOT",
@@ -271,10 +274,13 @@ struct PythonModulePin {
 static constexpr PythonModulePin kPythonModules[] = {
     {"torch", FLAGDNN_ASCEND_TORCH_MODULE_PATH,
      FLAGDNN_ASCEND_TORCH_MODULE_SHA256},
-    {"triton", FLAGDNN_ASCEND_TRITON_MODULE_PATH,
-     FLAGDNN_ASCEND_TRITON_MODULE_SHA256},
     {"torch_npu", FLAGDNN_ASCEND_TORCH_NPU_MODULE_PATH,
      FLAGDNN_ASCEND_TORCH_NPU_MODULE_SHA256},
+    /* torch_npu must finish before Triton discovers the Ascend backend. The
+     * pinned backend's benchmark helper imports torch_npu while Triton itself
+     * is only partially initialized otherwise. */
+    {"triton", FLAGDNN_ASCEND_TRITON_MODULE_PATH,
+     FLAGDNN_ASCEND_TRITON_MODULE_SHA256},
     {"yaml", FLAGDNN_ASCEND_YAML_MODULE_PATH,
      FLAGDNN_ASCEND_YAML_MODULE_SHA256},
 };
@@ -609,7 +615,7 @@ void replace_environment_path(const char* name, const fs::path& value) {
 
 [[nodiscard]] LocalEnvironment prepare_local_environment(
     ContainmentMode mode,
-    std::string_view codegen_arch) {
+    const target_policy::Resolution& target) {
   LocalEnvironment result;
   if (mode == ContainmentMode::kDevelopment) {
     result.cache_root =
@@ -646,7 +652,12 @@ void replace_environment_path(const char* name, const fs::path& value) {
   freeze_canonical_environment_path("ASCEND_HOME_PATH", cann_root);
   freeze_canonical_environment_path("ASCEND_TOOLKIT_HOME", cann_root);
   configure_exact_local_environment(mode, "TRITON_JIT_BACKEND", "NPU");
-  configure_exact_local_environment(mode, "TRITON_ASCEND_ARCH", codegen_arch);
+  if (target.detects_codegen_arch_from_runtime) {
+    configure_unset_local_environment(mode, "TRITON_ASCEND_ARCH");
+  } else {
+    configure_exact_local_environment(mode, "TRITON_ASCEND_ARCH",
+                                      target.codegen_arch);
+  }
   configure_exact_local_environment(mode, "TRITON_BACKEND", "torch_npu");
   configure_exact_local_environment(
       mode, "TRITON_ALL_BLOCKS_PARALLEL", "false");
@@ -926,14 +937,32 @@ template <typename Function>
 void verify_object(const LoadedObject& object,
                    const char* configured_path,
                    const char* configured_sha256,
-                   const char* description) {
+                   const char* description,
+                   std::string_view private_relative = {}) {
   std::error_code error;
-  const fs::path expected = fs::canonical(configured_path, error);
+  fs::path expected;
+  if (!private_relative.empty()) {
+    try {
+      const std::optional<fs::path> private_path =
+          detail::private_runtime_path(private_relative);
+      if (private_path.has_value()) {
+        expected = *private_path;
+      }
+    } catch (const std::exception& exception) {
+      throw AscendError(
+          FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
+          std::string("invalid private ") + description + ": " +
+              exception.what());
+    }
+  }
+  if (expected.empty()) {
+    expected = fs::canonical(configured_path, error);
+  }
   if (error || expected != object.path) {
     throw AscendError(
         FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
         std::string("loaded ") + description +
-            " does not match the configured CANN package: " +
+            " does not match its configured or plugin-private file: " +
             object.path.string());
   }
   const std::string digest = flagdnn::native::sha256_file(object.path);
@@ -959,7 +988,41 @@ void verify_object(const LoadedObject& object,
 
 [[nodiscard]] fs::path verify_configured_file(const char* configured_path,
                                               const char* configured_sha256,
-                                              const char* description) {
+                                              const char* description,
+                                              std::string_view
+                                                  private_relative = {}) {
+  if (!private_relative.empty()) {
+    try {
+      const std::optional<fs::path> private_path =
+          detail::private_runtime_path(private_relative);
+      if (private_path.has_value()) {
+        std::error_code error;
+        if (!fs::is_regular_file(*private_path, error) || error) {
+          throw AscendError(
+              FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
+              std::string("plugin-private ") + description +
+                  " is not a regular file");
+        }
+        const std::string digest =
+            flagdnn::native::sha256_file(*private_path);
+        if (configured_sha256 == nullptr || configured_sha256[0] == '\0' ||
+            digest != configured_sha256) {
+          throw AscendError(
+              FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
+              std::string("plugin-private ") + description +
+                  " content hash differs from configure time");
+        }
+        return *private_path;
+      }
+    } catch (const AscendError&) {
+      throw;
+    } catch (const std::exception& exception) {
+      throw AscendError(
+          FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
+          std::string("invalid plugin-private ") + description + ": " +
+              exception.what());
+    }
+  }
   std::string path_error;
   const std::optional<fs::path> path = canonical_existing_path(
       configured_path == nullptr ? "" : configured_path, false, &path_error);
@@ -1267,15 +1330,10 @@ void verify_python_module_root(const fs::path& module_root) {
   return identity.str();
 }
 
-[[nodiscard]] PyThreadState*& embedded_main_thread_state() noexcept {
-  static PyThreadState* state = nullptr;
-  return state;
-}
-
 [[nodiscard]] std::string initialize_embedded_python(
     const fs::path& module_root,
     const char* program_name) {
-  if (Py_IsInitialized() != 0 || embedded_main_thread_state() != nullptr) {
+  if (Py_IsInitialized() != 0) {
     throw AscendError(
         FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
         "Ascend requires a clean parent with no initialized CPython runtime");
@@ -1311,10 +1369,12 @@ void verify_python_module_root(const fs::path& module_root) {
 
   /* No owned PyObject crosses this point. The initial GIL is released exactly
    * once and the saved main thread state remains process-lifetime state. */
-  embedded_main_thread_state() = PyEval_SaveThread();
-  if (embedded_main_thread_state() == nullptr) {
+  try {
+    detail::release_embedded_python_gil_for_process_lifetime();
+  } catch (const std::exception& error) {
     throw AscendError(FLAGDNN_BACKEND_RESULT_RUNTIME_ERROR,
-                      "PyEval_SaveThread returned a null main thread state");
+                      "cannot release embedded Python GIL: " +
+                          std::string(error.what()));
   }
   if (!failure.empty()) {
     throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
@@ -1342,17 +1402,6 @@ void verify_python_module_root(const fs::path& module_root) {
                       "aclrtGetSocName returned an empty SoC identity");
   }
   return result;
-}
-
-[[nodiscard]] bool supported_codegen_arch(std::string_view value) {
-  static constexpr std::array<std::string_view, 14> kSupported = {
-      "Ascend910B1",   "Ascend910B2",   "Ascend910B3",
-      "Ascend910B4",   "Ascend910_9362", "Ascend910_9372",
-      "Ascend910_9381", "Ascend910_9382", "Ascend910_9391",
-      "Ascend910_9392", "Ascend910_9579", "Ascend910_9581",
-      "Ascend910_9589", "Ascend910_9599"};
-  return std::find(kSupported.begin(), kSupported.end(), value) !=
-         kSupported.end();
 }
 
 [[nodiscard]] std::string acl_failure(const char* operation,
@@ -1431,12 +1480,26 @@ void verify_python_module_root(const fs::path& module_root) {
                         "aclrtGetSocName did not return a SoC identity");
     }
     const std::string soc = sanitize_fingerprint_component(soc_name);
-    if (!supported_codegen_arch(soc)) {
-      throw AscendError(
-          FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
-          "aclrtGetSocName returned an unsupported code-generation class: " +
-              soc);
+    const std::string compatibility_setting = environment_value(
+        target_policy::kCompatibilityEnvironment);
+    const target_policy::Resolution target =
+        target_policy::resolve_codegen_arch(soc, compatibility_setting);
+    if (target.status != target_policy::ResolutionStatus::kSupported) {
+      std::string message;
+      if (target.status ==
+          target_policy::ResolutionStatus::kInvalidCompatibilitySetting) {
+        message = std::string(target_policy::kCompatibilityEnvironment) +
+                  " must be unset, '0', or '1', and '1' is valid only on " +
+                  std::string(target_policy::kCompatibilityRuntimeSoc);
+      } else {
+        message =
+            "aclrtGetSocName returned an unsupported code-generation class: " +
+            soc;
+      }
+      throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
+                        std::move(message));
     }
+    const std::string codegen_arch(target.codegen_arch);
     const std::int32_t ai_core_result =
         api.get_ai_core_count(&ai_core_count);
     if (ai_core_result != RT_ERROR_NONE) {
@@ -1504,6 +1567,7 @@ void verify_python_module_root(const fs::path& module_root) {
     verify_object(triton_jit,
                   FLAGDNN_ASCEND_LIBTRITON_JIT_PATH,
                   FLAGDNN_ASCEND_LIBTRITON_JIT_SHA256,
+                  "libtriton_jit.so",
                   "libtriton_jit.so");
     const LoadedObject python_symbol = object_containing(
         &Py_IsInitialized, "libpython");
@@ -1515,6 +1579,7 @@ void verify_python_module_root(const fs::path& module_root) {
     const fs::path standalone = verify_configured_file(
         FLAGDNN_ASCEND_STANDALONE_PATH,
         FLAGDNN_ASCEND_STANDALONE_SHA256,
+        "standalone_compile.py",
         "standalone_compile.py");
     const fs::path python_program = verify_configured_file(
         FLAGDNN_ASCEND_PYTHON_PROGRAM_CANONICAL_PATH,
@@ -1531,7 +1596,7 @@ void verify_python_module_root(const fs::path& module_root) {
     verify_pinned_python_module_files();
 
     const LocalEnvironment local_environment =
-        prepare_local_environment(*mode, soc);
+        prepare_local_environment(*mode, target);
     const auto configuration_snapshot =
         freeze_process_configuration(*mode, local_environment);
     const std::string frozen_configuration =
@@ -1575,7 +1640,7 @@ void verify_python_module_root(const fs::path& module_root) {
     binding.device_ordinal = device_ordinal;
     binding.default_context = current;
     binding.ai_core_count = ai_core_count;
-    binding.codegen_arch = soc;
+    binding.codegen_arch = codegen_arch;
     binding.target_fingerprint = "ascend_" + soc + "_cann_" + version +
                                  "_aic_" +
                                  std::to_string(ai_core_count);
@@ -1586,7 +1651,15 @@ void verify_python_module_root(const fs::path& module_root) {
                         "limit");
     }
     std::ostringstream identity;
-    identity << "ai_core_count=" << ai_core_count
+    identity << "runtime_soc=" << soc
+             << ";codegen_arch=" << codegen_arch
+             << ";codegen_compatibility_alias="
+             << (target.uses_compatibility_alias ? "enabled" : "disabled")
+             << ";codegen_arch_source="
+             << (target.detects_codegen_arch_from_runtime
+                     ? "runtime_detection"
+                     : "environment")
+             << ";ai_core_count=" << ai_core_count
              << ";cann_version=" << package_version.data()
              << ";cann_version_num=" << package_version_number
              << ";cann_inner_version=" << FLAGDNN_ASCEND_CANN_INNER_VERSION

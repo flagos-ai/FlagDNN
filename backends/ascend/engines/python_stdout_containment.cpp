@@ -60,6 +60,8 @@ class ScopedPythonStdoutContainment final {
             consume_python_error());
       }
 
+      install_non_tle_sentinel();
+
       original_stdout_ = PySys_GetObject("stdout");  // Borrowed reference.
       if (original_stdout_ == nullptr) {
         throw std::runtime_error(
@@ -122,6 +124,7 @@ class ScopedPythonStdoutContainment final {
       const ScopedPythonStdoutContainment&) = delete;
 
   void restore() {
+    restore_non_tle_sentinel();
     if (!redirected_) {
       return;
     }
@@ -137,6 +140,66 @@ class ScopedPythonStdoutContainment final {
   }
 
  private:
+  void install_non_tle_sentinel() {
+    modules_ = PyImport_GetModuleDict();  // Borrowed reference.
+    if (modules_ == nullptr || PyDict_Check(modules_) == 0) {
+      throw std::runtime_error("embedded Python sys.modules is unavailable");
+    }
+    if (PyDict_GetItemString(modules_, "triton.experimental.tle") != nullptr) {
+      throw std::runtime_error(
+          "Triton TLE is already imported in the non-TLE compiler domain");
+    }
+
+    PyObject* dsa = nullptr;
+    PyObject* pipeline = nullptr;
+    PyObject* parallel = nullptr;
+    tle_sentinel_ = PyModule_New("triton.experimental.tle");
+    dsa = PyModule_New("triton.experimental.tle.dsa");
+    pipeline = PyObject_CallNoArgs(
+        reinterpret_cast<PyObject*>(&PyBaseObject_Type));
+    parallel = PyObject_CallNoArgs(
+        reinterpret_cast<PyObject*>(&PyBaseObject_Type));
+    const bool failed =
+        tle_sentinel_ == nullptr || dsa == nullptr || pipeline == nullptr ||
+        parallel == nullptr ||
+        PyObject_SetAttrString(dsa, "pipeline", pipeline) != 0 ||
+        PyObject_SetAttrString(dsa, "parallel", parallel) != 0 ||
+        PyObject_SetAttrString(tle_sentinel_, "dsa", dsa) != 0 ||
+        PyDict_SetItemString(modules_,
+                             "triton.experimental.tle",
+                             tle_sentinel_) != 0;
+    Py_XDECREF(dsa);
+    Py_XDECREF(pipeline);
+    Py_XDECREF(parallel);
+    if (failed) {
+      const std::string error = consume_python_error();
+      Py_CLEAR(tle_sentinel_);
+      throw std::runtime_error(
+          "cannot install the scoped non-TLE compiler sentinel: " + error);
+    }
+    sentinel_installed_ = true;
+  }
+
+  void restore_non_tle_sentinel() {
+    if (!sentinel_installed_) {
+      return;
+    }
+    PyObject* current =
+        PyDict_GetItemString(modules_, "triton.experimental.tle");
+    if (current != tle_sentinel_) {
+      throw std::runtime_error(
+          "scoped non-TLE compiler sentinel changed during compilation");
+    }
+    if (PyDict_DelItemString(modules_, "triton.experimental.tle") != 0) {
+      throw std::runtime_error(
+          "cannot remove the scoped non-TLE compiler sentinel: " +
+          consume_python_error());
+    }
+    sentinel_installed_ = false;
+    Py_CLEAR(tle_sentinel_);
+    modules_ = nullptr;
+  }
+
   void close_sink() {
     if (sink_fd_ < 0) {
       return;
@@ -160,6 +223,16 @@ class ScopedPythonStdoutContainment final {
 
   void cleanup_noexcept() noexcept {
     if (gil_acquired_) {
+      if (sentinel_installed_ && modules_ != nullptr &&
+          PyDict_GetItemString(modules_, "triton.experimental.tle") ==
+              tle_sentinel_) {
+        if (PyDict_DelItemString(modules_, "triton.experimental.tle") != 0) {
+          PyErr_Clear();
+        }
+      }
+      sentinel_installed_ = false;
+      Py_CLEAR(tle_sentinel_);
+      modules_ = nullptr;
       if (redirected_) {
         if (PySys_SetObject("stdout", original_stdout_) != 0) {
           PyErr_Clear();
@@ -176,10 +249,13 @@ class ScopedPythonStdoutContainment final {
   }
 
   PyGILState_STATE gil_state_ = PyGILState_UNLOCKED;
+  PyObject* modules_ = nullptr;
+  PyObject* tle_sentinel_ = nullptr;
   PyObject* original_stdout_ = nullptr;
   PyObject* sink_ = nullptr;
   int sink_fd_ = -1;
   bool gil_acquired_ = false;
+  bool sentinel_installed_ = false;
   bool redirected_ = false;
 };
 

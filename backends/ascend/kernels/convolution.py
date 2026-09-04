@@ -733,9 +733,14 @@ def convolution_fprop_im2col_kernel(
         rgb_block_channels: tl.constexpr = 4
         rgb_block_width: tl.constexpr = 64
         rgb_block_rows: tl.constexpr = 4
-        rgb_row_groups: tl.constexpr = 16
-        rgb_rows_per_group: tl.constexpr = tl.cdiv(
-            OUTPUT_DIM_3, rgb_row_groups
+        # Use one row group per persistent worker. With three filter rows this
+        # gives three balanced row tasks per worker per batch when the output
+        # height covers all workers, while keeping that row range hot as the
+        # worker advances filter_h.
+        rgb_row_groups: tl.constexpr = (
+            WORKER_COUNT
+            if OUTPUT_DIM_3 >= WORKER_COUNT
+            else OUTPUT_DIM_3
         )
         rgb_tasks_per_batch: tl.constexpr = (
             FILTER_DIM_3 * rgb_row_groups
@@ -749,10 +754,12 @@ def convolution_fprop_im2col_kernel(
             rgb_batch_task = rgb_task - rgb_batch * rgb_tasks_per_batch
             rgb_filter_h = rgb_batch_task // rgb_row_groups
             rgb_row_group = rgb_batch_task - rgb_filter_h * rgb_row_groups
-            rgb_output_h = rgb_row_group * rgb_rows_per_group
+            rgb_output_h = (
+                rgb_row_group * OUTPUT_DIM_3 // rgb_row_groups
+            )
             rgb_channel_start = tl.zeros((), dtype=tl.int64)
-            rgb_output_h_end = tl.minimum(
-                rgb_output_h + rgb_rows_per_group, OUTPUT_DIM_3
+            rgb_output_h_end = (
+                (rgb_row_group + 1) * OUTPUT_DIM_3 // rgb_row_groups
             )
             while rgb_output_h < rgb_output_h_end:
                 rgb_input_h = (

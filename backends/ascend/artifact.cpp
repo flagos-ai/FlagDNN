@@ -2,6 +2,7 @@
 
 #include "backends/ascend/artifact.hpp"
 
+#include "backends/ascend/target_policy.hpp"
 #include "backends/ascend/error.hpp"
 #include "runtime/json.hpp"
 #include "runtime/sha256.hpp"
@@ -361,14 +362,7 @@ std::uint32_t parse_target_ai_core_count(std::string_view target) {
 
   const std::string_view arch =
       target.substr(kPrefix.size(), cann - kPrefix.size());
-  static constexpr std::array<std::string_view, 14> kSupported = {
-      "Ascend910B1",   "Ascend910B2",    "Ascend910B3",
-      "Ascend910B4",   "Ascend910_9362", "Ascend910_9372",
-      "Ascend910_9381", "Ascend910_9382", "Ascend910_9391",
-      "Ascend910_9392", "Ascend910_9579", "Ascend910_9581",
-      "Ascend910_9589", "Ascend910_9599"};
-  if (std::find(kSupported.begin(), kSupported.end(), arch) ==
-      kSupported.end()) {
+  if (!target_policy::supported_target_soc(arch)) {
     artifact_failure("Ascend target SoC capability is unsupported");
   }
 

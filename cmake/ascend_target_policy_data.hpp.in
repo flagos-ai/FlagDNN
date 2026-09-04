@@ -1,0 +1,29 @@
+/* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
+
+#ifndef FLAGDNN_GENERATED_ASCEND_TARGET_POLICY_DATA_HPP_
+#define FLAGDNN_GENERATED_ASCEND_TARGET_POLICY_DATA_HPP_
+
+#include <array>
+#include <string_view>
+
+namespace flagdnn::ascend::target_policy {
+
+inline constexpr std::array<std::string_view, @_flagdnn_ascend_arch_count@>
+    kSupportedCodegenArches = {
+@_flagdnn_ascend_arch_initializers@};
+
+inline constexpr std::array<std::string_view,
+                            @_flagdnn_ascend_runtime_detected_count@>
+    kRuntimeDetectedCodegenArches = {
+@_flagdnn_ascend_runtime_detected_initializers@};
+
+inline constexpr std::string_view kCompatibilityRuntimeSoc =
+    "@_flagdnn_ascend_compatibility_runtime_soc@";
+inline constexpr std::string_view kCompatibilityCodegenArch =
+    "@_flagdnn_ascend_compatibility_codegen_arch@";
+inline constexpr const char* kCompatibilityEnvironment =
+    "@_flagdnn_ascend_compatibility_environment@";
+
+}  // namespace flagdnn::ascend::target_policy
+
+#endif  // FLAGDNN_GENERATED_ASCEND_TARGET_POLICY_DATA_HPP_
