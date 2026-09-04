@@ -44,3 +44,8 @@ htmlcov/
 .idea/
 .settings/
 .worktrees/
+
+# Crash dumps and rejected/backup patch artifacts
+*.mudmp
+*.orig
+*.rej

@@ -1,0 +1,119 @@
+schema_version: 1
+backend: mthreads
+defaults:
+  block_size: 256
+  num_warps: 4
+  num_stages: 1
+tables:
+  binary_contiguous:
+    strategy: cartesian
+    warmup: 3
+    repetitions: 10
+    dimensions:
+      block_size: [128, 256, 512]
+      num_warps: [2, 4, 8]
+      num_stages: [1]
+  binary_strided:
+    strategy: cartesian
+    warmup: 3
+    repetitions: 10
+    dimensions:
+      block_size: [128, 256]
+      num_warps: [2, 4]
+      num_stages: [1]
+  unary_contiguous:
+    strategy: cartesian
+    warmup: 3
+    repetitions: 10
+    dimensions:
+      block_size: [128, 256, 512]
+      num_warps: [2, 4, 8]
+      num_stages: [1]
+  unary_strided:
+    strategy: cartesian
+    warmup: 3
+    repetitions: 10
+    dimensions:
+      block_size: [128, 256]
+      num_warps: [2, 4]
+      num_stages: [1]
+  ternary_contiguous:
+    strategy: cartesian
+    warmup: 3
+    repetitions: 10
+    dimensions:
+      block_size: [128, 256, 512]
+      num_warps: [2, 4, 8]
+      num_stages: [1]
+  ternary_strided:
+    strategy: cartesian
+    warmup: 3
+    repetitions: 10
+    dimensions:
+      block_size: [128, 256]
+      num_warps: [2, 4]
+      num_stages: [1]
+  layout:
+    strategy: cartesian
+    warmup: 3
+    repetitions: 10
+    dimensions:
+      block_size: [128, 256, 512]
+      num_warps: [2, 4, 8]
+      num_stages: [1]
+  reduction:
+    strategy: cartesian
+    warmup: 3
+    repetitions: 10
+    dimensions:
+      block_size: [1, 4, 16]
+      num_warps: [2, 4]
+      num_stages: [1]
+  matmul:
+    strategy: cartesian
+    warmup: 3
+    repetitions: 10
+    dimensions:
+      block_size: [32, 64]
+      num_warps: [4, 8]
+      num_stages: [1, 2]
+  convolution:
+    strategy: cartesian
+    warmup: 3
+    repetitions: 10
+    dimensions:
+      block_size: [16, 32]
+      num_warps: [4, 8]
+      num_stages: [1, 2]
+  normalization:
+    strategy: cartesian
+    warmup: 3
+    repetitions: 10
+    dimensions:
+      block_size: [256, 512]
+      num_warps: [4, 8]
+      num_stages: [1]
+  batchnorm:
+    strategy: cartesian
+    warmup: 3
+    repetitions: 10
+    dimensions:
+      block_size: [128, 256, 512]
+      num_warps: [4, 8]
+      num_stages: [1]
+  batchnorm_inference:
+    strategy: cartesian
+    warmup: 3
+    repetitions: 10
+    dimensions:
+      block_size: [128, 256, 512]
+      num_warps: [4, 8]
+      num_stages: [1]
+  attention:
+    strategy: cartesian
+    warmup: 3
+    repetitions: 10
+    dimensions:
+      block_size: [16, 32]
+      num_warps: [2, 4]
+      num_stages: [1, 2]

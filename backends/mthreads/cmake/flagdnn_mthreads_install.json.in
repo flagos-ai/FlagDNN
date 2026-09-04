@@ -1,0 +1,23 @@
+{
+  "backend": "mthreads",
+  "environment_identity_sha256": "@FLAGDNN_MTHREADS_DEPENDENCIES_ENVIRONMENT_IDENTITY_SHA256@",
+  "libtriton_jit": {
+    "provenance_sha256": "@FLAGDNN_MTHREADS_JIT_PROVENANCE_SHA256@",
+    "relative_path": "@FLAGDNN_MTHREADS_INSTALL_JIT_RELATIVE_PATH@",
+    "sha256": "@FLAGDNN_MTHREADS_JIT_PRIVATE_SHA256@",
+    "soname": "@FLAGDNN_MTHREADS_JIT_SONAME@"
+  },
+  "schema_version": 1,
+  "scripts": {
+    "gen_ssig.py": {
+      "provenance_sha256": "@_flagdnn_mthreads_gen_ssig_provenance_sha256@",
+      "relative_path": "@FLAGDNN_MTHREADS_INSTALL_SCRIPT_RELATIVE_ROOT@/gen_ssig.py",
+      "sha256": "@_flagdnn_mthreads_gen_ssig_sha256@"
+    },
+    "standalone_compile.py": {
+      "provenance_sha256": "@_flagdnn_mthreads_standalone_provenance_sha256@",
+      "relative_path": "@FLAGDNN_MTHREADS_INSTALL_SCRIPT_RELATIVE_ROOT@/standalone_compile.py",
+      "sha256": "@_flagdnn_mthreads_standalone_compile_sha256@"
+    }
+  }
+}

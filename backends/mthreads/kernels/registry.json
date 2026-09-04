@@ -1,0 +1,243 @@
+{
+  "schema_version": 1,
+  "ownership": "platform",
+  "backend": "mthreads",
+  "kernels": [
+    {
+      "operations": [
+        "add", "sub", "mul", "div", "min", "max", "mod", "pow",
+        "cmp_eq", "cmp_neq", "cmp_gt", "cmp_ge", "cmp_lt", "cmp_le",
+        "logical_and", "logical_or", "sigmoid_backward"
+      ],
+      "provider": "mthreads_triton",
+      "source": "binary.py",
+      "functions": ["binary_contiguous_kernel", "binary_strided_kernel"],
+      "tuning": {
+        "source": "mthreads.yaml",
+        "table": "binary_contiguous",
+        "key": "n_elements",
+        "strategy": "cartesian",
+        "warmup": 3,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "identity",
+      "provider": "mthreads_triton",
+      "source": "identity.py",
+      "functions": [
+        "identity_contiguous_packed_kernel",
+        "identity_contiguous_kernel",
+        "identity_strided_kernel"
+      ],
+      "tuning": {
+        "source": "mthreads.yaml",
+        "table": "unary_contiguous",
+        "key": "n_elements",
+        "strategy": "cartesian",
+        "warmup": 3,
+        "repetitions": 10
+      }
+    },
+    {
+      "operations": [
+        "relu", "abs", "ceil", "cos", "erf", "exp", "floor",
+        "log", "neg", "reciprocal", "rsqrt", "sin", "sqrt", "tan",
+        "logical_not", "sigmoid", "tanh", "elu", "gelu", "softplus",
+        "swish", "gelu_approx_tanh"
+      ],
+      "provider": "mthreads_triton",
+      "source": "unary.py",
+      "functions": [
+        "unary_pointwise_contiguous_kernel",
+        "unary_pointwise_strided_kernel"
+      ],
+      "tuning": {
+        "source": "mthreads.yaml",
+        "table": "unary_contiguous",
+        "key": "n_elements",
+        "strategy": "cartesian",
+        "warmup": 3,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "reshape",
+      "provider": "mthreads_triton",
+      "source": "layout.py",
+      "functions": ["reshape_contiguous_kernel", "layout_copy_kernel"],
+      "tuning": {
+        "source": "mthreads.yaml",
+        "table": "layout",
+        "key": "n_elements",
+        "strategy": "cartesian",
+        "warmup": 3,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "slice",
+      "provider": "mthreads_triton",
+      "source": "layout.py",
+      "functions": ["slice_copy_kernel", "layout_copy_kernel"],
+      "tuning": {
+        "source": "mthreads.yaml",
+        "table": "layout",
+        "key": "n_elements",
+        "strategy": "cartesian",
+        "warmup": 3,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "transpose",
+      "provider": "mthreads_triton",
+      "source": "layout.py",
+      "functions": [
+        "transpose_physical_copy_kernel",
+        "layout_copy_kernel"
+      ],
+      "tuning": {
+        "source": "mthreads.yaml",
+        "table": "layout",
+        "key": "n_elements",
+        "strategy": "cartesian",
+        "warmup": 3,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "add_square",
+      "provider": "mthreads_triton",
+      "source": "composite.py",
+      "functions": ["add_square_tensor_kernel"],
+      "tuning": {
+        "source": "mthreads.yaml",
+        "table": "binary_contiguous",
+        "key": "n_elements",
+        "strategy": "cartesian",
+        "warmup": 3,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "conv_bias_relu",
+      "provider": "mthreads_triton",
+      "source": "conv_bias_relu.py",
+      "functions": ["conv_bias_relu_2d_kernel"],
+      "tuning": {
+        "source": "mthreads.yaml",
+        "table": "convolution",
+        "key": "n_outputs",
+        "strategy": "cartesian",
+        "warmup": 3,
+        "repetitions": 10
+      }
+    },
+    {
+      "operations": ["conv2d_fprop", "convolution_fprop"],
+      "provider": "mthreads_triton",
+      "source": "convolution.py",
+      "functions": [
+        "conv1d_gemm_kernel",
+        "conv2d_spatial_nchw_kernel",
+        "conv3d_spatial_ncdhw_m_kernel",
+        "_conv_fprop2d_im2col_kernel",
+        "_conv_fprop2d_im2col_mm_kernel",
+        "conv_dgrad_nd_kernel",
+        "conv_wgrad_nd_kernel"
+      ],
+      "tuning": {
+        "source": "mthreads.yaml",
+        "table": "convolution",
+        "key": "n_outputs",
+        "strategy": "cartesian",
+        "warmup": 3,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "convolution_dgrad",
+      "provider": "mthreads_triton",
+      "source": "convolution.py",
+      "functions": [
+        "conv_dgrad_nd_kernel",
+        "_conv_dgrad2d_dense_pack_filter_kernel",
+        "_conv_dgrad2d_dense_pack_loss_kernel",
+        "_conv_dgrad2d_dense_mm_kernel"
+      ],
+      "tuning": {
+        "source": "mthreads.yaml",
+        "table": "convolution",
+        "key": "n_outputs",
+        "strategy": "cartesian",
+        "warmup": 3,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "convolution_wgrad",
+      "provider": "mthreads_triton",
+      "source": "convolution.py",
+      "functions": [
+        "conv_wgrad_nd_kernel",
+        "_conv_wgrad2d_p5_pack_image_kernel",
+        "_conv_wgrad2d_p5_mm_kernel",
+        "_conv_wgrad2d_direct_split_kernel",
+        "_conv_wgrad2d_im2row_kernel",
+        "_conv_wgrad2d_rowmajor_kernel",
+        "_conv_wgrad_nd_im2row_kernel",
+        "_conv_wgrad_nd_rowmajor_kernel",
+        "_conv_wgrad_nd_reduce_kernel",
+        "_conv_wgrad2d_1x1_split_kernel",
+        "_conv_wgrad2d_stem_split_kernel",
+        "_conv_wgrad2d_stem_reduce_kernel"
+      ],
+      "tuning": {
+        "source": "mthreads.yaml",
+        "table": "convolution",
+        "key": "n_outputs",
+        "strategy": "cartesian",
+        "warmup": 3,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "matmul",
+      "provider": "mthreads_triton",
+      "source": "matmul.py",
+      "functions": [
+        "matmul_descriptor_kernel",
+        "_matmul_tle_consumer",
+        "_matmul_tle_producer",
+        "matmul_tle_kernel",
+        "matmul_strided_kernel"
+      ],
+      "tuning": {
+        "source": "mthreads.yaml",
+        "table": "matmul",
+        "key": "m",
+        "strategy": "cartesian",
+        "warmup": 3,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "batchnorm_inference",
+      "provider": "mthreads_triton",
+      "source": "normalization.py",
+      "functions": [
+        "batch_norm_inference_nchw_kernel",
+        "batch_norm_inference_kernel"
+      ],
+      "tuning": {
+        "source": "mthreads.yaml",
+        "table": "batchnorm_inference",
+        "key": "n_elements",
+        "strategy": "cartesian",
+        "warmup": 3,
+        "repetitions": 10
+      }
+    }
+  ]
+}
