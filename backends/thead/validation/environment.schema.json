@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flagos.ai/flagdnn/thead/environment.schema.json",
+  "title": "FlagDNN THead environment identity",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "ppu_sdk",
+    "cuda_compat",
+    "triton",
+    "libtriton_jit",
+    "python",
+    "device"
+  ],
+  "$defs": {
+    "absolute_path": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "source_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": {
+          "enum": ["git_commit", "content_sha256"]
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "ppu_sdk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "version",
+        "release_file",
+        "hggc_library",
+        "acdnn_header",
+        "acdnn_library"
+      ],
+      "properties": {
+        "root": {"$ref": "#/$defs/absolute_path"},
+        "version": {"type": "string", "minLength": 1},
+        "release_file": {"$ref": "#/$defs/absolute_path"},
+        "hggc_library": {"$ref": "#/$defs/absolute_path"},
+        "acdnn_header": {"$ref": "#/$defs/absolute_path"},
+        "acdnn_library": {"$ref": "#/$defs/absolute_path"}
+      }
+    },
+    "cuda_compat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "header",
+        "driver_library",
+        "compiler",
+        "ptxas",
+        "ir_formatter"
+      ],
+      "properties": {
+        "root": {"$ref": "#/$defs/absolute_path"},
+        "header": {"$ref": "#/$defs/absolute_path"},
+        "driver_library": {"$ref": "#/$defs/absolute_path"},
+        "compiler": {"$ref": "#/$defs/absolute_path"},
+        "ptxas": {"$ref": "#/$defs/absolute_path"},
+        "ir_formatter": {"$ref": "#/$defs/absolute_path"}
+      }
+    },
+    "triton": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "repository_root",
+        "package_file",
+        "module_version",
+        "distribution_version",
+        "distribution_metadata",
+        "backend_catalog",
+        "codegen_backend",
+        "target_backend",
+        "compiler_file",
+        "driver_file",
+        "compiler_frontend_file",
+        "binary_extension",
+        "ppu_compatibility",
+        "source_identity"
+      ],
+      "properties": {
+        "root": {"$ref": "#/$defs/absolute_path"},
+        "repository_root": {"$ref": "#/$defs/absolute_path"},
+        "package_file": {"$ref": "#/$defs/absolute_path"},
+        "module_version": {"type": "string", "minLength": 1},
+        "distribution_version": {
+          "type": "string",
+          "pattern": "[Pp][Pp][Uu]"
+        },
+        "distribution_metadata": {"$ref": "#/$defs/absolute_path"},
+        "backend_catalog": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "contains": {"const": "nvidia"},
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "codegen_backend": {"const": "nvidia"},
+        "target_backend": {"const": "cuda"},
+        "compiler_file": {"$ref": "#/$defs/absolute_path"},
+        "driver_file": {"$ref": "#/$defs/absolute_path"},
+        "compiler_frontend_file": {"$ref": "#/$defs/absolute_path"},
+        "binary_extension": {"const": "cubin"},
+        "ppu_compatibility": {"const": "cuda"},
+        "source_identity": {"$ref": "#/$defs/source_identity"}
+      }
+    },
+    "libtriton_jit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "repository_root",
+        "config_file",
+        "backend",
+        "library",
+        "script_directory",
+        "standalone_compile",
+        "gen_ssig",
+        "source_identity"
+      ],
+      "properties": {
+        "root": {"$ref": "#/$defs/absolute_path"},
+        "repository_root": {"$ref": "#/$defs/absolute_path"},
+        "config_file": {"$ref": "#/$defs/absolute_path"},
+        "backend": {"const": "CUDA"},
+        "library": {"$ref": "#/$defs/absolute_path"},
+        "script_directory": {"$ref": "#/$defs/absolute_path"},
+        "standalone_compile": {"$ref": "#/$defs/absolute_path"},
+        "gen_ssig": {"$ref": "#/$defs/absolute_path"},
+        "source_identity": {"$ref": "#/$defs/source_identity"}
+      }
+    },
+    "python": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "executable",
+        "version",
+        "implementation",
+        "abi",
+        "cache_tag",
+        "torch_version",
+        "torch_file"
+      ],
+      "properties": {
+        "executable": {"$ref": "#/$defs/absolute_path"},
+        "version": {"type": "string", "minLength": 1},
+        "implementation": {"type": "string", "minLength": 1},
+        "abi": {"type": "string", "minLength": 1},
+        "cache_tag": {"type": "string", "minLength": 1},
+        "torch_version": {"type": "string", "minLength": 1},
+        "torch_file": {"$ref": "#/$defs/absolute_path"}
+      }
+    },
+    "device": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ordinal",
+            "name",
+            "uuid",
+            "pci_bus_id",
+            "capability",
+            "capability_code",
+            "driver_version",
+            "triton_registry_backend",
+            "triton_target_backend",
+            "triton_target_arch",
+            "triton_warp_size",
+            "ppu_smi"
+          ],
+          "properties": {
+            "ordinal": {"type": "integer", "minimum": 0},
+            "name": {"type": "string", "minLength": 1},
+            "uuid": {"type": "string", "format": "uuid"},
+            "pci_bus_id": {"type": "string", "minLength": 1},
+            "capability": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+            "capability_code": {"type": "integer", "minimum": 0},
+            "driver_version": {"type": "integer", "minimum": 1},
+            "triton_registry_backend": {"const": "nvidia"},
+            "triton_target_backend": {"const": "cuda"},
+            "triton_target_arch": {"type": "integer", "minimum": 1},
+            "triton_warp_size": {"const": 32},
+            "ppu_smi": {"$ref": "#/$defs/absolute_path"}
+          }
+        }
+      ]
+    }
+  }
+}
