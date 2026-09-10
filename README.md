@@ -60,4 +60,3 @@ python3 tools/run_tests.py \
     --output build/hygon/run-tests.json \
     2>&1 | tee build/hygon/run-tests.log
 
-该命令以 `Release` 模式编译 FlagDNN，并同时构建功能测试和性能测试。
