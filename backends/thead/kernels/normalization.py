@@ -23,40 +23,84 @@ def batch_norm_inference_nchw_kernel(
     HAS_BIAS: tl.constexpr,
     STAT_IS_INV_VARIANCE: tl.constexpr,
 ):
-    """Apply one contiguous NCHW channel/spatial tile per program.
+    """Pack small channels; retain scalar parameter loads for one channel."""
+    BLOCK_S: tl.constexpr = min(triton.next_power_of_2(S), BLOCK_SIZE)
+    BLOCK_C: tl.constexpr = BLOCK_SIZE // BLOCK_S
+    if BLOCK_C == 1:
+        # A [1, BLOCK_S] PPU layout duplicates masked parameter loads.
+        # The original scalar loads avoid that overhead for unpacked tiles.
+        program = tl.program_id(0).to(tl.int64)
+        spatial_blocks: tl.constexpr = (S + BLOCK_SIZE - 1) // BLOCK_SIZE
+        spatial_block = program % spatial_blocks
+        remaining = program // spatial_blocks
+        channel = remaining % C
+        batch = remaining // C
+        spatial = spatial_block * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+        active = spatial < S
+        offsets = (batch * C + channel) * S + spatial
 
-    The common kernel packs channels and spatial positions into a single
-    compile-time tile.  PPU Triton 3.5 loses the constexpr type after that
-    tile is clamped when S exceeds BLOCK_SIZE.  This equivalent mapping keeps
-    the complete frontend ABI while using a fixed one-channel spatial tile.
-    """
+        values = tl.load(x_ptr + offsets, mask=active, other=0.0).to(tl.float32)
+        mean = tl.load(mean_ptr + channel).to(tl.float32)
+        statistic = tl.load(stat_ptr + channel).to(tl.float32)
+        inv_variance = (
+            statistic if STAT_IS_INV_VARIANCE else tl.rsqrt(statistic + eps)
+        )
+        weight = (
+            tl.load(weight_ptr + channel).to(tl.float32) if HAS_WEIGHT else 1.0
+        )
+        bias = tl.load(bias_ptr + channel).to(tl.float32) if HAS_BIAS else 0.0
+        result = (values - mean) * inv_variance * weight + bias
+        tl.store(
+            y_ptr + offsets,
+            result.to(y_ptr.dtype.element_ty),
+            mask=active,
+        )
 
-    program = tl.program_id(0).to(tl.int64)
-    spatial_blocks: tl.constexpr = (S + BLOCK_SIZE - 1) // BLOCK_SIZE
-    spatial_block = program % spatial_blocks
-    remaining = program // spatial_blocks
-    channel = remaining % C
-    batch = remaining // C
-    spatial = spatial_block * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    active = spatial < S
-    offsets = (batch * C + channel) * S + spatial
+    else:
+        program = tl.program_id(0).to(tl.int64)
+        SPATIAL_BLOCKS: tl.constexpr = (S + BLOCK_S - 1) // BLOCK_S
+        CHANNEL_BLOCKS: tl.constexpr = (C + BLOCK_C - 1) // BLOCK_C
 
-    values = tl.load(x_ptr + offsets, mask=active, other=0.0).to(tl.float32)
-    mean = tl.load(mean_ptr + channel).to(tl.float32)
-    statistic = tl.load(stat_ptr + channel).to(tl.float32)
-    inv_variance = (
-        statistic if STAT_IS_INV_VARIANCE else tl.rsqrt(statistic + eps)
-    )
-    weight = (
-        tl.load(weight_ptr + channel).to(tl.float32) if HAS_WEIGHT else 1.0
-    )
-    bias = tl.load(bias_ptr + channel).to(tl.float32) if HAS_BIAS else 0.0
-    result = (values - mean) * inv_variance * weight + bias
-    tl.store(
-        y_ptr + offsets,
-        result.to(y_ptr.dtype.element_ty),
-        mask=active,
-    )
+        spatial_block = program % SPATIAL_BLOCKS
+        remaining = program // SPATIAL_BLOCKS
+        channel_block = remaining % CHANNEL_BLOCKS
+        batch = remaining // CHANNEL_BLOCKS
+        channels = channel_block * BLOCK_C + tl.arange(0, BLOCK_C)[:, None]
+        spatial = spatial_block * BLOCK_S + tl.arange(0, BLOCK_S)[None, :]
+        channel_active = channels < C
+        active = channel_active & (spatial < S)
+        offsets = (batch * C + channels) * S + spatial
+
+        values = tl.load(x_ptr + offsets, mask=active, other=0.0).to(tl.float32)
+        mean = tl.load(mean_ptr + channels, mask=channel_active, other=0.0).to(
+            tl.float32
+        )
+        statistic = tl.load(
+            stat_ptr + channels, mask=channel_active, other=0.0
+        ).to(tl.float32)
+        inv_variance = (
+            statistic if STAT_IS_INV_VARIANCE else tl.rsqrt(statistic + eps)
+        )
+        weight = (
+            tl.load(weight_ptr + channels, mask=channel_active, other=1.0).to(
+                tl.float32
+            )
+            if HAS_WEIGHT
+            else 1.0
+        )
+        bias = (
+            tl.load(bias_ptr + channels, mask=channel_active, other=0.0).to(
+                tl.float32
+            )
+            if HAS_BIAS
+            else 0.0
+        )
+        result = (values - mean) * inv_variance * weight + bias
+        tl.store(
+            y_ptr + offsets,
+            result.to(y_ptr.dtype.element_ty),
+            mask=active,
+        )
 
 
 @triton.jit

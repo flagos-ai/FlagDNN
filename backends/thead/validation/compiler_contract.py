@@ -14,6 +14,7 @@ import importlib.util
 import json
 import math
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -28,7 +29,6 @@ sys.dont_write_bytecode = True
 SOURCE_ROOT = Path(__file__).resolve().parents[3]
 COMPILER_ROOT = SOURCE_ROOT / "compiler"
 BACKEND_ROOT = SOURCE_ROOT / "backends"
-DEFAULT_TRITON_JIT_ROOT = SOURCE_ROOT.parent / "libtriton_jit"
 TARGET = "ppu_contract_cc80"
 
 
@@ -63,6 +63,29 @@ def request(
     *,
     autotune: bool = False,
 ) -> dict[str, Any]:
+    if operation in {"binary_select", "logical_not", "logical_and", "logical_or"}:
+        document = request(identity, "abs" if operation == "logical_not" else "add", autotune=autotune)
+        graph = document["graph"]
+        node = graph["nodes"][0]
+        node["type"] = operation
+        node["name"] = operation
+        mode = {"binary_select": 41, "logical_not": 24,
+                "logical_and": 31, "logical_or": 32}[operation]
+        node["attributes"]["mode"] = mode
+        if operation == "binary_select":
+            graph["tensor_count"] = 4
+            output = copy.deepcopy(graph["tensors"][0])
+            output["uid"] = 4
+            graph["tensors"].append(output)
+            graph["tensors"][2]["data_type"] = "boolean"
+            node["inputs"] = [{"name": name, "uid": uid} for name, uid in (("a", 1), ("b", 2), ("t", 3))]
+            node["outputs"] = [{"name": "output", "uid": 4}]
+            node["attributes"] = {"mode": mode, "n_elements": 16}
+        else:
+            for tensor in graph["tensors"]: tensor["data_type"] = "boolean"
+            node["compute_data_type"] = "boolean"
+            if operation != "logical_not": node["attributes"]["pointwise_mode"] = mode
+        return document
     if operation == "add_square":
         def binary_node(
             node_id: int,
@@ -145,6 +168,7 @@ def request(
         "swish",
         "gelu_approx_tanh",
         "reciprocal",
+        "erf",
     ):
         pointwise_mode = {
             "relu": 2,
@@ -169,6 +193,7 @@ def request(
             "swish": 38,
             "gelu_approx_tanh": 39,
             "reciprocal": 16,
+            "erf": 4,
         }[operation]
         return {
             "schema_version": 3,
@@ -2252,6 +2277,239 @@ def assert_identity_artifact(
         compile_add_kernel(output, variant, kernel)
 
 
+def assert_performance_artifacts(
+    provider: object, temporary: Path, identity: str, *, compile_kernel: bool
+) -> None:
+    for operation in ("add", "abs", "pow"):
+        for data_type in ("float32", "float16", "bfloat16"):
+            document = request(identity, operation, autotune=True)
+            for tensor in document["graph"]["tensors"]:
+                tensor.update(data_type=data_type, dimensions=[65536], strides=[1])
+            document["graph"]["nodes"][0]["attributes"]["n_elements"] = 65536
+            name = f"optimized-{operation}-{data_type}"
+            path, output = temporary / f"{name}.json", temporary / name
+            write_json(path, document)
+            provider.compile_request(path, output, "libtriton_jit")
+            stage = load_artifact(output)["program"]["stages"][0]
+            optimized = stage["variants"][-1]
+            require(len(stage["variants"]) == 3 and stage["tuning"] is not None,
+                    f"{name} lost the measured autotune candidate")
+            require(optimized["full_signature"].split(",")[len(document["graph"]["tensors"])] == "i32:16",
+                    f"{name} lost proven scalar divisibility")
+            require(optimized["arguments"][-1]["value"] == 65536,
+                    f"{name} specialized away the runtime count")
+            if compile_kernel:
+                compile_add_kernel(output, optimized, stage["kernel"])
+
+    document = batchnorm_request(identity, "batchnorm", autotune=True)
+    dimensions, strides = [8, 8, 56, 56], [25088, 3136, 56, 1]
+    for tensor in document["graph"]["tensors"]:
+        if tensor["uid"] in (1, 6):
+            tensor.update(dimensions=dimensions, strides=strides)
+    document["graph"]["nodes"][0]["attributes"].update(
+        batch=8, spatial=3136, n_elements=200704, dimensions=dimensions,
+        x_strides=strides, y_strides=strides)
+    path, output = temporary / "optimized-bn.json", temporary / "optimized-bn"
+    write_json(path, document)
+    provider.compile_request(path, output, "libtriton_jit")
+    stage = load_artifact(output)["program"]["stages"][0]
+    optimized = stage["variants"][-1]
+    require(len(stage["variants"]) == 3 and optimized["launch"]["shared_memory"] == 32,
+            "large BatchNorm lost its eight-warp reduction candidate")
+    if compile_kernel:
+        compile_add_kernel(output, optimized, stage["kernel"])
+
+
+    for operation in ("convolution_fprop", "convolution_dgrad", "convolution_wgrad"):
+        for dtype in ("float32", "float16", "bfloat16"):
+            document = convolution_request(identity, operation, autotune=True)
+            dimensions = ([1, 3, 640, 640], [16, 3, 3, 3], [1, 16, 320, 320])
+            for tensor, shape in zip(document["graph"]["tensors"], dimensions):
+                tensor.update(data_type=dtype, dimensions=shape,
+                              strides=[math.prod(shape[i + 1:]) for i in range(4)])
+            output = document["graph"]["nodes"][0]["outputs"][0]["uid"]
+            document["graph"]["nodes"][0]["attributes"].update(
+                stride=[2, 2], n_outputs=math.prod(dimensions[output - 1]))
+            name = f"optimized-{operation}-{dtype}"
+            path, output = temporary / f"{name}.json", temporary / name
+            write_json(path, document)
+            provider.compile_request(path, output, "libtriton_jit")
+            stage = load_artifact(output)["program"]["stages"][0]
+            require(len(stage["variants"]) == 3, f"{name} lost optimized candidate")
+            if compile_kernel:
+                compile_add_kernel(output, stage["variants"][-1], stage["kernel"])
+
+
+    # The PPU 64x32x32 FProp lowering can omit output stores for this shape.
+    # Keep both default and autotuned configurations on qualified tiles;
+    # the unchanged native acDNN standard_3x3 case checks numerical output.
+    for dtype in ("float16", "bfloat16"):
+        for channels_last in (False, True):
+            for autotune in (False, True):
+                document = convolution_request(
+                    identity, "convolution_fprop", autotune=autotune)
+                shapes = ([8, 32, 32, 32], [64, 32, 3, 3], [8, 64, 32, 32])
+                for tensor, shape in zip(document["graph"]["tensors"], shapes):
+                    strides = [math.prod(shape[i + 1:]) for i in range(4)]
+                    if channels_last and tensor["uid"] != 2:
+                        strides = [math.prod(shape[1:]), 1, shape[3] * shape[1], shape[1]]
+                    tensor.update(data_type=dtype, dimensions=shape, strides=strides)
+                document["graph"]["nodes"][0]["attributes"]["n_outputs"] = math.prod(shapes[2])
+                name = f"fprop-ci32-{dtype}-nhwc{channels_last}-tune{autotune}"
+                path, output = temporary / f"{name}.json", temporary / name
+                write_json(path, document)
+                provider.compile_request(path, output, "libtriton_jit")
+                stage = load_artifact(output)["program"]["stages"][0]
+                variants = stage["variants"]
+                require(len(variants) == (2 if autotune else 1),
+                        f"{name} duplicated the existing registry candidate")
+                require(variants[-1]["full_signature"].split(",")[-3:] == ["32"] * 3,
+                        f"{name} selected an unqualified FProp tile")
+                if compile_kernel:
+                    for variant in variants:
+                        compile_add_kernel(output, variant, stage["kernel"])
+
+
+    for dtype in ("float32", "float16", "bfloat16"):
+        for stride in (1, 2):
+            for autotune in (False, True):
+                document = convolution_request(identity, "convolution_wgrad", autotune=autotune)
+                extent, kernel, padding = (28, 1, 0) if stride == 1 else (56, 3, 1)
+                shapes = ([8, 64, extent, extent], [128, 64, kernel, kernel], [8, 128, 28, 28])
+                for tensor, shape in zip(document["graph"]["tensors"], shapes):
+                    tensor.update(data_type=dtype, dimensions=shape,
+                                  strides=[math.prod(shape[i + 1:]) for i in range(4)])
+                document["graph"]["nodes"][0]["attributes"].update(
+                    stride=[stride, stride], pre_padding=[padding, padding],
+                    post_padding=[padding, padding], n_outputs=math.prod(shapes[1]))
+                name = f"wgrad-reduction-{dtype}-stride{stride}-tune{autotune}"
+                path, output = temporary / f"{name}.json", temporary / name
+                write_json(path, document)
+                provider.compile_request(path, output, "libtriton_jit")
+                stage = load_artifact(output)["program"]["stages"][0]
+                variants = stage["variants"]
+                wide_reduction = dtype != "float32" and stride == 1
+                expected_count = (3 if wide_reduction else 2) if autotune else 1
+                require(len(variants) == expected_count, f"{name} has incorrect candidate coverage")
+                # WGrad's final constexpr arguments are OC, CI, M.
+                expected_tile = ([16, 16, 128] if wide_reduction
+                                 else ([32, 32, 32] if autotune else [16, 16, 16]))
+                require(variants[-1]["full_signature"].split(",")[-3:] == list(map(str, expected_tile)),
+                        f"{name} applied the unit-stride half reduction policy incorrectly")
+                if compile_kernel:
+                    compile_add_kernel(output, variants[-1], stage["kernel"])
+
+
+    for dtype in ("float16", "bfloat16"):
+        for autotune in (False, True):
+            document = convolution_request(identity, "convolution_fprop", autotune=autotune)
+            shapes = ([16, 32, 256], [64, 32, 3], [16, 64, 256])
+            for tensor, shape in zip(document["graph"]["tensors"], shapes):
+                strides = [math.prod(shape[i + 1:]) for i in range(3)]
+                if tensor["uid"] == 3:
+                    strides = [64 * 256, 1, 64]
+                tensor.update(data_type=dtype, dimensions=shape, strides=strides)
+            document["graph"]["nodes"][0]["attributes"].update(
+                spatial_rank=1, stride=[1], pre_padding=[1], post_padding=[1],
+                dilation=[1], n_outputs=math.prod(shapes[2]))
+            name = f"fprop-width-nwc-{dtype}-tune{autotune}"
+            path, output = temporary / f"{name}.json", temporary / name
+            write_json(path, document)
+            provider.compile_request(path, output, "libtriton_jit")
+            stage = load_artifact(output)["program"]["stages"][0]
+            variants = stage["variants"]
+            require(len(variants) == (3 if autotune else 1), f"{name} lost the qualified NWC candidate")
+            require(variants[-1]["full_signature"].split(",")[-3:] == ["64", "32", "32"],
+                    f"{name} unnecessarily applied the NCHW store workaround")
+            if compile_kernel:
+                compile_add_kernel(output, variants[-1], stage["kernel"])
+
+
+
+    # Retain useful parallelism for the small FP32 P5 gradient and avoid
+    # oversized scratch tiles for short 3-D reductions. Compile every
+    # candidate so the resource contract also covers autotune execution.
+    for geometry, dtype in (
+        ("p5", "float32"),
+        ("p5-batch2", "float32"),
+        ("3d", "float16"),
+        ("3d", "bfloat16"),
+        ("3d", "float32"),
+    ):
+        for autotune in (False, True):
+            document = convolution_request(
+                identity, "convolution_dgrad", autotune=autotune)
+            if geometry.startswith("p5"):
+                batch = 2 if geometry == "p5-batch2" else 1
+                shapes = ([batch, 128, 40, 40], [256, 128, 3, 3],
+                          [batch, 256, 20, 20])
+                rank, stride = 2, [2, 2]
+            else:
+                shapes = ([2, 8, 8, 16, 16], [16, 8, 3, 3, 3],
+                          [2, 16, 8, 16, 16])
+                rank, stride = 3, [1, 1, 1]
+            for tensor, shape in zip(document["graph"]["tensors"], shapes):
+                tensor.update(
+                    data_type=dtype, dimensions=shape,
+                    strides=[math.prod(shape[i + 1:]) for i in range(len(shape))])
+            document["graph"]["nodes"][0]["attributes"].update(
+                spatial_rank=rank, stride=stride, pre_padding=[1] * rank,
+                post_padding=[1] * rank, dilation=[1] * rank,
+                n_outputs=math.prod(shapes[0]))
+            name = f"dgrad-occupancy-{geometry}-{dtype}-tune{autotune}"
+            path, output = temporary / f"{name}.json", temporary / name
+            write_json(path, document)
+            provider.compile_request(path, output, "libtriton_jit")
+            stage = load_artifact(output)["program"]["stages"][0]
+            variants = stage["variants"]
+            half_3d = geometry == "3d" and dtype != "float32"
+            optimized = half_3d or geometry == "p5-batch2"
+            expected_count = (3 if optimized else 2) if autotune else 1
+            require(len(variants) == expected_count,
+                    f"{name} has incorrect DGrad candidate coverage")
+            expected_tile = ([64, 16, 16] if half_3d else
+                             [128, 32, 32] if geometry == "p5-batch2" else
+                             [32, 32, 32] if autotune else [16, 16, 16])
+            # DGrad's final constexpr arguments are M, CI, K, GROUP_M.
+            require(variants[-1]["full_signature"].split(",")[-4:-1]
+                    == list(map(str, expected_tile)),
+                    f"{name} selected a DGrad tile with measured regression")
+            if compile_kernel:
+                for variant in variants:
+                    compile_add_kernel(output, variant, stage["kernel"])
+
+
+
+    # Wide small-channel FProp tiles regress on short 3-D volumes for every
+    # dtype. Retain original defaults and the two qualified autotune tiles.
+    for dtype in ("float32", "float16", "bfloat16"):
+        for autotune in (False, True):
+            document = convolution_request(
+                identity, "convolution_fprop", autotune=autotune)
+            shapes = ([2, 8, 8, 16, 16], [16, 8, 3, 3, 3], [2, 16, 8, 16, 16])
+            for tensor, shape in zip(document["graph"]["tensors"], shapes):
+                tensor.update(data_type=dtype, dimensions=shape,
+                              strides=[math.prod(shape[i + 1:]) for i in range(5)])
+            document["graph"]["nodes"][0]["attributes"].update(
+                spatial_rank=3, stride=[1, 1, 1], pre_padding=[1, 1, 1],
+                post_padding=[1, 1, 1], dilation=[1, 1, 1],
+                n_outputs=math.prod(shapes[2]))
+            name = f"fprop-short-volume-{dtype}-tune{autotune}"
+            path, output = temporary / f"{name}.json", temporary / name
+            write_json(path, document)
+            provider.compile_request(path, output, "libtriton_jit")
+            stage = load_artifact(output)["program"]["stages"][0]
+            variants = stage["variants"]
+            require(len(variants) == (2 if autotune else 1),
+                    f"{name} retained a regressing wide volume tile")
+            require(variants[-1]["full_signature"].split(",")[-3:]
+                    == (["32"] * 3 if autotune else ["16"] * 3),
+                    f"{name} lost the original qualified volume tile")
+            if compile_kernel:
+                for variant in variants:
+                    compile_add_kernel(output, variant, stage["kernel"])
+
+
 def assert_generic_binary_artifact(
     provider: object,
     temporary: Path,
@@ -2289,8 +2547,8 @@ def assert_generic_binary_artifact(
     require(
         stage.get("operation") == operation
         and stage.get("tuning") is None
-        and kernel.get("provider") == "common_triton"
-        and kernel.get("ownership") == "common"
+        and kernel.get("provider") == ("thead_triton" if operation == "pow" else "common_triton")
+        and kernel.get("ownership") == ("platform" if operation == "pow" else "common")
         and kernel.get("function") == "binary_contiguous_kernel"
         and len(variants) == 1,
         f"{label} did not select one non-autotuned common binary stage",
@@ -2915,8 +3173,8 @@ def assert_layout_artifact(
         and stage.get("dependencies") == []
         and stage.get("operation") == operation
         and stage.get("tuning") is None
-        and kernel.get("provider") == "common_triton"
-        and kernel.get("ownership") == "common"
+        and kernel.get("provider") == ("thead_triton" if operation == "transpose" else "common_triton")
+        and kernel.get("ownership") == ("platform" if operation == "transpose" else "common")
         and kernel.get("function") == "layout_copy_kernel"
         and len(variants) == 1,
         f"{operation} did not select the common Layout stage",
@@ -2927,7 +3185,7 @@ def assert_layout_artifact(
         source_path.is_file()
         and source.get("sha256") == sha256_file(source_path)
         and source.get("sha256")
-        == sha256_file(SOURCE_ROOT / "kernels/common/layout.py"),
+        == sha256_file(SOURCE_ROOT / ("backends/thead/kernels/layout.py" if operation == "transpose" else "kernels/common/layout.py")),
         f"{operation} common Layout source identity is invalid",
     )
     variant = variants[0]
@@ -3696,6 +3954,7 @@ def assert_matmul_artifact(
             )
 
     for data_type, pointer in (
+        ("float32", "fp32"),
         ("float16", "fp16"),
         ("bfloat16", "bf16"),
     ):
@@ -3731,9 +3990,9 @@ def assert_matmul_artifact(
             )
             and large_variant.get("launch")
             == {
-                "grid": [16, 32, 1],
-                "block": [256, 1, 1],
-                "shared_memory": 32768,
+                "grid": [64 if data_type == "float32" else 16, 32, 1],
+                "block": [128, 1, 1],
+                "shared_memory": 32768 if data_type == "float32" else 65536,
             },
             f"large MatMul {data_type} launch metadata is invalid",
         )
@@ -3795,6 +4054,71 @@ def assert_matmul_artifact(
     )
 
 
+def assert_convolution_indexing() -> None:
+    """Compile large strides without allocating or executing unsafe layouts.
+
+    The regression is a 2**31 element offset being multiplied in int32 before
+    conversion at tt.addptr. Inspect the multiply itself, not the pointer type.
+    Numerical execution remains exclusively compared with acDNN by the runner.
+    """
+    import triton
+    from triton.backends.compiler import GPUTarget
+    from triton.compiler import ASTSource
+
+    path = BACKEND_ROOT / "thead/kernels/convolution.py"
+    name = "_flagdnn_thead_convolution_indexing"
+    spec = importlib.util.spec_from_file_location(name, path)
+    require(spec is not None and spec.loader is not None, "missing convolution source")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+        for function_name in (
+            "conv_fprop_nd_kernel", "conv_dgrad_nd_kernel",
+            "conv_wgrad_nd_kernel", "conv2d_bias_relu_kernel",
+        ):
+            function = getattr(module, function_name)
+            pointer_count = 4 if function_name == "conv2d_bias_relu_kernel" else 3
+            names = function.arg_names
+            for stride_axis in ("N", "W"):
+                values = {key: 1 for key in names[pointer_count:]}
+                values.update({key: 0 for key in values if key.startswith("PAD_")})
+                values.update({key: 16 for key in values if key.startswith("BLOCK_")})
+                values.update(INPUT_PRECISION="ieee")
+                if stride_axis == "W":
+                    values.update(XW=3, OW=3)
+                values[f"X_STRIDE_{stride_axis}"] = 2**30
+                if "M" in values:
+                    values["M"] = 3
+                if "FLIP_FILTER" in values:
+                    values["FLIP_FILTER"] = False
+                source = ASTSource(
+                    function,
+                    signature={key: "*fp32" if i < pointer_count else "constexpr"
+                               for i, key in enumerate(names)},
+                    constexprs={(i,): values[key] for i, key in enumerate(names)
+                                if i >= pointer_count},
+                    attrs={(i,): [["tt.divisibility", 16]] for i in range(pointer_count)},
+                )
+                compiled = triton.compile(
+                    source, target=GPUTarget("cuda", 80, 32),
+                    options={"num_warps": 4, "num_stages": 1},
+                )
+                ir = compiled.asm["ttir"]
+                constant = re.search(
+                    r"(%[\w]+) = arith.constant (?:dense<1073741824>|1073741824)"
+                    r" : (?:tensor<[^>]*xi64>|i64)", ir
+                )
+                require(constant is not None, f"{function_name}/{stride_axis}: stride was narrowed to int32")
+                require(
+                    any("arith.muli" in line and constant[1] in line and "i64" in line
+                        for line in ir.splitlines()),
+                    f"{function_name}/{stride_axis}: large stride multiplication must happen in int64",
+                )
+    finally:
+        sys.modules.pop(name, None)
+
+
 def assert_convolution_artifacts(
     provider: object,
     temporary: Path,
@@ -3811,15 +4135,15 @@ def assert_convolution_artifacts(
             "grid": [2, 1, 1],
         },
         "convolution_dgrad": {
-            "provider": "common_triton",
-            "ownership": "common",
+            "provider": "thead_triton",
+            "ownership": "platform",
             "function": "conv_dgrad_nd_kernel",
             "uids": [3, 2, 1],
             "grid": [2, 1, 1],
         },
         "convolution_wgrad": {
-            "provider": "common_triton",
-            "ownership": "common",
+            "provider": "thead_triton",
+            "ownership": "platform",
             "function": "conv_wgrad_nd_kernel",
             "uids": [3, 1, 2],
             "grid": [1, 9, 1],
@@ -3991,6 +4315,13 @@ def assert_convolution_artifacts(
                     "attributes"
                 ].__setitem__("groups", 3),
                 "groups",
+            ),
+            (
+                "int64-coordinate-overflow",
+                lambda value: value["graph"]["nodes"][0]["attributes"].__setitem__(
+                    "dilation", [2**62, 2**62]
+                ),
+                "spatial coordinates exceed int64",
             ),
             (
                 "int32-index-overflow",
@@ -4383,6 +4714,249 @@ def assert_generic_unary_artifact(
 
     if compile_kernel:
         compile_add_kernel(output, variant, kernel)
+
+
+def attention_requests(identity: str) -> list[dict[str, Any]]:
+    # Public forward profiles, plus each backward profile's forward inputs.
+    profiles = (
+        (False, 1, 2, 2, 64, 64, 64, 64, "float16", False, False, True),
+        (False, 1, 4, 2, 48, 48, 64, 64, "bfloat16", True, False, True),
+        (False, 2, 2, 2, 32, 40, 64, 64, "float16", False, True, True),
+        (False, 1, 2, 2, 16, 24, 64, 64, "float16", False, False, False),
+        (True, 1, 2, 2, 32, 32, 32, 32, "float16", False, False, True),
+        (True, 1, 4, 2, 32, 32, 64, 64, "bfloat16", True, False, True),
+        (True, 1, 2, 2, 24, 32, 32, 64, "float16", False, False, True),
+        (True, 2, 4, 4, 32, 40, 64, 64, "float16", False, True, True),
+        (False, 1, 2, 2, 64, 64, 128, 128, "fp8_e4m3", False, False, True),
+        (False, 1, 4, 2, 48, 48, 128, 128, "fp8_e5m2", True, False, True),
+        (False, 1, 2, 2, 32, 40, 128, 128, "fp8_e4m3", False, False, True),
+        (False, 1, 2, 2, 32, 40, 128, 128, "fp8_e4m3", False, False, False),
+        (True, 1, 2, 2, 64, 64, 128, 128, "fp8_e4m3", False, False, True),
+        (True, 1, 4, 2, 48, 48, 128, 128, "fp8_e5m2", True, False, True),
+    )
+    documents = []
+    for index, profile in enumerate(profiles):
+        backward, batch, heads, kv_heads, sq, sk, d, dv, dtype, causal, bias, stats = profile
+        for is_backward in ((True, False) if backward else (False,)):
+            fp8 = dtype.startswith("fp8_")
+            operation = ("sdpa_fp8_backward" if is_backward else "sdpa_fp8") if fp8 else ("sdpa_backward" if is_backward else "sdpa")
+            inputs = ["q", "k", "v"] + (["o", "do", "stats"] if is_backward else [])
+            if bias:
+                inputs.append("bias")
+            outputs = ["dq", "dk", "dv"] if is_backward else ["o", "stats"]
+            if bias and is_backward:
+                outputs.append("dbias")
+            shapes = {
+                "q": [batch, heads, sq, d], "k": [batch, kv_heads, sk, d],
+                "v": [batch, kv_heads, sk, dv], "o": [batch, heads, sq, dv],
+                "stats": [batch, heads, sq, 1], "bias": [1, heads, sq, sk],
+            }
+            shapes.update(dq=shapes["q"], dk=shapes["k"], dv=shapes["v"],
+                          do=shapes["o"], dbias=shapes["bias"])
+            float_names = {"stats"}
+            if fp8:
+                scales = (["descale_q", "descale_k", "descale_v", "descale_o", "descale_do",
+                           "descale_s", "descale_dp", "scale_s", "scale_dq", "scale_dk", "scale_dv", "scale_dp"]
+                          if is_backward else
+                          ["descale_q", "descale_k", "descale_v", "descale_s", "scale_s", "scale_o"])
+                maxima = ["amax_dq", "amax_dk", "amax_dv", "amax_dp"] if is_backward else ["amax_s", "amax_o"]
+                inputs += scales
+                outputs += maxima
+                float_names.update(scales + maxima)
+                shapes.update({name: [1, 1, 1, 1] for name in scales + maxima})
+            names = inputs + outputs
+            uids = {name: uid for uid, name in enumerate(names, 1)}
+            tensors = []
+            for name in names:
+                shape = shapes[name]
+                tensors.append({
+                    "uid": uids[name], "data_type": "float32" if name in float_names else dtype,
+                    "dimensions": shape, "strides": [math.prod(shape[i+1:]) for i in range(4)],
+                    "alignment": 16, "virtual": name == "stats" and not stats,
+                })
+            attributes = dict(
+                attn_scale=0.2 if d == 32 and dv == 64 else 1 / math.sqrt(d),
+                attn_scale_set=True, banded=int(causal), batch=batch,
+                causal_top_left=int(causal and sq == sk), diagonal_alignment=0,
+                diagonal_band_left_bound=0, diagonal_band_right_bound=0,
+                generate_stats=int(stats), has_bias=int(bias), has_dbias=int(bias and is_backward),
+                head_dimension=d, heads=heads, key_heads=kv_heads, left_bound_set=False,
+                max_diag=0 if causal else 1 << 30, min_diag=-(1 << 30),
+                q_per_k=heads // kv_heads, q_per_v=heads // kv_heads,
+                reverse_causal=int(causal), right_bound_set=causal, sequence_kv=sk,
+                sequence_q=sq, value_dimension=dv, value_heads=kv_heads,
+            )
+            documents.append({
+                "schema_version": 3, "flagdnn_version": "0.2.0", "backend": "thead",
+                "target": TARGET, "compiler_identity": identity,
+                "build_options": {"heuristic_modes": ["A"], "autotune": True},
+                "graph": {"name": f"attention-{index}-{operation}", "tensor_count": len(tensors),
+                          "tensors": tensors, "node_count": 1, "nodes": [{
+                              "id": 0, "type": operation, "name": operation, "compute_data_type": "float32",
+                              "inputs": [{"name": name, "uid": uids[name]} for name in inputs],
+                              "outputs": [{"name": name, "uid": uids[name]} for name in outputs],
+                              "attributes": attributes,
+                          }]},
+            })
+    return documents
+
+
+def assert_attention_artifacts(
+    provider: object, temporary: Path, identity: str, *, compile_kernel: bool,
+    fp8_only: bool = False,
+) -> None:
+    for document in attention_requests(identity):
+        if fp8_only and not document["graph"]["nodes"][0]["type"].startswith("sdpa_fp8"):
+            continue
+        graph = document["graph"]
+        name = graph["name"]
+        source = temporary / f"{name}.json"
+        output = temporary / f"{name}-artifact"
+        write_json(source, document)
+        result = provider.compile_request(source, output, "libtriton_jit")
+        require(result["status"] == "success", f"{name} compile failed")
+        manifest = load_artifact(output)
+        external = [t["uid"] for t in graph["tensors"] if not t["virtual"]]
+        require(manifest["external_uids"] == external, f"{name} external UID order changed")
+        require(manifest["workspace"] == {"size": 0, "alignment": 256},
+                f"{name} introduced unbound attention scratch memory")
+        stages = manifest["program"]["stages"]
+        require(len(stages) == 1 and stages[0]["source_node_ids"] == [0],
+                f"{name} no longer captures one kernel per Graph node")
+        stage = stages[0]
+        require(stage["tuning"] and len(stage["variants"]) == 2,
+                f"{name} lost its autotune candidates")
+        for variant in stage["variants"]:
+            arguments = variant["arguments"]
+            require(variant["argument_count"] == len(external) and
+                    all(arg["kind"] == "tensor" for arg in arguments) and
+                    sorted(arg["uid"] for arg in arguments) == sorted(external),
+                    f"{name} runtime ABI includes optional pointers or constants")
+            node = graph["nodes"][0]
+            attrs = node["attributes"]
+            fp8 = node["type"].startswith("sdpa_fp8")
+            fp8_uids = {t["uid"] for t in graph["tensors"] if t["data_type"].startswith("fp8_")}
+            for argument in arguments:
+                require((argument.get("storage_view") == "fp8_bytes") == (argument["uid"] in fp8_uids),
+                        f"{name} lost explicit FP8 byte storage views")
+            if fp8:
+                require(variant["launch"]["shared_memory"] == (24576 if node["type"].endswith("backward") else 8192),
+                        f"{name} FP8 shared memory metadata differs from native compilation")
+            absent = (int(not attrs["has_bias"]) +
+                      (int(not attrs["has_dbias"]) if node["type"] == "sdpa_backward"
+                       else int(not attrs["generate_stats"])))
+            if fp8:
+                absent = int(not attrs["generate_stats"])
+            require(variant["full_signature"].split(",").count("nullopt") == absent,
+                    f"{name} lost specialized None pointers")
+            if compile_kernel:
+                compile_add_kernel(output, variant, stage["kernel"])
+        fields = ["dtype", "compute", "geometry", "stride", "port", "scale", "mask", "group", "storage"]
+        if graph["nodes"][0]["type"].startswith("sdpa_fp8"):
+            fields += ["scalar_dtype", "scalar_shape", "amax_dtype", "bias"]
+        for field in fields:
+            invalid = copy.deepcopy(document)
+            node = invalid["graph"]["nodes"][0]
+            tensor = invalid["graph"]["tensors"][0]
+            if field == "dtype": tensor["data_type"] = "float32"
+            elif field == "compute": node["compute_data_type"] = "float16"
+            elif field == "geometry": tensor["dimensions"][2] += 1
+            elif field == "stride": tensor["strides"][0] += 16
+            elif field == "port": node["inputs"][0]["name"] = "invalid"
+            elif field == "scale": node["attributes"]["attn_scale"] = "0.125"
+            elif field == "mask": node["attributes"]["left_bound_set"] = True
+            elif field == "group": node["attributes"]["q_per_k"] += 1
+            elif field == "scalar_dtype":
+                uid = next(port["uid"] for port in node["inputs"] if port["name"] == "scale_s")
+                next(t for t in invalid["graph"]["tensors"] if t["uid"] == uid)["data_type"] = "float16"
+            elif field == "scalar_shape":
+                uid = next(port["uid"] for port in node["inputs"] if port["name"] == "scale_s")
+                next(t for t in invalid["graph"]["tensors"] if t["uid"] == uid)["dimensions"][-1] = 2
+            elif field == "amax_dtype":
+                uid = next(port["uid"] for port in node["outputs"] if port["name"].startswith("amax_"))
+                next(t for t in invalid["graph"]["tensors"] if t["uid"] == uid)["data_type"] = "float16"
+            elif field == "bias": node["attributes"]["has_bias"] = 1
+            else: tensor["virtual"] = True
+            bad = temporary / f"{name}-{field}-invalid.json"
+            bad_output = temporary / f"{name}-{field}-invalid-artifact"
+            write_json(bad, invalid)
+            expect_value_error(lambda: provider.compile_request(bad, bad_output, "libtriton_jit"), "")
+            require(not bad_output.exists(), f"{name}/{field} rejection wrote an artifact")
+
+
+def assert_boolean_pointwise_artifacts(
+    provider: object, temporary: Path, identity: str, *, compile_kernel: bool
+) -> None:
+    for operation in ("logical_not", "logical_and", "logical_or", "binary_select"):
+        dtypes = ("float32", "float16", "bfloat16") if operation == "binary_select" else ("boolean",)
+        for dtype in dtypes:
+            for strided in ((False, True) if operation == "binary_select" else (False,)):
+                document = request(identity, operation, autotune=True)
+                graph = document["graph"]
+                if operation == "binary_select":
+                    for tensor in graph["tensors"]:
+                        if tensor["uid"] != 3: tensor["data_type"] = dtype
+                    if strided:
+                        for tensor, strides in zip(graph["tensors"], ([31, 9, 1], [37, 11, 1], [12, 4, 1], [43, 14, 1])):
+                            tensor["dimensions"] = [2, 3, 4]
+                            tensor["strides"] = strides
+                        graph["nodes"][0]["attributes"]["n_elements"] = 24
+                name = f"{operation}-{dtype}-{'strided' if strided else 'dense'}"
+                source = temporary / f"{name}.json"
+                output = temporary / f"{name}-artifact"
+                write_json(source, document)
+                result = provider.compile_request(source, output, "libtriton_jit")
+                require(result["status"] == "success", f"{name} compile failed: {result}")
+                stage = load_artifact(output)["program"]["stages"][0]
+                require(stage["tuning"] is not None and len(stage["variants"]) == 2,
+                        f"{name} lost its autotune candidates")
+                for variant in stage["variants"]:
+                    require(variant["argument_count"] == len(graph["tensors"]) + 1,
+                            f"{name} runtime arity differs from graph")
+                    require([arg["uid"] for arg in variant["arguments"][:-1]] ==
+                            [t["uid"] for t in graph["tensors"]], f"{name} tensor ABI order changed")
+                    if operation == "binary_select":
+                        expected = "binary_select_strided_kernel" if strided else "binary_select_tensor_kernel"
+                        require(stage["kernel"]["function"] == expected, f"{name} kernel mismatch")
+                        require(variant["full_signature"].split(",")[2] == "*i8:16",
+                                f"{name} mask pointer is not byte boolean")
+                    else:
+                        require(all(token == "*i8:16" for token in variant["full_signature"].split(",")[:len(graph["tensors"])]),
+                                f"{name} logical tensor ABI is not byte boolean")
+                    if compile_kernel:
+                        compile_add_kernel(output, variant, stage["kernel"])
+                for field in ("dtype", "compute", "mode", "geometry", "port"):
+                    invalid = copy.deepcopy(document)
+                    node = invalid["graph"]["nodes"][0]
+                    if field == "dtype":
+                        invalid["graph"]["tensors"][2 if operation == "binary_select" else 0]["data_type"] = "float32"
+                    elif field == "compute": node["compute_data_type"] = "boolean" if operation == "binary_select" else "float32"
+                    elif field == "mode": node["attributes"]["mode"] = 1
+                    elif field == "geometry": invalid["graph"]["tensors"][0]["dimensions"][0] += 1
+                    else: node["inputs"][0]["name"] = "invalid"
+                    bad = temporary / f"{name}-{field}-invalid.json"
+                    write_json(bad, invalid)
+                    expect_value_error(lambda: provider.compile_request(bad, output, "libtriton_jit"), "")
+
+    for dtype in ("float32", "float16", "bfloat16"):
+        document = request(identity, "binary_select", autotune=False)
+        for tensor in document["graph"]["tensors"]:
+            tensor["dimensions"] = [524288]
+            tensor["strides"] = [1]
+            if tensor["uid"] != 3:
+                tensor["data_type"] = dtype
+        document["graph"]["nodes"][0]["attributes"]["n_elements"] = 524288
+        source = temporary / f"binary-select-large-{dtype}.json"
+        output = temporary / f"binary-select-large-{dtype}-artifact"
+        write_json(source, document)
+        provider.compile_request(source, output, "libtriton_jit")
+        stage = load_artifact(output)["program"]["stages"][0]
+        variant = stage["variants"][0]
+        require(variant["full_signature"].endswith(",1024") and
+                variant["launch"]["shared_memory"] == (4096 if dtype == "float32" else 0),
+                "large BinarySelect tile has incorrect PPU shared memory")
+        if compile_kernel:
+            compile_add_kernel(output, variant, stage["kernel"])
 
 
 def assert_typed_pointwise_artifacts(
@@ -5013,15 +5587,31 @@ def assert_add_autotune_artifact(
     )
 
 
+def selected_jit_paths() -> dict[str, Path]:
+    # Use the backend's coherent build/install layout, including lib64 and
+    # the bundled JIT shipped with an installed FlagDNN SDK.
+    from flagdnn_codegen import provider_loader
+    provider = provider_loader.get_provider("thead")
+    identity = importlib.import_module(provider.__package__ + ".compiler_identity")
+    return identity._jit_paths()
+
+
+def selected_codegen_backend() -> str:
+    import triton
+    from flagdnn_codegen import provider_loader
+    provider = provider_loader.get_provider("thead")
+    compat = importlib.import_module(provider.__package__ + ".triton_compat")
+    return compat.ppu_codegen_backend(Path(triton.__file__).resolve().parent.parent)
+
+
 def compile_add_kernel(
     artifact_directory: Path,
     variant: dict[str, Any],
     kernel: dict[str, Any],
 ) -> None:
-    jit_root = Path(
-        os.environ.get(
-            "FLAGDNN_THEAD_TRITON_JIT_ROOT", str(DEFAULT_TRITON_JIT_ROOT)
-        )
+    jit = selected_jit_paths()
+    sdk_root = Path(
+        os.environ.get("FLAGDNN_THEAD_PPU_SDK_ROOT", "/usr/local/PPU_SDK")
     ).resolve()
     source = artifact_directory / kernel["materialized_source"]["path"]
     options = variant["compile_options"]
@@ -5031,17 +5621,17 @@ def compile_add_kernel(
             "PYTHONDONTWRITEBYTECODE": "1",
             "TRITON_JIT_BACKEND": "CUDA",
             "TRITON_OVERRIDE_ARCH": "sm80",
-            "CUDA_PATH": "/usr/local/PPU_SDK/CUDA_SDK",
-            "TRITON_PTXAS_PATH": "/usr/local/PPU_SDK/CUDA_SDK/bin/ptxas",
+            "CUDA_PATH": str(sdk_root / "CUDA_SDK"),
+            "TRITON_PTXAS_PATH": str(sdk_root / "CUDA_SDK/bin/ptxas"),
             "TRITON_IR_FORMATTER_PATH": (
-                "/usr/local/PPU_SDK/bin/llvm-irformatter"
+                str(sdk_root / "bin/llvm-irformatter")
             ),
         }
     )
     completed = subprocess.run(
         [
             sys.executable,
-            str(jit_root / "scripts/standalone_compile.py"),
+            str(jit["standalone_compile"]),
             str(source),
             "--kernel-name",
             kernel["function"],
@@ -5062,7 +5652,7 @@ def compile_add_kernel(
     )
     require(
         completed.returncode == 0,
-        "Triton Add compilation failed\nstdout:\n"
+        "Triton kernel compilation failed\nstdout:\n"
         + completed.stdout
         + "\nstderr:\n"
         + completed.stderr,
@@ -5072,7 +5662,8 @@ def compile_add_kernel(
     cache = Path(lines[-1]).resolve()
     require(cache.is_dir(), "standalone compiler cache directory is missing")
     metadata = tuple(cache.glob("*.json"))
-    cubins = tuple(cache.glob("*.cubin"))
+    extension = "hgbin" if selected_codegen_backend() == "ppu" else "cubin"
+    cubins = tuple(cache.glob(f"*.{extension}"))
     require(metadata, "Triton cache lacks kernel metadata")
     require(len(cubins) == 1, "Triton cache does not contain one cubin")
     require(
@@ -5114,13 +5705,11 @@ def expect_value_error(function: Callable[[], object], detail: str) -> None:
 def required_dependency_paths() -> set[Path]:
     import torch
     import triton
+    import importlib
 
+    backend_name = selected_codegen_backend()
     triton_package = Path(triton.__file__).resolve().parent
-    jit_root = Path(
-        os.environ.get(
-            "FLAGDNN_THEAD_TRITON_JIT_ROOT", str(DEFAULT_TRITON_JIT_ROOT)
-        )
-    ).resolve()
+    jit = selected_jit_paths()
     sdk_root = Path(
         os.environ.get("FLAGDNN_THEAD_PPU_SDK_ROOT", "/usr/local/PPU_SDK")
     ).resolve()
@@ -5134,18 +5723,23 @@ def required_dependency_paths() -> set[Path]:
         (SOURCE_ROOT / "kernels/registry.json").resolve(),
         (SOURCE_ROOT / "backends/thead/kernels/registry.json").resolve(),
         (SOURCE_ROOT / "backends/thead/kernels/add_square.py").resolve(),
+        (SOURCE_ROOT / "backends/thead/kernels/attention.py").resolve(),
+        (SOURCE_ROOT / "backends/thead/kernels/fp8_attention.py").resolve(),
         (SOURCE_ROOT / "backends/thead/kernels/convolution.py").resolve(),
         (SOURCE_ROOT / "backends/thead/kernels/normalization.py").resolve(),
+        (SOURCE_ROOT / "backends/thead/kernels/layout.py").resolve(),
+        (SOURCE_ROOT / "backends/thead/kernels/pow.py").resolve(),
         (SOURCE_ROOT / "backends/thead/tuning/common.yaml").resolve(),
         Path(sys.executable).resolve(),
         Path(torch.__file__).resolve(),
         Path(torch._C.__file__).resolve(),
         (triton_package / "__init__.py").resolve(),
-        (triton_package / "backends/nvidia/compiler.py").resolve(),
-        (triton_package / "backends/nvidia/driver.py").resolve(),
-        (triton_package / "compiler/compiler.py").resolve(),
+        (triton_package / f"backends/{backend_name}/compiler.py").resolve(),
+        (triton_package / f"backends/{backend_name}/driver.py").resolve(),
+        Path(importlib.import_module("triton.compiler.compiler").__file__).resolve(),
         (triton_package / "_C/libtriton.so").resolve(),
-        (triton_package / "backends/nvidia/lib/libdevice.10.bc").resolve(),
+        (triton_package / "backends" / backend_name / "lib" /
+         ("libdevice.ppu.bc" if backend_name == "ppu" else "libdevice.10.bc")).resolve(),
         (sdk_root / "release.yaml").resolve(),
         (sdk_root / "bin/llvm-irformatter").resolve(),
         (sdk_root / "CUDA_SDK/bin/ptxas").resolve(),
@@ -5153,16 +5747,12 @@ def required_dependency_paths() -> set[Path]:
         (sdk_root / "CUDA_SDK/include/cuda.h").resolve(),
         (sdk_root / "CUDA_SDK/lib64/libcuda.so.1").resolve(),
         (sdk_root / "CUDA_SDK/nvvm/libdevice/libdevice.10.bc").resolve(),
-        (jit_root / "build/TritonJITConfig.cmake").resolve(),
-        (jit_root / "build/src/libtriton_jit.so").resolve(),
-        (jit_root / "scripts/standalone_compile.py").resolve(),
-        (jit_root / "scripts/gen_ssig.py").resolve(),
     }
+    if backend_name == "ppu":
+        result.add((sdk_root / "bin/ppu-llc").resolve())
+    result.add((SOURCE_ROOT / "backends/thead/triton_compat.py").resolve())
     result.update(path.resolve() for path in (SOURCE_ROOT / "kernels/common").glob("*.py"))
-    result.update(
-        path.resolve()
-        for path in (jit_root / "include/triton_jit").rglob("*.h")
-    )
+    result.update(path.resolve() for path in jit.values())
     return result
 
 
@@ -5236,6 +5826,7 @@ def assert_source_tree_jit_discovery(temporary: Path) -> None:
         "compiler.py",
         "compiler_identity.py",
         "python_environment_identity.py",
+        "triton_compat.py",
     ):
         shutil.copy2(SOURCE_ROOT / "backends/thead" / name, provider_root / name)
     expected_jit_root = source_container / "libtriton_jit"
@@ -5350,6 +5941,7 @@ def assert_installed_private_jit_discovery(temporary: Path) -> None:
         "compiler.py",
         "compiler_identity.py",
         "python_environment_identity.py",
+        "triton_compat.py",
     ):
         shutil.copy2(SOURCE_ROOT / "backends/thead" / name, provider_root / name)
     shutil.copytree(
@@ -5367,20 +5959,16 @@ def assert_installed_private_jit_discovery(temporary: Path) -> None:
         SOURCE_ROOT / "kernels/common", resource_root / "kernels/common"
     )
 
-    configured_jit_root = Path(
-        os.environ.get(
-            "FLAGDNN_THEAD_TRITON_JIT_ROOT", str(DEFAULT_TRITON_JIT_ROOT)
-        )
-    ).resolve()
+    configured_jit = selected_jit_paths()
     private_library = sdk / "lib/flagdnn/thead/libtriton_jit.so"
     private_scripts = sdk / "lib/flagdnn/share/triton_jit/scripts"
     private_library.parent.mkdir(parents=True)
     private_scripts.mkdir(parents=True)
     shutil.copy2(
-        configured_jit_root / "build/src/libtriton_jit.so", private_library
+        configured_jit["library"], private_library
     )
     for name in ("standalone_compile.py", "gen_ssig.py"):
-        shutil.copy2(configured_jit_root / "scripts" / name, private_scripts / name)
+        shutil.copy2(configured_jit[Path(name).stem], private_scripts / name)
 
     environment_path = provider_root / "flagdnn_thead_compiler_environment.json"
     write_json(
@@ -5431,7 +6019,7 @@ def assert_installed_private_jit_discovery(temporary: Path) -> None:
             "installed THead provider omitted private JIT dependencies",
         )
         require(
-            not any(path.is_relative_to(configured_jit_root) for path in dependencies),
+            not dependencies.intersection(configured_jit.values()),
             "installed THead provider leaked the build-tree libtriton_jit root",
         )
         require(
@@ -5547,7 +6135,12 @@ def main() -> int:
             "convolution",
             "conv_bias_relu",
             "typed_pointwise",
+            "boolean_pointwise",
+            "attention",
+            "fp8_attention",
+            "erf",
             "strided_pointwise",
+            "performance",
         ),
         default="all",
     )
@@ -5560,8 +6153,9 @@ def main() -> int:
     caches_before = python_cache_entries()
     sys.path.insert(0, str(COMPILER_ROOT))
     os.environ["FLAGDNN_BACKEND_ROOT"] = str(BACKEND_ROOT)
-    os.environ.setdefault("PPU_SDK", "/usr/local/PPU_SDK")
-    os.environ.setdefault("PPU_HOME", "/usr/local/PPU_SDK")
+    sdk = os.environ.get("FLAGDNN_THEAD_PPU_SDK_ROOT", "/usr/local/PPU_SDK")
+    os.environ.setdefault("PPU_SDK", sdk)
+    os.environ.setdefault("PPU_HOME", sdk)
 
     from flagdnn_codegen import provider_loader
 
@@ -5598,6 +6192,22 @@ def main() -> int:
         "TRITON_JIT_BACKEND": "CUDA",
         "TRITON_OVERRIDE_ARCH": "sm80",
     }
+    if selected_codegen_backend() == "ppu":
+        effective_jit_environment["TRITON_PPU_LLC_PATH"] = str(
+            sdk_root / "bin/ppu-llc"
+        )
+        previous_llc = os.environ.get("TRITON_PPU_LLC_PATH")
+        try:
+            os.environ["TRITON_PPU_LLC_PATH"] = "/usr/bin/true"
+            expect_value_error(
+                lambda: provider.compiler_identity(TARGET, "libtriton_jit"),
+                "TRITON_PPU_LLC_PATH",
+            )
+        finally:
+            if previous_llc is None:
+                os.environ.pop("TRITON_PPU_LLC_PATH", None)
+            else:
+                os.environ["TRITON_PPU_LLC_PATH"] = previous_llc
     saved_jit_environment = {
         name: os.environ.pop(name, None)
         for name in effective_jit_environment
@@ -5823,6 +6433,7 @@ def main() -> int:
                 compile_kernel=arguments.compile,
             )
         unary_descriptor_cases = (
+            ("erf", "Erf", 4, 5, None),
             ("log", "Log", 7, 6, None),
             ("cos", "Cos", 11, 7, None),
             ("rsqrt", "Rsqrt", 13, 11, None),
@@ -5892,6 +6503,15 @@ def main() -> int:
                     bad_dtype_detail="comparison inputs",
                     compile_kernel=arguments.compile,
                 )
+        if arguments.case in ("all", "attention", "fp8_attention"):
+            assert_attention_artifacts(
+                provider, temporary, digest, compile_kernel=arguments.compile,
+                fp8_only=arguments.case == "fp8_attention",
+            )
+        if arguments.case in ("all", "boolean_pointwise"):
+            assert_boolean_pointwise_artifacts(
+                provider, temporary, digest, compile_kernel=arguments.compile,
+            )
         if arguments.case in ("all", "typed_pointwise"):
             assert_typed_pointwise_artifacts(
                 provider,
@@ -5943,6 +6563,9 @@ def main() -> int:
                 digest,
                 compile_kernel=arguments.compile,
             )
+        if arguments.case in ("all", "performance"):
+            assert_performance_artifacts(
+                provider, temporary, digest, compile_kernel=arguments.compile)
         if arguments.case in ("all", "matmul"):
             assert_matmul_artifact(
                 provider,
@@ -5951,6 +6574,8 @@ def main() -> int:
                 compile_kernel=arguments.compile,
             )
         if arguments.case in ("all", "convolution"):
+            if arguments.compile:
+                assert_convolution_indexing()
             assert_convolution_artifacts(
                 provider,
                 temporary,

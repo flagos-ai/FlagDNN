@@ -29,6 +29,10 @@ struct BackendPointwiseReferenceSpecification {
   float alpha1 = 1.0F;
   float alpha2 = 1.0F;
   bool constant_one_numerator = false;
+  // Explicit raw storage access for the acDNN FP8 codec. Reading produces
+  // signed byte values; writing accepts integral byte codes in [0, 255].
+  // This flag never treats acDNN INT8 arithmetic as native FP8 arithmetic.
+  bool fp8_storage_bytes = false;
 };
 
 [[nodiscard]] std::unique_ptr<flagdnn::testing::TestExecutable>

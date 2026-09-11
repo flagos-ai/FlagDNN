@@ -3,8 +3,8 @@
   "platform": "thead",
   "reference_provider": "acdnn",
   "baseline": {
-    "ppu_sdk_min": "2.0.0-715aa1",
-    "ppu_sdk_max": "2.0.0-715aa1",
+    "ppu_sdk_min": "2.1.0-a5f865",
+    "ppu_sdk_max": "2.1.0-a5f865",
     "acdnn_header_min": 1400,
     "acdnn_header_max": 1400,
     "acdnn_runtime_min": 1400,
@@ -2692,7 +2692,551 @@
         "reason_code": "no_certified_acdnn_primitive",
         "detail": "acDNN runtime/header 1400 exposes no exact ternary select primitive or backend pointwise mode"
       },
-      "overrides": {}
+      "overrides": {
+        "binary_select_bfloat16_1x1x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnTransformTensor(layout-if-needed)",
+            "acdnnBackendExecute(POINTWISE_MUL,SUB,ADD,select-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "binary_select_bfloat16_1x8x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnTransformTensor(layout-if-needed)",
+            "acdnnBackendExecute(POINTWISE_MUL,SUB,ADD,select-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "binary_select_bfloat16_2x8x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnTransformTensor(layout-if-needed)",
+            "acdnnBackendExecute(POINTWISE_MUL,SUB,ADD,select-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "binary_select_bfloat16_2x8x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnTransformTensor(layout-if-needed)",
+            "acdnnBackendExecute(POINTWISE_MUL,SUB,ADD,select-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "binary_select_fp16_1x1x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnTransformTensor(layout-if-needed)",
+            "acdnnBackendExecute(POINTWISE_MUL,SUB,ADD,select-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "binary_select_fp16_1x8x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnTransformTensor(layout-if-needed)",
+            "acdnnBackendExecute(POINTWISE_MUL,SUB,ADD,select-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "binary_select_fp16_2x8x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnTransformTensor(layout-if-needed)",
+            "acdnnBackendExecute(POINTWISE_MUL,SUB,ADD,select-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "binary_select_fp16_2x8x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnTransformTensor(layout-if-needed)",
+            "acdnnBackendExecute(POINTWISE_MUL,SUB,ADD,select-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "binary_select_fp32_1x1x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnTransformTensor(layout-if-needed)",
+            "acdnnBackendExecute(POINTWISE_MUL,SUB,ADD,select-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "binary_select_fp32_1x8x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnTransformTensor(layout-if-needed)",
+            "acdnnBackendExecute(POINTWISE_MUL,SUB,ADD,select-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "binary_select_fp32_2x8x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnTransformTensor(layout-if-needed)",
+            "acdnnBackendExecute(POINTWISE_MUL,SUB,ADD,select-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "binary_select_fp32_2x8x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnTransformTensor(layout-if-needed)",
+            "acdnnBackendExecute(POINTWISE_MUL,SUB,ADD,select-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "binary_select_strided_fp32_2x3x4": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnTransformTensor(layout-if-needed)",
+            "acdnnBackendExecute(POINTWISE_MUL,SUB,ADD,select-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "explicit_strided"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        }
+      }
     },
     "ceil": {
       "case_names": [
@@ -14100,7 +14644,968 @@
         "reason_code": "no_certified_acdnn_primitive",
         "detail": "acDNN runtime/header 1400 exposes no ERF activation, OpTensor operation, or backend pointwise mode"
       },
-      "overrides": {}
+      "overrides": {
+        "erf_bfloat16_1x1x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_bfloat16_1x3x17": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_bfloat16_1x3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_bfloat16_1x4x8x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_bfloat16_2x3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_bfloat16_2x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_bfloat16_2x4x8x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_bfloat16_3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_fp16_1x1x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_fp16_1x3x17": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_fp16_1x3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_fp16_1x4x8x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_fp16_2x3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_fp16_2x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_fp16_2x4x8x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_fp16_3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_fp32_1x1x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_fp32_1x3x17": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_fp32_1x3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_fp32_1x4x8x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_fp32_2x3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_fp32_2x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_fp32_2x4x8x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "erf_fp32_3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnActivationForward(GELU,Erf-DAG)",
+            "acdnnActivationBackward(GELU,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_MUL,EXP,SUB,Erf-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        }
+      }
     },
     "exp": {
       "case_names": [
@@ -21141,7 +22646,172 @@
         "reason_code": "acdnn_semantic_mismatch",
         "detail": "acDNN POINTWISE_LOGICAL_AND executes but returns false for controlled true input pairs on runtime 1400"
       },
-      "overrides": {}
+      "overrides": {
+        "logical_and_bool_1x1x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_MUL,x*y)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bool"
+            ],
+            "compute_type": "bool",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "canonical_boolean"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "logical_and_bool_1x8x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_MUL,x*y)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bool"
+            ],
+            "compute_type": "bool",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "canonical_boolean"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "logical_and_bool_2x8x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_MUL,x*y)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bool"
+            ],
+            "compute_type": "bool",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "canonical_boolean"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "logical_and_bool_2x8x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_MUL,x*y)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bool"
+            ],
+            "compute_type": "bool",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "canonical_boolean"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        }
+      }
     },
     "logical_not": {
       "case_names": [
@@ -21158,7 +22828,172 @@
         "reason_code": "acdnn_status_not_supported",
         "detail": "acDNN runtime 1400 rejects POINTWISE_LOGICAL_NOT while finalizing the backend operation descriptor"
       },
-      "overrides": {}
+      "overrides": {
+        "logical_not_bool_1x1x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_SUB,1-x)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bool"
+            ],
+            "compute_type": "bool",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "canonical_boolean"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "logical_not_bool_1x8x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_SUB,1-x)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bool"
+            ],
+            "compute_type": "bool",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "canonical_boolean"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "logical_not_bool_2x8x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_SUB,1-x)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bool"
+            ],
+            "compute_type": "bool",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "canonical_boolean"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "logical_not_bool_2x8x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_SUB,1-x)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bool"
+            ],
+            "compute_type": "bool",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "canonical_boolean"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        }
+      }
     },
     "logical_or": {
       "case_names": [
@@ -21175,7 +23010,172 @@
         "reason_code": "acdnn_semantic_mismatch",
         "detail": "acDNN POINTWISE_LOGICAL_OR executes but returns false for controlled true input pairs on runtime 1400"
       },
-      "overrides": {}
+      "overrides": {
+        "logical_or_bool_1x1x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnOpTensor(MAX,x,y)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bool"
+            ],
+            "compute_type": "bool",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "canonical_boolean"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "logical_or_bool_1x8x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnOpTensor(MAX,x,y)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bool"
+            ],
+            "compute_type": "bool",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "canonical_boolean"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "logical_or_bool_2x8x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnOpTensor(MAX,x,y)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bool"
+            ],
+            "compute_type": "bool",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "canonical_boolean"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "logical_or_bool_2x8x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnOpTensor(MAX,x,y)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bool"
+            ],
+            "compute_type": "bool",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "canonical_boolean"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        }
+      }
     },
     "matmul": {
       "case_names": [
@@ -24080,7 +26080,1142 @@
         "reason_code": "acdnn_status_not_supported",
         "detail": "acDNN runtime 1400 rejects ACDNN_POINTWISE_MOD while finalizing the operation descriptor"
       },
-      "overrides": {}
+      "overrides": {
+        "mod_bfloat16_1x1x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_bfloat16_1x1x6_signed": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_bfloat16_1x3x17": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_bfloat16_1x3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_bfloat16_1x4x8x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_bfloat16_2x3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_bfloat16_2x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_bfloat16_2x4x8x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_bfloat16_3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp16_1x1x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp16_1x1x6_signed": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp16_1x3x17": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp16_1x3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp16_1x4x8x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp16_2x3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp16_2x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp16_2x4x8x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp16_3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp32_1x1x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp32_1x1x6_signed": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp32_1x3x17": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp32_1x3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp32_1x4x8x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp32_2x3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp32_2x4x8": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp32_2x4x8x16": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "nhwc"
+            ],
+            "stride_policy": "explicit_strides",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "true"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "mod_fp32_3x5x7": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
+            "acdnnBackendExecute(POINTWISE_DIV,FLOOR,CEIL,ADD,MUL,SUB,trunc-remainder-DAG)",
+            "acdnnOpTensor(MAX,MIN,trunc-remainder-DAG)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp32"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 1,
+              "max": 8
+            },
+            "shape": [
+              "same_shape",
+              "positive_extents"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "none",
+            "attributes": {
+              "alpha": [
+                "1"
+              ],
+              "autotune": [
+                "false"
+              ],
+              "reference_input_domain": [
+                "finite_nonzero_divisor"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        }
+      }
     },
     "mul": {
       "case_names": [
@@ -32228,7 +35363,176 @@
         "reason_code": "acdnn_semantic_mismatch",
         "detail": "SDK 2.0.0-715aa1 exposes only the legacy projection-oriented acdnnMultiHeadAttnForward API; it cannot exactly represent FlagDNN raw-QKV SDPA outputs, optional statistics, broadcast bias, GQA, or diagonal masking"
       },
-      "overrides": {}
+      "overrides": {
+        "sdpa_bfloat16_causal_gqa": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
+            "acdnnBackendExecute(MATMUL,attention-heads)",
+            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
+            "acdnnSoftmaxForward(ACCURATE,CHANNEL)",
+            "acdnnSoftmaxForward(LOG,CHANNEL)",
+            "acdnnBackendExecute(POINTWISE_SUB,attention-statistics)",
+            "acdnnTransformTensor(attention-statistics-column)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 4,
+              "max": 4
+            },
+            "shape": [
+              "positive_extents",
+              "qualified_attention_profile"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "numpy_trailing",
+            "attributes": {
+              "reference_input_domain": [
+                "finite"
+              ],
+              "mask": [
+                "top_left_causal"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "sdpa_fp16_broadcast_bias": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
+            "acdnnBackendExecute(MATMUL,attention-heads)",
+            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
+            "acdnnSoftmaxForward(ACCURATE,CHANNEL)",
+            "acdnnSoftmaxForward(LOG,CHANNEL)",
+            "acdnnBackendExecute(POINTWISE_SUB,attention-statistics)",
+            "acdnnTransformTensor(attention-statistics-column)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 4,
+              "max": 4
+            },
+            "shape": [
+              "positive_extents",
+              "qualified_attention_profile"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "numpy_trailing",
+            "attributes": {
+              "reference_input_domain": [
+                "finite"
+              ],
+              "mask": [
+                "none"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "sdpa_fp16_dense_autotune": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
+            "acdnnBackendExecute(MATMUL,attention-heads)",
+            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
+            "acdnnSoftmaxForward(ACCURATE,CHANNEL)",
+            "acdnnSoftmaxForward(LOG,CHANNEL)",
+            "acdnnBackendExecute(POINTWISE_SUB,attention-statistics)",
+            "acdnnTransformTensor(attention-statistics-column)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 4,
+              "max": 4
+            },
+            "shape": [
+              "positive_extents",
+              "qualified_attention_profile"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "numpy_trailing",
+            "attributes": {
+              "reference_input_domain": [
+                "finite"
+              ],
+              "mask": [
+                "none"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "sdpa_fp16_inference_without_stats": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
+            "acdnnBackendExecute(MATMUL,attention-heads)",
+            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
+            "acdnnSoftmaxForward(ACCURATE,CHANNEL)",
+            "acdnnSoftmaxForward(LOG,CHANNEL)",
+            "acdnnBackendExecute(POINTWISE_SUB,attention-statistics)",
+            "acdnnTransformTensor(attention-statistics-column)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 4,
+              "max": 4
+            },
+            "shape": [
+              "positive_extents",
+              "qualified_attention_profile"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "numpy_trailing",
+            "attributes": {
+              "reference_input_domain": [
+                "finite"
+              ],
+              "mask": [
+                "none"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        }
+      }
     },
     "sdpa_backward": {
       "case_names": [
@@ -32245,7 +35549,172 @@
         "reason_code": "no_certified_acdnn_primitive",
         "detail": "SDK 2.0.0-715aa1 declares no acDNN multi-head-attention backward API capable of producing FlagDNN dQ, dK, dV, and optional dBias"
       },
-      "overrides": {}
+      "overrides": {
+        "sdpa_backward_bfloat16_causal_gqa": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
+            "acdnnBackendExecute(MATMUL,attention-heads)",
+            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
+            "acdnnSoftmaxForward(ACCURATE,CHANNEL)",
+            "acdnnSoftmaxBackward(ACCURATE,CHANNEL)",
+            "acdnnBackendExecute(MATMUL,POINTWISE_ADD,attention-gradients)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "bf16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 4,
+              "max": 4
+            },
+            "shape": [
+              "positive_extents",
+              "qualified_attention_profile"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "numpy_trailing",
+            "attributes": {
+              "reference_input_domain": [
+                "finite"
+              ],
+              "mask": [
+                "top_left_causal"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "sdpa_backward_fp16_broadcast_dbias": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
+            "acdnnBackendExecute(MATMUL,attention-heads)",
+            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
+            "acdnnSoftmaxForward(ACCURATE,CHANNEL)",
+            "acdnnSoftmaxBackward(ACCURATE,CHANNEL)",
+            "acdnnBackendExecute(MATMUL,POINTWISE_ADD,attention-gradients)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 4,
+              "max": 4
+            },
+            "shape": [
+              "positive_extents",
+              "qualified_attention_profile"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "numpy_trailing",
+            "attributes": {
+              "reference_input_domain": [
+                "finite"
+              ],
+              "mask": [
+                "none"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "sdpa_backward_fp16_dense_autotune": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
+            "acdnnBackendExecute(MATMUL,attention-heads)",
+            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
+            "acdnnSoftmaxForward(ACCURATE,CHANNEL)",
+            "acdnnSoftmaxBackward(ACCURATE,CHANNEL)",
+            "acdnnBackendExecute(MATMUL,POINTWISE_ADD,attention-gradients)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 4,
+              "max": 4
+            },
+            "shape": [
+              "positive_extents",
+              "qualified_attention_profile"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "numpy_trailing",
+            "attributes": {
+              "reference_input_domain": [
+                "finite"
+              ],
+              "mask": [
+                "none"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        },
+        "sdpa_backward_fp16_different_value_dimension": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
+            "acdnnBackendExecute(MATMUL,attention-heads)",
+            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
+            "acdnnSoftmaxForward(ACCURATE,CHANNEL)",
+            "acdnnSoftmaxBackward(ACCURATE,CHANNEL)",
+            "acdnnBackendExecute(MATMUL,POINTWISE_ADD,attention-gradients)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp16"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 4,
+              "max": 4
+            },
+            "shape": [
+              "positive_extents",
+              "qualified_attention_profile"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "numpy_trailing",
+            "attributes": {
+              "reference_input_domain": [
+                "finite"
+              ],
+              "mask": [
+                "none"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 using the declared acDNN-only composite reference"
+        }
+      }
     },
     "sdpa_fp8": {
       "case_names": [
@@ -32259,10 +35728,179 @@
         "path": null,
         "reference_plan": [],
         "constraints": null,
-        "reason_code": "acdnn_semantic_mismatch",
-        "detail": "SDK 2.0.0-715aa1 exposes only the legacy projection-oriented acdnnMultiHeadAttnForward API and no exact FP8 SDPA interface for FlagDNN descale/scale, amax, statistics, GQA, or diagonal-mask semantics"
+        "reason_code": "no_certified_acdnn_primitive",
+        "detail": "PPU SDK 2.1.0-a5f865 / acDNN 1400 exposes no FP8 datatype or certified E4M3/E5M2 conversion; backend UINT8-to-FLOAT and FLOAT-to-UINT8 IDENTITY are rejected. Scaled FP8 attention and amax remain unqualified under acDNN-only reference."
       },
-      "overrides": {}
+      "overrides": {
+        "sdpa_fp8_e4m3_dense_autotune": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(IDENTITY_INT8_FLOAT,FP8-storage)",
+            "acdnnBackendExecute(POINTWISE,FP8-decode-encode-RNE)",
+            "acdnnOpTensor(MIN,MAX,FP8-saturation)",
+            "acdnnBackendExecute(MATMUL,FP8-attention-heads)",
+            "acdnnOpTensor(ADD,FP8-scale-row-broadcast)",
+            "acdnnReduceTensor(MAX,ADD,FP8-attention-rows)",
+            "acdnnBackendExecute(POINTWISE,FP8-attention-scale-exp-normalize)",
+            "acdnnReduceTensor(MAX,FP8-attention-amax)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp8_e4m3"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 4,
+              "max": 4
+            },
+            "shape": [
+              "qualified_fp8_attention_profile"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "numpy_trailing",
+            "attributes": {
+              "reference_input_domain": [
+                "finite"
+              ],
+              "mask": [
+                "dense_or_top_left_causal"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against an independent acDNN FP8 codec and attention DAG, including Graph capture/replay and public autotune cases"
+        },
+        "sdpa_fp8_e4m3_inference_without_stats": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(IDENTITY_INT8_FLOAT,FP8-storage)",
+            "acdnnBackendExecute(POINTWISE,FP8-decode-encode-RNE)",
+            "acdnnOpTensor(MIN,MAX,FP8-saturation)",
+            "acdnnBackendExecute(MATMUL,FP8-attention-heads)",
+            "acdnnOpTensor(ADD,FP8-scale-row-broadcast)",
+            "acdnnReduceTensor(MAX,ADD,FP8-attention-rows)",
+            "acdnnBackendExecute(POINTWISE,FP8-attention-scale-exp-normalize)",
+            "acdnnReduceTensor(MAX,FP8-attention-amax)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp8_e4m3"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 4,
+              "max": 4
+            },
+            "shape": [
+              "qualified_fp8_attention_profile"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "numpy_trailing",
+            "attributes": {
+              "reference_input_domain": [
+                "finite"
+              ],
+              "mask": [
+                "dense_or_top_left_causal"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against an independent acDNN FP8 codec and attention DAG, including Graph capture/replay and public autotune cases"
+        },
+        "sdpa_fp8_e4m3_rectangular": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(IDENTITY_INT8_FLOAT,FP8-storage)",
+            "acdnnBackendExecute(POINTWISE,FP8-decode-encode-RNE)",
+            "acdnnOpTensor(MIN,MAX,FP8-saturation)",
+            "acdnnBackendExecute(MATMUL,FP8-attention-heads)",
+            "acdnnOpTensor(ADD,FP8-scale-row-broadcast)",
+            "acdnnReduceTensor(MAX,ADD,FP8-attention-rows)",
+            "acdnnBackendExecute(POINTWISE,FP8-attention-scale-exp-normalize)",
+            "acdnnReduceTensor(MAX,FP8-attention-amax)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp8_e4m3"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 4,
+              "max": 4
+            },
+            "shape": [
+              "qualified_fp8_attention_profile"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "numpy_trailing",
+            "attributes": {
+              "reference_input_domain": [
+                "finite"
+              ],
+              "mask": [
+                "dense_or_top_left_causal"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against an independent acDNN FP8 codec and attention DAG, including Graph capture/replay and public autotune cases"
+        },
+        "sdpa_fp8_e5m2_causal_gqa": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(IDENTITY_INT8_FLOAT,FP8-storage)",
+            "acdnnBackendExecute(POINTWISE,FP8-decode-encode-RNE)",
+            "acdnnOpTensor(MIN,MAX,FP8-saturation)",
+            "acdnnBackendExecute(MATMUL,FP8-attention-heads)",
+            "acdnnOpTensor(ADD,FP8-scale-row-broadcast)",
+            "acdnnReduceTensor(MAX,ADD,FP8-attention-rows)",
+            "acdnnBackendExecute(POINTWISE,FP8-attention-scale-exp-normalize)",
+            "acdnnReduceTensor(MAX,FP8-attention-amax)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp8_e5m2"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 4,
+              "max": 4
+            },
+            "shape": [
+              "qualified_fp8_attention_profile"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "numpy_trailing",
+            "attributes": {
+              "reference_input_domain": [
+                "finite"
+              ],
+              "mask": [
+                "dense_or_top_left_causal"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against an independent acDNN FP8 codec and attention DAG, including Graph capture/replay and public autotune cases"
+        }
+      }
     },
     "sdpa_fp8_backward": {
       "case_names": [
@@ -32275,9 +35913,96 @@
         "reference_plan": [],
         "constraints": null,
         "reason_code": "no_certified_acdnn_primitive",
-        "detail": "SDK 2.0.0-715aa1 declares no acDNN FP8 multi-head-attention backward API capable of producing scaled gradients and amax outputs"
+        "detail": "PPU SDK 2.1.0-a5f865 / acDNN 1400 exposes no FP8 datatype or certified E4M3/E5M2 conversion; backend UINT8-to-FLOAT and FLOAT-to-UINT8 IDENTITY are rejected. Scaled FP8 attention and amax remain unqualified under acDNN-only reference."
       },
-      "overrides": {}
+      "overrides": {
+        "sdpa_fp8_backward_e4m3_dense_autotune": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(IDENTITY_INT8_FLOAT,FP8-storage)",
+            "acdnnBackendExecute(POINTWISE,FP8-decode-encode-RNE)",
+            "acdnnOpTensor(MIN,MAX,FP8-saturation)",
+            "acdnnBackendExecute(MATMUL,FP8-attention-heads)",
+            "acdnnOpTensor(ADD,FP8-scale-row-broadcast)",
+            "acdnnReduceTensor(MAX,ADD,FP8-attention-rows)",
+            "acdnnBackendExecute(POINTWISE,FP8-attention-scale-exp-normalize)",
+            "acdnnReduceTensor(MAX,FP8-attention-amax)",
+            "acdnnBackendExecute(MATMUL,POINTWISE_ADD,FP8-attention-gradients)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp8_e4m3"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 4,
+              "max": 4
+            },
+            "shape": [
+              "qualified_fp8_attention_profile"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "numpy_trailing",
+            "attributes": {
+              "reference_input_domain": [
+                "finite"
+              ],
+              "mask": [
+                "dense_or_top_left_causal"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against an independent acDNN FP8 codec and attention DAG, including Graph capture/replay and public autotune cases"
+        },
+        "sdpa_fp8_backward_e5m2_causal_gqa": {
+          "status": "supported",
+          "path": "backend_descriptor",
+          "reference_plan": [
+            "acdnnBackendExecute(IDENTITY_INT8_FLOAT,FP8-storage)",
+            "acdnnBackendExecute(POINTWISE,FP8-decode-encode-RNE)",
+            "acdnnOpTensor(MIN,MAX,FP8-saturation)",
+            "acdnnBackendExecute(MATMUL,FP8-attention-heads)",
+            "acdnnOpTensor(ADD,FP8-scale-row-broadcast)",
+            "acdnnReduceTensor(MAX,ADD,FP8-attention-rows)",
+            "acdnnBackendExecute(POINTWISE,FP8-attention-scale-exp-normalize)",
+            "acdnnReduceTensor(MAX,FP8-attention-amax)",
+            "acdnnBackendExecute(MATMUL,POINTWISE_ADD,FP8-attention-gradients)"
+          ],
+          "constraints": {
+            "dtypes": [
+              "fp8_e5m2"
+            ],
+            "compute_type": "fp32",
+            "rank": {
+              "min": 4,
+              "max": 4
+            },
+            "shape": [
+              "qualified_fp8_attention_profile"
+            ],
+            "layouts": [
+              "contiguous"
+            ],
+            "stride_policy": "dense_contiguous",
+            "broadcast": "numpy_trailing",
+            "attributes": {
+              "reference_input_domain": [
+                "finite"
+              ],
+              "mask": [
+                "dense_or_top_left_causal"
+              ]
+            }
+          },
+          "reason_code": "",
+          "detail": "Qualified on PPU SDK 2.1.0-a5f865 against an independent acDNN FP8 codec and attention DAG, including Graph capture/replay and public autotune cases"
+        }
+      }
     },
     "sigmoid": {
       "case_names": [

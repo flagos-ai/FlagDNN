@@ -52,7 +52,10 @@ CONVOLUTION_CASE_PATTERN = re.compile(
     r"^conv[123]d_(fprop|dgrad|wgrad)(?:_|$)"
 )
 
-DEFAULT_TIMEOUT = 1800
+# The runner applies this budget to the entire serial preflight as well as
+# each operator. PPU codegen/Graph/JIT/autotune and installed-consumer checks
+# exceed 30 minutes with a cold FlagTree cache; CTest still bounds each test.
+DEFAULT_TIMEOUT = 7200
 PREFLIGHT_BY_DEFAULT = True
 SUPPORTS_MIN_SPEEDUP = True
 FILTER_REGISTERED_TESTS = False
@@ -96,12 +99,15 @@ def preflight_tests(_suites: list[str] | tuple[str, ...]) -> set[str]:
     required = {
         "integration.thead.validation_contract",
         "integration.thead.capability_contract",
+        "integration.thead.acdnn_gap_contract",
+        "integration.thead.acdnn_fp8_codec_contract",
         "integration.thead.catalog_closure_contract",
         "integration.thead.cmake_configuration_contract",
         "integration.thead.dependency_boundary",
         "integration.thead.reference_dependency_boundary",
         "integration.thead.artifact_contract",
         "integration.thead.compiler_contract",
+        "integration.thead.triton_compat_contract",
         "integration.thead.jit",
         "integration.thead.jit_mul",
         "integration.thead.jit_sub",

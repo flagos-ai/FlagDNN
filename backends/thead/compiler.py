@@ -76,6 +76,7 @@ _BINARY_POINTWISE_MODES = {
     "logical_or": 32,
 }
 _UNARY_POINTWISE_MODES = {
+    "erf": 4,
     "relu": 2,
     "identity": 5,
     "sigmoid": 33,
@@ -139,6 +140,10 @@ _TUNING_TABLES = {
     "rms_norm",
     "matmul",
     "conv2d_spatial",
+    "sdpa",
+    "sdpa_backward_dq",
+    "sdpa_fp8",
+    "sdpa_fp8_backward",
 }
 _APPROVED_PPU_COMPILER_OPTIONS = {
     "debug",
@@ -718,6 +723,53 @@ def _validate_binary_pointwise_graph(
             if strided
             else None
         ),
+    }
+
+
+def _validate_binary_select_graph(graph: dict[str, Any]) -> dict[str, Any]:
+    tensors = _require_list(graph["tensors"], "graph.tensors")
+    nodes = _require_list(graph["nodes"], "graph.nodes")
+    if len(nodes) != 1 or len(tensors) != 4:
+        raise ValueError("THead BinarySelect requires one node and four tensors")
+    node = _require_object(nodes[0], "BinarySelect node")
+    if node["id"] != 0 or node["type"] != "binary_select":
+        raise ValueError("THead BinarySelect requires canonical node id 0")
+    if node["compute_data_type"] != "float32":
+        raise ValueError("THead BinarySelect compute data type must be float32")
+    uids = _named_port_uids(node, "inputs", ("a", "b", "t"), "BinarySelect")
+    uids += _named_port_uids(node, "outputs", ("output",), "BinarySelect")
+    if len(set(uids)) != 4:
+        raise ValueError("THead BinarySelect tensor UIDs must be distinct")
+    by_uid = {int(tensor["uid"]): tensor for tensor in tensors}
+    ordered = [by_uid[uid] for uid in uids]
+    dtype = ordered[0]["data_type"]
+    if dtype not in _FLOATING_DATA_TYPES or [t["data_type"] for t in ordered] != [
+        dtype, dtype, "boolean", dtype
+    ]:
+        raise ValueError("THead BinarySelect requires matching floating values/output and boolean mask")
+    dimensions = ordered[-1]["dimensions"]
+    if any(t["dimensions"] != dimensions for t in ordered):
+        raise ValueError("THead BinarySelect requires matching shapes")
+    if any(t["virtual"] or int(t["alignment"]) < 16 for t in ordered):
+        raise ValueError("THead BinarySelect requires external tensors with 16-byte alignment")
+    if any(not _has_non_overlapping_strides(t["dimensions"], t["strides"]) for t in ordered):
+        raise ValueError("THead BinarySelect requires non-overlapping strides")
+    attributes = _require_object(node["attributes"], "BinarySelect attributes")
+    _require_exact_fields(attributes, {"mode", "n_elements"}, set(), "BinarySelect attributes")
+    if _integer(attributes["mode"], "BinarySelect mode") != 41:
+        raise ValueError("THead BinarySelect mode must be 41")
+    elements = _integer(attributes["n_elements"], "BinarySelect n_elements")
+    if elements != math.prod(dimensions) or not 1 <= elements <= 2**31 - 1:
+        raise ValueError("THead BinarySelect element count does not match output")
+    strided = not _same_dense_layout(ordered)
+    return {
+        "node": node, "tensors": tensors, "ordered_uids": uids,
+        "n_elements": elements, "alpha": 1.0,
+        "function": "binary_select_strided_kernel" if strided else "binary_select_tensor_kernel",
+        "stride_constants": [
+            *_padded_pointwise_values(dimensions, 1),
+            *(value for tensor in ordered for value in _padded_pointwise_values(tensor["strides"], 0)),
+        ] if strided else None,
     }
 
 
@@ -2100,6 +2152,19 @@ def _validate_convolution_graph(
             + pre_padding[axis]
             + post_padding[axis]
         )
+        # Spatial coordinates are computed before the load mask. Python shape
+        # arithmetic can fit while a device int64 intermediate would overflow.
+        coordinate_limit = 2**63 - 1
+        if (
+            effective_filter - 1 > coordinate_limit
+            or (loss_dimensions[axis + 2] - 1) * stride[axis]
+            + effective_filter - 1 > coordinate_limit
+            or image_dimensions[axis + 2] - 1 + pre_padding[axis]
+            > coordinate_limit
+        ):
+            raise ValueError(
+                f"THead {operation} spatial coordinates exceed int64"
+            )
         if padded_image < effective_filter:
             raise ValueError(
                 f"THead {operation} filter exceeds padded input"
@@ -2421,17 +2486,20 @@ def _validate_binary_pointwise_candidate(
     candidate: Any, operation: str
 ) -> None:
     operation_label = operation.capitalize()
+    select = operation == "binary_select"
+    power = operation == "pow"
     tuning = candidate.tuning
     if (
         candidate.backend != "thead"
         or candidate.operation != operation
-        or candidate.provider != "common_triton"
-        or candidate.ownership != "common"
-        or candidate.source_layout != "kernels"
+        or candidate.provider != ("thead_triton" if power else "common_triton")
+        or candidate.ownership != ("platform" if power else "common")
+        or candidate.source_layout != ("platform" if power else "kernels")
         or candidate.source_format != "module"
-        or candidate.source != "binary.py"
+        or candidate.source != ("ternary.py" if select else ("pow.py" if power else "binary.py"))
         or candidate.functions
-        != ("binary_contiguous_kernel", "binary_strided_kernel")
+        != (("binary_select_tensor_kernel", "binary_select_strided_kernel")
+            if select else ("binary_contiguous_kernel", "binary_strided_kernel"))
         or tuning is None
         or tuning.source != "common.yaml"
         or tuning.table != "binary"
@@ -2504,9 +2572,9 @@ def _validate_layout_candidate(candidate: Any, operation: str) -> None:
     if (
         candidate.backend != "thead"
         or candidate.operation != operation
-        or candidate.provider != "common_triton"
-        or candidate.ownership != "common"
-        or candidate.source_layout != "kernels"
+        or candidate.provider != ("thead_triton" if operation == "transpose" else "common_triton")
+        or candidate.ownership != ("platform" if operation == "transpose" else "common")
+        or candidate.source_layout != ("platform" if operation == "transpose" else "kernels")
         or candidate.source_format != "module"
         or candidate.source != "layout.py"
         or candidate.functions != ("layout_copy_kernel",)
@@ -2649,10 +2717,9 @@ def _validate_convolution_candidate(candidate: Any, operation: str) -> None:
     if (
         candidate.backend != "thead"
         or candidate.operation != operation
-        or candidate.provider
-        != ("thead_triton" if fprop or fused else "common_triton")
-        or candidate.ownership != ("platform" if fprop or fused else "common")
-        or candidate.source_layout != ("platform" if fprop or fused else "kernels")
+        or candidate.provider != "thead_triton"
+        or candidate.ownership != "platform"
+        or candidate.source_layout != "platform"
         or candidate.source_format != "module"
         or candidate.source != "convolution.py"
         or expected_function not in candidate.functions
@@ -3198,6 +3265,18 @@ def _load_convolution_tuning(
     return configurations, tuning_bytes
 
 
+def _include_default_candidate(
+    configurations: list[dict[str, Any]], default: dict[str, Any]
+) -> list[dict[str, Any]]:
+    return configurations if default in configurations else [*configurations, default]
+
+
+def _element_count_signature(n_elements: int) -> str:
+    # The count is artifact-owned and immutable at execution. Expose proven
+    # divisibility to PPU lowering so masked stores can remain vectorized.
+    return "i32:16" if n_elements >= 65536 and n_elements % 16 == 0 else "i32"
+
+
 def _binary_pointwise_variant(
     argument_tensors: list[dict[str, Any]],
     n_elements: int,
@@ -3210,20 +3289,28 @@ def _binary_pointwise_variant(
     block_size = int(configuration["META"]["BLOCK_SIZE"])
     num_warps = int(configuration["num_warps"])
     num_stages = int(configuration["num_stages"])
+    shared_memory = num_warps * 4 if pointwise_mode == 23 and block_size >= 1024 else 0
+    if pointwise_mode == 41:
+        width = _DATA_TYPE_BYTES[argument_tensors[-1]["data_type"]]
+        if stride_constants is not None and block_size > num_warps * _PPU_WARP_SIZE:
+            shared_memory = min(block_size * width, 2048)
+        elif stride_constants is None and block_size == 1024 and width == 4:
+            shared_memory = 4096
     return {
         "variant_id": variant_id,
         "full_signature": (
             ",".join(_tensor_pointer_signature(tensor)
                      for tensor in argument_tensors)
-            + ",i32"
+            + (",i32" if pointwise_mode == 41 else "," + _element_count_signature(n_elements))
             + (
                 ""
                 if stride_constants is None
                 else "," + ",".join(str(value) for value in stride_constants)
             )
-            + f",{pointwise_mode},{alpha},{block_size}"
+            + (f",{block_size}" if pointwise_mode == 41
+               else f",{pointwise_mode},{alpha},{block_size}")
         ),
-        "argument_count": 4,
+        "argument_count": len(argument_tensors) + 1,
         "arguments": [
             *[_tensor_argument(tensor) for tensor in argument_tensors],
             {
@@ -3241,7 +3328,9 @@ def _binary_pointwise_variant(
         "launch": {
             "grid": [(n_elements + block_size - 1) // block_size, 1, 1],
             "block": [num_warps * _PPU_WARP_SIZE, 1, 1],
-            "shared_memory": 0,
+            # Qualified from native PPU metadata for both layouts and all
+            # value types, including the default 1024-element performance tile.
+            "shared_memory": shared_memory,
         },
     }
 
@@ -3311,7 +3400,7 @@ def _unary_pointwise_variant(
         "full_signature": (
             ",".join(_tensor_pointer_signature(tensor)
                      for tensor in argument_tensors)
-            + ",i32"
+            + "," + _element_count_signature(n_elements)
             + (
                 ""
                 if stride_constants is None
@@ -3377,7 +3466,7 @@ def _layout_variant(
                 _tensor_pointer_signature(tensor)
                 for tensor in argument_tensors
             )
-            + ",i32,"
+            + "," + _element_count_signature(n_elements) + ","
             + ",".join(str(value) for value in ordered_constants)
             + f",{block_size}"
         ),
@@ -3599,10 +3688,13 @@ def _batchnorm_variant(
             1,
             1,
         ]
+        spatial = int(plan["spatial"])
+        channels = int(plan["channels"])
+        channel_tile = max(1, block_size // (1 << (spatial - 1).bit_length()))
         programs = (
             int(plan["batch"])
-            * int(plan["channels"])
-            * ((int(plan["spatial"]) + block_size - 1) // block_size)
+            * ((channels + channel_tile - 1) // channel_tile)
+            * ((spatial + block_size - 1) // block_size)
         )
         shared_memory = 0
     elif inference_strided:
@@ -3649,7 +3741,7 @@ def _batchnorm_variant(
             1,
         ]
         programs = int(plan["channels"])
-        shared_memory = 16
+        shared_memory = num_warps * 4
         if training_strided:
             constants = [
                 plan["epsilon"],
@@ -3748,12 +3840,12 @@ def _matmul_variant(
     num_warps = int(configuration["num_warps"])
     input_data_type = plan["argument_tensors"][0]["data_type"]
     # The PPU CUDA-compatible Triton lowering widens the staged operands of
-    # the 128x128 tile to four-byte shared-memory lanes even for FP16/BF16.
-    # Smaller qualified tiles retain packed two-byte lanes.  This value is
+    # eight-warp 128x128 tile to four-byte lanes even for FP16/BF16.
+    # Four-warp tiles retain packed two-byte lanes. This value is
     # part of the launch ABI and must match the compiled cubin metadata.
     shared_scalar_bytes = (
         4
-        if input_data_type == "float32" or block_m >= 128 or block_n >= 128
+        if input_data_type == "float32" or ((block_m >= 128 or block_n >= 128) and num_warps >= 8)
         else 2
     )
     return {
@@ -3788,9 +3880,42 @@ def _matmul_variant(
             # shared memory for this IEEE dot-product tile.
             "shared_memory": (
                 block_m * block_k + block_k * block_n
-            ) * shared_scalar_bytes,
+            ) * shared_scalar_bytes * max(1, int(configuration["num_stages"]) - 1),
         },
     }
+
+
+def _direct_dgrad(constants: dict[str, Any], meta: dict[str, Any]) -> bool:
+    return (
+        constants["CIN_PER_GROUP"] <= 8
+        and constants["COUT_PER_GROUP"] >= 16
+        and constants["M"] >= 4096
+        and meta["BLOCK_M"] == 128
+        and meta["BLOCK_K"] == 16
+        and constants["XD"] == 1
+        and constants["OD"] == 1
+        and constants["KD"] == 1
+        and constants["KH"] == 3
+        and constants["KW"] == 3
+        and constants["STRIDE_H"] == 2
+        and constants["STRIDE_W"] == 2
+        and constants["DIL_H"] == 1
+        and constants["DIL_W"] == 1
+        and constants["XH"] % 2 == 0
+        and constants["XW"] % 2 == 0
+        and constants["X_STRIDE_N"] == constants["CIN_PER_GROUP"] * constants["XH"] * constants["XW"]
+        and constants["X_STRIDE_C"] == constants["XH"] * constants["XW"]
+        and constants["X_STRIDE_H"] == constants["XW"]
+        and constants["X_STRIDE_W"] == 1
+        and constants["DY_STRIDE_N"] == constants["COUT_PER_GROUP"] * constants["OH"] * constants["OW"]
+        and constants["DY_STRIDE_C"] == constants["OH"] * constants["OW"]
+        and constants["DY_STRIDE_H"] == constants["OW"]
+        and constants["DY_STRIDE_W"] == 1
+        and constants["W_STRIDE_K"] == constants["CIN_PER_GROUP"] * 9
+        and constants["W_STRIDE_C"] == 9
+        and constants["W_STRIDE_H"] == 3
+        and constants["W_STRIDE_W"] == 1
+    )
 
 
 def _convolution_variant(
@@ -3989,7 +4114,15 @@ def _convolution_variant(
         shared_memory = (
             block_n * block_m + block_m * block_k
         ) * operand_bytes
+    if function == "conv_dgrad_nd_kernel" and _direct_dgrad(constants, meta):
+        grid = [4 * ((plan["m"] // 4 + block_m - 1) // block_m),
+                plan["channels_per_group"], plan["groups"]]
+        shared_memory = block_m * operand_bytes
     num_warps = int(configuration["num_warps"])
+    if (function == "conv_wgrad_nd_kernel" and constants["CIN_PER_GROUP"] <= 8
+            and constants["M"] >= 4096 and block_m >= 256):
+        grid = [plan["outputs_per_group"] * plan["channels_per_group"] * plan["kernel_volume"], plan["groups"], 1]
+        shared_memory = num_warps * 4
     return {
         "variant_id": variant_id,
         "full_signature": (
@@ -4255,8 +4388,10 @@ def _compile_binary_pointwise(
     operation: str,
 ) -> dict[str, Any]:
     operation_label = operation.capitalize()
-    pointwise_mode = _BINARY_POINTWISE_MODES[operation]
-    plan = _validate_binary_pointwise_graph(request["graph"], operation)
+    pointwise_mode = 41 if operation == "binary_select" else _BINARY_POINTWISE_MODES[operation]
+    plan = (_validate_binary_select_graph(request["graph"])
+            if operation == "binary_select"
+            else _validate_binary_pointwise_graph(request["graph"], operation))
     candidate = kernel_registry.select_kernel_candidate("thead", operation)
     _validate_binary_pointwise_candidate(candidate, operation)
     compiler_path = Path(__file__)
@@ -4287,7 +4422,9 @@ def _compile_binary_pointwise(
         "META": {"BLOCK_SIZE": _pointwise_block_size(n_elements)},
         "maxnreg": None,
         "num_stages": _FIXED_NUM_STAGES,
-        "num_warps": _FIXED_NUM_WARPS,
+        "num_warps": (8 if n_elements >= 65536 and stride_constants is None
+                      and argument_tensors[0]["data_type"] == "float32"
+                      and pointwise_mode != 41 else _FIXED_NUM_WARPS),
         "ppu_compiler_options": {},
     }
     variants = [
@@ -4306,6 +4443,8 @@ def _compile_binary_pointwise(
         configurations, tuning_bytes = _load_pointwise_tuning(
             tuning_path, candidate, operation
         )
+        if n_elements >= 65536:
+            configurations = _include_default_candidate(configurations, default_configuration)
         variants = [
             _binary_pointwise_variant(
                 argument_tensors,
@@ -4476,7 +4615,9 @@ def _compile_unary_pointwise(
         "META": {"BLOCK_SIZE": _pointwise_block_size(n_elements)},
         "maxnreg": None,
         "num_stages": _FIXED_NUM_STAGES,
-        "num_warps": _FIXED_NUM_WARPS,
+        "num_warps": (8 if n_elements >= 65536 and stride_constants is None
+                      and argument_tensors[0]["data_type"] == "float32"
+                      and pointwise_mode != 41 else _FIXED_NUM_WARPS),
         "ppu_compiler_options": {},
     }
     variants = [
@@ -4495,6 +4636,8 @@ def _compile_unary_pointwise(
         configurations, tuning_bytes = _load_pointwise_tuning(
             tuning_path, candidate, operation
         )
+        if n_elements >= 65536:
+            configurations = _include_default_candidate(configurations, default_configuration)
         variants = [
             _unary_pointwise_variant(
                 argument_tensors,
@@ -4648,7 +4791,7 @@ def _compile_layout(
     registry_digest = _registry_sha256()
     n_elements = int(plan["n_elements"])
     default_configuration = {
-        "META": {"BLOCK_SIZE": _FIXED_BLOCK_SIZE},
+        "META": {"BLOCK_SIZE": _pointwise_block_size(n_elements)},
         "maxnreg": None,
         "num_stages": _FIXED_NUM_STAGES,
         "num_warps": _FIXED_NUM_WARPS,
@@ -4668,6 +4811,8 @@ def _compile_layout(
         configurations, tuning_bytes = _load_pointwise_tuning(
             tuning_path, candidate, operation
         )
+        if n_elements >= 65536:
+            configurations = _include_default_candidate(configurations, default_configuration)
         variants = [
             _layout_variant(
                 plan["argument_tensors"],
@@ -4680,7 +4825,7 @@ def _compile_layout(
                 + str(configuration["num_warps"])
                 + "_s"
                 + str(configuration["num_stages"]),
-            )
+                )
             for configuration in configurations
         ]
         candidate_identity = _canonical_sha256(
@@ -5157,11 +5302,14 @@ def _compile_batchnorm(
     if not tuning_path.is_file():
         raise ValueError(f"THead {operation} tuning source is missing")
     registry_digest = _registry_sha256()
+    reduction_tile = (min(16384, 1 << (plan["batch"] * plan["spatial"] - 1).bit_length())
+                      if plan["function"] == "batch_norm_nchw_kernel"
+                      and plan["batch"] * plan["spatial"] >= 4096 else 256)
     default_configuration = {
-        "META": {"BLOCK_SIZE": 256},
+        "META": {"BLOCK_SIZE": reduction_tile},
         "maxnreg": None,
         "num_stages": 1,
-        "num_warps": 4,
+        "num_warps": 8 if reduction_tile >= 4096 else 4,
         "ppu_compiler_options": {},
     }
     variants = [_batchnorm_variant(plan, default_configuration, "default")]
@@ -5170,6 +5318,8 @@ def _compile_batchnorm(
         configurations, tuning_bytes = _load_pointwise_tuning(
             tuning_path, candidate, operation
         )
+        if reduction_tile >= 4096:
+            configurations = _include_default_candidate(configurations, default_configuration)
         variants = [
             _batchnorm_variant(
                 plan,
@@ -5339,16 +5489,18 @@ def _compile_matmul(
         and int(plan["n"]) >= 128
         and int(plan["k"]) >= 64
     )
+    pipeline = very_large_matrix and int(plan["k"]) >= 128
+    large_half = very_large_matrix and plan["argument_tensors"][0]["data_type"] != "float32"
     default_configuration = {
         "META": {
-            "BLOCK_M": 128 if very_large_matrix else (64 if large_matrix else 16),
-            "BLOCK_N": 128 if very_large_matrix else (64 if large_matrix else 16),
+            "BLOCK_M": 128 if large_half else (64 if large_matrix else 16),
+            "BLOCK_N": 128 if large_half else (64 if large_matrix else 16),
             "BLOCK_K": 32 if large_matrix else 16,
             "GROUP_M": 8 if large_matrix else 1,
         },
         "maxnreg": None,
-        "num_stages": 1,
-        "num_warps": 8 if very_large_matrix else 4,
+        "num_stages": (5 if large_half else 3) if pipeline else 1,
+        "num_warps": 4,
         "ppu_compiler_options": {},
     }
     variants = [_matmul_variant(plan, default_configuration, "default")]
@@ -5357,6 +5509,8 @@ def _compile_matmul(
         configurations, tuning_bytes = _load_matmul_tuning(
             tuning_path, candidate
         )
+        if very_large_matrix:
+            configurations = _include_default_candidate(configurations, default_configuration)
         variants = [
             _matmul_variant(
                 plan,
@@ -5530,6 +5684,67 @@ def _compile_convolution(
         "num_warps": 4,
         "ppu_compiler_options": {},
     }
+    # Keep the small tensor policy; amortize indexing and launch work on
+    # larger NCHW convolutions. IEEE FP32 dot arithmetic is unchanged.
+    if operation == "convolution_wgrad" and plan["channels_per_group"] <= 8 and plan["m"] >= 4096:
+        default_configuration["META"]["BLOCK_M"] = 1024
+    elif (
+        operation == "convolution_wgrad"
+        and plan["argument_tensors"][0]["data_type"] != "float32"
+        and plan["channels_per_group"] >= 32
+        and plan["m"] >= 4096
+        and all(plan["constants"][name] == 1 for name in (
+            "STRIDE_D", "STRIDE_H", "STRIDE_W", "X_STRIDE_W", "DY_STRIDE_W"
+        ))
+    ):
+        # Amortize indexing over longer unit-stride reductions while retaining
+        # 16x16 output tiles. Stride-two and IEEE FP32 profiles regress here.
+        default_configuration["META"]["BLOCK_M"] = 128
+    elif operation == "convolution_dgrad" and min(plan["channels_per_group"], plan["outputs_per_group"]) >= 32 and plan["m"] >= 256:
+        default_configuration["META"].update(
+            BLOCK_M=128 if plan["argument_tensors"][0]["data_type"] == "float32" else 64,
+            BLOCK_CI=32, BLOCK_K=32)
+    elif operation == "convolution_fprop" and plan["argument_tensors"][0]["data_type"] != "float32" and min(plan["channels_per_group"], plan["outputs_per_group"]) >= 32 and plan["m"] >= 256:
+        default_configuration["META"].update(BLOCK_M=64, BLOCK_OC=32, BLOCK_K=32)
+        width_only_nwc = all(plan["constants"][name] == 1 for name in (
+            "XD", "XH", "OD", "OH", "KD", "KH", "Y_STRIDE_C"
+        ))
+        if plan["channels_per_group"] == 32 and not width_only_nwc:
+            # PPU lowering of the 64x32x32 tile leaves output positions
+            # unwritten for CI=32 NCHW 3x3 convolutions (FP16 and BF16).
+            # Width-only NWC outputs have qualified complete stores and run
+            # faster with the larger tile. Other CI=32 layouts use the
+            # 32x32x32 registry candidate; complete metadata deduplicates it.
+            default_configuration["META"] = {
+                name: 32 for name in default_configuration["META"]
+            }
+    small_channels = (plan["channels_per_group"] <= 8
+                      and plan["outputs_per_group"] >= 16 and plan["m"] >= 4096)
+    if small_channels and operation == "convolution_fprop":
+        # Wide spatial tiles are qualified for planar convolutions. Small
+        # volumes regress in every dtype, so retain the original 16x16x16 tile.
+        if plan["constants"]["XD"] == 1 and plan["constants"]["KD"] == 1:
+            default_configuration["META"].update(BLOCK_M=128, BLOCK_OC=16, BLOCK_K=32)
+    elif small_channels and operation == "convolution_dgrad":
+        default_configuration["META"].update(BLOCK_M=128, BLOCK_CI=16, BLOCK_K=16)
+        if not _direct_dgrad(plan["constants"], default_configuration["META"]):
+            # Short half reductions need less scratch space; IEEE FP32 runs
+            # faster with the original tile. Keep the qualified direct path.
+            default_configuration["META"]["BLOCK_M"] = (
+                16 if plan["argument_tensors"][0]["data_type"] == "float32"
+                else (64 if plan["m"] < 16384 else 256)
+            )
+    if (operation == "convolution_dgrad"
+            and plan["argument_tensors"][0]["data_type"] == "float32"
+            and not _direct_dgrad(plan["constants"], default_configuration["META"])):
+        meta = default_configuration["META"]
+        blocks = ((plan["m"] + meta["BLOCK_M"] - 1) // meta["BLOCK_M"]
+                  * ((plan["channels_per_group"] + meta["BLOCK_CI"] - 1) // meta["BLOCK_CI"])
+                  * plan["groups"])
+        if blocks < 64:
+            # A large tile can leave ZW810's 64 SMs idle (for example the
+            # FP32 P5 input gradient). Restore the qualified original tile.
+            default_configuration["META"] = {name: 16 for name in meta}
     variants = [
         _convolution_variant(plan, default_configuration, "default")
     ]
@@ -5538,6 +5753,8 @@ def _compile_convolution(
         configurations, tuning_bytes = _load_convolution_tuning(
             tuning_path, candidate, operation
         )
+        if default_configuration["META"]["BLOCK_M"] > 16:
+            configurations = _include_default_candidate(configurations, default_configuration)
         variants = [
             _convolution_variant(
                 plan,
@@ -5669,6 +5886,293 @@ def _compile_convolution(
     }
 
 
+def _validate_attention_graph(graph: dict[str, Any], operation: str) -> dict[str, Any]:
+    fp8 = operation in {"sdpa_fp8", "sdpa_fp8_backward"}
+    backward = operation in {"sdpa_backward", "sdpa_fp8_backward"}
+    nodes = _require_list(graph["nodes"], "graph.nodes")
+    tensors = _require_list(graph["tensors"], "graph.tensors")
+    if len(nodes) != 1 or nodes[0]["id"] != 0 or nodes[0]["type"] != operation:
+        raise ValueError("THead attention requires one canonical graph node")
+    node = nodes[0]
+    if node["compute_data_type"] != "float32":
+        raise ValueError("THead attention requires float32 accumulation")
+    attributes = _require_object(node["attributes"], "attention attributes")
+    fields = {
+        "attn_scale", "attn_scale_set", "banded", "batch", "causal_top_left",
+        "diagonal_alignment", "diagonal_band_left_bound", "diagonal_band_right_bound",
+        "generate_stats", "has_bias", "has_dbias", "head_dimension", "heads",
+        "key_heads", "left_bound_set", "max_diag", "min_diag", "q_per_k", "q_per_v",
+        "reverse_causal", "right_bound_set", "sequence_kv", "sequence_q",
+        "value_dimension", "value_heads",
+    }
+    _require_exact_fields(attributes, fields, set(), "attention attributes")
+    for name in ("attn_scale_set", "left_bound_set", "right_bound_set"):
+        if not isinstance(attributes[name], bool):
+            raise ValueError(f"THead attention {name} must be boolean")
+    integers = {name: _integer(attributes[name], f"attention {name}")
+                for name in fields - {"attn_scale", "attn_scale_set", "left_bound_set", "right_bound_set"}}
+    for name in ("has_bias", "has_dbias", "generate_stats", "banded", "causal_top_left", "reverse_causal"):
+        if integers[name] not in (0, 1):
+            raise ValueError(f"THead attention {name} must be zero or one")
+    if attributes["left_bound_set"] or integers["diagonal_alignment"] != 0 or integers["diagonal_band_left_bound"] != 0 or integers["diagonal_band_right_bound"] != 0:
+        raise ValueError("THead attention supports dense and top-left causal masks")
+    causal = attributes["right_bound_set"]
+    has_bias, has_dbias = bool(integers["has_bias"]), bool(integers["has_dbias"])
+    input_names = ("q", "k", "v", "o", "do", "stats") if backward else ("q", "k", "v")
+    if fp8 and (has_bias or has_dbias):
+        raise ValueError("THead FP8 attention bias is not qualified")
+    scalar_names = ()
+    amax_names = ()
+    if fp8:
+        scalar_names = (
+            ("descale_q", "descale_k", "descale_v", "descale_o", "descale_do",
+             "descale_s", "descale_dp", "scale_s", "scale_dq", "scale_dk", "scale_dv", "scale_dp")
+            if backward else
+            ("descale_q", "descale_k", "descale_v", "descale_s", "scale_s", "scale_o")
+        )
+        amax_names = ("amax_dq", "amax_dk", "amax_dv", "amax_dp") if backward else ("amax_s", "amax_o")
+        input_names += scalar_names
+    if has_bias: input_names += ("bias",)
+    output_names = ("dq", "dk", "dv") if backward else ("o", "stats")
+    if has_dbias:
+        if not backward or not has_bias:
+            raise ValueError("THead attention bias gradient requires a backward bias input")
+        output_names += ("dbias",)
+    output_names += amax_names
+    input_uids = _named_port_uids(node, "inputs", input_names, "attention")
+    output_uids = _named_port_uids(node, "outputs", output_names, "attention")
+    uids = input_uids + output_uids
+    if len(set(uids)) != len(uids) or len(uids) != len(tensors):
+        raise ValueError("THead attention requires distinct complete tensor ports")
+    by_uid = {int(t["uid"]): t for t in tensors}
+    named = {name: by_uid[uid] for name, uid in zip(input_names + output_names, uids)}
+    q, k, v = (named[name] for name in ("q", "k", "v"))
+    if any(len(t["dimensions"]) != 4 or t["strides"] != _dense_strides(t["dimensions"])
+           or int(t["alignment"]) < 16 for t in tensors):
+        raise ValueError("THead attention requires dense rank-four tensors with 16-byte alignment")
+    dtype = q["data_type"]
+    allowed_types = {"fp8_e4m3", "fp8_e5m2"} if fp8 else {"float16", "bfloat16"}
+    float_names = {"stats", *scalar_names, *amax_names}
+    if dtype not in allowed_types or any(
+        t["data_type"] != ("float32" if name in float_names else dtype) for name, t in named.items()
+    ):
+        raise ValueError("THead attention tensor types differ from the operation dtype and fp32 metadata")
+    batch, heads, sq, dimension = q["dimensions"]
+    kb, key_heads, sk, kd = k["dimensions"]
+    vb, value_heads, vs, value_dimension = v["dimensions"]
+    if kb != batch or vb != batch or kd != dimension or vs != sk or key_heads != value_heads or heads % key_heads:
+        raise ValueError("THead attention Q/K/V geometry is inconsistent")
+    if batch > 2 or heads > 4 or heads // key_heads > 2:
+        raise ValueError("THead attention batch/head profile is not qualified")
+    profiles = {(64,64,64,64), (48,48,64,64), (32,40,64,64), (16,24,64,64),
+                (32,32,32,32), (32,32,64,64), (24,32,32,64)}
+    profile = (sq, sk, dimension, value_dimension)
+    if fp8:
+        fp8_profiles = {
+            (1,2,2,64,64,128,128,"fp8_e4m3",False),
+            (1,4,2,48,48,128,128,"fp8_e5m2",True),
+        }
+        if not backward:
+            fp8_profiles.add((1,2,2,32,40,128,128,"fp8_e4m3",False))
+        if (batch,heads,key_heads,*profile,dtype,causal) not in fp8_profiles:
+            raise ValueError("THead FP8 attention shape/dtype/mask profile is not qualified")
+    elif profile not in profiles:
+        raise ValueError("THead attention shape profile is not qualified")
+    backward_shared = {
+        (32,32,32,32,False): 8192, (32,32,64,64,False): 14336,
+        (24,32,32,64,False): 10240, (32,40,64,64,True): 24576,
+    }
+    if backward and not fp8 and (profile + (has_dbias,)) not in backward_shared:
+        raise ValueError("THead attention backward profile is not qualified")
+    expected_shapes = {"o": [batch, heads, sq, value_dimension], "stats": [batch, heads, sq, 1]}
+    if backward:
+        expected_shapes.update(do=expected_shapes["o"], dq=q["dimensions"], dk=k["dimensions"], dv=v["dimensions"])
+    expected_shapes.update({name: [1,1,1,1] for name in scalar_names + amax_names})
+    for name, shape in expected_shapes.items():
+        if named[name]["dimensions"] != shape:
+            raise ValueError(f"THead attention {name} shape mismatch")
+    if has_bias:
+        bias_shape = named["bias"]["dimensions"]
+        if bias_shape not in ([1, heads, sq, sk], [batch, heads, sq, sk]):
+            raise ValueError("THead attention supports batch-broadcast bias with matching heads")
+        if has_dbias and named["dbias"]["dimensions"] != bias_shape:
+            raise ValueError("THead attention bias gradient shape mismatch")
+    for name, tensor in named.items():
+        expected_virtual = name == "stats" and not backward and not integers["generate_stats"]
+        if tensor["virtual"] != expected_virtual:
+            raise ValueError("THead attention tensor storage differs from stats generation")
+    expected = {
+        "batch": batch, "heads": heads, "key_heads": key_heads, "value_heads": value_heads,
+        "sequence_q": sq, "sequence_kv": sk, "head_dimension": dimension,
+        "value_dimension": value_dimension, "q_per_k": heads // key_heads,
+        "q_per_v": heads // value_heads, "banded": int(causal),
+        "causal_top_left": int(causal and sq == sk), "reverse_causal": int(causal),
+        "min_diag": -(1 << 30), "max_diag": 0 if causal else 1 << 30,
+    }
+    if any(integers[name] != value for name, value in expected.items()):
+        raise ValueError("THead attention lowered metadata differs from tensors or mask")
+    if backward and integers["generate_stats"] != 1:
+        raise ValueError("THead attention backward requires stats")
+    scale = attributes["attn_scale"]
+    if isinstance(scale, bool) or not isinstance(scale, (int, float)) or not math.isfinite(scale):
+        raise ValueError("THead attention scale must be finite")
+    if not attributes["attn_scale_set"] and not math.isclose(scale, 1 / math.sqrt(dimension), rel_tol=1e-12):
+        raise ValueError("THead attention default scale is inconsistent")
+    return {"tensors": tensors, "named": named, "attributes": attributes, "profile": profile,
+            "backward": backward, "fp8": fp8,
+            "backward_shared": 24576 if fp8 else backward_shared.get(profile + (has_dbias,))}
+
+
+def _compile_attention(*, request: dict[str, Any], request_bytes: bytes,
+                       identity: dict[str, Any], target: str, output_directory: Path,
+                       enable_autotune: bool, operation: str) -> dict[str, Any]:
+    import ast
+    plan = _validate_attention_graph(request["graph"], operation)
+    backward, named, attributes = plan["backward"], plan["named"], plan["attributes"]
+    candidate = kernel_registry.select_kernel_candidate("thead", operation)
+    fp8 = plan["fp8"]
+    function = (("fp8_sdpa_backward_kernel" if backward else "fp8_sdpa_forward_kernel")
+                if fp8 else ("thead_sdpa_bwd_kernel" if backward else "thead_sdpa_fwd_kernel"))
+    source_name = "fp8_attention.py" if fp8 else "attention.py"
+    table = (("sdpa_fp8_backward" if backward else "sdpa_fp8") if fp8 else
+             ("sdpa_backward_dq" if backward else "sdpa"))
+    tuning = candidate.tuning
+    if (candidate.backend != "thead" or candidate.provider != "thead_triton" or
+        candidate.ownership != "platform" or candidate.source != source_name or
+        candidate.source_layout != "platform" or candidate.source_format != "module" or
+        candidate.functions != (function,) or tuning is None or tuning.source != "common.yaml" or
+        tuning.table != table or tuning.key != "sequence_q" or
+        tuning.strategy != "attention" or tuning.warmup != 5 or tuning.repetitions != 10):
+        raise ValueError("THead attention kernel registry contract is invalid")
+    source = kernel_registry.resolve_kernel_source(Path(__file__), candidate)
+    source_bytes = kernel_registry.materialize_kernel_source(source, candidate)
+    if not source_bytes or len(source_bytes) > _MAX_KERNEL_SOURCE_BYTES:
+        raise ValueError("THead attention source size is invalid")
+    parameters = next(n.args.args for n in ast.parse(source_bytes).body
+                      if isinstance(n, ast.FunctionDef) and n.name == function)
+    tuning_path = kernel_registry.resolve_tuning_source(Path(__file__), candidate)
+    tuning_bytes = tuning_path.read_bytes()
+    document = yaml.safe_load(tuning_bytes)
+    if not isinstance(document, dict) or set(document) != _TUNING_TABLES:
+        raise ValueError("THead attention tuning tables are invalid")
+    configurations = document[tuning.table]
+    expected_configs = ([{"META": {}, "num_warps": warps, "num_stages": 1,
+                          "maxnreg": None, "ppu_compiler_options": {}} for warps in (4,8)]
+                        if backward or fp8 else [{"META": {"BLOCK_M": tile, "BLOCK_N": 32},
+                            "num_warps": 4, "num_stages": 1, "maxnreg": None,
+                            "ppu_compiler_options": {}} for tile in (16,32)])
+    if configurations != expected_configs:
+        raise ValueError("THead attention tuning candidates are not qualified")
+    if not enable_autotune: configurations = configurations[:1]
+    q, k, v = (named[name] for name in ("q", "k", "v"))
+    batch, heads, sq, dimension = q["dimensions"]
+    _, key_heads, sk, _ = k["dimensions"]
+    value_dimension = v["dimensions"][3]
+    pointers = {name + "_ptr": tensor for name, tensor in named.items() if not tensor["virtual"]}
+    scale = float(attributes["attn_scale"])
+    bias_shape = named["bias"]["dimensions"] if "bias" in named else [1,heads,sq,sk]
+    constants = dict(
+        qk_scale=scale * 1.4426950408889634, HQ=heads, SQ=sq, SKV=sk, SK=sk,
+        q_per_k=heads // key_heads, q_per_v=heads // key_heads,
+        min_diag=attributes["min_diag"], max_diag=attributes["max_diag"],
+        HEAD_DIM=dimension, V_DIM=value_dimension, ELEM_SIZE=2,
+        BLOCK_D=1 << (dimension - 1).bit_length(),
+        BLOCK_DV=1 << (value_dimension - 1).bit_length(),
+        HAS_BIAS=attributes["has_bias"], BANDED=attributes["banded"],
+        GENERATE_STATS=attributes["generate_stats"], REVERSE_CAUSAL=attributes["reverse_causal"],
+        BATCH=batch, HKV=key_heads, HK=key_heads, D=dimension, DV=value_dimension, SCALE=scale,
+        E4=int(q["data_type"] == "fp8_e4m3"), STATS=attributes["generate_stats"],
+        BIAS_BATCHES=bias_shape[0], BIAS_HEADS=bias_shape[1],
+        HAS_DBIAS=attributes["has_dbias"], CAUSAL=attributes["banded"],
+    )
+    for name, axes in (("q","bhmd"),("k","bhnd"),("v","bhnd"),("o","bhmd")):
+        constants.update({f"stride_{name}{axis}": stride for axis, stride in zip(axes,named[name]["strides"])})
+    constants.update({f"stride_s{axis}": stride for axis,stride in zip("bhm",named["stats"]["strides"][:3])})
+    bias_strides = list(named["bias"]["strides"]) if "bias" in named else [0,0,0,0]
+    if bias_shape[0] == 1: bias_strides[0] = 0
+    constants.update({f"stride_bias_{axis}": stride for axis,stride in zip("bhmn",bias_strides)})
+    forward_shared = {(32,32,16):4096, (32,32,32):6144, (32,64,16):6144,
+                      (32,64,32):8192, (64,64,16):7168, (64,64,32):10240}
+    variants = []
+    for config in configurations:
+        values = dict(constants)
+        if fp8:
+            values.update(BLOCK_M=1 << (sq - 1).bit_length(), BLOCK_N=1 << (sk - 1).bit_length())
+            shared = 24576 if backward else 8192
+            grid = [1, 1, 1]
+        elif backward:
+            values.update(BLOCK_M=1 << (sq - 1).bit_length(), BLOCK_N=1 << (sk - 1).bit_length())
+            shared = plan["backward_shared"]
+            grid = [batch * key_heads, 1, 1]
+        else:
+            values.update(config["META"])
+            shared = forward_shared[(dimension, value_dimension, values["BLOCK_M"])]
+            grid = [(sq + values["BLOCK_M"] - 1) // values["BLOCK_M"], batch * heads, 1]
+        signature, arguments = [], []
+        for parameter in parameters:
+            name = parameter.arg
+            if name.endswith("_ptr"):
+                tensor = pointers.get(name)
+                if tensor is None:
+                    signature.append("nullopt")
+                else:
+                    argument = _tensor_argument(tensor)
+                    if fp8 and tensor["data_type"] in {"fp8_e4m3", "fp8_e5m2"}:
+                        signature.append("*i8:16")
+                        argument["storage_view"] = "fp8_bytes"
+                    else:
+                        signature.append(_tensor_pointer_signature(tensor))
+                    arguments.append(argument)
+            else:
+                if parameter.annotation is None:
+                    raise ValueError("THead attention specialization unexpectedly has a runtime scalar")
+                signature.append(str(values[name]))
+        variants.append({
+            "variant_id": f"tile{values['BLOCK_M']}_w{config['num_warps']}_s1" if enable_autotune else "default",
+            "full_signature": ",".join(signature), "argument_count": len(arguments), "arguments": arguments,
+            "compile_options": {key: config[key] for key in ("num_warps","num_stages","maxnreg","ppu_compiler_options")},
+            "launch": {"grid": grid, "block": [config["num_warps"] * _PPU_WARP_SIZE,1,1], "shared_memory": shared},
+        })
+    registry_digest = _registry_sha256()
+    tuning_manifest = None
+    if enable_autotune:
+        tuning_manifest = {
+            "warmup": tuning.warmup, "repetitions": tuning.repetitions,
+            "candidate_identity": _canonical_sha256({
+                "backend": "thead", "target": target, "compiler_identity": identity["identity_sha256"],
+                "source_sha256": _sha256(source_bytes), "registry_sha256": registry_digest,
+                "tuning_sha256": _sha256(tuning_bytes), "table": tuning.table,
+                "variants": variants, "request_sha256": _sha256(request_bytes),
+            }), "selection_cache": ".flagdnn-autotune-v1-stage-0.json",
+        }
+    materialized_name = "generated_stage_0.py"
+    manifest = {
+        "schema_version": 1, "artifact_kind": "flagdnn_execution_program",
+        "flagdnn_version": request["flagdnn_version"], "graph_ir_schema_version": SCHEMA_VERSION,
+        "backend_abi_version": 2, "backend": "thead", "target": target,
+        "warp_size": _PPU_WARP_SIZE, "engine": "libtriton_jit", "request_sha256": _sha256(request_bytes),
+        "compiler": {"provider": identity["provider"], "provider_version": identity["provider_version"], "identity_sha256": identity["identity_sha256"]},
+        "external_uids": [t["uid"] for t in plan["tensors"] if not t["virtual"]],
+        "tensor_count": len(plan["tensors"]), "tensors": [_manifest_tensor(t) for t in plan["tensors"]],
+        "workspace": {"size": 0, "alignment": 256},
+        "program": {"schema_version": 1, "stage_count": 1, "stages": [{
+            "stage_id": 0, "source_node_ids": [0], "dependencies": [], "operation": operation,
+            "kernel": {"provider": candidate.provider, "ownership": candidate.ownership, "function": function,
+                       "registry_sha256": registry_digest, "materialized_source": {"path": materialized_name, "size": len(source_bytes), "sha256": _sha256(source_bytes)}},
+            "variants": variants, "tuning": tuning_manifest,
+        }]},
+    }
+    output_directory.mkdir(parents=True, exist_ok=True)
+    if output_directory.is_symlink() or not output_directory.is_dir():
+        raise ValueError("THead attention artifact output directory is invalid")
+    _atomic_write(output_directory / materialized_name, source_bytes)
+    _atomic_write(output_directory / "manifest.json", json.dumps(manifest,sort_keys=True,indent=2,allow_nan=False).encode()+b"\n")
+    return {"schema_version": 1, "status": "success", "backend": "thead", "provider": PROVIDER_NAME,
+            "node_count": 1, "stage_count": 1, "target": target, "warp_size": _PPU_WARP_SIZE,
+            "artifact_directory": str(output_directory), "workspace_size": 0, "workspace_alignment": 256,
+            "execution_engine": "libtriton_jit"}
+
+
 def compile_request(
     request_path: Path,
     output_directory: Path,
@@ -5709,6 +6213,12 @@ def compile_request(
         raise ValueError("request compiler identity does not match provider")
     enable_autotune = _parse_build_options(request["build_options"])
     operation_types = _parse_graph(request["graph"])
+    if len(operation_types) == 1 and operation_types[0] in {"sdpa", "sdpa_backward", "sdpa_fp8", "sdpa_fp8_backward"}:
+        return _compile_attention(
+            request=request, request_bytes=request_bytes, identity=identity, target=target,
+            output_directory=Path(output_directory), enable_autotune=enable_autotune,
+            operation=operation_types[0],
+        )
     if operation_types == _CONV_BIAS_RELU_OPERATION_TYPES:
         return _compile_convolution(
             request=request,
@@ -5728,7 +6238,10 @@ def compile_request(
             output_directory=Path(output_directory),
             enable_autotune=enable_autotune,
         )
-    if len(operation_types) == 1 and operation_types[0] in _BINARY_POINTWISE_MODES:
+    if len(operation_types) == 1 and (
+        operation_types[0] in _BINARY_POINTWISE_MODES
+        or operation_types[0] == "binary_select"
+    ):
         return _compile_binary_pointwise(
             request=request,
             request_bytes=request_bytes,

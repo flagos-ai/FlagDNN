@@ -389,6 +389,19 @@ PreparedBuffers prepare_buffers(const BenchmarkCase &specification,
   const bool is_reciprocal =
       specification.operation == Operation::kPointwise &&
       specification.pointwise_mode == FLAGDNN_POINTWISE_RECIPROCAL;
+  const bool is_erf =
+      specification.operation == Operation::kPointwise &&
+      specification.pointwise_mode == FLAGDNN_POINTWISE_ERF;
+  const bool is_logical_not =
+      specification.operation == Operation::kPointwise &&
+      specification.pointwise_mode == FLAGDNN_POINTWISE_LOGICAL_NOT;
+  const bool is_logical_binary =
+      specification.operation == Operation::kPointwise &&
+      (specification.pointwise_mode == FLAGDNN_POINTWISE_LOGICAL_AND ||
+       specification.pointwise_mode == FLAGDNN_POINTWISE_LOGICAL_OR);
+  const bool is_binary_select =
+      specification.operation == Operation::kPointwise &&
+      specification.pointwise_mode == FLAGDNN_POINTWISE_BINARY_SELECT;
   const bool is_comparison =
       specification.operation == Operation::kPointwise &&
       (specification.pointwise_mode == FLAGDNN_POINTWISE_CMP_EQ ||
@@ -486,19 +499,20 @@ PreparedBuffers prepare_buffers(const BenchmarkCase &specification,
   const bool is_unary =
       is_activation || is_sqrt || is_neg || is_abs || is_ceil || is_floor ||
       is_exp || is_log || is_cos || is_rsqrt || is_sin || is_tan ||
-      is_softplus || is_swish || is_gelu_approx_tanh || is_reciprocal;
+      is_softplus || is_swish || is_gelu_approx_tanh || is_reciprocal ||
+      is_erf || is_logical_not;
   const std::size_t expected_tensor_count =
       is_batchnorm ? 10
                    : (is_batchnorm_inference ? 6
                       : (is_layernorm ? 6
                          : (is_rmsnorm ? 5
-                            : (is_conv_bias_relu ? 4
+                            : ((is_conv_bias_relu || is_binary_select) ? 4
                                : ((is_unary || is_layout || is_reduction)
                                       ? 2
                                       : 3)))));
   if ((!is_add && !is_sub && !is_mul && !is_min && !is_max && !is_div &&
        !is_pow && !is_mod && !is_sigmoid_backward && !is_add_square &&
-       !is_conv_bias_relu &&
+       !is_conv_bias_relu && !is_binary_select && !is_logical_binary &&
        !is_comparison && !is_unary && !is_layout && !is_reduction &&
        !is_batchnorm && !is_batchnorm_inference && !is_layernorm &&
        !is_rmsnorm && !is_matmul &&

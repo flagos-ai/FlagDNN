@@ -17,6 +17,7 @@ foreach(_property IN ITEMS
     FLAGDNN_THEAD_TRITON_JIT_STANDALONE_SHA256
     FLAGDNN_THEAD_TRITON_JIT_GEN_SSIG_SHA256
     FLAGDNN_THEAD_TRITON_ROOT
+    FLAGDNN_THEAD_PYTHON_LIBRARY_DIR
     FLAGDNN_THEAD_TRITON_METADATA
     FLAGDNN_THEAD_TRITON_JIT_INCLUDE_DIR
     FLAGDNN_THEAD_TORCH_INCLUDE
@@ -47,7 +48,10 @@ if(FLAGDNN_BUILD_TESTS OR FLAGDNN_BUILD_BENCHMARKS)
 
   add_library(flagdnn_validation_thead_reference STATIC
     acdnn_convolution_reference.cpp
+    acdnn_attention_reference.cpp
+    acdnn_fp8_codec.cpp
     acdnn_composite_reference.cpp
+    acdnn_pointwise_dag.cpp
     acdnn_layout_reference.cpp
     acdnn_matmul_reference.cpp
     acdnn_normalization_reference.cpp
@@ -136,6 +140,14 @@ set_tests_properties(
   RUN_SERIAL TRUE
   TIMEOUT 120)
 
+add_test(NAME integration.thead.triton_compat_contract
+  COMMAND "${FLAGDNN_CODEGEN_PYTHON}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/triton_compat_contract.py")
+set_tests_properties(integration.thead.triton_compat_contract PROPERTIES
+  LABELS "integration;thead;compiler;libtriton_jit;contract"
+  ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1"
+  RUN_SERIAL TRUE TIMEOUT 30)
+
 add_test(NAME integration.thead.catalog_closure_contract
   COMMAND "${CMAKE_COMMAND}"
     "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
@@ -155,6 +167,7 @@ if(FLAGDNN_BUILD_TESTS)
       "-DBUILD_ROOT=${PROJECT_BINARY_DIR}"
       "-DTEST_ROOT=${PROJECT_BINARY_DIR}/installed-consumer-contract/thead"
       "-DCODEGEN_PYTHON=${FLAGDNN_CODEGEN_PYTHON}"
+      "-DPYTHON_LIBRARY_DIR=${_FLAGDNN_THEAD_PYTHON_LIBRARY_DIR}"
       "-DPPU_SDK_ROOT=${_FLAGDNN_THEAD_PPU_SDK_ROOT}"
       "-DBUILD_PLUGIN=$<TARGET_FILE:flagdnn_backend_thead>"
       "-DPLUGIN_SONAME=$<TARGET_SONAME_FILE_NAME:flagdnn_backend_thead>"
@@ -209,6 +222,28 @@ if(FLAGDNN_BUILD_TESTS)
     RUN_SERIAL TRUE
     TIMEOUT 120)
 
+  add_executable(flagdnn_test_thead_acdnn_gaps acdnn_gap_contract.cpp)
+  target_compile_features(flagdnn_test_thead_acdnn_gaps PRIVATE cxx_std_20)
+  target_link_libraries(flagdnn_test_thead_acdnn_gaps PRIVATE
+    flagdnn_validation_thead_reference)
+  flagdnn_enable_warnings(flagdnn_test_thead_acdnn_gaps)
+  add_test(NAME integration.thead.acdnn_gap_contract
+    COMMAND flagdnn_test_thead_acdnn_gaps)
+  set_tests_properties(integration.thead.acdnn_gap_contract PROPERTIES
+    LABELS "integration;thead;acdnn;capability;contract"
+    RUN_SERIAL TRUE TIMEOUT 60)
+
+  add_executable(flagdnn_test_thead_acdnn_fp8_codec acdnn_fp8_codec_contract.cpp)
+  target_compile_features(flagdnn_test_thead_acdnn_fp8_codec PRIVATE cxx_std_20)
+  target_link_libraries(flagdnn_test_thead_acdnn_fp8_codec PRIVATE
+    flagdnn_validation_thead_reference)
+  flagdnn_enable_warnings(flagdnn_test_thead_acdnn_fp8_codec)
+  add_test(NAME integration.thead.acdnn_fp8_codec_contract
+    COMMAND flagdnn_test_thead_acdnn_fp8_codec)
+  set_tests_properties(integration.thead.acdnn_fp8_codec_contract PROPERTIES
+    LABELS "integration;thead;acdnn;fp8;contract"
+    RUN_SERIAL TRUE TIMEOUT 120)
+
   add_executable(flagdnn_test_thead_artifact
     functional/test_artifact.cpp
     "${PROJECT_SOURCE_DIR}/backends/thead/artifact.cpp"
@@ -239,7 +274,8 @@ if(FLAGDNN_BUILD_TESTS)
     ENVIRONMENT
       "${_flagdnn_thead_codegen_environment}"
     RUN_SERIAL TRUE
-    TIMEOUT 180)
+    # Includes all attention profiles and malformed Graph/ABI cases.
+    TIMEOUT 600)
 
   add_executable(flagdnn_test_thead_jit
     functional/test_jit.cpp)
@@ -787,7 +823,7 @@ if(FLAGDNN_BUILD_TESTS)
     RUN_SERIAL TRUE
     # The exhaustive contract compiles every qualified family, including the
     # typed/strided, normalization, MatMul and convolution variants.
-    TIMEOUT 900)
+    TIMEOUT 1800)
 
   add_executable(flagdnn_test_thead_runtime
     functional/test_runtime.cpp)
@@ -821,6 +857,7 @@ if(FLAGDNN_BUILD_TESTS)
 
   add_library(flagdnn_test_thead_adapter STATIC
     $<TARGET_OBJECTS:flagdnn_test_common_objects>
+    functional/attention_runner.cpp
     functional/acdnn_add.cpp
     functional/add_runner.cpp
     functional/composite_runner.cpp
@@ -829,8 +866,7 @@ if(FLAGDNN_BUILD_TESTS)
     functional/matmul_runner.cpp
     functional/normalization_runner.cpp
     functional/pointwise_runner.cpp
-    functional/reduction_runner.cpp
-    functional/unsupported_runner.cpp)
+    functional/reduction_runner.cpp)
   target_compile_features(flagdnn_test_thead_adapter PUBLIC cxx_std_20)
   target_compile_definitions(flagdnn_test_thead_adapter PRIVATE
     FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG="${CMAKE_CURRENT_SOURCE_DIR}/capability.json"
@@ -863,6 +899,11 @@ if(FLAGDNN_BUILD_TESTS)
       SKIP_RETURN_CODE 77)
   endforeach()
   unset(_flagdnn_thead_operator)
+  # Gradient cases build multiple graphs. Their complete cold-cache catalogs
+  # can exceed 15 minutes with the current FlagTree/Torch dependency closure.
+  set_tests_properties(
+    functional.thead.conv_dgrad functional.thead.conv_wgrad
+    PROPERTIES TIMEOUT 1800)
 endif()
 
 if(FLAGDNN_BUILD_BENCHMARKS)
@@ -887,30 +928,11 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     flagdnn_validation_thead_reference)
   flagdnn_enable_warnings(flagdnn_benchmark_thead_adapter)
 
-  add_library(flagdnn_benchmark_thead_unsupported_adapter STATIC
-    benchmark/unsupported_runner.cpp)
-  target_compile_features(
-    flagdnn_benchmark_thead_unsupported_adapter PUBLIC cxx_std_20)
-  target_compile_definitions(
-    flagdnn_benchmark_thead_unsupported_adapter PRIVATE
-    FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG="${CMAKE_CURRENT_SOURCE_DIR}/capability.json"
-    FLAGDNN_THEAD_PPU_SDK_VERSION="${_FLAGDNN_THEAD_PPU_SDK_VERSION}")
-  target_include_directories(
-    flagdnn_benchmark_thead_unsupported_adapter PUBLIC
-    "${CMAKE_CURRENT_SOURCE_DIR}"
-    "${PROJECT_SOURCE_DIR}/benchmark")
-  target_link_libraries(
-    flagdnn_benchmark_thead_unsupported_adapter PUBLIC
-    flagdnn_benchmark_cases
-    flagdnn_validation_thead_reference)
-  flagdnn_enable_warnings(flagdnn_benchmark_thead_unsupported_adapter)
-
   include("${PROJECT_SOURCE_DIR}/cmake/Operators.cmake")
   flagdnn_register_benchmark_suite(
     PLATFORM thead
     ADAPTER_TARGET flagdnn_benchmark_thead_adapter
     BACKEND_TARGET flagdnn_backend_thead
-    OPERATORS add sub mul min max scale relu leaky_relu sigmoid tanh elu identity gelu sqrt neg abs ceil floor exp log cos rsqrt sin tan softplus swish gelu_approx_tanh div pow mod sigmoid_backward reciprocal add_square cmp_eq cmp_neq cmp_gt cmp_ge cmp_lt cmp_le reshape transpose slice reduction batchnorm batchnorm_inference layernorm rmsnorm matmul conv_fprop conv_dgrad conv_wgrad conv_bias_relu
     COMMAND_ARGS
       "${FLAGDNN_CODEGEN_PYTHON}"
       "${FLAGDNN_CODEGEN_COMPILER}"
@@ -920,55 +942,10 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     TIMEOUT 1800
     BUILD_RPATH
       "${_FLAGDNN_THEAD_PPU_SDK_ROOT}/lib;${_FLAGDNN_THEAD_PPU_SDK_ROOT}/CUDA_SDK/lib64")
-  set_tests_properties(
-    benchmark.thead.add benchmark.thead.sub benchmark.thead.mul
-    benchmark.thead.min benchmark.thead.max benchmark.thead.scale
-    benchmark.thead.relu benchmark.thead.leaky_relu
-    benchmark.thead.sigmoid benchmark.thead.tanh
-    benchmark.thead.elu benchmark.thead.identity benchmark.thead.gelu
-    benchmark.thead.sqrt benchmark.thead.neg benchmark.thead.abs
-    benchmark.thead.ceil benchmark.thead.floor benchmark.thead.exp
-    benchmark.thead.log benchmark.thead.cos benchmark.thead.rsqrt
-    benchmark.thead.sin benchmark.thead.tan benchmark.thead.softplus
-    benchmark.thead.swish benchmark.thead.gelu_approx_tanh
-    benchmark.thead.div benchmark.thead.pow benchmark.thead.mod
-    benchmark.thead.sigmoid_backward benchmark.thead.reciprocal
-    benchmark.thead.add_square benchmark.thead.cmp_eq
-    benchmark.thead.cmp_neq benchmark.thead.cmp_gt benchmark.thead.cmp_ge
-    benchmark.thead.cmp_lt benchmark.thead.cmp_le benchmark.thead.reshape
-    benchmark.thead.transpose benchmark.thead.slice benchmark.thead.reduction
-    benchmark.thead.batchnorm benchmark.thead.batchnorm_inference
-    benchmark.thead.layernorm benchmark.thead.rmsnorm
-    benchmark.thead.matmul benchmark.thead.conv_fprop
-    benchmark.thead.conv_dgrad benchmark.thead.conv_wgrad
-    benchmark.thead.conv_bias_relu
-    PROPERTIES
-    SKIP_RETURN_CODE 77)
-
-  set(_flagdnn_thead_unsupported_benchmark_operators
-    ${FLAGDNN_BENCHMARK_OPERATORS})
-  list(REMOVE_ITEM _flagdnn_thead_unsupported_benchmark_operators
-    add sub mul min max scale relu leaky_relu sigmoid tanh elu identity gelu sqrt neg abs ceil floor exp log cos rsqrt sin tan softplus swish gelu_approx_tanh div pow mod sigmoid_backward reciprocal add_square cmp_eq cmp_neq cmp_gt cmp_ge cmp_lt cmp_le reshape transpose slice reduction batchnorm batchnorm_inference layernorm rmsnorm matmul conv_fprop conv_dgrad conv_wgrad conv_bias_relu)
-  flagdnn_register_benchmark_suite(
-    PLATFORM thead
-    ADAPTER_TARGET flagdnn_benchmark_thead_unsupported_adapter
-    BACKEND_TARGET flagdnn_backend_thead
-    OPERATORS ${_flagdnn_thead_unsupported_benchmark_operators}
-    COMMAND_ARGS
-      "${FLAGDNN_CODEGEN_PYTHON}"
-      "${FLAGDNN_CODEGEN_COMPILER}"
-    ENVIRONMENT
-      "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_thead>"
-    LABELS "acdnn;explicit-unsupported;ppu"
-    TIMEOUT 300
-    BUILD_RPATH
-      "${_FLAGDNN_THEAD_PPU_SDK_ROOT}/lib;${_FLAGDNN_THEAD_PPU_SDK_ROOT}/CUDA_SDK/lib64")
-  foreach(_flagdnn_thead_operator IN LISTS
-      _flagdnn_thead_unsupported_benchmark_operators)
+  foreach(_flagdnn_thead_operator IN LISTS FLAGDNN_BENCHMARK_OPERATORS)
     set_tests_properties(
       "benchmark.thead.${_flagdnn_thead_operator}" PROPERTIES
       SKIP_RETURN_CODE 77)
   endforeach()
   unset(_flagdnn_thead_operator)
-  unset(_flagdnn_thead_unsupported_benchmark_operators)
 endif()

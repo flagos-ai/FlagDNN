@@ -8,7 +8,6 @@ from __future__ import annotations
 import functools
 import hashlib
 import importlib
-import importlib.metadata
 import json
 import os
 from pathlib import Path
@@ -17,6 +16,12 @@ import sys
 import sysconfig
 from types import ModuleType
 from typing import Any
+
+from .triton_compat import configure_triton_path, ppu_codegen_backend, ppu_distribution
+
+# External codegen and embedded Python must resolve the selected package alike.
+if os.environ.get("FLAGDNN_THEAD_TRITON_ROOT"):
+    configure_triton_path(os.environ["FLAGDNN_THEAD_TRITON_ROOT"])
 
 import torch
 import triton
@@ -88,11 +93,12 @@ def _configured_triton_root() -> Path:
 
 
 def _critical_modules() -> dict[str, ModuleType]:
+    backend = ppu_codegen_backend(_configured_triton_root())
     names = (
         "triton.backends",
         "triton.backends.compiler",
-        "triton.backends.nvidia.compiler",
-        "triton.backends.nvidia.driver",
+        f"triton.backends.{backend}.compiler",
+        f"triton.backends.{backend}.driver",
         "triton.compiler.compiler",
         "triton.runtime.jit",
         "triton.language.extra.libdevice",
@@ -103,12 +109,15 @@ def _critical_modules() -> dict[str, ModuleType]:
 
 def _validate_triton(root: Path) -> dict[str, ModuleType]:
     modules = _critical_modules()
+    backend_name = ppu_codegen_backend(root)
     backend_catalog = getattr(modules["triton.backends"], "backends", None)
-    if not isinstance(backend_catalog, dict) or "nvidia" not in backend_catalog:
+    if (
+        not isinstance(backend_catalog, dict)
+        or backend_name not in backend_catalog
+    ):
         raise RuntimeError(
             "configured Triton backend catalog has no CUDA codegen backend"
         )
-    package_root = _module_file(triton).parent
     for name, module in {"triton": triton, **modules}.items():
         origin = _module_file(module)
         try:
@@ -121,19 +130,20 @@ def _validate_triton(root: Path) -> dict[str, ModuleType]:
     target_type = getattr(compiler_api, "GPUTarget", None)
     if target_type is None:
         raise RuntimeError("Triton has no GPUTarget API")
-    backend_class = backend_catalog["nvidia"].compiler
+    backend_class = backend_catalog[backend_name].compiler
     backend = backend_class(target_type("cuda", 80, 32))
-    if getattr(backend, "binary_ext", None) != "cubin":
-        raise RuntimeError("Triton CUDA compiler binary extension is not cubin")
+    expected_extension = "hgbin" if backend_name == "ppu" else "cubin"
+    if getattr(backend, "binary_ext", None) != expected_extension:
+        raise RuntimeError("unexpected Triton PPU compiler binary extension")
     compiler_source = _module_file(
-        modules["triton.backends.nvidia.compiler"]
+        modules[f"triton.backends.{backend_name}.compiler"]
     ).read_text(encoding="utf-8")
     if any(
         marker not in compiler_source
         for marker in ("PPU_SDK", "llvm-irformatter", "--ppu-backend-options")
     ):
         raise RuntimeError("Triton CUDA compiler lacks the PPU compatibility path")
-    distribution = importlib.metadata.distribution("triton")
+    distribution, _ = ppu_distribution(root)
     if "ppu" not in distribution.version.lower():
         raise RuntimeError(
             "configured Triton distribution is not the PPU-qualified build"
@@ -157,7 +167,7 @@ def _package_files(package_root: Path) -> tuple[Path, ...]:
 
 
 def _distribution_files(root: Path) -> tuple[Path, ...]:
-    distribution = importlib.metadata.distribution("triton")
+    distribution, _ = ppu_distribution(root)
     files = tuple(
         sorted(
             Path(distribution.locate_file(entry)).resolve(strict=True)
@@ -208,6 +218,7 @@ def _cache_invalidating_environment() -> dict[str, str]:
         or name.startswith(
             (
                 "PPU_",
+                "FLAGTREE_",
                 "TRITON_",
                 "CUDA_",
                 "MLIR_",
@@ -260,13 +271,15 @@ def collect_environment_identity() -> dict[str, Any]:
             "root": str(root),
             "package_root": str(package_root),
             "module_version": str(triton.__version__),
-            "distribution_version": importlib.metadata.version("triton"),
+            "distribution_version": ppu_distribution(root)[0].version,
             "backend_catalog": sorted(
                 importlib.import_module("triton.backends").backends
             ),
-            "codegen_backend": "nvidia",
+            "codegen_backend": ppu_codegen_backend(root),
             "target_backend": "cuda",
-            "binary_extension": "cubin",
+            "binary_extension": (
+                "hgbin" if ppu_codegen_backend(root) == "ppu" else "cubin"
+            ),
             "ppu_compatibility": "cuda",
             "package_tree_sha256": _tree_sha256(
                 package_root, package_files

@@ -141,6 +141,11 @@ void configure_environment(int capability) {
       "TRITON_IR_FORMATTER_PATH",
       std::string(FLAGDNN_THEAD_PPU_SDK_ROOT) +
           "/bin/llvm-irformatter");
+  if (std::string(FLAGDNN_THEAD_TRITON_CODEGEN_BACKEND) == "ppu") {
+    set_required_environment(
+        "TRITON_PPU_LLC_PATH",
+        std::string(FLAGDNN_THEAD_PPU_SDK_ROOT) + "/bin/ppu-llc");
+  }
   set_required_environment("TRITON_OVERRIDE_ARCH",
                            "sm" + std::to_string(capability));
   set_required_environment("PYTHONDONTWRITEBYTECODE", "1");
@@ -348,8 +353,23 @@ void validate_python_environment(int capability,
                   configured_triton_root[0] != '\0'
               ? configured_triton_root
               : FLAGDNN_THEAD_TRITON_ROOT;
-      prepend_python_path(search_path.get(), selected_triton_root);
       prepend_python_path(search_path.get(), script_root.string());
+
+      PythonObject bridge = import_module("flagdnn_thead_jit_compat");
+      require_module_file(bridge.get(), "flagdnn_thead_jit_compat",
+                          script_root / "flagdnn_thead_jit_compat.py",
+                          FLAGDNN_THEAD_JIT_COMPAT_SHA256);
+      PythonObject configure_path = get_attribute(
+          bridge.get(), "configure_triton_path", "THead Python package path");
+      PythonObject package_root(PyUnicode_FromString(selected_triton_root.c_str()));
+      if (package_root == nullptr) {
+        python_failure("cannot encode the configured Triton root");
+      }
+      PythonObject configured_path(PyObject_CallFunctionObjArgs(
+          configure_path.get(), package_root.get(), nullptr));
+      if (configured_path == nullptr) {
+        python_failure("cannot configure the THead Python package path");
+      }
 
       std::error_code error;
       const std::filesystem::path triton_root =
@@ -363,18 +383,22 @@ void validate_python_environment(int capability,
         compilation_error("configured Triton package is incomplete");
       }
       const std::filesystem::path cuda_compiler = std::filesystem::canonical(
-          triton_root / "triton/backends/nvidia/compiler.py", error);
+          triton_root / ("triton/backends/"
+                         FLAGDNN_THEAD_TRITON_CODEGEN_BACKEND "/compiler.py"),
+          error);
       if (error) {
         compilation_error("configured Triton CUDA compiler is missing");
       }
       const std::filesystem::path cuda_driver = std::filesystem::canonical(
-          triton_root / "triton/backends/nvidia/driver.py", error);
+          triton_root / ("triton/backends/"
+                         FLAGDNN_THEAD_TRITON_CODEGEN_BACKEND "/driver.py"),
+          error);
       if (error) {
         compilation_error("configured Triton CUDA driver is missing");
       }
       const std::filesystem::path compiler_frontend =
           std::filesystem::canonical(
-              triton_root / "triton/compiler/compiler.py", error);
+              triton_root / FLAGDNN_THEAD_TRITON_FRONTEND_RELATIVE, error);
       if (error) {
         compilation_error("configured Triton compiler frontend is missing");
       }
@@ -395,6 +419,18 @@ void validate_python_environment(int capability,
       }
 
       PythonObject triton = import_module("triton");
+      // FlagTree owns static pybind objects in libtriton. They are destroyed
+      // by the C runtime after main(), when an embedded interpreter otherwise
+      // has no GIL. Register after importing that extension so this callback
+      // runs before its destructors. A caller-owned interpreter retains its
+      // own shutdown policy. The plugin is linked NODELETE for callback safety.
+      if (initialized_here && std::atexit([] {
+            if (Py_IsInitialized()) {
+              (void)PyGILState_Ensure();
+            }
+          }) != 0) {
+        compilation_error("cannot register embedded Python shutdown handling");
+      }
       require_module_file(triton.get(), "triton", package_init,
                           FLAGDNN_THEAD_TRITON_INIT_SHA256);
       if (!path_below(triton_root,
@@ -411,20 +447,27 @@ void validate_python_environment(int capability,
       if (!PyDict_Check(catalog.get())) {
         compilation_error("Triton backend catalog is not a dictionary");
       }
-      PyObject* backend = PyDict_GetItemString(catalog.get(), "nvidia");
+      PyObject* backend = PyDict_GetItemString(
+          catalog.get(), FLAGDNN_THEAD_TRITON_CODEGEN_BACKEND);
       if (backend == nullptr) {
         compilation_error("Triton backend catalog has no CUDA codegen backend");
       }
 
       PythonObject cuda_compiler_module =
-          import_module("triton.backends.nvidia.compiler");
+          import_module("triton.backends."
+                        FLAGDNN_THEAD_TRITON_CODEGEN_BACKEND ".compiler");
       require_module_file(cuda_compiler_module.get(),
-                          "triton.backends.nvidia.compiler", cuda_compiler,
+                          "triton.backends."
+                          FLAGDNN_THEAD_TRITON_CODEGEN_BACKEND ".compiler",
+                          cuda_compiler,
                           FLAGDNN_THEAD_TRITON_COMPILER_SHA256);
       PythonObject cuda_driver_module =
-          import_module("triton.backends.nvidia.driver");
+          import_module("triton.backends."
+                        FLAGDNN_THEAD_TRITON_CODEGEN_BACKEND ".driver");
       require_module_file(cuda_driver_module.get(),
-                          "triton.backends.nvidia.driver", cuda_driver,
+                          "triton.backends."
+                          FLAGDNN_THEAD_TRITON_CODEGEN_BACKEND ".driver",
+                          cuda_driver,
                           FLAGDNN_THEAD_TRITON_DRIVER_SHA256);
       PythonObject frontend_module = import_module("triton.compiler.compiler");
       require_module_file(frontend_module.get(), "triton.compiler.compiler",
@@ -461,9 +504,11 @@ void validate_python_environment(int capability,
       const char* extension = PyUnicode_Check(binary_extension.get())
                                   ? PyUnicode_AsUTF8(binary_extension.get())
                                   : nullptr;
-      if (extension == nullptr || std::string_view(extension) != "cubin") {
+      if (extension == nullptr ||
+          std::string_view(extension) !=
+              FLAGDNN_THEAD_TRITON_BINARY_EXTENSION) {
         PyErr_Clear();
-        compilation_error("Triton CUDA binary extension is not cubin");
+        compilation_error("unexpected Triton PPU binary extension");
       }
 
       const std::filesystem::path standalone = std::filesystem::canonical(
@@ -480,6 +525,15 @@ void validate_python_environment(int capability,
       require_module_file(standalone_module.get(), "standalone_compile",
                           standalone,
                           FLAGDNN_THEAD_JIT_STANDALONE_SHA256);
+      if (std::string_view(FLAGDNN_THEAD_TRITON_CODEGEN_BACKEND) == "ppu") {
+        PythonObject install = get_attribute(
+            bridge.get(), "install_cuda_jit_bridge", "PPU CUDA JIT bridge");
+        PythonObject installed(PyObject_CallFunctionObjArgs(
+            install.get(), standalone_module.get(), nullptr));
+        if (installed == nullptr) {
+          python_failure("cannot install the PPU CUDA JIT bridge");
+        }
+      }
       PythonObject signature_module = import_module("gen_ssig");
       require_module_file(signature_module.get(), "gen_ssig", signature,
                           FLAGDNN_THEAD_JIT_GEN_SSIG_SHA256);
@@ -780,7 +834,12 @@ void validate_jit_abi(const JitFunction& function,
         !tokens[index].starts_with('*') && tokens[index].ends_with(":1") &&
         (kind == triton_jit::ArgType::SPECIALIZED ||
          kind == triton_jit::ArgType::SPECIALIZED_NO_ALIGNMENT);
-    if (!specialized_one) {
+    // libtriton_jit specializes optional pointer parameters to Python None.
+    // Such parameters have no runtime argument in the compiled CUDA ABI.
+    const bool specialized_none = tokens[index] == "nullopt" &&
+        (kind == triton_jit::ArgType::SPECIALIZED ||
+         kind == triton_jit::ArgType::SPECIALIZED_NO_ALIGNMENT);
+    if (!specialized_one && !specialized_none) {
       ++runtime_arguments;
     }
   }

@@ -13,11 +13,16 @@ endif()
 set(_flagdnn_thead_compiler_resources
   compiler.py
   compiler_identity.py
-  python_environment_identity.py)
+  python_environment_identity.py
+  triton_compat.py)
 set(_flagdnn_thead_kernel_resources
   kernels/registry.json
+  kernels/attention.py
+  kernels/fp8_attention.py
   kernels/add_square.py
   kernels/convolution.py
+  kernels/pow.py
+  kernels/layout.py
   kernels/normalization.py
   tuning/common.yaml)
 foreach(_resource IN LISTS
@@ -36,16 +41,29 @@ set(FLAGDNN_THEAD_TRITON_JIT_ROOT "${PROJECT_SOURCE_DIR}/../libtriton_jit"
 if(NOT DEFINED FLAGDNN_THEAD_TRITON_ROOT OR
    FLAGDNN_THEAD_TRITON_ROOT STREQUAL "")
   execute_process(
-    COMMAND "${FLAGDNN_CODEGEN_PYTHON}" -c
+    COMMAND "${FLAGDNN_CODEGEN_PYTHON}" -X faulthandler -c
       "import pathlib,triton;print(pathlib.Path(triton.__file__).resolve().parent.parent)"
     RESULT_VARIABLE _flagdnn_thead_triton_discovery_result
     OUTPUT_VARIABLE _flagdnn_thead_triton_default_root
     ERROR_VARIABLE _flagdnn_thead_triton_discovery_error
     OUTPUT_STRIP_TRAILING_WHITESPACE)
-  if(NOT _flagdnn_thead_triton_discovery_result EQUAL 0 OR
+  if(NOT "${_flagdnn_thead_triton_discovery_result}" STREQUAL "0" OR
      _flagdnn_thead_triton_default_root STREQUAL "")
+    if(NOT "${_flagdnn_thead_triton_discovery_result}" MATCHES "^[0-9]+$")
+      message(FATAL_ERROR
+        "PPU FlagTree import process crashed or was terminated: "
+        "${_flagdnn_thead_triton_discovery_result}.\n"
+        "Selected Python: ${FLAGDNN_CODEGEN_PYTHON}\n"
+        "Repair or reinstall PPU FlagTree for this interpreter; check that its "
+        "native extension was built with consistent dependencies. "
+        "Alternatively, select a working interpreter via tools/build.sh --python PATH.\n"
+        "${_flagdnn_thead_triton_discovery_error}")
+    endif()
     message(FATAL_ERROR
-      "FLAGDNN_CODEGEN_PYTHON cannot import the THead Triton distribution: "
+      "Selected Python '${FLAGDNN_CODEGEN_PYTHON}' cannot import 'triton'.\n"
+      "PPU FlagTree provides the 'triton' Python module. Install PPU FlagTree "
+      "for this interpreter, or select an interpreter containing it via "
+      "tools/build.sh --python PATH.\n"
       "${_flagdnn_thead_triton_discovery_error}")
   endif()
 else()
@@ -77,6 +95,9 @@ file(SHA256 "${_flagdnn_thead_jit_SCRIPT_DIR}/gen_ssig.py"
 
 set(Python_EXECUTABLE "${FLAGDNN_CODEGEN_PYTHON}")
 find_package(Python REQUIRED COMPONENTS Interpreter Development)
+get_target_property(_flagdnn_thead_python_library Python::Python IMPORTED_LOCATION)
+get_filename_component(_flagdnn_thead_python_library_directory
+  "${_flagdnn_thead_python_library}" DIRECTORY)
 execute_process(
   COMMAND "${FLAGDNN_CODEGEN_PYTHON}" -c
     "import pathlib,torch\nroot=pathlib.Path(torch.__file__).resolve().parent\nprint(root/'include')\nprint(root/'include/torch/csrc/api/include')\nprint('1' if torch._C._GLIBCXX_USE_CXX11_ABI else '0')"
@@ -107,61 +128,8 @@ if(NOT IS_DIRECTORY "${FLAGDNN_THEAD_TRITON_ROOT}")
 endif()
 file(REAL_PATH "${FLAGDNN_THEAD_TRITON_ROOT}"
   _flagdnn_thead_triton_root EXPAND_TILDE)
-set(_flagdnn_thead_triton_init
-  "${_flagdnn_thead_triton_root}/triton/__init__.py")
-set(_flagdnn_thead_triton_compiler
-  "${_flagdnn_thead_triton_root}/triton/backends/nvidia/compiler.py")
-set(_flagdnn_thead_triton_driver
-  "${_flagdnn_thead_triton_root}/triton/backends/nvidia/driver.py")
-set(_flagdnn_thead_triton_frontend
-  "${_flagdnn_thead_triton_root}/triton/compiler/compiler.py")
-set(_flagdnn_thead_triton_extension
-  "${_flagdnn_thead_triton_root}/triton/_C/libtriton.so")
-foreach(_flagdnn_thead_triton_file IN ITEMS
-    "${_flagdnn_thead_triton_init}"
-    "${_flagdnn_thead_triton_compiler}"
-    "${_flagdnn_thead_triton_driver}"
-    "${_flagdnn_thead_triton_frontend}"
-    "${_flagdnn_thead_triton_extension}")
-  if(NOT EXISTS "${_flagdnn_thead_triton_file}")
-    message(FATAL_ERROR
-      "Required THead Triton file is missing: "
-      "${_flagdnn_thead_triton_file}")
-  endif()
-endforeach()
-file(GLOB _flagdnn_thead_triton_metadata_candidates
-  "${_flagdnn_thead_triton_root}/triton-*.dist-info/METADATA")
-list(SORT _flagdnn_thead_triton_metadata_candidates)
-list(LENGTH _flagdnn_thead_triton_metadata_candidates
-  _flagdnn_thead_triton_metadata_count)
-if(NOT _flagdnn_thead_triton_metadata_count EQUAL 1)
-  message(FATAL_ERROR
-    "FLAGDNN_THEAD_TRITON_ROOT must contain exactly one installed Triton "
-    "distribution; found ${_flagdnn_thead_triton_metadata_count}")
-endif()
-list(GET _flagdnn_thead_triton_metadata_candidates 0
-  _flagdnn_thead_triton_metadata)
-file(READ "${_flagdnn_thead_triton_metadata}" _flagdnn_thead_triton_metadata_text)
-if(NOT _flagdnn_thead_triton_metadata_text MATCHES
-   "Version:[ \t]*[^\r\n]*[Pp][Pp][Uu]")
-  message(FATAL_ERROR
-    "The selected Triton distribution is not PPU-qualified: "
-    "${_flagdnn_thead_triton_metadata}")
-endif()
-file(READ "${_flagdnn_thead_triton_compiler}"
-  _flagdnn_thead_triton_compiler_text)
-foreach(_flagdnn_thead_triton_marker IN ITEMS
-    "PPU_SDK" "llvm-irformatter" "--ppu-backend-options")
-  string(FIND "${_flagdnn_thead_triton_compiler_text}"
-    "${_flagdnn_thead_triton_marker}" _flagdnn_thead_marker_position)
-  if(_flagdnn_thead_marker_position EQUAL -1)
-    message(FATAL_ERROR
-      "The selected Triton CUDA compiler lacks the PPU compatibility marker "
-      "${_flagdnn_thead_triton_marker}")
-  endif()
-endforeach()
 execute_process(
-  COMMAND "${FLAGDNN_CODEGEN_PYTHON}"
+  COMMAND "${FLAGDNN_CODEGEN_PYTHON}" -X faulthandler
     "${CMAKE_CURRENT_SOURCE_DIR}/validation/TritonIdentityContract.py"
     --root "${_flagdnn_thead_triton_root}"
     --jit-root "${_flagdnn_thead_jit_ROOT}"
@@ -169,11 +137,38 @@ execute_process(
   OUTPUT_VARIABLE _flagdnn_thead_triton_identity
   ERROR_VARIABLE _flagdnn_thead_triton_identity_error
   OUTPUT_STRIP_TRAILING_WHITESPACE)
-if(NOT _flagdnn_thead_triton_identity_result EQUAL 0)
+if(NOT "${_flagdnn_thead_triton_identity_result}" STREQUAL "0")
   message(FATAL_ERROR
-    "THead Triton identity validation failed: "
+    "THead compiler identity validation failed "
+    "(${_flagdnn_thead_triton_identity_result}), Python: ${FLAGDNN_CODEGEN_PYTHON}\n"
     "${_flagdnn_thead_triton_identity_error}")
 endif()
+# The PPU-qualified distribution owns its actual backend and specialized
+# frontend paths; FlagTree routes triton.compiler through spec/ppu.
+foreach(_field IN ITEMS package_file compiler_file driver_file
+    compiler_frontend_file distribution_metadata codegen_backend binary_extension)
+  string(JSON _flagdnn_thead_triton_${_field} GET
+    "${_flagdnn_thead_triton_identity}" triton "${_field}")
+endforeach()
+if(_flagdnn_thead_triton_codegen_backend STREQUAL "ppu")
+  set(_flagdnn_thead_ppu_llc "${_flagdnn_thead_ppu_ROOT}/bin/ppu-llc")
+  if(NOT EXISTS "${_flagdnn_thead_ppu_llc}")
+    message(FATAL_ERROR "PPU compiler is missing: ${_flagdnn_thead_ppu_llc}")
+  endif()
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${_flagdnn_thead_ppu_llc}")
+endif()
+set(_flagdnn_thead_triton_init "${_flagdnn_thead_triton_package_file}")
+set(_flagdnn_thead_triton_compiler "${_flagdnn_thead_triton_compiler_file}")
+set(_flagdnn_thead_triton_driver "${_flagdnn_thead_triton_driver_file}")
+set(_flagdnn_thead_triton_frontend "${_flagdnn_thead_triton_compiler_frontend_file}")
+set(_flagdnn_thead_triton_metadata "${_flagdnn_thead_triton_distribution_metadata}")
+set(_flagdnn_thead_triton_extension
+  "${_flagdnn_thead_triton_root}/triton/_C/libtriton.so")
+file(RELATIVE_PATH _flagdnn_thead_triton_frontend_relative
+  "${_flagdnn_thead_triton_root}" "${_flagdnn_thead_triton_frontend}")
+file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/triton_compat.py"
+  _flagdnn_thead_jit_compat_sha256)
 file(SHA256 "${_flagdnn_thead_triton_init}"
   _flagdnn_thead_triton_init_sha256)
 file(SHA256 "${_flagdnn_thead_triton_compiler}"
@@ -194,6 +189,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
   "${_flagdnn_thead_triton_frontend}"
   "${_flagdnn_thead_triton_extension}"
   "${_flagdnn_thead_triton_metadata}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/validation/TritonIdentityContract.py"
   ${_flagdnn_thead_compiler_resources}
   ${_flagdnn_thead_kernel_resources})
 
@@ -225,6 +221,10 @@ target_compile_definitions(flagdnn_backend_thead PRIVATE
   _GLIBCXX_USE_CXX11_ABI=${_flagdnn_thead_torch_cxx11_abi}
   FLAGDNN_THEAD_PPU_SDK_VERSION="${_flagdnn_thead_ppu_VERSION}"
   FLAGDNN_THEAD_TRITON_ROOT="${_flagdnn_thead_triton_root}"
+  FLAGDNN_THEAD_TRITON_CODEGEN_BACKEND="${_flagdnn_thead_triton_codegen_backend}"
+  FLAGDNN_THEAD_TRITON_BINARY_EXTENSION="${_flagdnn_thead_triton_binary_extension}"
+  FLAGDNN_THEAD_TRITON_FRONTEND_RELATIVE="${_flagdnn_thead_triton_frontend_relative}"
+  FLAGDNN_THEAD_JIT_COMPAT_SHA256="${_flagdnn_thead_jit_compat_sha256}"
   FLAGDNN_THEAD_TRITON_METADATA="${_flagdnn_thead_triton_metadata}"
   FLAGDNN_THEAD_PPU_SDK_ROOT="${_flagdnn_thead_ppu_ROOT}"
   FLAGDNN_THEAD_JIT_SHA256="${_flagdnn_thead_jit_library_sha256}"
@@ -255,7 +255,8 @@ set_target_properties(flagdnn_backend_thead PROPERTIES
   INSTALL_RPATH_USE_LINK_PATH NO)
 if(UNIX AND NOT APPLE)
   target_link_options(flagdnn_backend_thead PRIVATE
-    "LINKER:--disable-new-dtags")
+    "LINKER:--disable-new-dtags"
+    "LINKER:-z,nodelete")
 endif()
 add_custom_command(TARGET flagdnn_backend_thead POST_BUILD
   COMMAND "${CMAKE_COMMAND}" -E make_directory
@@ -271,8 +272,14 @@ add_custom_command(TARGET flagdnn_backend_thead POST_BUILD
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
     "${_flagdnn_thead_jit_SCRIPT_DIR}/gen_ssig.py"
     "$<TARGET_FILE_DIR:flagdnn_backend_thead>/flagdnn/share/triton_jit/scripts/gen_ssig.py"
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+    "${CMAKE_CURRENT_SOURCE_DIR}/triton_compat.py"
+    "$<TARGET_FILE_DIR:flagdnn_backend_thead>/flagdnn/share/triton_jit/scripts/flagdnn_thead_jit_compat.py"
   VERBATIM)
 
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/triton_compat.py"
+  DESTINATION "${_flagdnn_thead_jit_script_install_directory}"
+  RENAME flagdnn_thead_jit_compat.py)
 install(FILES "${_flagdnn_thead_jit_LIBRARY}"
   DESTINATION "${_flagdnn_thead_jit_install_directory}"
   RENAME "${_flagdnn_thead_jit_SONAME}")
@@ -301,6 +308,7 @@ set_target_properties(flagdnn_backend_thead PROPERTIES
   FLAGDNN_THEAD_TRITON_JIT_GEN_SSIG_SHA256
     "${_flagdnn_thead_jit_gen_ssig_sha256}"
   FLAGDNN_THEAD_TRITON_ROOT "${_flagdnn_thead_triton_root}"
+  FLAGDNN_THEAD_PYTHON_LIBRARY_DIR "${_flagdnn_thead_python_library_directory}"
   FLAGDNN_THEAD_TRITON_METADATA "${_flagdnn_thead_triton_metadata}"
   FLAGDNN_THEAD_TORCH_INCLUDE "${_flagdnn_thead_torch_include}"
   FLAGDNN_THEAD_TORCH_API_INCLUDE "${_flagdnn_thead_torch_api_include}"
@@ -329,4 +337,4 @@ message(STATUS
   "FlagDNN THead TritonJIT ${_flagdnn_thead_jit_BACKEND} "
   "(${_flagdnn_thead_jit_LAYOUT}): ${_flagdnn_thead_jit_LIBRARY}")
 message(STATUS
-  "FlagDNN THead PPU-aware Triton: ${_flagdnn_thead_triton_root}")
+  "FlagDNN THead PPU compiler packages (triton API): ${_flagdnn_thead_triton_root}")

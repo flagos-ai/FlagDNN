@@ -396,6 +396,33 @@ int main() {
     require(artifact.stages.at(0).registry_sha256 == kCandidateIdentity,
             "artifact registry identity was not retained");
 
+    // FP8 software conversion uses an explicitly declared byte pointer ABI.
+    // Graph types and allocation sizes remain tied to the original FP8 tensor.
+    for (const std::string_view type : {"fp8_e4m3", "fp8_e5m2"}) {
+      const std::string type_field = "\"data_type\":\"" + std::string(type) + "\"";
+      const auto fp8_graph = replace_once(graph_ir, "\"data_type\":\"float32\"", type_field);
+      auto fp8_manifest = fixture.manifest(flagdnn::native::sha256(fp8_graph));
+      fp8_manifest = replace_once(fp8_manifest, "\"data_type\":\"float32\"", type_field);
+      fp8_manifest = replace_once(fp8_manifest, "\"storage_size\":16", "\"storage_size\":4");
+      fp8_manifest = replace_once(fp8_manifest, tensor_argument(1, false),
+          "{\"kind\":\"tensor\",\"uid\":1,\"size\":4,\"alignment\":16,"
+          "\"storage_view\":\"fp8_bytes\"}");
+      fp8_manifest = replace_once(fp8_manifest, "*fp32:16", "*i8:16");
+      const auto fp8_artifact = fixture.load(fp8_graph, fp8_manifest);
+      require(fp8_artifact.stages[0].variants[0].arguments[0].fp8_storage_bytes,
+              "FP8 byte view was not preserved");
+      require_compilation_failure(fixture, "undeclared FP8 byte view", fp8_graph,
+          replace_once(fp8_manifest, ",\"storage_view\":\"fp8_bytes\"", ""), "signature");
+      require_compilation_failure(fixture, "FP8 byte view pointer mismatch", fp8_graph,
+          replace_once(fp8_manifest, "*i8:16", "*fp32:16"), "signature");
+      require_compilation_failure(fixture, "unknown FP8 storage view", fp8_graph,
+          replace_once(fp8_manifest, "\"fp8_bytes\"", "\"unknown\""), "storage_view");
+    }
+    require_compilation_failure(fixture, "FP8 byte view on FP32 tensor", graph_ir,
+        replace_once(valid, tensor_argument(1, false),
+            "{\"kind\":\"tensor\",\"uid\":1,\"size\":16,\"alignment\":16,"
+            "\"storage_view\":\"fp8_bytes\"}"), "storage_view");
+
     const auto fused_artifact =
         fixture.load(graph_ir, fixture.fused_manifest(request_hash));
     require(fused_artifact.workspace_size == 0 &&
@@ -407,6 +434,20 @@ int main() {
                           std::string_view detail) {
       require_compilation_failure(fixture, name, graph_ir, mutated, detail);
     };
+    fail("unproven scalar divisibility",
+         replace_once(valid, ",i32,", ",i32:16,"), "signature");
+    fail("unsupported scalar divisibility",
+         replace_once(valid, ",i32,", ",i32:8,"), "signature");
+    // A divisible scalar remains a runtime argument, unlike :1, which
+    // libtriton_jit specializes away. No device execution is needed here.
+    auto hinted = replace_once(valid, ",i32,", ",i32:16,");
+    hinted = replace_once(hinted, "\"name\":\"n_elements\",\"value\":4",
+                          "\"name\":\"stride\",\"value\":16");
+    const auto hinted_artifact = fixture.load(graph_ir, hinted);
+    require(hinted_artifact.stages[0].variants[0].runtime_signature.back() == "i32:16"
+                && hinted_artifact.stages[0].variants[0].arguments.back().scalar_i32 == 16,
+            "divisible scalar was not retained in the runtime ABI");
+
     fail("wrong schema",
          replace_once(valid, "{\"schema_version\":1",
                       "{\"schema_version\":2"),

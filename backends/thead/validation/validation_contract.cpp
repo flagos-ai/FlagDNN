@@ -4,6 +4,8 @@
 #include "acdnn_reference.hpp"
 #include "acdnn_layout_reference.hpp"
 #include "capability.hpp"
+#include "acdnn_pointwise_dag.hpp"
+#include "acdnn_attention_reference.hpp"
 #include "numeric_types.hpp"
 #include "tensor_io.hpp"
 
@@ -394,8 +396,13 @@ void run_numeric_type_contract() {
       tv::element_size(FLAGDNN_DATA_BOOLEAN) != 1) {
     throw std::runtime_error("THead validation element sizes are invalid");
   }
-  require_rejected("FP8 validation storage", [] {
-    (void)tv::element_size(FLAGDNN_DATA_FP8_E4M3);
+  if (tv::element_size(FLAGDNN_DATA_FP8_E4M3) != 1 ||
+      tv::element_size(FLAGDNN_DATA_FP8_E5M2) != 1) {
+    throw std::runtime_error("FP8 raw storage must occupy one byte");
+  }
+  require_rejected("FP8 host numeric conversion", [] {
+    const std::array<float, 1> value{1.0F};
+    (void)tv::encode_floating(FLAGDNN_DATA_FP8_E4M3, value);
   });
 
   const std::array<float, 10> values = {
@@ -826,13 +833,6 @@ void run_catalog_contract(const std::string &catalog_path,
                                " segmented tail contract mismatch");
     }
   }
-  const CapabilityRecord &mod =
-      catalog.lookup("mod", "mod_fp32_1x1x16");
-  if (mod.status != CapabilityStatus::kUnsupported ||
-      mod.path != ReferencePath::kNone || !mod.reference_plan.empty() ||
-      mod.reason_code != "acdnn_status_not_supported") {
-    throw std::runtime_error("Mod audited-skip contract mismatch");
-  }
   const CapabilityRecord &add_square =
       catalog.lookup("add_square", "add_square_fp32_1x1x16");
   if (!executable(add_square) ||
@@ -865,24 +865,21 @@ void run_catalog_contract(const std::string &catalog_path,
                                " comparison capability slice mismatch");
     }
   }
-  const std::array<std::pair<std::string_view, std::string_view>, 5>
-      audited_pointwise_skips = {{
-          {"logical_and", "acdnn_semantic_mismatch"},
-          {"logical_not", "acdnn_status_not_supported"},
-          {"logical_or", "acdnn_semantic_mismatch"},
-          {"binary_select", "no_certified_acdnn_primitive"},
-          {"erf", "no_certified_acdnn_primitive"},
-      }};
-  for (const auto &[operation, reason] : audited_pointwise_skips) {
+  for (const auto &[operation, mode] :
+       std::array<std::pair<std::string_view, flagdnnPointwiseMode_t>, 6>{{
+           {"logical_not", FLAGDNN_POINTWISE_LOGICAL_NOT},
+           {"logical_and", FLAGDNN_POINTWISE_LOGICAL_AND},
+           {"logical_or", FLAGDNN_POINTWISE_LOGICAL_OR},
+           {"erf", FLAGDNN_POINTWISE_ERF},
+           {"mod", FLAGDNN_POINTWISE_MOD},
+           {"binary_select", FLAGDNN_POINTWISE_BINARY_SELECT}}}) {
     const auto &records = catalog.records().at(std::string(operation));
-    if (records.empty() ||
-        std::ranges::any_of(records, [&](const auto &entry) {
-          return entry.second.status != CapabilityStatus::kUnsupported ||
-                 entry.second.path != ReferencePath::kNone ||
-                 entry.second.reason_code != reason;
+    if (records.empty() || std::ranges::any_of(records, [&](const auto &entry) {
+          return !executable(entry.second) ||
+                 entry.second.path != ReferencePath::kBackendDescriptor ||
+                 entry.second.reference_plan != flagdnn::validation::thead::acdnn_pointwise_dag_plan(mode);
         })) {
-      throw std::runtime_error(std::string(operation) +
-                               " audited-skip contract mismatch");
+      throw std::runtime_error(std::string(operation) + " acDNN composite reference contract mismatch");
     }
   }
 
@@ -1113,28 +1110,37 @@ void run_catalog_contract(const std::string &catalog_path,
     }
   }
 
-  const std::array<std::pair<std::string_view, std::string_view>, 4>
-      attention_skips = {{
-          {"sdpa", "acdnn_semantic_mismatch"},
-          {"sdpa_backward", "no_certified_acdnn_primitive"},
-          {"sdpa_fp8", "acdnn_semantic_mismatch"},
-          {"sdpa_fp8_backward", "no_certified_acdnn_primitive"},
-      }};
-  for (const auto &[operation, reason] : attention_skips) {
-    const auto &records = catalog.records().at(std::string(operation));
-    if (records.empty() ||
+  for (const auto operation : {"sdpa", "sdpa_backward"}) {
+    const auto &records = catalog.records().at(operation);
+    const auto plan = flagdnn::validation::thead::acdnn_attention_plan(std::string_view(operation) == "sdpa_backward");
+    if (records.size() != 4 ||
         std::ranges::any_of(records, [&](const auto &entry) {
-          return entry.second.status != CapabilityStatus::kUnsupported ||
-                 entry.second.path != ReferencePath::kNone ||
-                 entry.second.reason_code != reason;
+          return !executable(entry.second) ||
+                 entry.second.path != ReferencePath::kBackendDescriptor ||
+                 entry.second.reference_plan != plan;
         })) {
       throw std::runtime_error(std::string(operation) +
-                               " audited-skip contract mismatch");
+                               " acDNN attention DAG contract mismatch");
+    }
+  }
+
+  for (const auto operation : {"sdpa_fp8", "sdpa_fp8_backward"}) {
+    const bool backward = std::string_view(operation) == "sdpa_fp8_backward";
+    const auto &records = catalog.records().at(operation);
+    const auto plan = flagdnn::validation::thead::acdnn_fp8_attention_plan(backward);
+    if (records.size() != (backward ? 2U : 4U) ||
+        std::ranges::any_of(records, [&](const auto &entry) {
+          return !executable(entry.second) ||
+                 entry.second.path != ReferencePath::kBackendDescriptor ||
+                 entry.second.reference_plan != plan;
+        })) {
+      throw std::runtime_error(std::string(operation) +
+                               " acDNN FP8 attention DAG contract mismatch");
     }
   }
 
   if (catalog.records().size() != 61 || total != 1142 ||
-      supported + probes + skipped != total || supported + probes < 170) {
+      supported != total || probes != 0 || skipped != 0) {
     throw std::runtime_error("capability catalog accounting mismatch");
   }
   std::cout << "PASS THead acDNN capability catalog: operators="

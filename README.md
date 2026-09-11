@@ -141,3 +141,97 @@ python3 tools/run_tests.py \
 
 CoreX cuDNN 不支持的 reference case 会记录结构化 `SKIP`，应结合 JSON 汇总中的
 覆盖情况和跳过原因解读结果。更多测试说明见[功能与性能验证](docs/testing.md)。
+
+### THEAD（阿里平头哥）
+
+#### 环境要求
+
+- Linux、平头哥 PPU，以及相互匹配的驱动、PPU SDK 和 acDNN。当前验证设备为
+  PPU-ZW810E，CUDA compatibility capability 为 8.0；验证环境为 PPU SDK
+  `2.1.0-a5f865`、acDNN header/runtime `1400`。
+- CMake 3.25+（FlagDNN 本身最低要求为 3.23，编译 `libtriton_jit` 需 3.25）、
+  Ninja、支持 C++20 的编译器、Python 及对应开发头文件；当前验证使用 Python 3.12。
+  检查 SDK 动态库还需要 `readelf` 和 `nm`（或对应的 LLVM 工具）。
+- 同一 Python 环境中的 PPU 版 PyTorch、支持 PPU 的 FlagTree、PyYAML、NumPy、
+  packaging 和 pybind11。当前构建及安装验证使用 FlagTree `0.7.0+ppu.git22f4ff0e`，
+  对应 Triton API `3.6.0`。
+- CUDA 后端的 `libtriton_jit`，使用 PPU SDK 的 CUDA 兼容环境构建，且与所选
+  Python、PyTorch 的 ABI 一致。THEAD 当前使用 `libtriton_jit` 执行 Triton kernel。
+
+依赖的编译和安装方法请参考：
+
+- [FlagTree](https://github.com/flagos-ai/flagtree)：选择 PPU 发行版。发行包名为
+  `flagtree`，对外提供的 Python 模块仍名为 `triton`，因此代码使用 `import triton`；
+  无需另装上游 Triton。
+- [`libtriton_jit`](https://github.com/flagos-ai/libtriton_jit)：编译时设置
+  `-DBACKEND=CUDA`，使用 PPU SDK 的 CUDA 兼容头文件和动态库；需保留动态库、
+  头文件、编译脚本和 `TritonJITConfig.cmake`。
+
+默认从 `/usr/local/PPU_SDK` 查找 SDK，从 FlagDNN 同级的
+`libtriton_jit` 目录查找 JIT 依赖；FlagTree 路径由所选 Python 环境自动发现。
+功能和性能测试严格使用同一 PPU SDK 中的 acDNN 作为参考。
+
+#### 编译
+
+在已安装 PPU 版 FlagTree 及上述依赖的 Python 环境中，于 FlagDNN 根目录执行。
+可直接使用系统 Python，无需创建或激活虚拟环境：
+
+```bash
+tools/build.sh \
+  --backends thead \
+  --build-dir build/thead
+```
+
+该命令以 `Release` 模式编译 FlagDNN，并同时构建功能测试和性能测试。
+
+显式指定 Python、PPU SDK、`libtriton_jit` 和 FlagTree 路径：
+
+```bash
+tools/build.sh \
+  --backends thead \
+  --default-backend thead \
+  --build-dir build/thead \
+  --python /path/to/ppu-env/bin/python3 \
+  -- \
+  -DFLAGDNN_THEAD_PPU_SDK_ROOT=/path/to/PPU_SDK \
+  -DFLAGDNN_THEAD_TRITON_JIT_ROOT=/path/to/libtriton_jit \
+  -DFLAGDNN_THEAD_TRITON_ROOT=/path/to/ppu-env/lib/python3.12/site-packages
+```
+
+`FLAGDNN_THEAD_TRITON_JIT_ROOT` 可指向已构建的源码仓库根目录或完整安装前缀。
+`FLAGDNN_THEAD_TRITON_ROOT` 应指向同时包含 `triton/` 和对应发行包元数据的
+Python 包根目录，通常为 `site-packages`；可省略此参数以自动发现。
+`--python` 也可指定系统 Python（例如 `/usr/local/bin/python3`），无需激活虚拟环境。
+解释器与 FlagTree 包目录可以分别选择；所选 Python 仍需能导入 PPU 版 PyTorch
+及其余依赖。
+
+#### 安装
+
+```bash
+# 默认安装到 build/thead/install
+tools/install.sh --build-dir build/thead
+
+# 指定安装目录
+tools/install.sh \
+  --build-dir build/thead \
+  --prefix /path/to/flagdnn-sdk
+```
+
+#### 批量测试
+
+在与编译时一致的 Python 环境中执行：
+
+```bash
+set -o pipefail
+python3 tools/run_tests.py \
+    --platform thead \
+    --device 0 \
+    --suites functional,benchmark \
+    --no-preflight \
+    --verbose \
+    --output build/thead/run-tests.json \
+    2>&1 | tee build/thead/run-tests.log
+```
+
+通用测试说明见
+[功能与性能验证](docs/testing.md)。

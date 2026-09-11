@@ -16,6 +16,8 @@ from typing import Any, Iterable
 
 from flagdnn_codegen import kernel_registry
 
+from .triton_compat import ppu_codegen_backend
+
 from .python_environment_identity import (
     collect_environment_identity,
     module_dependency_paths,
@@ -160,6 +162,10 @@ def _normalize_jit_environment(capability: int) -> None:
         "TRITON_PTXAS_PATH": sdk_root / "CUDA_SDK/bin/ptxas",
         "TRITON_IR_FORMATTER_PATH": sdk_root / "bin/llvm-irformatter",
     }
+    if ppu_codegen_backend(
+        Path(__import__("triton").__file__).resolve().parent.parent
+    ) == "ppu":
+        expected_tools["TRITON_PPU_LLC_PATH"] = sdk_root / "bin/ppu-llc"
     for name, expected in expected_tools.items():
         configured = os.environ.get(name, "")
         if configured:
@@ -262,6 +268,12 @@ def _sdk_paths() -> dict[str, Path]:
             root=root,
         ),
     }
+    if ppu_codegen_backend(
+        Path(__import__("triton").__file__).resolve().parent.parent
+    ) == "ppu":
+        paths["ppu_llc"] = _selected_tool(
+            "TRITON_PPU_LLC_PATH", root / "bin/ppu-llc", "PPU LLVM compiler"
+        )
     return paths
 
 

@@ -11,7 +11,6 @@ import argparse
 import ctypes
 import hashlib
 import importlib
-import importlib.metadata
 import inspect
 import json
 import os
@@ -26,6 +25,9 @@ import uuid
 
 
 sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from triton_compat import configure_triton_path, ppu_codegen_backend, ppu_distribution
+from TritonIdentityContract import IdentityError, _jit_backend
 
 
 _TOP_LEVEL_FIELDS = (
@@ -239,13 +241,7 @@ def _probe_sdk(sdk_root_argument: Path) -> tuple[dict[str, Any], dict[str, Any]]
 
 def _probe_triton(triton_root_argument: Path) -> dict[str, Any]:
     triton_root = _required_directory(triton_root_argument, "Triton package root")
-    search_roots = {
-        Path(entry).expanduser().resolve()
-        for entry in sys.path
-        if isinstance(entry, str) and entry
-    }
-    if triton_root not in search_roots:
-        sys.path.insert(0, str(triton_root))
+    configure_triton_path(triton_root)
     try:
         triton = importlib.import_module("triton")
         backend_module = importlib.import_module("triton.backends")
@@ -262,13 +258,18 @@ def _probe_triton(triton_root_argument: Path) -> dict[str, Any]:
     package_file = _required_file(
         Path(package_file_value), "Triton package file", root=triton_root
     )
+    try:
+        codegen_backend = ppu_codegen_backend(triton_root)
+        distribution, _ = ppu_distribution(triton_root)
+    except RuntimeError as error:
+        raise PreflightError("static_provenance_error", str(error)) from error
     catalog = getattr(backend_module, "backends", None)
-    if not isinstance(catalog, dict) or "nvidia" not in catalog:
+    if not isinstance(catalog, dict) or codegen_backend not in catalog:
         raise PreflightError(
             "static_provenance_error",
             f"configured Triton backend catalog has no CUDA codegen backend: {catalog!r}",
         )
-    cuda_backend = catalog["nvidia"]
+    cuda_backend = catalog[codegen_backend]
     compiler_source = inspect.getsourcefile(cuda_backend.compiler)
     driver_source = inspect.getsourcefile(cuda_backend.driver)
     frontend_source = inspect.getsourcefile(compiler_frontend)
@@ -298,16 +299,11 @@ def _probe_triton(triton_root_argument: Path) -> dict[str, Any]:
     if target_type is None:
         raise PreflightError("static_provenance_error", "Triton has no GPUTarget API")
     backend = cuda_backend.compiler(target_type("cuda", 80, 32))
-    if getattr(backend, "binary_ext", None) != "cubin":
+    expected_extension = "hgbin" if codegen_backend == "ppu" else "cubin"
+    if getattr(backend, "binary_ext", None) != expected_extension:
         raise PreflightError(
-            "static_provenance_error", "Triton CUDA binary extension is not cubin"
+            "static_provenance_error", "unexpected Triton PPU binary extension"
         )
-    try:
-        distribution = importlib.metadata.distribution("triton")
-    except importlib.metadata.PackageNotFoundError as error:
-        raise PreflightError(
-            "static_provenance_error", "Triton distribution metadata is missing"
-        ) from error
     metadata_files = [
         Path(distribution.locate_file(entry)).resolve(strict=True)
         for entry in distribution.files or ()
@@ -338,12 +334,12 @@ def _probe_triton(triton_root_argument: Path) -> dict[str, Any]:
         "distribution_version": distribution.version,
         "distribution_metadata": str(metadata_file),
         "backend_catalog": sorted(catalog),
-        "codegen_backend": "nvidia",
+        "codegen_backend": codegen_backend,
         "target_backend": "cuda",
         "compiler_file": str(compiler_file),
         "driver_file": str(driver_file),
         "compiler_frontend_file": str(frontend_file),
-        "binary_extension": "cubin",
+        "binary_extension": backend.binary_ext,
         "ppu_compatibility": "cuda",
         "source_identity": source_identity,
     }
@@ -351,31 +347,30 @@ def _probe_triton(triton_root_argument: Path) -> dict[str, Any]:
 
 def _probe_triton_jit(jit_root_argument: Path) -> dict[str, Any]:
     jit_root = _required_directory(jit_root_argument, "libtriton_jit root")
-    config_file = _required_file(
-        jit_root / "build" / "TritonJITConfig.cmake",
-        "TritonJITConfig.cmake",
-        root=jit_root,
-    )
-    backend = _single_match(
-        (
-            r"^[ \t]*set\([ \t]*TritonJIT_BACKEND[ \t]+"
-            r"[\"']?([A-Za-z0-9_+-]+)[\"']?[ \t]*\)[ \t]*$"
-        ),
-        config_file.read_text(encoding="utf-8"),
-        "TritonJIT_BACKEND declaration",
-    )
-    if backend != "CUDA":
+    try:
+        config_file, backend = _jit_backend(jit_root)
+    except (IdentityError, OSError) as error:
+        raise PreflightError("static_provenance_error", str(error)) from error
+    if config_file.parent == jit_root / "build":
+        library_path = jit_root / "build/src/libtriton_jit.so"
+        scripts_path = jit_root / "scripts"
+    elif config_file.parent in (
+        jit_root / "lib/cmake/TritonJIT",
+        jit_root / "lib64/cmake/TritonJIT",
+    ):
+        library_path = config_file.parents[2] / "libtriton_jit.so"
+        scripts_path = jit_root / "share/triton_jit/scripts"
+    else:
         raise PreflightError(
-            "static_provenance_error",
-            f"libtriton_jit backend must be CUDA, got {backend!r}",
+            "static_provenance_error", "unrecognized libtriton_jit configuration layout"
         )
     library = _required_file(
-        jit_root / "build" / "src" / "libtriton_jit.so",
+        library_path,
         "libtriton_jit library",
         root=jit_root,
     )
     script_directory = _required_directory(
-        jit_root / "scripts", "libtriton_jit script directory"
+        scripts_path, "libtriton_jit script directory"
     )
     if not script_directory.is_relative_to(jit_root):
         raise PreflightError(
@@ -389,9 +384,17 @@ def _probe_triton_jit(jit_root_argument: Path) -> dict[str, Any]:
     gen_ssig = _required_file(
         script_directory / "gen_ssig.py", "gen_ssig.py", root=jit_root
     )
-    repository, source_identity = _source_identity(
-        jit_root, (config_file, library, standalone_compile, gen_ssig)
-    )
+    identity_files = (config_file, library, standalone_compile, gen_ssig)
+    if (jit_root / ".git").exists():
+        repository, source_identity = _source_identity(jit_root, identity_files)
+    else:
+        # An installed SDK may live below an unrelated checkout. Its identity
+        # must describe these installed files, not that checkout's Git revision.
+        repository = jit_root
+        source_identity = {
+            "kind": "content_sha256",
+            "value": _sha256_files(identity_files, jit_root),
+        }
     return {
         "root": str(jit_root),
         "repository_root": str(repository),
@@ -503,6 +506,9 @@ def _run_ppu_smi(executable_argument: Path) -> Path:
 
 def _active_triton_backend(triton_root: Path) -> dict[str, Any]:
     probe = (
+        "import sys; sys.path.insert(0, sys.argv[1]); "
+        "from triton_compat import configure_triton_path; "
+        "configure_triton_path(sys.argv[2]); "
         "import json; from triton.backends import backends; "
         "from triton.runtime import driver; "
         "active=[name for name, value in backends.items() "
@@ -513,18 +519,9 @@ def _active_triton_backend(triton_root: Path) -> dict[str, Any]:
     )
     environment = os.environ.copy()
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
-    current_roots = {
-        Path(entry).expanduser().resolve()
-        for entry in sys.path
-        if isinstance(entry, str) and entry
-    }
-    if triton_root not in current_roots:
-        previous_python_path = environment.get("PYTHONPATH")
-        environment["PYTHONPATH"] = str(triton_root)
-        if previous_python_path:
-            environment["PYTHONPATH"] += os.pathsep + previous_python_path
     result = subprocess.run(
-        [sys.executable, "-c", probe],
+        [sys.executable, "-c", probe,
+         str(Path(__file__).resolve().parents[1]), str(triton_root)],
         check=False,
         capture_output=True,
         text=True,
@@ -544,7 +541,7 @@ def _active_triton_backend(triton_root: Path) -> dict[str, Any]:
         ) from error
     if (
         not isinstance(active, dict)
-        or active.get("active") != ["nvidia"]
+        or active.get("active") != [ppu_codegen_backend(triton_root)]
         or active.get("backend") != "cuda"
         or active.get("warp_size") != 32
         or not isinstance(active.get("arch"), int)

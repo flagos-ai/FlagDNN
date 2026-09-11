@@ -4,6 +4,7 @@
 #include "pointwise_reference.hpp"
 
 #include "acdnn_reference.hpp"
+#include "acdnn_pointwise_dag.hpp"
 #include "backend_pointwise_reference.hpp"
 #include "numeric_types.hpp"
 
@@ -1138,6 +1139,10 @@ std::unique_ptr<flagdnn::testing::TestExecutable>
 make_acdnn_pointwise_reference(
     const PointwiseReferenceSpecification &specification,
     const CapabilityRecord &capability) {
+  if (!acdnn_pointwise_dag_plan(specification.mode).empty() &&
+      capability.reference_plan.size() > 1) {
+    return make_acdnn_pointwise_dag(specification, capability);
+  }
   const bool leaky_relu =
       specification.mode == FLAGDNN_POINTWISE_RELU_FWD &&
       specification.attributes.flags ==

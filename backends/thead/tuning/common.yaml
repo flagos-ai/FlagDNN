@@ -105,3 +105,51 @@ conv2d_spatial:
     num_stages: 1
     maxnreg: null
     ppu_compiler_options: {}
+
+# Complete small attention profiles qualified with the PPU compiler.
+sdpa:
+  - META: {BLOCK_M: 16, BLOCK_N: 32}
+    num_warps: 4
+    num_stages: 1
+    maxnreg: null
+    ppu_compiler_options: {}
+  - META: {BLOCK_M: 32, BLOCK_N: 32}
+    num_warps: 4
+    num_stages: 1
+    maxnreg: null
+    ppu_compiler_options: {}
+sdpa_backward_dq:
+  - META: {}
+    num_warps: 4
+    num_stages: 1
+    maxnreg: null
+    ppu_compiler_options: {}
+  - META: {}
+    num_warps: 8
+    num_stages: 1
+    maxnreg: null
+    ppu_compiler_options: {}
+
+sdpa_fp8:
+  - META: {}
+    num_warps: 4
+    num_stages: 1
+    maxnreg: null
+    ppu_compiler_options: {}
+  - META: {}
+    num_warps: 8
+    num_stages: 1
+    maxnreg: null
+    ppu_compiler_options: {}
+
+sdpa_fp8_backward:
+  - META: {}
+    num_warps: 4
+    num_stages: 1
+    maxnreg: null
+    ppu_compiler_options: {}
+  - META: {}
+    num_warps: 8
+    num_stages: 1
+    maxnreg: null
+    ppu_compiler_options: {}

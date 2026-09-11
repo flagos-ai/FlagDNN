@@ -37,6 +37,7 @@ struct KernelArgument {
   std::size_t workspace_offset = 0;
   std::size_t storage_size = 0;
   std::size_t alignment = 1;
+  bool fp8_storage_bytes = false;
 };
 
 struct KernelVariant {

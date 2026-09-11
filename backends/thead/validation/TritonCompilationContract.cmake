@@ -30,9 +30,9 @@ execute_process(
   ERROR_VARIABLE _error)
 if(NOT _result EQUAL 0)
   message(FATAL_ERROR
-    "THead PPU-aware Triton cubin compilation contract failed\n"
+    "THead PPU-aware Triton PPU binary compilation contract failed\n"
     "stdout:\n${_output}\nstderr:\n${_error}")
 endif()
 
 message(STATUS
-  "THead qualified pointwise PPU-aware Triton cubin compilation contract passed")
+  "THead qualified pointwise PPU-aware Triton PPU binary compilation contract passed")

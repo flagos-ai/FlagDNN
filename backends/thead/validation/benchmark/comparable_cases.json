@@ -4307,34 +4307,34 @@
     },
     "mod": {
       "mod_perf_bfloat16_1x1x1024_by_1x1x1024": {
-        "status": "unsupported",
-        "reason_code": "acdnn_status_not_supported",
-        "detail": "acDNN runtime 1400 rejects ACDNN_POINTWISE_MOD while finalizing the operation descriptor"
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
       },
       "mod_perf_bfloat16_1x1x1000_by_1x1x1000": {
-        "status": "unsupported",
-        "reason_code": "acdnn_status_not_supported",
-        "detail": "acDNN runtime 1400 rejects ACDNN_POINTWISE_MOD while finalizing the operation descriptor"
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
       },
       "mod_perf_fp16_1x1x1024_by_1x1x1024": {
-        "status": "unsupported",
-        "reason_code": "acdnn_status_not_supported",
-        "detail": "acDNN runtime 1400 rejects ACDNN_POINTWISE_MOD while finalizing the operation descriptor"
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
       },
       "mod_perf_fp16_1x1x1000_by_1x1x1000": {
-        "status": "unsupported",
-        "reason_code": "acdnn_status_not_supported",
-        "detail": "acDNN runtime 1400 rejects ACDNN_POINTWISE_MOD while finalizing the operation descriptor"
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
       },
       "mod_perf_fp32_1x1x1024_by_1x1x1024": {
-        "status": "unsupported",
-        "reason_code": "acdnn_status_not_supported",
-        "detail": "acDNN runtime 1400 rejects ACDNN_POINTWISE_MOD while finalizing the operation descriptor"
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
       },
       "mod_perf_fp32_1x1x1000_by_1x1x1000": {
-        "status": "unsupported",
-        "reason_code": "acdnn_status_not_supported",
-        "detail": "acDNN runtime 1400 rejects ACDNN_POINTWISE_MOD while finalizing the operation descriptor"
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
       }
     },
     "sigmoid_backward": {
@@ -5760,6 +5760,271 @@
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and timing qualified on PPU SDK 2.0.0-715aa1 against acDNN runtime 1400"
+      }
+    },
+    "erf": {
+      "erf_perf_fp32_3x257x513": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "erf_perf_fp16_3x257x513": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "erf_perf_bfloat16_3x257x513": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      }
+    },
+    "binary_select": {
+      "binary_select_perf_fp32_1x1x1024_by_1x1x1024_mask_1x1x1024": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_fp16_1x1x1024_by_1x1x1024_mask_1x1x1024": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_bfloat16_1x1x1024_by_1x1x1024_mask_1x1x1024": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_fp32_8x16x32_by_8x16x32_mask_8x16x32": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_fp16_8x16x32_by_8x16x32_mask_8x16x32": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_bfloat16_8x16x32_by_8x16x32_mask_8x16x32": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_fp32_4x16x64x128_by_4x16x64x128_mask_4x16x64x128": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_fp16_4x16x64x128_by_4x16x64x128_mask_4x16x64x128": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_bfloat16_4x16x64x128_by_4x16x64x128_mask_4x16x64x128": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_fp32_8x16x64x128_by_8x16x64x128_mask_8x16x64x128": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_fp16_8x16x64x128_by_8x16x64x128_mask_8x16x64x128": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_bfloat16_8x16x64x128_by_8x16x64x128_mask_8x16x64x128": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_fp32_1x1x1000_by_1x1x1000_mask_1x1x1000": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_fp16_1x1x1000_by_1x1x1000_mask_1x1x1000": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_bfloat16_1x1x1000_by_1x1x1000_mask_1x1x1000": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_fp32_3x257x513_by_3x257x513_mask_3x257x513": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_fp16_3x257x513_by_3x257x513_mask_3x257x513": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_bfloat16_3x257x513_by_3x257x513_mask_3x257x513": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_fp32_3x7x65x129_by_3x7x65x129_mask_3x7x65x129": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_fp16_3x7x65x129_by_3x7x65x129_mask_3x7x65x129": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_bfloat16_3x7x65x129_by_3x7x65x129_mask_3x7x65x129": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_fp32_5x7x65x129_by_5x7x65x129_mask_5x7x65x129": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_fp16_5x7x65x129_by_5x7x65x129_mask_5x7x65x129": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      },
+      "binary_select_perf_bfloat16_5x7x65x129_by_5x7x65x129_mask_5x7x65x129": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "All 24 paired correctness and timing cases qualified on PPU SDK 2.1.0-a5f865 against the acDNN finite-input BinarySelect DAG"
+      }
+    },
+    "logical_not": {
+      "logical_not_perf_bool_1x1x1024": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_not_perf_bool_8x16x32": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_not_perf_bool_4x16x64x128": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_not_perf_bool_8x16x64x128": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_not_perf_bool_1x1x1000": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_not_perf_bool_3x257x513": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_not_perf_bool_3x7x65x129": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_not_perf_bool_5x7x65x129": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      }
+    },
+    "logical_and": {
+      "logical_and_perf_bool_1x1x1024_by_1x1x1024": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_and_perf_bool_8x16x32_by_8x16x32": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_and_perf_bool_4x16x64x128_by_4x16x64x128": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_and_perf_bool_8x16x64x128_by_8x16x64x128": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_and_perf_bool_1x1x1000_by_1x1x1000": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_and_perf_bool_3x257x513_by_3x257x513": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_and_perf_bool_3x7x65x129_by_3x7x65x129": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_and_perf_bool_5x7x65x129_by_5x7x65x129": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      }
+    },
+    "logical_or": {
+      "logical_or_perf_bool_1x1x1024_by_1x1x1024": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_or_perf_bool_8x16x32_by_8x16x32": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_or_perf_bool_4x16x64x128_by_4x16x64x128": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_or_perf_bool_8x16x64x128_by_8x16x64x128": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_or_perf_bool_1x1x1000_by_1x1x1000": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_or_perf_bool_3x257x513_by_3x257x513": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_or_perf_bool_3x7x65x129_by_3x7x65x129": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
+      },
+      "logical_or_perf_bool_5x7x65x129_by_5x7x65x129": {
+        "status": "comparable",
+        "reason_code": "",
+        "detail": "Qualified paired FlagDNN/acDNN correctness and steady-state timing on PPU SDK 2.1.0-a5f865 / acDNN 1400 using an acDNN-only composite reference"
       }
     }
   }

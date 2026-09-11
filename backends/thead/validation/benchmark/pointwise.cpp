@@ -8,6 +8,7 @@
 #include "backend_pointwise_reference.hpp"
 #include "capability.hpp"
 #include "pointwise_reference.hpp"
+#include "acdnn_pointwise_dag.hpp"
 
 #include "common/benchmark_provider.hpp"
 #include "common/case.hpp"
@@ -165,6 +166,49 @@ build_acdnn_pointwise_benchmark(
     const flagdnn::benchmarking::BenchmarkCase &specification,
     ComparableStatus qualification) {
   using flagdnn::benchmarking::Operation;
+  const auto dag_plan = acdnn_pointwise_dag_plan(specification.pointwise_mode);
+  if (specification.operation == Operation::kPointwise && !dag_plan.empty()) {
+    const auto mode = specification.pointwise_mode;
+    const bool logical = mode == FLAGDNN_POINTWISE_LOGICAL_NOT ||
+                         mode == FLAGDNN_POINTWISE_LOGICAL_AND ||
+                         mode == FLAGDNN_POINTWISE_LOGICAL_OR;
+    const std::size_t inputs_count = mode == FLAGDNN_POINTWISE_BINARY_SELECT ? 3 :
+        (mode == FLAGDNN_POINTWISE_MOD || mode == FLAGDNN_POINTWISE_LOGICAL_AND ||
+         mode == FLAGDNN_POINTWISE_LOGICAL_OR) ? 2 : 1;
+    if (specification.tensors.size() != inputs_count + 1 ||
+        specification.output_count != 1) {
+      throw std::invalid_argument("acDNN pointwise DAG benchmark arity mismatch");
+    }
+    CapabilityRecord capability;
+    capability.status = qualification == ComparableStatus::kComparable
+                            ? CapabilityStatus::kSupported
+                            : CapabilityStatus::kProbeRequired;
+    capability.path = ReferencePath::kBackendDescriptor;
+    capability.reference_plan = dag_plan;
+    capability.constraints = CapabilityConstraints{
+        .dtypes = {logical ? "bool" : capability_dtype(specification.tensors[0].data_type)},
+        .compute_type = logical ? "bool" : "fp32",
+        .rank = {.minimum = 1, .maximum = 8},
+        .shape = {"same_shape", "positive_extents"},
+        .layouts = {"contiguous"},
+        .stride_policy = "dense_contiguous",
+        .broadcast = "none",
+        .attributes = {{"autotune", {"false"}},
+                       {"reference_input_domain", {logical ? "canonical_boolean" :
+                           mode == FLAGDNN_POINTWISE_MOD ? "finite_nonzero_divisor" : "finite"}}},
+    };
+    capability.reason_code = capability.status == CapabilityStatus::kProbeRequired
+                                 ? "real_device_qualification_pending" : "";
+    capability.detail = "Paired acDNN-only pointwise composite reference";
+    std::vector<flagdnn::testing::TestTensor> inputs;
+    for (std::size_t index = 0; index < inputs_count; ++index) {
+      inputs.push_back(to_test_tensor(specification.tensors[index]));
+    }
+    return std::make_unique<ExecutableAdapter>(make_acdnn_pointwise_dag(
+        {.mode = mode, .inputs = std::move(inputs),
+         .output = to_test_tensor(specification.tensors.back()),
+         .attributes = specification.pointwise_attributes}, capability));
+  }
   const bool is_add_square =
       specification.operation == Operation::kGraph &&
       specification.name.starts_with("add_square_perf_");

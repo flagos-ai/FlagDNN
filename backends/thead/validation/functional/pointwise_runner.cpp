@@ -69,6 +69,16 @@ std::string operation_from_suite(std::string_view suite_name) {
 
 std::string operation_from_mode(flagdnnPointwiseMode_t mode) {
   switch (mode) {
+    case FLAGDNN_POINTWISE_LOGICAL_NOT:
+      return "logical_not";
+    case FLAGDNN_POINTWISE_LOGICAL_AND:
+      return "logical_and";
+    case FLAGDNN_POINTWISE_LOGICAL_OR:
+      return "logical_or";
+    case FLAGDNN_POINTWISE_ERF:
+      return "erf";
+    case FLAGDNN_POINTWISE_BINARY_SELECT:
+      return "binary_select";
     case FLAGDNN_POINTWISE_ADD:
       return "add";
     case FLAGDNN_POINTWISE_SUB:

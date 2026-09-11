@@ -187,6 +187,10 @@ if(DEFINED REFERENCE_EXECUTABLE AND
   file(GLOB _reference_extensions LIST_DIRECTORIES FALSE
     "${SOURCE_ROOT}/backends/thead/validation/*_reference.cpp"
     "${SOURCE_ROOT}/backends/thead/validation/*_reference.hpp"
+    "${SOURCE_ROOT}/backends/thead/validation/acdnn_*_dag.cpp"
+    "${SOURCE_ROOT}/backends/thead/validation/acdnn_*_dag.hpp"
+    "${SOURCE_ROOT}/backends/thead/validation/acdnn_fp8_codec.cpp"
+    "${SOURCE_ROOT}/backends/thead/validation/acdnn_fp8_codec.hpp"
     "${SOURCE_ROOT}/backends/thead/validation/functional/*acdnn*.cpp"
     "${SOURCE_ROOT}/backends/thead/validation/functional/*acdnn*.hpp"
     "${SOURCE_ROOT}/backends/thead/validation/functional/test_autotune.cpp"

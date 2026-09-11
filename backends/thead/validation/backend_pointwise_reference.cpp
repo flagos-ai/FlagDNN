@@ -60,7 +60,8 @@ class BackendDescriptor final {
   acdnnBackendDescriptor_t descriptor_ = nullptr;
 };
 
-acdnnDataType_t backend_data_type(flagdnnDataType_t data_type) {
+acdnnDataType_t backend_data_type(flagdnnDataType_t data_type,
+                                   bool fp8_storage_bytes = false) {
   switch (data_type) {
     case FLAGDNN_DATA_FLOAT32:
       return ACDNN_DATA_FLOAT;
@@ -72,6 +73,7 @@ acdnnDataType_t backend_data_type(flagdnnDataType_t data_type) {
       return ACDNN_DATA_BOOL;
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
+      if (fp8_storage_bytes) return ACDNN_DATA_INT8;
       break;
   }
   throw std::invalid_argument(
@@ -101,10 +103,25 @@ bool is_logical_mode(acdnnPointwiseMode_t mode) {
 
 bool valid_tensor_types(
     const BackendPointwiseReferenceSpecification &specification) {
+  if (specification.fp8_storage_bytes) {
+    const auto fp8 = [](flagdnnDataType_t type) {
+      return type == FLAGDNN_DATA_FP8_E4M3 || type == FLAGDNN_DATA_FP8_E5M2;
+    };
+    return specification.mode == ACDNN_POINTWISE_IDENTITY_FWD &&
+           specification.inputs.size() == 1 &&
+           !specification.constant_one_numerator &&
+           specification.alpha1 == 1.0F && specification.alpha2 == 1.0F &&
+           ((fp8(specification.inputs[0].data_type) &&
+             specification.output.data_type == FLAGDNN_DATA_FLOAT32) ||
+            (specification.inputs[0].data_type == FLAGDNN_DATA_FLOAT32 &&
+             fp8(specification.output.data_type)));
+  }
   if (specification.mode == ACDNN_POINTWISE_IDENTITY_FWD) {
     return specification.inputs.size() == 1 &&
-           is_floating(specification.inputs[0].data_type) &&
-           is_floating(specification.output.data_type);
+           (is_floating(specification.inputs[0].data_type) ||
+            specification.inputs[0].data_type == FLAGDNN_DATA_BOOLEAN) &&
+           (is_floating(specification.output.data_type) ||
+            specification.output.data_type == FLAGDNN_DATA_BOOLEAN);
   }
   if (is_comparison_mode(specification.mode)) {
     return specification.inputs.size() == 2 &&
@@ -181,8 +198,10 @@ std::size_t storage_element_count(
 }
 
 void build_tensor_descriptor(BackendDescriptor &descriptor,
-                             const flagdnn::testing::TestTensor &tensor) {
-  const acdnnDataType_t data_type = backend_data_type(tensor.data_type);
+                             const flagdnn::testing::TestTensor &tensor,
+                             bool fp8_storage_bytes = false) {
+  const acdnnDataType_t data_type =
+      backend_data_type(tensor.data_type, fp8_storage_bytes);
   const std::vector<std::int64_t> dimensions =
       checked_metadata(tensor.dimensions, "backend tensor dimensions");
   const std::vector<std::int64_t> strides =
@@ -305,13 +324,15 @@ class AcdnnBackendPointwiseSegment final
                      "cuMemsetD16(acDNN reciprocal numerator)");
       }
     } else {
-      build_tensor_descriptor(input_, specification_.inputs[0]);
+      build_tensor_descriptor(input_, specification_.inputs[0],
+                              specification_.fp8_storage_bytes);
     }
     if (!specification_.constant_one_numerator &&
         specification_.inputs.size() == 2) {
       build_tensor_descriptor(second_input_, specification_.inputs[1]);
     }
-    build_tensor_descriptor(output_, specification_.output);
+    build_tensor_descriptor(output_, specification_.output,
+                            specification_.fp8_storage_bytes);
 
     const acdnnDataType_t math_precision =
         is_comparison_mode(specification_.mode) ||
@@ -591,7 +612,8 @@ class AcdnnBackendPointwise final
             "segmented acDNN pointwise tensors have different sizes");
       }
       dense_storage =
-          dense_storage && elements == storage_element_count(input);
+          dense_storage && elements == storage_element_count(input) &&
+          input.strides == specification_.output.strides;
     }
     if (!dense_storage) {
       auto executable =

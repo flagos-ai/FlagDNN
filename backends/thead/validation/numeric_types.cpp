@@ -149,10 +149,9 @@ std::size_t element_size(flagdnnDataType_t data_type) {
     case FLAGDNN_DATA_BFLOAT16:
       return sizeof(std::uint16_t);
     case FLAGDNN_DATA_BOOLEAN:
-      return sizeof(std::uint8_t);
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
-      break;
+      return sizeof(std::uint8_t);
   }
   throw std::invalid_argument(
       "THead validation storage does not support this data type");

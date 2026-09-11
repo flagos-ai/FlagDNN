@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
-import importlib.metadata
+import importlib.util
 import inspect
 import json
 import os
@@ -20,6 +20,8 @@ from typing import Any
 
 
 sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from triton_compat import configure_triton_path, ppu_codegen_backend, ppu_distribution
 
 
 class IdentityError(RuntimeError):
@@ -36,29 +38,22 @@ def _inside(path_value: str | None, root: Path, description: str) -> Path:
 
 
 def _distribution_metadata(root: Path) -> tuple[Path, str]:
-    try:
-        distribution = importlib.metadata.distribution("triton")
-    except importlib.metadata.PackageNotFoundError as error:
-        raise IdentityError("configured Python path has no Triton distribution") from error
-    metadata_files = [
-        Path(distribution.locate_file(entry)).resolve(strict=True)
-        for entry in distribution.files or ()
-        if entry.name == "METADATA" and entry.parent.name.endswith(".dist-info")
-    ]
-    if len(metadata_files) != 1 or not metadata_files[0].is_relative_to(root):
-        raise IdentityError(
-            "Triton distribution metadata is missing or outside configured root"
-        )
-    version = distribution.version
-    if "ppu" not in version.lower():
-        raise IdentityError(
-            f"Triton distribution is not the PPU-qualified build: {version!r}"
-        )
-    return metadata_files[0], version
+    distribution, metadata = ppu_distribution(root)
+    return metadata, distribution.version
 
 
 def _jit_backend(jit_root: Path) -> tuple[Path, str]:
-    config = (jit_root / "build" / "TritonJITConfig.cmake").resolve(strict=True)
+    # Match the source/build and install layouts accepted by the JIT resolver.
+    # The identity check also runs during CMake configuration of installed JITs.
+    candidates = (
+        jit_root / "build/TritonJITConfig.cmake",
+        jit_root / "lib/cmake/TritonJIT/TritonJITConfig.cmake",
+        jit_root / "lib64/cmake/TritonJIT/TritonJITConfig.cmake",
+    )
+    selected = next((path for path in candidates if path.is_file()), None)
+    if selected is None:
+        raise IdentityError("JIT root has no supported build/install configuration")
+    config = _inside(str(selected), jit_root, "libtriton_jit configuration")
     matches = re.findall(
         (
             r"^[ \t]*set\([ \t]*TritonJIT_BACKEND[ \t]+"
@@ -78,13 +73,13 @@ def identify(triton_root_value: Path, jit_root_value: Path) -> dict[str, Any]:
     if not triton_root.is_dir() or not jit_root.is_dir():
         raise IdentityError("Triton and JIT roots must be directories")
 
-    search_roots = {
-        Path(entry).expanduser().resolve()
-        for entry in sys.path
-        if isinstance(entry, str) and entry
-    }
-    if triton_root not in search_roots:
-        sys.path.insert(0, str(triton_root))
+    # Resolve and check the package before executing its native extension.
+    # An absent configured package must not load an unrelated system install.
+    configure_triton_path(triton_root)
+    package_spec = importlib.util.find_spec("triton")
+    if package_spec is None:
+        raise IdentityError("configured root has no Triton package")
+    _inside(package_spec.origin, triton_root, "Triton package")
     try:
         triton = importlib.import_module("triton")
         backend_module = importlib.import_module("triton.backends")
@@ -96,12 +91,13 @@ def identify(triton_root_value: Path, jit_root_value: Path) -> dict[str, Any]:
     package_file = _inside(
         getattr(triton, "__file__", None), triton_root, "Triton package"
     )
+    codegen_backend = ppu_codegen_backend(triton_root)
     catalog = getattr(backend_module, "backends", None)
-    if not isinstance(catalog, dict) or "nvidia" not in catalog:
+    if not isinstance(catalog, dict) or codegen_backend not in catalog:
         raise IdentityError(
             f"Triton backend catalog has no CUDA codegen backend: {catalog!r}"
         )
-    cuda = catalog["nvidia"]
+    cuda = catalog[codegen_backend]
     compiler_file = _inside(
         inspect.getsourcefile(cuda.compiler), triton_root, "Triton CUDA compiler"
     )
@@ -127,9 +123,9 @@ def identify(triton_root_value: Path, jit_root_value: Path) -> dict[str, Any]:
     except Exception as error:
         raise IdentityError(f"cannot instantiate Triton CUDA compiler: {error}") from error
     binary_extension = getattr(backend, "binary_ext", None)
-    if binary_extension != "cubin":
+    if binary_extension != ("hgbin" if codegen_backend == "ppu" else "cubin"):
         raise IdentityError(
-            f"Triton CUDA binary extension is not cubin: {binary_extension!r}"
+            f"unexpected Triton PPU binary extension: {binary_extension!r}"
         )
 
     metadata_file, distribution_version = _distribution_metadata(triton_root)
@@ -146,7 +142,7 @@ def identify(triton_root_value: Path, jit_root_value: Path) -> dict[str, Any]:
             "distribution_version": distribution_version,
             "distribution_metadata": str(metadata_file),
             "backend_catalog": sorted(catalog),
-            "codegen_backend": "nvidia",
+            "codegen_backend": codegen_backend,
             "target_backend": "cuda",
             "compiler_file": str(compiler_file),
             "driver_file": str(driver_file),
@@ -193,6 +189,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (IdentityError, OSError) as error:
+    except (RuntimeError, OSError) as error:
         print(f"THead Triton identity contract: FAIL: {error}", file=sys.stderr)
         raise SystemExit(1) from error

@@ -120,7 +120,7 @@ def main() -> int:
     adapter = runner.load_platform_adapter("thead")
     require(adapter is not None, "THead run_tests adapter was not loaded")
     require(
-        adapter.DEFAULT_TIMEOUT == 1800
+        adapter.DEFAULT_TIMEOUT == 7200
         and adapter.PREFLIGHT_BY_DEFAULT is True
         and adapter.SUPPORTS_MIN_SPEEDUP is True
         and adapter.FILTER_REGISTERED_TESTS is False
@@ -617,7 +617,10 @@ def main() -> int:
             }
             for operation in ("div", "pow", "sigmoid_backward")
         )
-        and binary_descriptor_required["mod"] == []
+        and set(binary_descriptor_required["mod"]) >= {
+            "mod_perf_fp32_1x1x1024_by_1x1x1024",
+            "mod_perf_fp32_1x1x1000_by_1x1x1000",
+        }
         and set(required_reciprocal_cases)
         >= {"reciprocal_perf_fp32_1x1x1024"}
         and set(required_add_square_cases)
@@ -693,7 +696,7 @@ def main() -> int:
             "w16x8x3x3_s1x1_p1x1_d1x1"
         }
         and catalog["schema_version"] == 2
-        and catalog["declared_operator_count"] == 52,
+        and catalog["declared_operator_count"] == 57,
         "THead comparable catalog lacks required pointwise/activation coverage",
     )
 

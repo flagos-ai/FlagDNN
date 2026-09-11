@@ -1,11 +1,14 @@
 # Copyright 2026 FlagOS Contributors
 # SPDX-License-Identifier: Apache-2.0
 
+cmake_minimum_required(VERSION 3.23)
+
 foreach(_required IN ITEMS
     SOURCE_ROOT
     BUILD_ROOT
     TEST_ROOT
     CODEGEN_PYTHON
+    PYTHON_LIBRARY_DIR
     PPU_SDK_ROOT
     BUILD_PLUGIN
     PLUGIN_SONAME
@@ -27,7 +30,8 @@ foreach(_required_directory IN ITEMS
     "${BUILD_ROOT}"
     "${PPU_SDK_ROOT}"
     "${JIT_ROOT}"
-    "${TRITON_ROOT}")
+    "${TRITON_ROOT}"
+    "${PYTHON_LIBRARY_DIR}")
   if(NOT IS_DIRECTORY "${_required_directory}")
     message(FATAL_ERROR "required directory is missing: ${_required_directory}")
   endif()
@@ -149,6 +153,12 @@ if(NOT _test_below_build OR _test_root STREQUAL _build_root)
   message(FATAL_ERROR "TEST_ROOT must be a strict child of BUILD_ROOT")
 endif()
 
+# The installed SDK discovers python3 from PATH. Select the configured
+# interpreter without source/compiler overrides. Preserve its executable
+# path (including a possible venv symlink) and the matching Python runtime.
+# Clearing the runtime directory can load another libpython with the same
+# SONAME and change site-package discovery even for an absolute executable.
+get_filename_component(_codegen_python_directory "${CODEGEN_PYTHON}" DIRECTORY)
 set(_clean_environment
   "${CMAKE_COMMAND}" -E env
   --unset=FLAGDNN_BACKEND
@@ -177,7 +187,8 @@ set(_clean_environment
   --unset=FLAGDNN_CACHE_DIRECTORY
   --unset=PYTHONPATH
   --unset=PYTHONHOME
-  --unset=LD_LIBRARY_PATH
+  "LD_LIBRARY_PATH=${PYTHON_LIBRARY_DIR}"
+  "PATH=${_codegen_python_directory}:$ENV{PATH}"
   --)
 
 function(_flagdnn_thead_run_step _description)
@@ -289,6 +300,8 @@ foreach(_resource IN ITEMS
     "${_installed_provider}"
     "${_sdk}/share/flagdnn/backends/thead/compiler_identity.py"
     "${_sdk}/share/flagdnn/backends/thead/python_environment_identity.py"
+    "${_sdk}/share/flagdnn/backends/thead/triton_compat.py"
+    "${_sdk}/lib/flagdnn/share/triton_jit/scripts/flagdnn_thead_jit_compat.py"
     "${_installed_environment}"
     "${_sdk}/share/flagdnn/backends/thead/kernels/registry.json"
     "${_sdk}/share/flagdnn/backends/thead/kernels/add_square.py"
@@ -397,6 +410,7 @@ _flagdnn_thead_run_clean_step(
   "-DFLAGDNN_INSTALLED_THEAD_PLUGIN=${_installed_plugin}"
   "-DFLAGDNN_INSTALLED_THEAD_JIT=${_installed_jit}"
   "-DFLAGDNN_INSTALLED_THEAD_TRITON_ROOT=${TRITON_ROOT}"
+  "-DFLAGDNN_INSTALLED_PYTHON_LIBRARY_DIR=${PYTHON_LIBRARY_DIR}"
   "-DFLAGDNN_INSTALLED_THEAD_CACHE_ROOT=${_cache}")
 _flagdnn_thead_run_clean_step(
   "build installed THead consumers"
@@ -430,13 +444,15 @@ if(NOT _triton_checkout STREQUAL "")
     "install the PPU-aware Triton distribution independently")
 endif()
 if(NOT EXISTS "${_triton_root}/triton/__init__.py" OR
-   NOT EXISTS "${_triton_root}/triton/backends/nvidia/compiler.py")
+   (NOT EXISTS "${_triton_root}/triton/backends/nvidia/compiler.py" AND
+    NOT EXISTS "${_triton_root}/triton/backends/ppu/compiler.py"))
   message(FATAL_ERROR
     "THead installed-consumer environment prerequisite failure: "
     "installed Triton root is incomplete: ${_triton_root}")
 endif()
 file(GLOB _triton_metadata
-  "${_triton_root}/triton-*.dist-info/METADATA")
+  "${_triton_root}/triton-*.dist-info/METADATA"
+  "${_triton_root}/flagtree-*.dist-info/METADATA")
 list(LENGTH _triton_metadata _triton_metadata_count)
 if(NOT _triton_metadata_count EQUAL 1)
   message(FATAL_ERROR
@@ -465,7 +481,7 @@ _flagdnn_thead_run_clean_step(
   "TRITON_PTXAS_PATH=${PPU_SDK_ROOT}/CUDA_SDK/bin/ptxas"
   "TRITON_IR_FORMATTER_PATH=${PPU_SDK_ROOT}/bin/llvm-irformatter"
   "TRITON_JIT_BACKEND=CUDA"
-  "LD_LIBRARY_PATH=${PPU_SDK_ROOT}/targets/x86_64-linux/lib:${PPU_SDK_ROOT}/lib:${PPU_SDK_ROOT}/CUDA_SDK/lib64"
+  "LD_LIBRARY_PATH=${PYTHON_LIBRARY_DIR}:${PPU_SDK_ROOT}/targets/x86_64-linux/lib:${PPU_SDK_ROOT}/lib:${PPU_SDK_ROOT}/CUDA_SDK/lib64"
   "${CODEGEN_PYTHON}" "${_installed_compiler}"
   --identify --backend thead --target ppu_contract_cc80
   --execution-engine libtriton_jit

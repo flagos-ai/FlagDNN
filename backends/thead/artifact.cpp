@@ -434,9 +434,15 @@ const GraphTensor& graph_tensor(
   return graph.tensors.at(iterator->second);
 }
 
-std::string tensor_pointer_signature(const GraphTensor& tensor) {
+std::string tensor_pointer_signature(const GraphTensor& tensor,
+                                     bool fp8_storage_bytes) {
   std::string scalar;
-  if (tensor.data_type == "float32") {
+  if (fp8_storage_bytes) {
+    require_artifact(tensor.data_type == "fp8_e4m3" ||
+                         tensor.data_type == "fp8_e5m2",
+                     "FP8 byte view requires an FP8 tensor");
+    scalar = "i8";
+  } else if (tensor.data_type == "float32") {
     scalar = "fp32";
   } else if (tensor.data_type == "float16") {
     scalar = "fp16";
@@ -514,7 +520,8 @@ KernelArgument parse_argument(
                    {"kind", "uid", "size", "alignment"},
                    workspace ? std::initializer_list<std::string_view>{
                                    "workspace_offset"}
-                             : std::initializer_list<std::string_view>{},
+                             : std::initializer_list<std::string_view>{
+                                   "storage_view"},
                    "kernel tensor argument");
     if (workspace && !object.contains("workspace_offset")) {
       artifact_error("workspace tensor argument is missing workspace_offset");
@@ -523,6 +530,13 @@ KernelArgument parse_argument(
                             : ArgumentKind::kTensor;
     result.uid = object.at("uid").as_int();
     const GraphTensor& tensor = graph_tensor(graph, tensor_indices, result.uid);
+    if (object.contains("storage_view")) {
+      require_artifact(object.at("storage_view").as_string() == "fp8_bytes" &&
+                           (tensor.data_type == "fp8_e4m3" ||
+                            tensor.data_type == "fp8_e5m2"),
+                       "storage_view requires an explicit FP8 byte view");
+      result.fp8_storage_bytes = true;
+    }
     const TensorArtifact& artifact_tensor =
         artifact_tensors.at(tensor_indices.at(result.uid));
     require_artifact(tensor.is_virtual == workspace,
@@ -607,7 +621,7 @@ KernelVariant parse_variant(
   }
   const std::vector<std::string> tokens = signature_tokens(result.full_signature);
   for (const std::string& token : tokens) {
-    if (token.starts_with('*') || token == "i32" || token == "fp32" ||
+    if (token.starts_with('*') || token == "i32" || token == "i32:16" || token == "fp32" ||
         token == "f32") {
       result.runtime_signature.push_back(token);
     }
@@ -622,9 +636,11 @@ KernelVariant parse_variant(
         kind == ArgumentKind::kWorkspaceTensor) {
       const GraphTensor& tensor = graph_tensor(
           graph, tensor_indices, result.arguments[index].uid);
-      compatible = token == tensor_pointer_signature(tensor);
+      compatible = token == tensor_pointer_signature(
+          tensor, result.arguments[index].fp8_storage_bytes);
     } else if (kind == ArgumentKind::kScalarI32) {
-      compatible = token == "i32";
+      compatible = token == "i32" ||
+                   (token == "i32:16" && result.arguments[index].scalar_i32 % 16 == 0);
     } else if (kind == ArgumentKind::kScalarF32) {
       compatible = token == "fp32" || token == "f32";
     }

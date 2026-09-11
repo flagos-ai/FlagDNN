@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -38,21 +39,10 @@ def _require(condition: bool, message: str) -> None:
 
 def _run(
     helper: Path,
-    triton_root: Path,
     arguments: list[str],
 ) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
-    search_roots = {
-        Path(entry).expanduser().resolve()
-        for entry in sys.path
-        if isinstance(entry, str) and entry
-    }
-    if triton_root.resolve(strict=True) not in search_roots:
-        previous_python_path = environment.get("PYTHONPATH")
-        environment["PYTHONPATH"] = str(triton_root)
-        if previous_python_path:
-            environment["PYTHONPATH"] += os.pathsep + previous_python_path
     return subprocess.run(
         [sys.executable, str(helper), *arguments],
         check=False,
@@ -148,11 +138,11 @@ def _assert_static_document(
         and "ppu" in triton["distribution_version"].lower(),
         "Triton distribution is not PPU-qualified",
     )
-    _require("nvidia" in triton["backend_catalog"], "wrong backend catalog")
+    _require(triton["codegen_backend"] in triton["backend_catalog"], "wrong backend catalog")
     _require(
-        triton["codegen_backend"] == "nvidia"
+        triton["codegen_backend"] in {"nvidia", "ppu"}
         and triton["target_backend"] == "cuda"
-        and triton["binary_extension"] == "cubin"
+        and triton["binary_extension"] == ("hgbin" if triton["codegen_backend"] == "ppu" else "cubin")
         and triton["ppu_compatibility"] == "cuda",
         "wrong Triton PPU compatibility identity",
     )
@@ -177,13 +167,25 @@ def _assert_static_document(
     _require(jit["root"] == str(jit_root.resolve(strict=True)), "wrong JIT root")
     _require(jit["backend"] == "CUDA", "JIT backend is not CUDA")
     _require(
-        jit["source_identity"]
-        == {
-            "kind": "git_commit",
-            "value": _git_head(Path(jit["repository_root"])),
-        },
-        "wrong JIT source identity",
+        jit["repository_root"] == str(jit_root.resolve(strict=True)),
+        "JIT identity inherited an unrelated parent repository",
     )
+    identity = jit["source_identity"]
+    if identity.get("kind") == "git_commit":
+        _require((jit_root / ".git").exists(), "installed JIT cannot inherit Git identity")
+        expected_identity = _git_head(jit_root)
+    else:
+        _require(identity.get("kind") == "content_sha256", "wrong JIT identity kind")
+        digest = hashlib.sha256()
+        for path in sorted({Path(jit[key]) for key in (
+            "config_file", "library", "standalone_compile", "gen_ssig"
+        )}):
+            digest.update(str(path.relative_to(jit_root.resolve(strict=True))).encode())
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+        expected_identity = digest.hexdigest()
+    _require(identity.get("value") == expected_identity, "wrong JIT source identity")
     for field in (
         "config_file",
         "library",
@@ -241,7 +243,6 @@ def main() -> int:
         ]
         static_result = _run(
             helper,
-            triton_root,
             ["--static", *common_arguments, "--output", str(output)],
         )
         _require(
@@ -267,7 +268,6 @@ def main() -> int:
         fake_smi.chmod(fake_smi.stat().st_mode | stat.S_IXUSR)
         device_result = _run(
             helper,
-            triton_root,
             [
                 "--device",
                 "0",

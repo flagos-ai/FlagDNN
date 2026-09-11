@@ -66,6 +66,11 @@ ComparableStatus parse_status(std::string_view value) {
 }
 
 flagdnnPointwiseMode_t pointwise_mode(std::string_view operation) {
+  if (operation == "erf") return FLAGDNN_POINTWISE_ERF;
+  if (operation == "binary_select") return FLAGDNN_POINTWISE_BINARY_SELECT;
+  if (operation == "logical_not") return FLAGDNN_POINTWISE_LOGICAL_NOT;
+  if (operation == "logical_and") return FLAGDNN_POINTWISE_LOGICAL_AND;
+  if (operation == "logical_or") return FLAGDNN_POINTWISE_LOGICAL_OR;
   if (operation == "sub") return FLAGDNN_POINTWISE_SUB;
   if (operation == "mul" || operation == "scale") {
     return FLAGDNN_POINTWISE_MUL;
@@ -861,7 +866,8 @@ AcdnnProvider::AcdnnProvider(const std::string &catalog_path,
                 "reduction", "batchnorm", "batchnorm_inference",
                 "layernorm", "rmsnorm",
                 "matmul", "conv_fprop", "conv_dgrad", "conv_wgrad",
-                "conv_bias_relu"},
+                "conv_bias_relu", "erf", "binary_select",
+                "logical_not", "logical_and", "logical_or"},
                "comparable catalog operators");
   const JsonObject &cases = operators.at(operation_).as_object();
   if (cases.empty()) {

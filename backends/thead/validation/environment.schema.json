@@ -110,16 +110,16 @@
         "backend_catalog": {
           "type": "array",
           "items": {"type": "string", "minLength": 1},
-          "contains": {"const": "nvidia"},
+          "contains": {"enum": ["nvidia", "ppu"]},
           "minItems": 1,
           "uniqueItems": true
         },
-        "codegen_backend": {"const": "nvidia"},
+        "codegen_backend": {"enum": ["nvidia", "ppu"]},
         "target_backend": {"const": "cuda"},
         "compiler_file": {"$ref": "#/$defs/absolute_path"},
         "driver_file": {"$ref": "#/$defs/absolute_path"},
         "compiler_frontend_file": {"$ref": "#/$defs/absolute_path"},
-        "binary_extension": {"const": "cubin"},
+        "binary_extension": {"enum": ["cubin", "hgbin"]},
         "ppu_compatibility": {"const": "cuda"},
         "source_identity": {"$ref": "#/$defs/source_identity"}
       }
@@ -200,7 +200,7 @@
             "capability": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
             "capability_code": {"type": "integer", "minimum": 0},
             "driver_version": {"type": "integer", "minimum": 1},
-            "triton_registry_backend": {"const": "nvidia"},
+            "triton_registry_backend": {"enum": ["nvidia", "ppu"]},
             "triton_target_backend": {"const": "cuda"},
             "triton_target_arch": {"type": "integer", "minimum": 1},
             "triton_warp_size": {"const": 32},

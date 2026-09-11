@@ -103,6 +103,14 @@ _make_build_layout("${TEST_ROOT}/missing-header" CUDA BACKEND_CUDA no-header)
 file(REMOVE
   "${TEST_ROOT}/missing-header/include/triton_jit/backends/cuda_backend.h")
 _make_install_layout("${TEST_ROOT}/installed" CUDA BACKEND_CUDA installed)
+_make_install_layout("${TEST_ROOT}/installed64" CUDA BACKEND_CUDA installed64)
+file(RENAME "${TEST_ROOT}/installed64/lib" "${TEST_ROOT}/installed64/lib64")
+set(_installed64_targets
+  "${TEST_ROOT}/installed64/lib64/cmake/TritonJIT/TritonJITTargets-release.cmake")
+file(READ "${_installed64_targets}" _installed64_metadata)
+string(REPLACE "/lib/libtriton_jit.so" "/lib64/libtriton_jit.so"
+  _installed64_metadata "${_installed64_metadata}")
+file(WRITE "${_installed64_targets}" "${_installed64_metadata}")
 
 function(_make_fake_triton root backend_name distribution_version
          include_ppu_markers binary_extension)
@@ -200,9 +208,9 @@ endforeach()
 if(NOT THEAD_JIT_BACKEND STREQUAL "CUDA")
   message(FATAL_ERROR "resolved JIT backend is not CUDA")
 endif()
-if(NOT THEAD_JIT_LAYOUT STREQUAL EXPECT_LAYOUT)
+if(NOT THEAD_JIT_LAYOUT IN_LIST EXPECT_LAYOUT)
   message(FATAL_ERROR
-    "resolved layout ${THEAD_JIT_LAYOUT} != ${EXPECT_LAYOUT}")
+    "resolved layout ${THEAD_JIT_LAYOUT} is not one of ${EXPECT_LAYOUT}")
 endif()
 if(NOT THEAD_JIT_PROVENANCE_SHA256 MATCHES "^[0-9a-f]+$")
   message(FATAL_ERROR "JIT provenance is not a digest")
@@ -277,10 +285,13 @@ function(_run_case name root other_root layout expect_success expected_error)
 endfunction()
 
 file(REAL_PATH "${TRITON_JIT_ROOT}" _real_jit_root EXPAND_TILDE)
-_run_case(real-valid "${_real_jit_root}" "${TEST_ROOT}/b" build TRUE "")
+_run_case(real-valid "${_real_jit_root}" "${TEST_ROOT}/b"
+  "build;install_lib;install_lib64" TRUE "")
 _run_case(synthetic-valid "${TEST_ROOT}/a" "${TEST_ROOT}/b" build TRUE "")
 _run_case(installed "${TEST_ROOT}/installed" "${TEST_ROOT}/b"
   install_lib TRUE "")
+_run_case(installed64 "${TEST_ROOT}/installed64" "${TEST_ROOT}/b"
+  install_lib64 TRUE "")
 _run_case(mutation "${TEST_ROOT}/a" "${TEST_ROOT}/b" build TRUE "")
 _run_case(mixed-library "${TEST_ROOT}/a" "${TEST_ROOT}/b" unused FALSE
   "do not belong to one coherent")
@@ -322,7 +333,7 @@ function(_run_identity_failure name root expected_error)
 endfunction()
 
 _run_identity_failure(no-triton "${TEST_ROOT}/no-triton"
-  "outside configured root")
+  "outside configured root|configured root has no Triton package")
 _run_identity_failure(no-cuda "${TEST_ROOT}/no-cuda"
   "has no CUDA codegen backend")
 _run_identity_failure(generic-triton "${TEST_ROOT}/generic-triton"
@@ -330,7 +341,7 @@ _run_identity_failure(generic-triton "${TEST_ROOT}/generic-triton"
 _run_identity_failure(missing-ppu-path "${TEST_ROOT}/missing-ppu-path"
   "lacks the PPU compatibility path")
 _run_identity_failure(wrong-binary "${TEST_ROOT}/wrong-binary"
-  "binary extension is not cubin")
+  "unexpected Triton PPU binary extension")
 
 execute_process(
   COMMAND "${CMAKE_COMMAND}" -E env
@@ -351,8 +362,14 @@ string(JSON _compiler_backend GET "${_identity_stdout}"
 string(JSON _binary_extension GET "${_identity_stdout}"
   triton binary_extension)
 string(JSON _jit_backend GET "${_identity_stdout}" libtriton_jit backend)
-if(NOT _compiler_backend STREQUAL "nvidia" OR
-   NOT _binary_extension STREQUAL "cubin" OR
+if(_compiler_backend STREQUAL "nvidia")
+  set(_expected_binary_extension "cubin")
+elseif(_compiler_backend STREQUAL "ppu")
+  set(_expected_binary_extension "hgbin")
+else()
+  message(FATAL_ERROR "unexpected PPU codegen backend: ${_compiler_backend}")
+endif()
+if(NOT _binary_extension STREQUAL _expected_binary_extension OR
    NOT _jit_backend STREQUAL "CUDA")
   message(FATAL_ERROR "Triton/JIT identities were conflated")
 endif()
