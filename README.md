@@ -5,7 +5,7 @@ FlagDNN 是一个面向多种加速器平台的 C/C++ DNN Graph Runtime。不同
 
 ## 平台安装
 
-### Hygon
+### Hygon（海光）
 
 #### 环境要求
 
@@ -235,3 +235,78 @@ python3 tools/run_tests.py \
 
 通用测试说明见
 [功能与性能验证](docs/testing.md)。
+
+### MThreads（摩尔线程）
+
+#### 环境要求
+
+- Linux、摩尔线程 GPU，以及相互匹配的驱动、MUSA Toolkit 和 muDNN。当前适配
+  基线为 MTT S5000、MUSA 4.3.5 和 muDNN 3.1.5。
+- CMake 3.25+（FlagDNN 本身最低要求为 3.23，编译 `libtriton_jit` 需 3.25）、
+  Ninja、支持 C++20 的编译器、Python 3.10+ 及 Python 开发头文件。
+- 同一 Python 环境中的 PyTorch、与其匹配的 `torch_musa`、支持 MUSA 后端的
+  FlagTree、PyYAML、NumPy、packaging 和 pybind11。
+- MUSA 版 `libtriton_jit`，以及可从 `PATH` 找到的 `mcc`、`patchelf` 和
+  `readelf`。
+
+依赖的编译和安装方法请参考：
+
+- [FlagTree](https://github.com/flagos-ai/flagtree)：选择 MUSA（`mtgpu`）后端，
+  提供 `triton` Python 模块，无需单独安装 Triton。
+- [`libtriton_jit`](https://github.com/flagos-ai/libtriton_jit)：编译时设置
+  `-DBACKEND=MUSA`，安装动态库、头文件、脚本和 CMake 配置文件。
+
+请选择与当前 MUSA 兼容的依赖版本，并在编译和运行测试前激活对应的 Python 环境。
+确保 MUSA、Torch/MKL 及 `libtriton_jit` 所依赖的其他动态库可被加载；环境变量
+配置示例见[摩尔线程适配设计](docs/mthreads-adaptation-design.md)。
+
+#### 编译
+
+在 FlagDNN 根目录执行，以下示例假设 MUSA 安装在 `/usr/local/musa`，MUSA 版
+`libtriton_jit` 安装在 `/usr/local`：
+
+```bash
+export MUSA_HOME=/usr/local/musa
+export PATH="$MUSA_HOME/bin:$PATH"
+export LD_LIBRARY_PATH="$MUSA_HOME/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+tools/build.sh \
+  --backends mthreads \
+  --build-dir build/mthreads \
+  -- \
+  -DFLAGDNN_MTHREADS_MUSA_ROOT="$MUSA_HOME" \
+  -DFLAGDNN_MTHREADS_TRITON_JIT_DIR=/usr/local/lib/cmake/TritonJIT
+```
+
+该命令以 `Release` 模式编译 FlagDNN，并同时构建功能测试和性能测试。当前后端
+仅支持默认的 `libtriton_jit` 执行引擎。
+
+`FLAGDNN_MTHREADS_MUSA_ROOT` 和 `FLAGDNN_MTHREADS_TRITON_JIT_DIR` 均须显式
+指定，后者应指向包含 `TritonJITConfig.cmake` 的目录。若依赖安装在其他位置，
+请调整上述路径；指定 Python 时，在 `--` 前添加 `--python /path/to/python3`。
+
+#### 安装
+
+```bash
+# 默认安装到 build/mthreads/install
+tools/install.sh --build-dir build/mthreads
+
+# 指定安装目录
+tools/install.sh \
+  --build-dir build/mthreads \
+  --prefix /path/to/flagdnn-sdk
+```
+
+#### 批量测试
+
+```bash
+set -o pipefail
+python3 tools/run_tests.py \
+    --platform mthreads \
+    --device 0 \
+    --suites functional,benchmark \
+    --no-preflight \
+    --verbose \
+    --output build/mthreads/run-tests.json \
+    2>&1 | tee build/mthreads/run-tests.log
+```
