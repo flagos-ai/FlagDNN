@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "ownership": "platform",
+  "backend": "thead",
+  "kernels": [
+    {
+      "operation": "conv_bias_relu",
+      "provider": "thead_triton",
+      "source": "convolution.py",
+      "functions": [
+        "conv2d_bias_relu_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "conv2d_spatial",
+        "key": "n_outputs",
+        "strategy": "convolution",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "convolution_fprop",
+      "provider": "thead_triton",
+      "source": "convolution.py",
+      "functions": [
+        "conv_fprop_nd_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "conv2d_spatial",
+        "key": "n_outputs",
+        "strategy": "convolution",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "batchnorm_inference",
+      "provider": "thead_triton",
+      "source": "normalization.py",
+      "functions": [
+        "batch_norm_inference_nchw_kernel",
+        "batch_norm_inference_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "batch_norm",
+        "key": "n_elements",
+        "strategy": "align32",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "add_square",
+      "provider": "thead_triton",
+      "source": "add_square.py",
+      "functions": [
+        "add_square_contiguous_kernel",
+        "add_square_strided_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "binary",
+        "key": "n_elements",
+        "strategy": "align32",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "sdpa",
+      "provider": "thead_triton",
+      "source": "attention.py",
+      "functions": [
+        "thead_sdpa_fwd_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "sdpa",
+        "key": "sequence_q",
+        "strategy": "attention",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "sdpa_backward",
+      "provider": "thead_triton",
+      "source": "attention.py",
+      "functions": [
+        "thead_sdpa_bwd_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "sdpa_backward_dq",
+        "key": "sequence_q",
+        "strategy": "attention",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "sdpa_fp8",
+      "provider": "thead_triton",
+      "source": "fp8_attention.py",
+      "functions": [
+        "fp8_sdpa_forward_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "sdpa_fp8",
+        "key": "sequence_q",
+        "strategy": "attention",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "sdpa_fp8_backward",
+      "provider": "thead_triton",
+      "source": "fp8_attention.py",
+      "functions": [
+        "fp8_sdpa_backward_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "sdpa_fp8_backward",
+        "key": "sequence_q",
+        "strategy": "attention",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "transpose",
+      "provider": "thead_triton",
+      "source": "layout.py",
+      "functions": [
+        "layout_copy_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "binary",
+        "key": "n_elements",
+        "strategy": "align32",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "convolution_wgrad",
+      "provider": "thead_triton",
+      "source": "convolution.py",
+      "functions": [
+        "conv_wgrad_nd_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "conv2d_spatial",
+        "key": "n_outputs",
+        "strategy": "convolution",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "pow",
+      "provider": "thead_triton",
+      "source": "pow.py",
+      "functions": [
+        "binary_contiguous_kernel",
+        "binary_strided_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "binary",
+        "key": "n_elements",
+        "strategy": "align32",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "convolution_dgrad",
+      "provider": "thead_triton",
+      "source": "convolution.py",
+      "functions": [
+        "conv_dgrad_nd_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "conv2d_spatial",
+        "key": "n_outputs",
+        "strategy": "convolution",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    }
+  ]
+}
