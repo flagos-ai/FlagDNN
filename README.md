@@ -310,3 +310,92 @@ python3 tools/run_tests.py \
     --output build/mthreads/run-tests.json \
     2>&1 | tee build/mthreads/run-tests.log
 ```
+
+### Ascend（昇腾）
+
+#### 环境要求
+
+- Linux（x86_64 或 aarch64）、昇腾 NPU，以及相互匹配的驱动、固件和 CANN 9.x
+  （要求 `>= 9.0` 且 `< 10.0`）。支持的设备型号见
+  [Ascend 能力配置](backends/ascend/capabilities.json)中的 `codegen_arches`。
+- CANN 中的 ACL 头文件、`libascendcl.so` 和 `libruntime.so`；功能测试和性能测试
+  还依赖同一 CANN 安装中的 ACLNN 头文件、`libnnopbase.so`、`libopapi_math.so`
+  和 `libopapi_nn.so`。
+- CMake 3.25+（FlagDNN 本身最低要求为 3.23，编译 `libtriton_jit` 需 3.25）、
+  Ninja、支持 C++20 的编译器、Python 3 及 Python 开发头文件和动态库；
+  检查动态库依赖还需要 `readelf`。
+- 同一 Python 环境中的 PyTorch、与之匹配的 `torch_npu`、支持 Ascend 后端的
+  FlagTree、PyYAML、NumPy、packaging 和 pybind11。
+- NPU 版 `libtriton_jit`，以及配套的头文件、`standalone_compile.py` 和 CMake
+  配置文件。其链接的 Python 动态库必须与 FlagDNN 编译时选择的 Python 一致。
+
+依赖的编译和安装方法请参考：
+
+- [FlagTree](https://github.com/flagos-ai/flagtree)：选择 Ascend 后端，提供
+  `triton` Python 模块，无需单独安装 Triton。
+- [`libtriton_jit`](https://github.com/flagos-ai/libtriton_jit)：编译时设置
+  `-DBACKEND=NPU`，并使用与 FlagDNN 相同的 Python 环境。
+
+FlagDNN 从 `ASCEND_HOME_PATH` 或 `ASCEND_TOOLKIT_HOME` 获取 CANN 路径，也可在
+编译时显式指定 `CANN_ROOT`。建议将 FlagDNN 与 `libtriton_jit` 放在同一级目录，
+默认会尝试从 `../libtriton_jit/build` 查找 NPU 版 `libtriton_jit`。
+
+#### 编译
+
+在 FlagDNN 根目录执行：
+
+```bash
+tools/build.sh \
+  --backends ascend \
+  --build-dir build/ascend
+```
+
+该命令以 `Release` 模式编译 FlagDNN，并同时构建功能测试和性能测试。
+Ascend 后端仅支持默认的 `libtriton_jit` 执行引擎。若依赖安装在其他位置，
+可显式指定 Python、CANN 和 `libtriton_jit` 路径：
+
+```bash
+tools/build.sh \
+  --backends ascend \
+  --build-dir build/ascend \
+  --python /path/to/python3 \
+  -- \
+  -DCANN_ROOT=/path/to/cann-9.x \
+  -DTritonJIT_DIR=/path/to/libtriton_jit/build
+```
+
+`CANN_ROOT` 应为 CANN 安装目录的绝对路径；`TritonJIT_DIR` 应指向包含
+`TritonJITConfig.cmake` 的目录，已安装的包通常为 `<prefix>/lib/cmake/TritonJIT`。
+若无法自动找到配套的 `standalone_compile.py`，可在 `--` 后追加
+`-DFLAGDNN_TRITON_JIT_STANDALONE_COMPILER=/path/to/standalone_compile.py`。
+
+#### 安装
+
+```bash
+# 默认安装到 build/ascend/install
+tools/install.sh --build-dir build/ascend
+
+# 指定安装目录
+tools/install.sh \
+  --build-dir build/ascend \
+  --prefix /path/to/flagdnn-sdk
+```
+
+安装后的 SDK 仍依赖兼容的 CANN 和构建时选定的 Python 环境；功能测试和性能测试
+保留在构建目录中，不随 SDK 安装。
+
+#### 批量测试
+
+```bash
+set -o pipefail
+python3 tools/run_tests.py \
+    --platform ascend \
+    --device 0 \
+    --suites functional,benchmark \
+    --no-preflight \
+    --verbose \
+    --output build/ascend/run-tests.json \
+    2>&1 | tee build/ascend/run-tests.log
+```
+
+更多测试说明见[功能与性能验证](docs/testing.md)。
