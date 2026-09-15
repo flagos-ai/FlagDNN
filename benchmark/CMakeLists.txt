@@ -81,9 +81,10 @@ function(flagdnn_register_benchmark_suite)
   list(REMOVE_DUPLICATES _flagdnn_bench_operators)
 
   foreach(operator IN LISTS _flagdnn_bench_operators)
-    if(NOT operator IN_LIST FLAGDNN_BENCHMARK_OPERATORS)
+    if(NOT operator IN_LIST FLAGDNN_BENCHMARK_OPERATORS AND
+       NOT operator IN_LIST FLAGDNN_FUNCTIONAL_OPERATORS)
       message(FATAL_ERROR
-        "Benchmark operator ${operator} is not in FLAGDNN_BENCHMARK_OPERATORS")
+        "Benchmark operator ${operator} is not in the public operator catalog")
     endif()
     set(entry "${PROJECT_SOURCE_DIR}/benchmark/test_${operator}.cpp")
     if(NOT EXISTS "${entry}")

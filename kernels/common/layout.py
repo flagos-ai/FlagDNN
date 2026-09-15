@@ -13,6 +13,30 @@ import triton.language as tl
 
 
 @triton.jit
+def matrix_transpose_kernel(
+    input_ptr,
+    output_ptr,
+    ROWS: tl.constexpr,
+    COLUMNS: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+):
+    """Materialize a compact matrix transpose with coalesced reads and writes."""
+    row = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    column = tl.program_id(1).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
+    active = (row[:, None] < ROWS) & (column[None, :] < COLUMNS)
+    value = tl.load(
+        input_ptr + row[:, None] * COLUMNS + column[None, :], active, other=0
+    )
+    tl.store(
+        output_ptr + column[:, None] * ROWS + row[None, :],
+        tl.trans(value),
+        tl.trans(active),
+    )
+
+
+@triton.jit
 def layout_copy_kernel(
     input_ptr,
     output_ptr,
@@ -109,288 +133,3 @@ def layout_copy_kernel(
 
     value = tl.load(input_ptr + input_offsets, mask=active, other=0.0)
     tl.store(output_ptr + output_offsets, value, mask=active)
-
-
-# -----------------------------------------------------------------------------
-# Kernel algorithm variants. Native dispatch selects only registry-declared
-# entry points; auxiliary kernels remain available to explicit compiler policy.
-# -----------------------------------------------------------------------------
-
-
-@triton.jit
-def _axis_coord(
-    i0,
-    i1,
-    i2,
-    i3,
-    i4,
-    i5,
-    AXIS: tl.constexpr,
-):
-    coord = i0
-    if AXIS == 1:
-        coord = i1
-    elif AXIS == 2:
-        coord = i2
-    elif AXIS == 3:
-        coord = i3
-    elif AXIS == 4:
-        coord = i4
-    elif AXIS == 5:
-        coord = i5
-    return coord
-
-
-@triton.jit
-def _input_offset(
-    i0,
-    i1,
-    i2,
-    i3,
-    i4,
-    i5,
-    axis_index,
-    AXIS: tl.constexpr,
-    s0,
-    s1,
-    s2,
-    s3,
-    s4,
-    s5,
-):
-    off = i0 * s0 + i1 * s1 + i2 * s2 + i3 * s3 + i4 * s4 + i5 * s5
-    if AXIS == 0:
-        off += (axis_index - i0) * s0
-    elif AXIS == 1:
-        off += (axis_index - i1) * s1
-    elif AXIS == 2:
-        off += (axis_index - i2) * s2
-    elif AXIS == 3:
-        off += (axis_index - i3) * s3
-    elif AXIS == 4:
-        off += (axis_index - i4) * s4
-    elif AXIS == 5:
-        off += (axis_index - i5) * s5
-    return off
-
-
-@triton.jit
-def _concat2_kernel(
-    x0,
-    x1,
-    out,
-    n_elements,
-    d0,
-    d1,
-    d2,
-    d3,
-    d4,
-    d5,
-    x0_axis,
-    sx00,
-    sx01,
-    sx02,
-    sx03,
-    sx04,
-    sx05,
-    sx10,
-    sx11,
-    sx12,
-    sx13,
-    sx14,
-    sx15,
-    AXIS: tl.constexpr,
-    BLOCK_SIZE: tl.constexpr,
-):
-    pid = tl.program_id(0)
-    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    mask = offsets < n_elements
-
-    i5 = offsets % d5
-    rem = offsets // d5
-    i4 = rem % d4
-    rem = rem // d4
-    i3 = rem % d3
-    rem = rem // d3
-    i2 = rem % d2
-    rem = rem // d2
-    i1 = rem % d1
-    i0 = rem // d1
-
-    axis_out = _axis_coord(i0, i1, i2, i3, i4, i5, AXIS)
-    use0 = axis_out < x0_axis
-    off0 = _input_offset(
-        i0,
-        i1,
-        i2,
-        i3,
-        i4,
-        i5,
-        axis_out,
-        AXIS,
-        sx00,
-        sx01,
-        sx02,
-        sx03,
-        sx04,
-        sx05,
-    )
-    off1 = _input_offset(
-        i0,
-        i1,
-        i2,
-        i3,
-        i4,
-        i5,
-        axis_out - x0_axis,
-        AXIS,
-        sx10,
-        sx11,
-        sx12,
-        sx13,
-        sx14,
-        sx15,
-    )
-    v0 = tl.load(x0 + off0, mask=mask & use0, other=0.0)
-    v1 = tl.load(x1 + off1, mask=mask & (~use0), other=0.0)
-    values = tl.where(use0, v0, v1)
-    tl.store(out + offsets, values, mask=mask)
-
-
-@triton.jit
-def _concat3_kernel(
-    x0,
-    x1,
-    x2,
-    out,
-    n_elements,
-    d0,
-    d1,
-    d2,
-    d3,
-    d4,
-    d5,
-    x0_axis,
-    x1_axis_end,
-    sx00,
-    sx01,
-    sx02,
-    sx03,
-    sx04,
-    sx05,
-    sx10,
-    sx11,
-    sx12,
-    sx13,
-    sx14,
-    sx15,
-    sx20,
-    sx21,
-    sx22,
-    sx23,
-    sx24,
-    sx25,
-    AXIS: tl.constexpr,
-    BLOCK_SIZE: tl.constexpr,
-):
-    pid = tl.program_id(0)
-    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    mask = offsets < n_elements
-
-    i5 = offsets % d5
-    rem = offsets // d5
-    i4 = rem % d4
-    rem = rem // d4
-    i3 = rem % d3
-    rem = rem // d3
-    i2 = rem % d2
-    rem = rem // d2
-    i1 = rem % d1
-    i0 = rem // d1
-
-    axis_out = _axis_coord(i0, i1, i2, i3, i4, i5, AXIS)
-    use0 = axis_out < x0_axis
-    use1 = (axis_out >= x0_axis) & (axis_out < x1_axis_end)
-    use2 = axis_out >= x1_axis_end
-    off0 = _input_offset(
-        i0,
-        i1,
-        i2,
-        i3,
-        i4,
-        i5,
-        axis_out,
-        AXIS,
-        sx00,
-        sx01,
-        sx02,
-        sx03,
-        sx04,
-        sx05,
-    )
-    off1 = _input_offset(
-        i0,
-        i1,
-        i2,
-        i3,
-        i4,
-        i5,
-        axis_out - x0_axis,
-        AXIS,
-        sx10,
-        sx11,
-        sx12,
-        sx13,
-        sx14,
-        sx15,
-    )
-    off2 = _input_offset(
-        i0,
-        i1,
-        i2,
-        i3,
-        i4,
-        i5,
-        axis_out - x1_axis_end,
-        AXIS,
-        sx20,
-        sx21,
-        sx22,
-        sx23,
-        sx24,
-        sx25,
-    )
-    v0 = tl.load(x0 + off0, mask=mask & use0, other=0.0)
-    v1 = tl.load(x1 + off1, mask=mask & use1, other=0.0)
-    v2 = tl.load(x2 + off2, mask=mask & use2, other=0.0)
-    values = tl.where(use0, v0, tl.where(use1, v1, v2))
-    tl.store(out + offsets, values, mask=mask)
-
-
-@triton.jit
-def _gen_index_kernel(
-    out_ptr,
-    n_elements,
-    axis_size: tl.constexpr,
-    inner_size: tl.constexpr,
-    BLOCK_SIZE: tl.constexpr,
-):
-    pid = tl.program_id(0)
-    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    mask = offsets < n_elements
-    axis_index = (offsets // inner_size) % axis_size
-    tl.store(out_ptr + offsets, axis_index, mask=mask)
-
-
-@triton.jit
-def _identity_copy_kernel(
-    input_ptr,
-    out_ptr,
-    n_elements,
-    BLOCK_SIZE: tl.constexpr,
-):
-    pid = tl.program_id(0)
-    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    mask = offsets < n_elements
-    values = tl.load(input_ptr + offsets, mask=mask)
-    tl.store(out_ptr + offsets, values, mask=mask)

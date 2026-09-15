@@ -1,11 +1,5 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
-#include "common/convolution.hpp"
-#include "validation/tensor_io.hpp"
-#include "validation/cuda_driver.hpp"
-
-#include <flagdnn/flagdnn.hpp>
-
 #include <unistd.h>
 
 #include <algorithm>
@@ -15,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <flagdnn/flagdnn.hpp>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -24,16 +19,20 @@
 #include <string>
 #include <vector>
 
+#include "common/convolution.hpp"
+#include "validation/cuda_driver.hpp"
+#include "validation/functional/cudnn_precision.hpp"
+#include "validation/tensor_io.hpp"
+
 namespace flagdnn::testing {
 namespace {
 
 class TemporaryCache {
  public:
   TemporaryCache() {
-    std::string pattern =
-        (std::filesystem::temp_directory_path() /
-         "flagdnn-convolution-functional-XXXXXX")
-            .string();
+    std::string pattern = (std::filesystem::temp_directory_path() /
+                           "flagdnn-convolution-functional-XXXXXX")
+                              .string();
     std::vector<char> writable(pattern.begin(), pattern.end());
     writable.push_back('\0');
     char* created = mkdtemp(writable.data());
@@ -72,40 +71,33 @@ std::vector<std::uint8_t> input_bytes(const TestTensor& tensor,
   return cuda::encode(
       cuda::scatter(make_input(cuda::element_count(tensor), tensor_index),
                     tensor),
-      tensor.data_type,
-      cuda::BooleanEncoding::kByte);
+      tensor.data_type, cuda::BooleanEncoding::kByte);
 }
 
 std::vector<std::uint8_t> output_bytes(const TestTensor& tensor) {
-  return cuda::encode(
-      std::vector<float>(
-          cuda::storage_element_count(tensor), cuda::padding_sentinel()),
-      tensor.data_type,
-      cuda::BooleanEncoding::kByte);
+  return cuda::encode(std::vector<float>(cuda::storage_element_count(tensor),
+                                         cuda::padding_sentinel()),
+                      tensor.data_type, cuda::BooleanEncoding::kByte);
 }
 
-bool is_output(const ConvolutionTestCase& test_case,
-               const TestTensor& tensor) {
+bool is_output(const ConvolutionTestCase& test_case, const TestTensor& tensor) {
   return tensor.uid == convolution_output_tensor(test_case).uid;
 }
 
-std::vector<std::uint8_t> initial_bytes(
-    const ConvolutionTestCase& test_case,
-    const TestTensor& tensor,
-    std::size_t tensor_index) {
+std::vector<std::uint8_t> initial_bytes(const ConvolutionTestCase& test_case,
+                                        const TestTensor& tensor,
+                                        std::size_t tensor_index) {
   return is_output(test_case, tensor) ? output_bytes(tensor)
-                                     : input_bytes(tensor, tensor_index);
+                                      : input_bytes(tensor, tensor_index);
 }
 
 std::vector<float> read_tensor(const DeviceBuffer& buffer,
-                               const TestTensor& tensor,
-                               Stream& stream) {
+                               const TestTensor& tensor, Stream& stream) {
   std::vector<std::uint8_t> bytes(
       cuda::encoded_byte_count(tensor, cuda::BooleanEncoding::kByte));
   buffer.copy_to_host(bytes.data(), bytes.size(), stream.get());
   stream.synchronize();
-  return cuda::decode(bytes,
-                      tensor.data_type,
+  return cuda::decode(bytes, tensor.data_type,
                       cuda::storage_element_count(tensor),
                       cuda::BooleanEncoding::kByte);
 }
@@ -130,12 +122,11 @@ Accuracy compare(std::span<const float> actual,
         absolute / std::max({std::abs(left), std::abs(right), 1.0e-30});
     result.maximum_absolute = std::max(result.maximum_absolute, absolute);
     result.maximum_relative = std::max(result.maximum_relative, relative);
-    if (!std::isfinite(absolute) ||
-        (absolute > test_case.absolute_tolerance &&
-         relative > test_case.relative_tolerance)) {
+    if (!std::isfinite(absolute) || (absolute > test_case.absolute_tolerance &&
+                                     relative > test_case.relative_tolerance)) {
       std::ostringstream message;
       message << test_case.name << " differs at output element " << index
-              << ": FlagDNN=" << left << ", cuDNN=" << right
+              << ": FlagDNN=" << left << ", reference=" << right
               << ", abs=" << absolute << ", rel=" << relative
               << ", atol=" << test_case.absolute_tolerance
               << ", rtol=" << test_case.relative_tolerance;
@@ -147,22 +138,18 @@ Accuracy compare(std::span<const float> actual,
 
 void execute(ConvolutionExecutable& executable,
              std::span<const flagdnnBinding_t> bindings,
-             DeviceBuffer& workspace,
-             Stream& stream) {
-  executable.execute(bindings,
-                     workspace.opaque(),
-                     executable.workspace_size(),
+             DeviceBuffer& workspace, Stream& stream) {
+  executable.execute(bindings, workspace.opaque(), executable.workspace_size(),
                      stream.opaque());
 }
 
-void run_case(const ConvolutionTestCase& test_case,
-              flagdnn::Handle& handle,
+void run_case(const ConvolutionTestCase& test_case, flagdnn::Handle& handle,
               Stream& stream) {
   auto flagdnn = build_flagdnn_convolution(handle, test_case);
   auto reference = build_convolution_reference(test_case);
 
-  const std::array<const TestTensor*, 3> tensors = {
-      &test_case.x, &test_case.w, &test_case.y};
+  const std::array<const TestTensor*, 3> tensors = {&test_case.x, &test_case.w,
+                                                    &test_case.y};
   std::array<std::vector<std::uint8_t>, 3> bytes;
   for (std::size_t index = 0; index < tensors.size(); ++index) {
     bytes[index] = initial_bytes(test_case, *tensors[index], index);
@@ -171,24 +158,23 @@ void run_case(const ConvolutionTestCase& test_case,
   std::array<std::unique_ptr<DeviceBuffer>, 3> flagdnn_buffers;
   std::array<std::unique_ptr<DeviceBuffer>, 3> reference_buffers;
   for (std::size_t index = 0; index < tensors.size(); ++index) {
-    flagdnn_buffers[index] = std::make_unique<DeviceBuffer>(bytes[index].size());
+    flagdnn_buffers[index] =
+        std::make_unique<DeviceBuffer>(bytes[index].size());
     reference_buffers[index] =
         std::make_unique<DeviceBuffer>(bytes[index].size());
-    flagdnn_buffers[index]->copy_from_host(
-        bytes[index].data(), bytes[index].size(), stream.get());
-    reference_buffers[index]->copy_from_host(
-        bytes[index].data(), bytes[index].size(), stream.get());
+    flagdnn_buffers[index]->copy_from_host(bytes[index].data(),
+                                           bytes[index].size(), stream.get());
+    reference_buffers[index]->copy_from_host(bytes[index].data(),
+                                             bytes[index].size(), stream.get());
   }
 
   std::array<flagdnnBinding_t, 3> flagdnn_bindings;
   std::array<flagdnnBinding_t, 3> reference_bindings;
   for (std::size_t index = 0; index < tensors.size(); ++index) {
     flagdnn_bindings[index] =
-        flagdnnBinding_t{tensors[index]->uid,
-                         flagdnn_buffers[index]->opaque()};
-    reference_bindings[index] =
-        flagdnnBinding_t{tensors[index]->uid,
-                         reference_buffers[index]->opaque()};
+        flagdnnBinding_t{tensors[index]->uid, flagdnn_buffers[index]->opaque()};
+    reference_bindings[index] = flagdnnBinding_t{
+        tensors[index]->uid, reference_buffers[index]->opaque()};
   }
 
   DeviceBuffer flagdnn_workspace(flagdnn->workspace_size());
@@ -209,14 +195,13 @@ void run_case(const ConvolutionTestCase& test_case,
   }
   const std::vector<float> flagdnn_physical =
       read_tensor(*flagdnn_buffers[output_index], output, stream);
-  const std::vector<float> reference_physical =
+  const auto reference_physical =
       read_tensor(*reference_buffers[output_index], output, stream);
   cuda::require_padding_unchanged("FlagDNN", flagdnn_physical, output);
   cuda::require_padding_unchanged("cuDNN", reference_physical, output);
-  const Accuracy accuracy = compare(
-      cuda::gather(flagdnn_physical, output),
-      cuda::gather(reference_physical, output),
-      test_case);
+  const Accuracy accuracy =
+      compare(cuda::gather(flagdnn_physical, output),
+              cuda::gather(reference_physical, output), test_case);
   std::cout << test_case.name << ": FlagDNN Graph vs cuDNN Graph PASS"
             << " max_abs=" << accuracy.maximum_absolute
             << " max_rel=" << accuracy.maximum_relative << std::endl;
@@ -224,13 +209,12 @@ void run_case(const ConvolutionTestCase& test_case,
 
 }  // namespace
 
-int run_convolution_functional_test(
-    int argc,
-    char** argv,
-    std::span<const ConvolutionTestCase> cases,
-    ConvolutionDirection expected_direction) {
+int run_convolution_functional_test(int argc, char** argv,
+                                    std::span<const ConvolutionTestCase> cases,
+                                    ConvolutionDirection expected_direction) {
   if (argc != 3) {
-    std::cerr << "usage: " << argv[0] << " COMPILER_EXECUTABLE COMPILER_ENTRY" << std::endl;
+    std::cerr << "usage: " << argv[0] << " COMPILER_EXECUTABLE COMPILER_ENTRY"
+              << std::endl;
     return 2;
   }
   try {
@@ -244,6 +228,8 @@ int run_convolution_functional_test(
 
     std::size_t executed = 0;
     for (const ConvolutionTestCase& test_case : cases) {
+      if (test_case.input_precision != cuda::selected_input_precision())
+        continue;
       if (test_case.direction != expected_direction) {
         throw std::invalid_argument(
             "convolution suite contains the wrong direction");

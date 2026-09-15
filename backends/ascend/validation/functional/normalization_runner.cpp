@@ -384,16 +384,12 @@ int run_batchnorm_inference_functional_test(
     return 2;
   }
   try {
-    if (cases.size() != 12) {
+    if (cases.empty()) {
       throw std::invalid_argument(
-          "common BatchNorm inference catalog must contain 12 cases");
+          "common BatchNorm inference catalog must contain cases");
     }
     const std::vector<BatchnormInferenceTestCase> ascend_cases =
         acl::make_ascend_batchnorm_inference_cases(cases);
-    if (ascend_cases.size() != 18) {
-      throw std::logic_error(
-          "Ascend BatchNorm inference catalog must contain 18 cases");
-    }
     acl::DevelopmentEnvironment development("batchnorm-inference-functional");
     acl::AclRuntime runtime;
     development.prepare_target(acl::soc_name());

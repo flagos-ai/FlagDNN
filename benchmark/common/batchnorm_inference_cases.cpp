@@ -22,12 +22,15 @@ constexpr std::array<flagdnnDataType_t, 3> kDataTypes = {
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return "int32";
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
       return "fp16";
     case FLAGDNN_DATA_BFLOAT16:
       return "bfloat16";
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -129,6 +132,10 @@ const std::vector<Shape>& benchmark_shapes() {
       {16, 256, 14, 14},
       {8, 512, 7, 7},
       {32, 1024, 1, 1},
+      {2, 16, 31, 33},
+      {4, 32, 15, 17},
+      {2, 64, 7, 9},
+      {1, 128, 8, 8},
   };
   return result;
 }
@@ -258,6 +265,13 @@ const std::vector<Shape>& normalization_benchmark_shapes() {
       {4, 256, 2048},
       {2, 512, 4096},
       {3, 257, 513},
+      {1, 32, 64},
+      {2, 64, 128},
+      {4, 32, 256},
+      {1, 128, 512},
+      {8, 32, 1023},
+      {4, 64, 1025},
+      {2, 32, 8192},
   };
   return result;
 }

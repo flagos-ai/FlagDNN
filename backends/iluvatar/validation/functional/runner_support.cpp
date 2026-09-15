@@ -219,18 +219,23 @@ void require_padding_unchanged(std::string_view provider,
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
-  case FLAGDNN_DATA_FLOAT32:
-    return "fp32";
-  case FLAGDNN_DATA_FLOAT16:
-    return "fp16";
-  case FLAGDNN_DATA_BFLOAT16:
-    return "bf16";
-  case FLAGDNN_DATA_BOOLEAN:
-    return "bool";
-  case FLAGDNN_DATA_FP8_E4M3:
-    return "fp8_e4m3";
-  case FLAGDNN_DATA_FP8_E5M2:
-    return "fp8_e5m2";
+    case FLAGDNN_DATA_INT32:
+      return "int32";
+
+    case FLAGDNN_DATA_FP8_E8M0:
+      return "fp8_e8m0";
+    case FLAGDNN_DATA_FLOAT32:
+      return "fp32";
+    case FLAGDNN_DATA_FLOAT16:
+      return "fp16";
+    case FLAGDNN_DATA_BFLOAT16:
+      return "bf16";
+    case FLAGDNN_DATA_BOOLEAN:
+      return "bool";
+    case FLAGDNN_DATA_FP8_E4M3:
+      return "fp8_e4m3";
+    case FLAGDNN_DATA_FP8_E5M2:
+      return "fp8_e5m2";
   }
   return "unknown";
 }
@@ -441,15 +446,19 @@ void DeviceBuffer::copy_to_host(void *destination, std::size_t bytes,
 
 std::size_t data_type_size(flagdnnDataType_t data_type) {
   switch (data_type) {
-  case FLAGDNN_DATA_FLOAT32:
-    return 4;
-  case FLAGDNN_DATA_FLOAT16:
-  case FLAGDNN_DATA_BFLOAT16:
-    return 2;
-  case FLAGDNN_DATA_BOOLEAN:
-  case FLAGDNN_DATA_FP8_E4M3:
-  case FLAGDNN_DATA_FP8_E5M2:
-    return 1;
+    case FLAGDNN_DATA_INT32:
+      return 4;
+
+    case FLAGDNN_DATA_FLOAT32:
+      return 4;
+    case FLAGDNN_DATA_FLOAT16:
+    case FLAGDNN_DATA_BFLOAT16:
+      return 2;
+    case FLAGDNN_DATA_BOOLEAN:
+    case FLAGDNN_DATA_FP8_E8M0:
+    case FLAGDNN_DATA_FP8_E4M3:
+    case FLAGDNN_DATA_FP8_E5M2:
+      return 1;
   }
   throw std::invalid_argument("unsupported functional data type");
 }
@@ -519,13 +528,20 @@ std::vector<std::uint8_t> encode(std::span<const float> values,
   for (std::size_t index = 0; index < values.size(); ++index) {
     std::uint8_t *destination = result.data() + index * element_size;
     switch (data_type) {
-    case FLAGDNN_DATA_FLOAT32:
-      break;
-    case FLAGDNN_DATA_FLOAT16: {
-      const __half value = __float2half_rn(values[index]);
-      std::memcpy(destination, &value, sizeof(value));
-      break;
-    }
+      case FLAGDNN_DATA_INT32:
+        throw std::invalid_argument(
+            "INT32 is not supported by this validation adapter");
+
+      case FLAGDNN_DATA_FP8_E8M0:
+        throw std::invalid_argument(
+            "E8M0 scale storage is not supported by this validation adapter");
+      case FLAGDNN_DATA_FLOAT32:
+        break;
+      case FLAGDNN_DATA_FLOAT16: {
+        const __half value = __float2half_rn(values[index]);
+        std::memcpy(destination, &value, sizeof(value));
+        break;
+      }
     case FLAGDNN_DATA_BFLOAT16: {
       const __nv_bfloat16 value = __float2bfloat16_rn(values[index]);
       std::memcpy(destination, &value, sizeof(value));
@@ -563,14 +579,21 @@ std::vector<float> decode(std::span<const std::uint8_t> bytes,
   for (std::size_t index = 0; index < count; ++index) {
     const std::uint8_t *source = bytes.data() + index * element_size;
     switch (data_type) {
-    case FLAGDNN_DATA_FLOAT32:
-      break;
-    case FLAGDNN_DATA_FLOAT16: {
-      __half value;
-      std::memcpy(&value, source, sizeof(value));
-      result[index] = __half2float(value);
-      break;
-    }
+      case FLAGDNN_DATA_INT32:
+        throw std::invalid_argument(
+            "INT32 is not supported by this validation adapter");
+
+      case FLAGDNN_DATA_FP8_E8M0:
+        throw std::invalid_argument(
+            "E8M0 scale storage is not supported by this validation adapter");
+      case FLAGDNN_DATA_FLOAT32:
+        break;
+      case FLAGDNN_DATA_FLOAT16: {
+        __half value;
+        std::memcpy(&value, source, sizeof(value));
+        result[index] = __half2float(value);
+        break;
+      }
     case FLAGDNN_DATA_BFLOAT16: {
       __nv_bfloat16 value;
       std::memcpy(&value, source, sizeof(value));

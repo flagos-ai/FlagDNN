@@ -8,6 +8,11 @@ import triton.language as tl
 
 
 @triton.jit
+def _sum_moments(sum_left, square_left, sum_right, square_right):
+    return sum_left + sum_right, square_left + square_right
+
+
+@triton.jit
 def layer_norm_kernel(
     x_ptr,
     y_ptr,
@@ -23,9 +28,19 @@ def layer_norm_kernel(
     HAS_WEIGHT: tl.constexpr,
     HAS_BIAS: tl.constexpr,
     RETURN_STATS: tl.constexpr,
+    STATIC_ROWS: tl.constexpr = 0,
+    EVICT_INPUT_FIRST: tl.constexpr = False,
+    PAIRED_REDUCTION: tl.constexpr = False,
 ):
-    rows = tl.program_id(0) * ROWS_PER_PROGRAM + tl.arange(0, ROWS_PER_PROGRAM)
-    row_active = rows < M
+    rows = tl.program_id(0).to(tl.int64) * ROWS_PER_PROGRAM + tl.arange(
+        0, ROWS_PER_PROGRAM
+    )
+    # A compiler may specialize the immutable row count. Keep runtime masking
+    # for existing callers and for a final, partially populated row group.
+    if STATIC_ROWS > 0 and STATIC_ROWS % ROWS_PER_PROGRAM == 0:
+        row_active = tl.full((ROWS_PER_PROGRAM,), True, tl.int1)
+    else:
+        row_active = rows < M
     inv_n: tl.constexpr = 1.0 / N
 
     if BLOCK_SIZE >= N:
@@ -36,9 +51,26 @@ def layer_norm_kernel(
             x_ptr + rows[:, None] * N + columns,
             mask=active,
             other=0.0,
+            eviction_policy="evict_first" if EVICT_INPUT_FIRST else "",
         ).to(tl.float32)
-        mean = tl.sum(values, axis=1) * inv_n
-        sum_squares = tl.sum(values * values, axis=1)
+        if PAIRED_REDUCTION:
+            # Keep the two independent FP32 moments in flight together, and
+            # overlap affine loads with their warp/shared-memory reductions.
+            if HAS_WEIGHT:
+                weight = tl.load(
+                    weight_ptr + columns, column_active, other=0.0
+                ).to(tl.float32)
+            if HAS_BIAS:
+                bias = tl.load(
+                    bias_ptr + columns, column_active, other=0.0
+                ).to(tl.float32)
+            sum_values, sum_squares = tl.reduce(
+                (values, values * values), axis=1, combine_fn=_sum_moments
+            )
+            mean = sum_values * inv_n
+        else:
+            mean = tl.sum(values, axis=1) * inv_n
+            sum_squares = tl.sum(values * values, axis=1)
         variance = tl.maximum(sum_squares * inv_n - mean * mean, 0.0)
         inv_variance = tl.rsqrt(variance + eps)
         if RETURN_STATS:
@@ -50,18 +82,20 @@ def layer_norm_kernel(
             )
         normalized = (values - mean[:, None]) * inv_variance[:, None]
         if HAS_WEIGHT:
-            weight = tl.load(
-                weight_ptr + columns,
-                mask=column_active,
-                other=0.0,
-            ).to(tl.float32)
+            if not PAIRED_REDUCTION:
+                weight = tl.load(
+                    weight_ptr + columns,
+                    mask=column_active,
+                    other=0.0,
+                ).to(tl.float32)
             normalized *= weight
         if HAS_BIAS:
-            bias = tl.load(
-                bias_ptr + columns,
-                mask=column_active,
-                other=0.0,
-            ).to(tl.float32)
+            if not PAIRED_REDUCTION:
+                bias = tl.load(
+                    bias_ptr + columns,
+                    mask=column_active,
+                    other=0.0,
+                ).to(tl.float32)
             normalized += bias
         tl.store(
             y_ptr + rows[:, None] * N + columns,
@@ -79,6 +113,7 @@ def layer_norm_kernel(
                 x_ptr + rows[:, None] * N + columns,
                 mask=active,
                 other=0.0,
+                eviction_policy="evict_first" if EVICT_INPUT_FIRST else "",
             ).to(tl.float32)
             sum_values += tl.sum(values, axis=1)
             sum_squares += tl.sum(values * values, axis=1)
@@ -102,6 +137,7 @@ def layer_norm_kernel(
                 x_ptr + rows[:, None] * N + columns,
                 mask=active,
                 other=0.0,
+                eviction_policy="evict_first" if EVICT_INPUT_FIRST else "",
             ).to(tl.float32)
             normalized = (values - mean[:, None]) * inv_variance[:, None]
             if HAS_WEIGHT:
@@ -140,9 +176,15 @@ def rms_norm_kernel(
     HAS_WEIGHT: tl.constexpr,
     HAS_BIAS: tl.constexpr,
     RETURN_STATS: tl.constexpr,
+    STATIC_ROWS: tl.constexpr = 0,
 ):
-    rows = tl.program_id(0) * ROWS_PER_PROGRAM + tl.arange(0, ROWS_PER_PROGRAM)
-    row_active = rows < M
+    rows = tl.program_id(0).to(tl.int64) * ROWS_PER_PROGRAM + tl.arange(
+        0, ROWS_PER_PROGRAM
+    )
+    if STATIC_ROWS > 0 and STATIC_ROWS % ROWS_PER_PROGRAM == 0:
+        row_active = tl.full((ROWS_PER_PROGRAM,), True, tl.int1)
+    else:
+        row_active = rows < M
 
     if BLOCK_SIZE >= N:
         columns = tl.arange(0, BLOCK_SIZE)[None, :]
@@ -153,6 +195,14 @@ def rms_norm_kernel(
             mask=active,
             other=0.0,
         ).to(tl.float32)
+        if HAS_WEIGHT:
+            weight = tl.load(
+                weight_ptr + columns, mask=column_active, other=0.0
+            ).to(tl.float32)
+        if HAS_BIAS:
+            bias = tl.load(
+                bias_ptr + columns, mask=column_active, other=0.0
+            ).to(tl.float32)
         inv_variance = tl.rsqrt(tl.sum(values * values, axis=1) / N + eps)
         if RETURN_STATS:
             tl.store(
@@ -162,18 +212,8 @@ def rms_norm_kernel(
             )
         normalized = values * inv_variance[:, None]
         if HAS_WEIGHT:
-            weight = tl.load(
-                weight_ptr + columns,
-                mask=column_active,
-                other=0.0,
-            ).to(tl.float32)
             normalized *= weight
         if HAS_BIAS:
-            bias = tl.load(
-                bias_ptr + columns,
-                mask=column_active,
-                other=0.0,
-            ).to(tl.float32)
             normalized += bias
         tl.store(
             y_ptr + rows[:, None] * N + columns,
@@ -499,9 +539,9 @@ def batch_norm_inference_nchw_kernel(
     STAT_IS_INV_VARIANCE: tl.constexpr,
 ):
     program = tl.program_id(0).to(tl.int64)
-    BLOCK_S: tl.constexpr = triton.next_power_of_2(S)
-    if BLOCK_S > BLOCK_SIZE:
-        BLOCK_S = BLOCK_SIZE
+    # Keep the clamped tile a compile-time value. Reassigning the annotated
+    # name inside an if can materialize a tensor in the frontend's SSA merge.
+    BLOCK_S: tl.constexpr = min(triton.next_power_of_2(S), BLOCK_SIZE)
     BLOCK_C: tl.constexpr = BLOCK_SIZE // BLOCK_S
     SPATIAL_BLOCKS: tl.constexpr = (S + BLOCK_S - 1) // BLOCK_S
     CHANNEL_BLOCKS: tl.constexpr = (C + BLOCK_C - 1) // BLOCK_C
@@ -660,344 +700,3 @@ def batch_norm_inference_kernel(
         result.to(y_ptr.dtype.element_ty),
         mask=active,
     )
-
-
-# -----------------------------------------------------------------------------
-# Kernel algorithm variants. Native dispatch selects only registry-declared
-# entry points; auxiliary kernels remain available to explicit compiler policy.
-# -----------------------------------------------------------------------------
-
-
-@triton.jit
-def batch_norm_batch_norm_inference_kernel_variant(
-    x_ptr,
-    y_ptr,
-    mean_ptr,
-    stat_ptr,
-    weight_ptr,
-    bias_ptr,
-    total_elements,
-    C,
-    S,
-    eps,
-    BLOCK_SIZE: tl.constexpr,
-    HAS_WEIGHT: tl.constexpr,
-    HAS_BIAS: tl.constexpr,
-    STAT_IS_INV_VARIANCE: tl.constexpr,
-):
-    pid = tl.program_id(0)
-    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    mask = offsets < total_elements
-    c_idx = (offsets // S) % C
-
-    x = tl.load(x_ptr + offsets, mask=mask).to(tl.float32)
-    mean = tl.load(mean_ptr + c_idx, mask=mask).to(tl.float32)
-    stat = tl.load(stat_ptr + c_idx, mask=mask).to(tl.float32)
-    weight = (
-        tl.load(weight_ptr + c_idx, mask=mask).to(tl.float32)
-        if HAS_WEIGHT
-        else 1.0
-    )
-    bias = (
-        tl.load(bias_ptr + c_idx, mask=mask).to(tl.float32)
-        if HAS_BIAS
-        else 0.0
-    )
-
-    rstd = stat if STAT_IS_INV_VARIANCE else 1.0 / tl.sqrt(stat + eps)
-    y = (x - mean) * rstd * weight + bias
-    tl.store(y_ptr + offsets, y.to(y_ptr.dtype.element_ty), mask=mask)
-
-
-@triton.jit
-def batch_norm_fused_kernel_optimized_(
-    x_ptr,
-    y_ptr,
-    mean_ptr,
-    var_ptr,
-    weight_ptr,
-    bias_ptr,
-    saved_mean_ptr,
-    saved_inv_var_ptr,
-    next_running_mean_ptr,
-    next_running_var_ptr,
-    N,
-    C,
-    S,
-    eps,
-    momentum,
-    BLOCK_SIZE: tl.constexpr,
-    IS_TRAINING: tl.constexpr,
-    HAS_WEIGHT: tl.constexpr,
-    HAS_BIAS: tl.constexpr,
-    HAS_RUNNING_STATS: tl.constexpr,
-    RETURN_STATS: tl.constexpr,
-):
-    c = tl.program_id(0)
-    M = N * S
-
-    stride_gap = S * (C - 1)
-    base_x_ptr = x_ptr + c * S
-    base_y_ptr = y_ptr + c * S
-
-    if IS_TRAINING:
-        sum_x = 0.0
-        sum_x2 = 0.0
-
-        for i_offset in range(0, M, BLOCK_SIZE):
-            i = i_offset + tl.arange(0, BLOCK_SIZE)
-            mask = i < M
-            mem_ptrs = base_x_ptr + i + (i // S) * stride_gap
-            x = tl.load(mem_ptrs, mask=mask, other=0.0).to(tl.float32)
-            sum_x += tl.sum(x, axis=0)
-            sum_x2 += tl.sum(x * x, axis=0)
-
-        mean = sum_x / M
-        var = (sum_x2 / M) - (mean * mean)
-        var = tl.maximum(var, 0.0)
-        rstd = 1.0 / tl.sqrt(var + eps)
-
-        if RETURN_STATS:
-            tl.store(saved_mean_ptr + c, mean)
-            tl.store(saved_inv_var_ptr + c, rstd)
-
-        if HAS_RUNNING_STATS:
-            rm = tl.load(mean_ptr + c).to(tl.float32)
-            rv = tl.load(var_ptr + c).to(tl.float32)
-            unbiased_var = var * (M / (M - 1)) if M > 1 else var
-            new_rm = rm * (1.0 - momentum) + mean * momentum
-            new_rv = rv * (1.0 - momentum) + unbiased_var * momentum
-            if RETURN_STATS:
-                tl.store(next_running_mean_ptr + c, new_rm)
-                tl.store(next_running_var_ptr + c, new_rv)
-            else:
-                tl.store(mean_ptr + c, new_rm.to(mean_ptr.dtype.element_ty))
-                tl.store(var_ptr + c, new_rv.to(var_ptr.dtype.element_ty))
-    else:
-        mean = tl.load(mean_ptr + c).to(tl.float32)
-        var = tl.load(var_ptr + c).to(tl.float32)
-        rstd = 1.0 / tl.sqrt(var + eps)
-
-    weight = tl.load(weight_ptr + c).to(tl.float32) if HAS_WEIGHT else 1.0
-    bias = tl.load(bias_ptr + c).to(tl.float32) if HAS_BIAS else 0.0
-
-    for i_offset in range(0, M, BLOCK_SIZE):
-        i = i_offset + tl.arange(0, BLOCK_SIZE)
-        mask = i < M
-        mem_ptrs = base_x_ptr + i + (i // S) * stride_gap
-        x = tl.load(mem_ptrs, mask=mask).to(tl.float32)
-        y = (x - mean) * rstd * weight + bias
-        out_ptrs = base_y_ptr + i + (i // S) * stride_gap
-        tl.store(out_ptrs, y.to(y_ptr.dtype.element_ty), mask=mask)
-
-
-@triton.jit
-def layer_norm_layer_norm_kernel_variant(
-    x_ptr,
-    y_ptr,
-    mean_ptr,
-    rstd_ptr,
-    weight_ptr,
-    bias_ptr,
-    M,
-    eps,
-    N: tl.constexpr,
-    BLOCK_SIZE: tl.constexpr,
-    HAS_WEIGHT: tl.constexpr,
-    HAS_BIAS: tl.constexpr,
-    RETURN_STATS: tl.constexpr,
-):
-    row_idx = tl.program_id(0)
-
-    x_row_ptr = x_ptr + row_idx * N
-    y_row_ptr = y_ptr + row_idx * N
-    inv_n: tl.constexpr = 1.0 / N
-
-    if BLOCK_SIZE >= N:
-        cols = tl.arange(0, BLOCK_SIZE)
-        mask = cols < N
-        x = tl.load(x_row_ptr + cols, mask=mask, other=0.0).to(tl.float32)
-        mean = tl.sum(x, axis=0) * inv_n
-        sum_x2 = tl.sum(x * x, axis=0)
-        var = tl.maximum((sum_x2 * inv_n) - (mean * mean), 0.0)
-        rstd = tl.math.rsqrt(var + eps)
-        if RETURN_STATS:
-            tl.store(mean_ptr + row_idx, mean)
-            tl.store(rstd_ptr + row_idx, rstd)
-        x_hat = (x - mean) * rstd
-        if HAS_WEIGHT:
-            weight = tl.load(weight_ptr + cols, mask=mask, other=0.0).to(
-                tl.float32
-            )
-            x_hat = x_hat * weight
-
-        if HAS_BIAS:
-            bias = tl.load(bias_ptr + cols, mask=mask, other=0.0).to(
-                tl.float32
-            )
-            x_hat = x_hat + bias
-
-        y = x_hat.to(x_ptr.dtype.element_ty)
-        tl.store(y_row_ptr + cols, y, mask=mask)
-    else:
-        sum_x = 0.0
-        sum_x2 = 0.0
-        for offset in range(0, N, BLOCK_SIZE):
-            cols = offset + tl.arange(0, BLOCK_SIZE)
-            mask = cols < N
-            x = tl.load(x_row_ptr + cols, mask=mask, other=0.0).to(tl.float32)
-            sum_x += tl.sum(x, axis=0)
-            sum_x2 += tl.sum(x * x, axis=0)
-
-        mean = sum_x * inv_n
-        var = tl.maximum((sum_x2 * inv_n) - (mean * mean), 0.0)
-        rstd = tl.math.rsqrt(var + eps)
-        if RETURN_STATS:
-            tl.store(mean_ptr + row_idx, mean)
-            tl.store(rstd_ptr + row_idx, rstd)
-
-        for offset in range(0, N, BLOCK_SIZE):
-            cols = offset + tl.arange(0, BLOCK_SIZE)
-            mask = cols < N
-            x = tl.load(x_row_ptr + cols, mask=mask, other=0.0).to(tl.float32)
-            x_hat = (x - mean) * rstd
-            if HAS_WEIGHT:
-                weight = tl.load(weight_ptr + cols, mask=mask, other=0.0).to(
-                    tl.float32
-                )
-                x_hat = x_hat * weight
-            if HAS_BIAS:
-                bias = tl.load(bias_ptr + cols, mask=mask, other=0.0).to(
-                    tl.float32
-                )
-                x_hat = x_hat + bias
-            y = x_hat.to(x_ptr.dtype.element_ty)
-            tl.store(y_row_ptr + cols, y, mask=mask)
-
-
-@triton.jit
-def rms_norm_rms_norm_kernel_variant(
-    x_ptr,
-    y_ptr,
-    weight_ptr,
-    bias_ptr,
-    rstd_ptr,
-    M,
-    N,
-    eps,
-    BLOCK_SIZE: tl.constexpr,
-    HAS_WEIGHT: tl.constexpr,
-    HAS_BIAS: tl.constexpr,
-    RETURN_STATS: tl.constexpr,
-):
-    row_idx = tl.program_id(0)
-
-    x_row_ptr = x_ptr + row_idx * N
-    y_row_ptr = y_ptr + row_idx * N
-
-    sum_squares = 0.0
-    for offset in range(0, N, BLOCK_SIZE):
-        cols = offset + tl.arange(0, BLOCK_SIZE)
-        mask = cols < N
-
-        x = tl.load(x_row_ptr + cols, mask=mask, other=0.0).to(tl.float32)
-        sum_squares += tl.sum(x * x, axis=0)
-
-    rrms = tl.math.rsqrt((sum_squares / N) + eps)
-    if RETURN_STATS:
-        tl.store(rstd_ptr + row_idx, rrms)
-
-    for offset in range(0, N, BLOCK_SIZE):
-        cols = offset + tl.arange(0, BLOCK_SIZE)
-        mask = cols < N
-
-        x = tl.load(x_row_ptr + cols, mask=mask, other=0.0).to(tl.float32)
-        x_hat = x * rrms
-
-        if HAS_WEIGHT:
-            weight = tl.load(weight_ptr + cols, mask=mask, other=0.0).to(
-                tl.float32
-            )
-            x_hat = x_hat * weight
-
-        if HAS_BIAS:
-            bias = tl.load(bias_ptr + cols, mask=mask, other=0.0).to(
-                tl.float32
-            )
-            x_hat = x_hat + bias
-
-        y = x_hat.to(x_ptr.dtype.element_ty)
-        tl.store(y_row_ptr + cols, y, mask=mask)
-
-
-@triton.jit
-def _hadamard_sign(cols, k: tl.constexpr):
-    bits = cols & k
-    parity = (
-        (bits & 1) ^ ((bits >> 1) & 1) ^ ((bits >> 2) & 1) ^ ((bits >> 3) & 1)
-    )
-    return tl.where(parity == 0, 1.0, -1.0)
-
-
-@triton.jit
-def _rmsnorm_rht_rows_kernel(
-    x_ptr,
-    w_ptr,
-    o_ptr,
-    row_amax_ptr,
-    eps,
-    N: tl.constexpr,
-    BLOCK_N: tl.constexpr,
-):
-    row = tl.program_id(0)
-    cols = tl.arange(0, BLOCK_N)
-    x_row = x_ptr + row * N
-    o_row = o_ptr + row * N
-
-    sum_squares = 0.0
-    for start in range(0, N, BLOCK_N):
-        offsets = start + cols
-        mask = offsets < N
-        x = tl.load(x_row + offsets, mask=mask, other=0.0).to(tl.float32)
-        sum_squares += tl.sum(x * x, axis=0)
-
-    rrms = tl.rsqrt(sum_squares / N + eps)
-    max_abs = 0.0
-
-    for start in range(0, N, BLOCK_N):
-        offsets = start + cols
-        mask = offsets < N
-        had_cols = offsets & 15
-        group_base = offsets - had_cols
-        acc = tl.zeros((BLOCK_N,), dtype=tl.float32)
-
-        for k in tl.static_range(0, 16):
-            source_cols = group_base + k
-            x = tl.load(x_row + source_cols, mask=mask, other=0.0).to(
-                tl.float32
-            )
-            w = tl.load(w_ptr + source_cols, mask=mask, other=0.0).to(
-                tl.float32
-            )
-            sign = _hadamard_sign(had_cols, k)
-            acc += x * rrms * w * sign
-
-        out = acc * 0.25
-        max_abs = tl.maximum(max_abs, tl.max(tl.abs(out), axis=0))
-        tl.store(o_row + offsets, out.to(o_ptr.dtype.element_ty), mask=mask)
-
-    tl.store(row_amax_ptr + row, max_abs)
-
-
-@triton.jit
-def _rows_to_cta_amax_kernel(
-    row_amax_ptr,
-    amax_ptr,
-    ROWS_PER_CTA: tl.constexpr,
-    BLOCK_R: tl.constexpr,
-):
-    cta = tl.program_id(0)
-    offsets = cta * ROWS_PER_CTA + tl.arange(0, BLOCK_R)
-    mask = tl.arange(0, BLOCK_R) < ROWS_PER_CTA
-    values = tl.load(row_amax_ptr + offsets, mask=mask, other=0.0)
-    tl.store(amax_ptr + cta, tl.max(values, axis=0))

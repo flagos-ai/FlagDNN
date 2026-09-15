@@ -42,6 +42,8 @@ struct LoweredOperation {
     const OperationSpec& operation);
 [[nodiscard]] LoweredOperation lower_reduction(
     const OperationSpec& operation);
+[[nodiscard]] LoweredOperation lower_moe_matmul(const OperationSpec& operation);
+[[nodiscard]] LoweredOperation lower_matmul_fp8(const OperationSpec& operation);
 [[nodiscard]] LoweredOperation lower_matmul(
     const OperationSpec& operation);
 [[nodiscard]] LoweredOperation lower_sdpa(
@@ -52,6 +54,9 @@ struct LoweredOperation {
     const OperationSpec& operation);
 [[nodiscard]] LoweredOperation lower_sdpa_fp8_backward(
     const OperationSpec& operation);
+[[nodiscard]] LoweredOperation lower_concatenate(
+    const OperationSpec& operation);
+[[nodiscard]] LoweredOperation lower_gen_index(const OperationSpec& operation);
 [[nodiscard]] LoweredOperation lower_reshape(
     const OperationSpec& operation);
 [[nodiscard]] LoweredOperation lower_transpose(
@@ -64,6 +69,16 @@ struct LoweredOperation {
     const OperationSpec& operation, bool data_gradient);
 [[nodiscard]] LoweredOperation lower_normalization_forward(
     const OperationSpec& operation, bool rmsnorm);
+[[nodiscard]] LoweredOperation lower_extended_normalization(
+    const OperationSpec& operation);
+[[nodiscard]] LoweredOperation lower_bn_finalize(
+    const OperationSpec& operation);
+[[nodiscard]] LoweredOperation lower_rope(const OperationSpec& operation);
+[[nodiscard]] LoweredOperation lower_rng(const OperationSpec& operation);
+[[nodiscard]] LoweredOperation lower_resample(const OperationSpec& operation);
+[[nodiscard]] LoweredOperation lower_causal_conv1d(
+    const OperationSpec& operation);
+[[nodiscard]] LoweredOperation lower_genstats(const OperationSpec& operation);
 [[nodiscard]] LoweredOperation lower_batchnorm(
     const OperationSpec& operation);
 [[nodiscard]] LoweredOperation lower_batchnorm_inference(

@@ -352,18 +352,23 @@ void warmup(BenchmarkExecutable &executable,
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
-  case FLAGDNN_DATA_FLOAT32:
-    return "fp32";
-  case FLAGDNN_DATA_FLOAT16:
-    return "fp16";
-  case FLAGDNN_DATA_BFLOAT16:
-    return "bf16";
-  case FLAGDNN_DATA_BOOLEAN:
-    return "bool";
-  case FLAGDNN_DATA_FP8_E4M3:
-    return "fp8_e4m3";
-  case FLAGDNN_DATA_FP8_E5M2:
-    return "fp8_e5m2";
+    case FLAGDNN_DATA_INT32:
+      return "int32";
+
+    case FLAGDNN_DATA_FP8_E8M0:
+      return "fp8_e8m0";
+    case FLAGDNN_DATA_FLOAT32:
+      return "fp32";
+    case FLAGDNN_DATA_FLOAT16:
+      return "fp16";
+    case FLAGDNN_DATA_BFLOAT16:
+      return "bf16";
+    case FLAGDNN_DATA_BOOLEAN:
+      return "bool";
+    case FLAGDNN_DATA_FP8_E4M3:
+      return "fp8_e4m3";
+    case FLAGDNN_DATA_FP8_E5M2:
+      return "fp8_e5m2";
   }
   return "unknown";
 }

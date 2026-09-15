@@ -28,17 +28,6 @@ std::string mode_name(flagdnnReductionMode_t mode) {
   throw std::invalid_argument("Ascend reduction mode is invalid");
 }
 
-std::size_t expected_common_count(flagdnnReductionMode_t mode) {
-  switch (mode) {
-    case FLAGDNN_REDUCTION_ADD:
-      return 11;
-    case FLAGDNN_REDUCTION_AVG:
-    case FLAGDNN_REDUCTION_MUL:
-      return 6;
-  }
-  throw std::invalid_argument("Ascend reduction mode is invalid");
-}
-
 ReductionTestCase make_special_case(flagdnnReductionMode_t mode) {
   ReductionTestCase result;
   result.name = "reduction_" + mode_name(mode) +
@@ -102,21 +91,21 @@ std::size_t row_major_index(
 std::vector<ReductionTestCase> make_ascend_reduction_cases(
     std::span<const ReductionTestCase> common_cases,
     flagdnnReductionMode_t mode) {
-  if (common_cases.size() != 23) {
+  if (common_cases.empty()) {
     throw std::invalid_argument(
-        "Ascend reduction common catalog must contain 23 cases");
+        "Ascend reduction common catalog must contain cases");
   }
   std::vector<ReductionTestCase> result;
-  result.reserve(expected_common_count(mode) + 1);
+  result.reserve(common_cases.size() + 1);
   for (const ReductionTestCase& test_case : common_cases) {
     validate_reduction_case(test_case);
     if (test_case.mode == mode) {
       result.push_back(test_case);
     }
   }
-  if (result.size() != expected_common_count(mode)) {
+  if (result.empty()) {
     throw std::invalid_argument(
-        "Ascend reduction common catalog mode count is invalid");
+        "Ascend reduction common catalog does not contain the requested mode");
   }
   result.push_back(make_special_case(mode));
   return result;

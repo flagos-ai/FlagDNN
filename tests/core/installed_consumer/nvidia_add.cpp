@@ -1,10 +1,8 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
-#include <flagdnn/flagdnn.hpp>
-#include <flagdnn_frontend.h>
-
 #include <cuda.h>
-
+#include <cudnn_frontend.h>
+#include <flagdnn_frontend.h>
 #include <unistd.h>
 
 #include <array>
@@ -12,10 +10,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <flagdnn/flagdnn.hpp>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -29,24 +29,40 @@ void check_cuda(CUresult status, std::string_view operation) {
   const char* detail = nullptr;
   (void)cuGetErrorString(status, &detail);
   throw std::runtime_error(
-      std::string(operation) + " failed: " +
-      (detail == nullptr ? "unknown CUDA Driver error" : detail));
+      std::string(operation) +
+      " failed: " + (detail == nullptr ? "unknown CUDA Driver error" : detail));
 }
 
 void check_frontend(fe::error_t status, std::string_view operation) {
   if (status.is_bad()) {
-    throw std::runtime_error(
-        std::string(operation) + " failed: " + status.get_message());
+    throw std::runtime_error(std::string(operation) +
+                             " failed: " + status.get_message());
   }
 }
+
+namespace cfe = ::cudnn_frontend;
+void check_cudnn(cudnnStatus_t status) {
+  if (status != CUDNN_STATUS_SUCCESS)
+    throw std::runtime_error(cudnnGetErrorString(status));
+}
+void check_cudnn_graph(cfe::error_t status) {
+  if (status.is_bad()) throw std::runtime_error(status.get_message());
+}
+class CudnnHandle {
+ public:
+  CudnnHandle() { check_cudnn(cudnnCreate(&value)); }
+  ~CudnnHandle() { (void)cudnnDestroy(value); }
+  CudnnHandle(const CudnnHandle&) = delete;
+  CudnnHandle& operator=(const CudnnHandle&) = delete;
+  cudnnHandle_t value = nullptr;
+};
 
 class TemporaryCache {
  public:
   TemporaryCache() {
-    std::string pattern =
-        (std::filesystem::temp_directory_path() /
-         "flagdnn-installed-add-XXXXXX")
-            .string();
+    std::string pattern = (std::filesystem::temp_directory_path() /
+                           "flagdnn-installed-add-XXXXXX")
+                              .string();
     std::vector<char> writable(pattern.begin(), pattern.end());
     writable.push_back('\0');
     char* created = mkdtemp(writable.data());
@@ -155,8 +171,7 @@ class DeviceBuffer {
   std::size_t bytes_ = 0;
 };
 
-fe::graph::Graph::Tensor make_tensor(fe::graph::Graph& graph,
-                                     const char* name,
+fe::graph::Graph::Tensor make_tensor(fe::graph::Graph& graph, const char* name,
                                      std::int64_t uid) {
   return graph.tensor(fe::graph::Tensor_attributes()
                           .set_name(name)
@@ -166,7 +181,7 @@ fe::graph::Graph::Tensor make_tensor(fe::graph::Graph& graph,
                           .set_stride({1}));
 }
 
-void require_jit_autotune_artifacts(const std::filesystem::path& cache) {
+void require_autotune_artifacts(const std::filesystem::path& cache) {
   std::size_t manifests = 0;
   std::size_t selections = 0;
   std::size_t cubins = 0;
@@ -177,14 +192,13 @@ void require_jit_autotune_artifacts(const std::filesystem::path& cache) {
     }
     const std::string filename = entry.path().filename().string();
     manifests += filename == "manifest.json" ? 1U : 0U;
-    selections += filename.starts_with(".flagdnn-autotune-v1-stage-")
-                      ? 1U
-                      : 0U;
+    selections += filename.starts_with(".flagdnn-autotune-v1-stage-") ? 1U : 0U;
     cubins += entry.path().extension() == ".cubin" ? 1U : 0U;
   }
   if (manifests != 1 || selections != 1 || cubins != 0) {
     throw std::runtime_error(
-        "installed Add did not use one libtriton_jit artifact and autotune selection");
+        "installed Add expected one manifest, one autotune selection, and "
+        "zero external cubins");
   }
 }
 
@@ -205,13 +219,12 @@ int main() {
         .set_autotune(true);
     const auto left = make_tensor(graph, "left", 1);
     const auto right = make_tensor(graph, "right", 2);
-    auto output = graph.pointwise(
-        left,
-        right,
-        fe::graph::Pointwise_attributes()
-            .set_name("add")
-            .set_mode(fe::PointwiseMode_t::ADD)
-            .set_compute_data_type(fe::DataType_t::FLOAT));
+    auto output =
+        graph.pointwise(left, right,
+                        fe::graph::Pointwise_attributes()
+                            .set_name("add")
+                            .set_mode(fe::PointwiseMode_t::ADD)
+                            .set_compute_data_type(fe::DataType_t::FLOAT));
     output->set_name("output")
         .set_uid(3)
         .set_data_type(fe::DataType_t::FLOAT)
@@ -220,7 +233,7 @@ int main() {
         .set_output(true);
     check_frontend(graph.build(handle, {fe::HeurMode_t::A}),
                    "installed Add graph build");
-    require_jit_autotune_artifacts(cache.path());
+    require_autotune_artifacts(cache.path());
 
     std::array<float, 256> host_left{};
     std::array<float, 256> host_right{};
@@ -245,26 +258,60 @@ int main() {
         flagdnnBinding_t{1, device_left.opaque()},
         flagdnnBinding_t{2, device_right.opaque()},
         flagdnnBinding_t{3, device_output.opaque()}};
-    check_frontend(graph.execute(handle,
-                                 bindings,
-                                 workspace.opaque(),
+    check_frontend(graph.execute(handle, bindings, workspace.opaque(),
                                  static_cast<std::size_t>(workspace_size),
                                  stream.opaque()),
                    "installed Add execute");
     device_output.copy_to(host_output.data(), stream.get());
     check_cuda(cuStreamSynchronize(stream.get()), "cuStreamSynchronize");
 
+    CudnnHandle cudnn;
+    check_cudnn(cudnnSetStream(cudnn.value, stream.get()));
+    cfe::graph::Graph reference;
+    reference.set_io_data_type(cfe::DataType_t::FLOAT)
+        .set_intermediate_data_type(cfe::DataType_t::FLOAT)
+        .set_compute_data_type(cfe::DataType_t::FLOAT);
+    const auto input_tensor = [&](std::int64_t uid) {
+      return reference.tensor(cfe::graph::Tensor_attributes()
+                                  .set_uid(uid)
+                                  .set_data_type(cfe::DataType_t::FLOAT)
+                                  .set_dim({1, 256, 1, 1})
+                                  .set_stride({256, 1, 256, 256}));
+    };
+    const auto reference_left = input_tensor(1),
+               reference_right = input_tensor(2);
+    auto reference_output = reference.pointwise(
+        reference_left, reference_right,
+        cfe::graph::Pointwise_attributes().set_mode(cfe::PointwiseMode_t::ADD));
+    reference_output->set_uid(3)
+        .set_data_type(cfe::DataType_t::FLOAT)
+        .set_dim({1, 256, 1, 1})
+        .set_stride({256, 1, 256, 256})
+        .set_output(true);
+    check_cudnn_graph(reference.build(
+        cudnn.value, {cfe::HeurMode_t::A, cfe::HeurMode_t::FALLBACK}));
+    DeviceBuffer reference_device_output(tensor_bytes);
+    DeviceBuffer reference_workspace(reference.get_workspace_size());
+    std::unordered_map<std::int64_t, void*> reference_bindings{
+        {1, device_left.opaque()},
+        {2, device_right.opaque()},
+        {3, reference_device_output.opaque()}};
+    check_cudnn_graph(reference.execute(cudnn.value, reference_bindings,
+                                        reference_workspace.opaque()));
+    std::array<float, 256> expected_output{};
+    reference_device_output.copy_to(expected_output.data(), stream.get());
+    check_cuda(cuStreamSynchronize(stream.get()), "cuDNN Add synchronize");
     for (std::size_t index = 0; index < host_output.size(); ++index) {
-      const float expected = host_left[index] + host_right[index];
-      if (std::abs(host_output[index] - expected) > 1.0e-6F) {
-        throw std::runtime_error(
-            "installed Add output differs at index " +
-            std::to_string(index));
+      const float expected = expected_output[index];
+      if (!std::isfinite(host_output[index] - expected) ||
+          std::abs(host_output[index] - expected) > 1.0e-6F) {
+        throw std::runtime_error("installed Add output differs at index " +
+                                 std::to_string(index));
       }
     }
 
-    std::cout << "PASS installed FlagDNN C++ Graph Add -> libtriton_jit -> "
-                 "autotune -> NVIDIA GPU\n";
+    std::cout << "PASS installed FlagDNN C++ Graph Add -> libtriton_jit"
+              << " -> autotune -> NVIDIA GPU vs cuDNN Graph\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "FAIL: " << error.what() << '\n';

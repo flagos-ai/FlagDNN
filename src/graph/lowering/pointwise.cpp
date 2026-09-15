@@ -5,6 +5,7 @@
 #include "graph/lowering/helpers.hpp"
 
 #include <cstdint>
+#include <cmath>
 #include <string_view>
 #include <vector>
 
@@ -25,6 +26,17 @@ bool is_logical_binary_mode(flagdnnPointwiseMode_t mode) {
          mode == FLAGDNN_POINTWISE_LOGICAL_OR;
 }
 
+bool is_activation_backward_mode(flagdnnPointwiseMode_t mode) {
+  return mode == FLAGDNN_POINTWISE_SIGMOID_BWD ||
+         mode == FLAGDNN_POINTWISE_RELU_BWD ||
+         mode == FLAGDNN_POINTWISE_TANH_BWD ||
+         mode == FLAGDNN_POINTWISE_ELU_BWD ||
+         mode == FLAGDNN_POINTWISE_GELU_BWD ||
+         mode == FLAGDNN_POINTWISE_SOFTPLUS_BWD ||
+         mode == FLAGDNN_POINTWISE_SWISH_BWD ||
+         mode == FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD;
+}
+
 LoweredOperation lower_binary_pointwise(
     const OperationSpec& operation) {
   require_port_count(operation, 2, 1);
@@ -41,15 +53,15 @@ LoweredOperation lower_binary_pointwise(
       operation.operation == FLAGDNN_OPERATION_POINTWISE
           ? pointwise_mode(operation)
           : FLAGDNN_POINTWISE_ADD;
-  if (mode == FLAGDNN_POINTWISE_SIGMOID_BWD &&
+  if (is_activation_backward_mode(mode) &&
       (left.dimensions != right.dimensions ||
        output.dimensions != left.dimensions)) {
     throw ApiError(FLAGDNN_STATUS_INVALID_VALUE,
-                   "sigmoid backward tensors must have equal shapes");
+                   "activation backward tensors must have equal shapes");
   }
   if (is_comparison_mode(mode)) {
-    require_floating_data_type(
-        left, "comparison pointwise inputs must use a floating data type");
+    require_numeric_data_type(
+        left, "comparison inputs must use floating or INT32 data type");
     require_boolean_data_type(
         output, "comparison pointwise output data type must be BOOLEAN");
   } else if (is_logical_binary_mode(mode)) {
@@ -58,8 +70,18 @@ LoweredOperation lower_binary_pointwise(
     require_boolean_data_type(
         output, "logical pointwise output must use BOOLEAN data type");
   } else {
-    require_floating_data_type(
-        left, "numeric binary pointwise tensors must use a floating data type");
+    require_numeric_data_type(
+        left, "binary pointwise tensors must use floating or INT32 data type");
+    if (is_activation_backward_mode(mode)) {
+      require_floating_data_type(left, "activation gradients must be floating");
+    }
+    const double alpha = real_attribute(operation, "alpha");
+    if (left.data_type == FLAGDNN_DATA_INT32 &&
+        (std::trunc(alpha) != alpha || alpha < -2147483648.0 ||
+         alpha > 2147483647.0)) {
+      throw ApiError(FLAGDNN_STATUS_INVALID_VALUE,
+                     "INT32 pointwise alpha must be representable as INT32");
+    }
     require_same_data_type(
         left, output, "binary pointwise input/output data types must match");
   }
@@ -70,10 +92,22 @@ LoweredOperation lower_binary_pointwise(
                    "binary pointwise output shape does not match "
                    "broadcast result");
   }
-  return {{{"n_elements", output.element_count()},
-           {"pointwise_mode", static_cast<std::int64_t>(mode)}},
-          {{"alpha", real_attribute(operation, "alpha")}},
-          {}};
+  LoweredOperation result{{{"n_elements", output.element_count()},
+                           {"pointwise_mode", static_cast<std::int64_t>(mode)}},
+                          {{"alpha", real_attribute(operation, "alpha")}},
+                          {}};
+  if (is_activation_backward_mode(mode)) {
+    result.parameters.emplace_back(
+        "has_upper_clip",
+        boolean_attribute(operation, "relu_upper_clip_set") ? 1 : 0);
+    for (const auto name :
+         {"relu_lower_clip", "relu_upper_clip", "relu_lower_clip_slope",
+          "swish_beta", "elu_alpha", "softplus_beta"}) {
+      result.real_parameters.emplace_back(name,
+                                          real_attribute(operation, name));
+    }
+  }
+  return result;
 }
 
 LoweredOperation lower_ternary_pointwise(
@@ -88,8 +122,8 @@ LoweredOperation lower_ternary_pointwise(
   require_non_overlapping_tensor(b, "B");
   require_non_overlapping_tensor(t, "T");
   require_non_overlapping_tensor(output, "output");
-  require_floating_data_type(
-      a, "ternary pointwise A/B/output tensors must be floating");
+  require_numeric_data_type(
+      a, "ternary pointwise A/B/output must be floating or INT32");
   require_same_data_type(
       a, b, "ternary pointwise A/B data types must match");
   require_same_data_type(
@@ -151,6 +185,20 @@ std::string_view pointwise_operation_name(flagdnnPointwiseMode_t mode) {
       return "logical_and";
     case FLAGDNN_POINTWISE_LOGICAL_OR:
       return "logical_or";
+    case FLAGDNN_POINTWISE_RELU_BWD:
+      return "relu_backward";
+    case FLAGDNN_POINTWISE_TANH_BWD:
+      return "tanh_backward";
+    case FLAGDNN_POINTWISE_ELU_BWD:
+      return "elu_backward";
+    case FLAGDNN_POINTWISE_GELU_BWD:
+      return "gelu_backward";
+    case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
+      return "softplus_backward";
+    case FLAGDNN_POINTWISE_SWISH_BWD:
+      return "swish_backward";
+    case FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD:
+      return "gelu_approx_tanh_backward";
     case FLAGDNN_POINTWISE_SIGMOID_BWD:
       return "sigmoid_backward";
     case FLAGDNN_POINTWISE_BINARY_SELECT:
@@ -241,7 +289,7 @@ LoweredOperation lower_unary_pointwise(const OperationSpec& operation) {
   if (mode == FLAGDNN_POINTWISE_LOGICAL_NOT) {
     require_boolean_data_type(
         input, "logical NOT input/output data types must be BOOLEAN");
-  } else {
+  } else if (mode != FLAGDNN_POINTWISE_IDENTITY) {
     require_floating_data_type(
         input, "numeric unary pointwise tensors must use a floating data type");
   }
@@ -278,6 +326,13 @@ LoweredOperation lower_pointwise(const OperationSpec& operation) {
     case FLAGDNN_POINTWISE_CMP_LE:
     case FLAGDNN_POINTWISE_LOGICAL_AND:
     case FLAGDNN_POINTWISE_LOGICAL_OR:
+    case FLAGDNN_POINTWISE_RELU_BWD:
+    case FLAGDNN_POINTWISE_TANH_BWD:
+    case FLAGDNN_POINTWISE_ELU_BWD:
+    case FLAGDNN_POINTWISE_GELU_BWD:
+    case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
+    case FLAGDNN_POINTWISE_SWISH_BWD:
+    case FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD:
     case FLAGDNN_POINTWISE_SIGMOID_BWD:
       return lower_binary_pointwise(operation);
     case FLAGDNN_POINTWISE_BINARY_SELECT:

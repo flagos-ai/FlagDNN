@@ -121,7 +121,8 @@ LoweredOperation lower_convolution_fprop(
     throw ApiError(FLAGDNN_STATUS_INVALID_VALUE,
                    "convolution FProp output shape is incorrect");
   }
-  return {{{"spatial_rank", spatial_rank_value},
+  return {{{"input_precision", requested_input_precision(operation, input)},
+           {"spatial_rank", spatial_rank_value},
            {"groups", groups},
            {"n_outputs", output.element_count()}},
           {},
@@ -238,7 +239,8 @@ LoweredOperation lower_convolution_backward(
                    "convolution backward loss shape is incorrect");
   }
 
-  return {{{"spatial_rank", spatial_rank_value},
+  return {{{"input_precision", requested_input_precision(operation, loss)},
+           {"spatial_rank", spatial_rank_value},
            {"groups", groups},
            {"convolution_mode", convolution_mode},
            {"n_outputs", output.element_count()}},
@@ -247,6 +249,49 @@ LoweredOperation lower_convolution_backward(
            {"post_padding", post_padding},
            {"stride", stride},
            {"dilation", dilation}}};
+}
+
+LoweredOperation lower_causal_conv1d(const OperationSpec& operation) {
+  const auto bias = integer_attribute(operation, "has_bias"),
+             activation = integer_attribute(operation, "activation");
+  const auto dilation = integer_attribute(operation, "dilation");
+  if ((bias != 0 && bias != 1) || (activation != 0 && activation != 1) ||
+      dilation <= 0)
+    throw ApiError(FLAGDNN_STATUS_INVALID_VALUE,
+                   "causal_conv1d attributes are invalid");
+  require_port_count(operation, bias ? 3 : 2, 1);
+  const auto& x = require_port(operation.inputs, "input", "input");
+  const auto& weight = require_port(operation.inputs, "weight", "input");
+  const auto& output = require_port(operation.outputs, "output", "output");
+  for (const auto& port : operation.inputs) {
+    require_non_overlapping_tensor(port.tensor, "causal_conv1d input");
+    require_same_data_type(x, port.tensor,
+                           "causal_conv1d input types must match");
+  }
+  require_non_overlapping_tensor(output, "causal_conv1d output");
+  require_floating_data_type(x, "causal_conv1d requires floating input");
+  require_same_data_type(x, output,
+                         "causal_conv1d output type must match input");
+  if (x.dimensions.size() != 3 || output.dimensions != x.dimensions ||
+      weight.dimensions.size() != 2 || weight.dimensions[0] != x.dimensions[1])
+    throw ApiError(
+        FLAGDNN_STATUS_INVALID_VALUE,
+        "causal_conv1d requires X[B,C,L], weight[C,K] and matching output");
+  if (bias) {
+    const auto& tensor = require_port(operation.inputs, "bias", "input");
+    if (tensor.dimensions != std::vector<std::int64_t>{x.dimensions[1]})
+      throw ApiError(FLAGDNN_STATUS_INVALID_VALUE,
+                     "causal_conv1d bias requires shape [C]");
+  }
+  (void)checked_multiply(weight.dimensions[1] - 1, dilation,
+                         "causal_conv1d effective filter size overflows");
+  return {{{"has_bias", bias},
+           {"activation", activation},
+           {"dilation", dilation},
+           {"input_precision", requested_input_precision(operation, x)},
+           {"n_elements", x.element_count()}},
+          {},
+          {}};
 }
 
 }  // namespace flagdnn::native

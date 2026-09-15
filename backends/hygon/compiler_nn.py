@@ -620,10 +620,7 @@ class GridSpec:
         elif self.kind == "conv_private_fprop_standard_3x3":
             rows, channels, batches = self.extents
             result = (
-                rows
-                * _ceil_div(
-                    channels, _meta_int(constants, "BLOCK_OC_S")
-                ),
+                rows * _ceil_div(channels, _meta_int(constants, "BLOCK_OC_S")),
                 batches,
                 1,
             )
@@ -671,9 +668,7 @@ class GridSpec:
             out_channels, reduction, splits = self.extents
             result = (
                 _ceil_div(out_channels, _meta_int(constants, "BLOCK_OC"))
-                * _ceil_div(
-                    reduction, _meta_int(constants, "BLOCK_CI_K")
-                ),
+                * _ceil_div(reduction, _meta_int(constants, "BLOCK_CI_K")),
                 splits,
                 1,
             )
@@ -2323,9 +2318,7 @@ def _private_fprop_plan(node: Mapping[str, Any]) -> NodePlan | None:
             },
             tuning=CONV_FPROP_TUNING,
             tuning_key_value=int(d["n_outputs"]),
-            grid_spec=GridSpec(
-                "conv_private_fprop_rows", (oh, ow, c_out, n)
-            ),
+            grid_spec=GridSpec("conv_private_fprop_rows", (oh, ow, c_out, n)),
             num_warps=4,
             num_stages=1,
         )
@@ -2339,7 +2332,9 @@ def _private_fprop_plan(node: Mapping[str, Any]) -> NodePlan | None:
     reduction_extent = cin_per_group * kh * kw
 
     columns = _private_workspace(
-        "fprop_columns", str(d["data_type"]), (n, reduction_extent, output_area)
+        "fprop_columns",
+        str(d["data_type"]),
+        (n, reduction_extent, output_area),
     )
     # Bound provider-local memory so unusual graphs cannot turn this
     # optimization into an unbounded allocation policy.
@@ -2670,9 +2665,7 @@ def _private_dgrad_plan(node: Mapping[str, Any]) -> NodePlan | None:
                 stage = _make_stage(
                     operation=operation,
                     stage_name=stage_name,
-                    function_name=(
-                        "hygon_conv_dgrad2d_stride2_parity_kernel"
-                    ),
+                    function_name=("hygon_conv_dgrad2d_stride2_parity_kernel"),
                     pointer_arguments=(
                         _tensor_pointer(node, "dy_ptr", "dy"),
                         _tensor_pointer(node, "w_ptr", "w"),
@@ -2845,9 +2838,7 @@ def _private_dgrad_plan(node: Mapping[str, Any]) -> NodePlan | None:
             },
             tuning=CONV_DGRAD_EXACT_COL2IM_TUNING,
             tuning_key_value=int(d["n_outputs"]),
-            grid_spec=GridSpec(
-                "conv_private_dgrad_fixed_2d", (xh, n * c_in)
-            ),
+            grid_spec=GridSpec("conv_private_dgrad_fixed_2d", (xh, n * c_in)),
             dependencies=("dgrad_s1_exact_gemm",),
             num_warps=2,
             num_stages=1,
@@ -3012,9 +3003,7 @@ def _private_wgrad_plan(node: Mapping[str, Any]) -> NodePlan | None:
             pointer_arguments=(
                 _tensor_pointer(node, "dy_ptr", "dy"),
                 _tensor_pointer(node, "x_ptr", "x"),
-                _workspace_pointer(
-                    "partial_ptr", "wgrad_partial", "float32"
-                ),
+                _workspace_pointer("partial_ptr", "wgrad_partial", "float32"),
             ),
             constants={
                 "TOTAL_ROWS": total_rows,
@@ -3088,9 +3077,7 @@ def _private_wgrad_plan(node: Mapping[str, Any]) -> NodePlan | None:
             pointer_arguments=(
                 _tensor_pointer(node, "dy_ptr", "dy"),
                 _tensor_pointer(node, "x_ptr", "x"),
-                _workspace_pointer(
-                    "partial_ptr", "wgrad_partial", "float32"
-                ),
+                _workspace_pointer("partial_ptr", "wgrad_partial", "float32"),
             ),
             constants={
                 "OUTPUT_ROWS_PER_SPLIT": oh // num_splits,
@@ -3179,9 +3166,7 @@ def _private_wgrad_plan(node: Mapping[str, Any]) -> NodePlan | None:
             pointer_arguments=(
                 _tensor_pointer(node, "dy_ptr", "dy"),
                 _tensor_pointer(node, "x_ptr", "x"),
-                _workspace_pointer(
-                    "partial_ptr", "wgrad_partial", "float32"
-                ),
+                _workspace_pointer("partial_ptr", "wgrad_partial", "float32"),
             ),
             constants={
                 "OH": oh,
@@ -3262,9 +3247,7 @@ def _private_wgrad_plan(node: Mapping[str, Any]) -> NodePlan | None:
         # gfx936 measurements show that block pointers win for the large
         # ML/X matrices. Keep N/S and tail shapes on the existing row-major
         # kernel so this optimization cannot regress their established path.
-        large_p5_block_ptr = (
-            cin_per_group >= 512 and cout_per_group >= 512
-        )
+        large_p5_block_ptr = cin_per_group >= 512 and cout_per_group >= 512
         columns = _private_workspace(
             "wgrad_rowmajor_columns",
             str(d["data_type"]),
@@ -3411,9 +3394,7 @@ def _private_wgrad_plan(node: Mapping[str, Any]) -> NodePlan | None:
             pointer_arguments=(
                 _tensor_pointer(node, "dy_ptr", "dy"),
                 _tensor_pointer(node, "x_ptr", "x"),
-                _workspace_pointer(
-                    "partial_ptr", "wgrad_partial", "float32"
-                ),
+                _workspace_pointer("partial_ptr", "wgrad_partial", "float32"),
             ),
             constants={
                 "TOTAL_ROWS": total_rows,
@@ -3610,9 +3591,7 @@ def _private_wgrad_plan(node: Mapping[str, Any]) -> NodePlan | None:
             _workspace_pointer(
                 "col_ptr", "wgrad_columns", str(d["data_type"])
             ),
-            _workspace_pointer(
-                "partial_ptr", "wgrad_partial", "float32"
-            ),
+            _workspace_pointer("partial_ptr", "wgrad_partial", "float32"),
         ),
         constants={
             "TOTAL_ROWS": total_rows,
@@ -3732,6 +3711,7 @@ def _normalization_stage(node: Mapping[str, Any]) -> KernelStagePlan:
             "eps": float(d["epsilon"]),
             "BLOCK_SIZE": block,
             "ROWS_PER_PROGRAM": 1,
+            "STATIC_ROWS": 0,
             "HAS_WEIGHT": True,
             "HAS_BIAS": True,
             "RETURN_STATS": True,

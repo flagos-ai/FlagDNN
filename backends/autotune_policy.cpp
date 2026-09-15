@@ -173,12 +173,13 @@ void validate_request(const SelectionRequest& request,
       request.measurement_identity.empty() || request.cache_path.empty()) {
     throw std::invalid_argument("autotune identity and cache path are required");
   }
-  if (request.candidate_ids.size() < 2 ||
-      request.benchmark_milliseconds == 0) {
+  if (request.candidate_ids.empty() ||
+      (request.candidate_ids.size() > 1 &&
+       request.benchmark_milliseconds == 0)) {
     throw std::invalid_argument(
-        "autotune requires at least two candidates and a benchmark budget");
+        "autotune requires candidates and a budget when comparison is needed");
   }
-  if (!warmup || !measure) {
+  if (request.candidate_ids.size() > 1 && (!warmup || !measure)) {
     throw std::invalid_argument("autotune callbacks are required");
   }
   std::unordered_set<std::string> unique_ids;
@@ -230,6 +231,10 @@ SelectionResult select_best_candidate(const SelectionRequest& request,
   validate_request(request, warmup, measure);
   if (const auto cached = find_cached_candidate(request)) {
     return {*cached, true, {}};
+  }
+  if (request.candidate_ids.size() == 1) {
+    write_cached_candidate(request, request.candidate_ids.front());
+    return {0, false, {}};
   }
 
   SelectionResult result;

@@ -826,10 +826,8 @@ int run_benchmark_suite(int argc,
       throw std::invalid_argument("layout benchmark suite has no cases");
     }
     const Operation operation = cases.front().operation;
-    const std::size_t expected_common =
-        operation == Operation::kSlice ? 12U : 15U;
-    if (cases.size() != expected_common ||
-        std::any_of(cases.begin(), cases.end(), [&](const auto& item) {
+
+    if (std::any_of(cases.begin(), cases.end(), [&](const auto& item) {
           return item.operation != operation;
         })) {
       throw std::invalid_argument(
@@ -837,11 +835,6 @@ int run_benchmark_suite(int argc,
     }
     std::vector<BenchmarkCase> ascend_cases(cases.begin(), cases.end());
     ascend_cases.push_back(make_special_case(cases.front()));
-    const std::size_t expected_catalog = expected_common + 1U;
-    if (ascend_cases.size() != expected_catalog) {
-      throw std::logic_error(
-          "Ascend layout benchmark extended catalog count is invalid");
-    }
 
     acl::DevelopmentEnvironment development(
         operation_name(operation) + "-benchmark");
@@ -910,7 +903,7 @@ int run_benchmark_suite(int argc,
     }
     std::cout << coverage.summary() << '\n';
     std::cout << suite_name << ": PASS cases=" << coverage.passed()
-              << " catalog_cases=" << expected_catalog
+              << " catalog_cases=" << ascend_cases.size()
               << " schema_v2_records=" << coverage.passed() * 2U << '\n';
     return 0;
   } catch (const std::exception& error) {

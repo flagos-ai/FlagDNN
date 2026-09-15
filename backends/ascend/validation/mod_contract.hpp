@@ -54,6 +54,10 @@ struct ExactMultipleNeighbors {
 [[nodiscard]] inline float maximum_finite(
     flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      throw std::invalid_argument(
+          "INT32 is not supported by this validation adapter");
+
     case FLAGDNN_DATA_FLOAT32:
       return std::numeric_limits<float>::max();
     case FLAGDNN_DATA_FLOAT16:
@@ -61,6 +65,7 @@ struct ExactMultipleNeighbors {
     case FLAGDNN_DATA_BFLOAT16:
       return std::bit_cast<float>(UINT32_C(0x7f7f0000));
     case FLAGDNN_DATA_BOOLEAN:
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -76,6 +81,10 @@ struct ExactMultipleNeighbors {
 [[nodiscard]] inline float large_nonzero_remainder_value(
     flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      throw std::invalid_argument(
+          "INT32 is not supported by this validation adapter");
+
     case FLAGDNN_DATA_FLOAT32:
       return std::bit_cast<float>(UINT32_C(0x7f7ffffe));
     case FLAGDNN_DATA_FLOAT16:
@@ -83,6 +92,7 @@ struct ExactMultipleNeighbors {
     case FLAGDNN_DATA_BFLOAT16:
       return std::bit_cast<float>(UINT32_C(0x7f7e0000));
     case FLAGDNN_DATA_BOOLEAN:
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -94,6 +104,10 @@ struct ExactMultipleNeighbors {
 [[nodiscard]] inline ExactMultipleNeighbors exact_multiple_neighbors(
     flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      throw std::invalid_argument(
+          "INT32 is not supported by this validation adapter");
+
     case FLAGDNN_DATA_FLOAT32:
       return {std::nextafter(6.0F, 0.0F),
               std::nextafter(6.0F,
@@ -103,6 +117,7 @@ struct ExactMultipleNeighbors {
     case FLAGDNN_DATA_BFLOAT16:
       return {5.96875F, 6.03125F};
     case FLAGDNN_DATA_BOOLEAN:
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;

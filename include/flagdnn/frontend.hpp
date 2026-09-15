@@ -26,6 +26,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <variant>
 
 /*
  * This is the header-only, cuDNN-Frontend-style layer of FlagDNN.  It lowers
@@ -39,6 +40,8 @@ namespace flagdnn_frontend {
 using Handle = flagdnn::Handle;
 using VariantPack = std::unordered_map<std::int64_t, void*>;
 
+enum class MoeGroupedMatmulMode_t { NONE = 0, GATHER = 1, SCATTER = 2 };
+
 enum class DataType_t {
   NOT_SET,
   FLOAT,
@@ -47,6 +50,8 @@ enum class DataType_t {
   BOOLEAN,
   FP8_E4M3,
   FP8_E5M2,
+  INT32,
+  FP8_E8M0,
 };
 
 enum class PointwiseMode_t {
@@ -92,6 +97,13 @@ enum class PointwiseMode_t {
   SOFTPLUS_FWD,
   SWISH_FWD,
   GELU_APPROX_TANH_FWD,
+  RELU_BWD,
+  TANH_BWD,
+  ELU_BWD,
+  GELU_BWD,
+  SOFTPLUS_BWD,
+  SWISH_BWD,
+  GELU_APPROX_TANH_BWD,
 };
 
 enum class ReductionMode_t {
@@ -184,6 +196,31 @@ inline error_t current_exception_as_error() noexcept {
 }
 
 }  // namespace detail
+
+// TF32 is a compute precision for FP32 storage, not a tensor data type.
+enum class InputPrecision_t { DEFAULT = 0, IEEE = 1, TF32 = 2 };
+
+enum class ResampleMode_t {
+  NOT_SET = 0,
+  AVGPOOL_EXCLUDE_PADDING = 1,
+  AVGPOOL_INCLUDE_PADDING = 2,
+  BILINEAR = 3,
+  NEAREST = 4,
+  MAXPOOL = 5
+};
+enum class PaddingMode_t {
+  NOT_SET = 0,
+  EDGE_VAL_PAD = 1,
+  NEG_INF_PAD = 2,
+  ZERO_PAD = 3
+};
+
+enum class RngDistribution_t {
+  NOT_SET = 0,
+  UNIFORM = 1,
+  NORMAL = 2,
+  BERNOULLI = 3
+};
 
 namespace graph {
 
@@ -446,6 +483,13 @@ class Reduction_attributes {
 
 class Conv_fprop_attributes {
  public:
+  Conv_fprop_attributes& set_input_precision(InputPrecision_t value) noexcept {
+    input_precision_ = value;
+    return *this;
+  }
+  InputPrecision_t get_input_precision() const noexcept {
+    return input_precision_;
+  }
   Conv_fprop_attributes& set_name(std::string name) {
     name_ = std::move(name);
     return *this;
@@ -539,6 +583,7 @@ class Conv_fprop_attributes {
   }
 
  private:
+  InputPrecision_t input_precision_ = InputPrecision_t::DEFAULT;
   std::string name_;
   DataType_t compute_data_type_ = DataType_t::NOT_SET;
   std::vector<std::int64_t> pre_padding_;
@@ -552,6 +597,13 @@ class Conv_fprop_attributes {
 
 class Conv_dgrad_attributes {
  public:
+  Conv_dgrad_attributes& set_input_precision(InputPrecision_t value) noexcept {
+    input_precision_ = value;
+    return *this;
+  }
+  InputPrecision_t get_input_precision() const noexcept {
+    return input_precision_;
+  }
   Conv_dgrad_attributes& set_name(std::string name) {
     name_ = std::move(name);
     return *this;
@@ -642,6 +694,7 @@ class Conv_dgrad_attributes {
   }
 
  private:
+  InputPrecision_t input_precision_ = InputPrecision_t::DEFAULT;
   std::string name_;
   DataType_t compute_data_type_ = DataType_t::NOT_SET;
   std::vector<std::int64_t> pre_padding_;
@@ -655,6 +708,13 @@ class Conv_dgrad_attributes {
 
 class Conv_wgrad_attributes {
  public:
+  Conv_wgrad_attributes& set_input_precision(InputPrecision_t value) noexcept {
+    input_precision_ = value;
+    return *this;
+  }
+  InputPrecision_t get_input_precision() const noexcept {
+    return input_precision_;
+  }
   Conv_wgrad_attributes& set_name(std::string name) {
     name_ = std::move(name);
     return *this;
@@ -745,6 +805,7 @@ class Conv_wgrad_attributes {
   }
 
  private:
+  InputPrecision_t input_precision_ = InputPrecision_t::DEFAULT;
   std::string name_;
   DataType_t compute_data_type_ = DataType_t::NOT_SET;
   std::vector<std::int64_t> pre_padding_;
@@ -946,6 +1007,13 @@ class Batchnorm_inference_attributes {
 
 class Matmul_attributes {
  public:
+  Matmul_attributes& set_input_precision(InputPrecision_t value) noexcept {
+    input_precision_ = value;
+    return *this;
+  }
+  InputPrecision_t get_input_precision() const noexcept {
+    return input_precision_;
+  }
   Matmul_attributes& set_name(std::string name) {
     name_ = std::move(name);
     return *this;
@@ -973,9 +1041,456 @@ class Matmul_attributes {
   [[nodiscard]] double get_padding() const noexcept { return padding_; }
 
  private:
+  InputPrecision_t input_precision_ = InputPrecision_t::DEFAULT;
   std::string name_;
   DataType_t compute_data_type_ = DataType_t::NOT_SET;
   double padding_ = 0.0;
+};
+
+template <class Derived>
+class Moe_matmul_attributes {
+ public:
+  Derived& set_name(std::string value) {
+    name_ = std::move(value);
+    return static_cast<Derived&>(*this);
+  }
+  Derived& set_compute_data_type(DataType_t value) {
+    compute_ = value;
+    return static_cast<Derived&>(*this);
+  }
+  const std::string& get_name() const noexcept { return name_; }
+  DataType_t get_compute_data_type() const noexcept { return compute_; }
+
+ private:
+  std::string name_;
+  DataType_t compute_ = DataType_t::FLOAT;
+};
+class Moe_grouped_matmul_attributes
+    : public Moe_matmul_attributes<Moe_grouped_matmul_attributes> {
+ public:
+  Moe_grouped_matmul_attributes& set_mode(MoeGroupedMatmulMode_t value) {
+    mode_ = value;
+    return *this;
+  }
+  Moe_grouped_matmul_attributes& set_top_k(std::int32_t value) {
+    top_k_ = value;
+    return *this;
+  }
+  MoeGroupedMatmulMode_t get_mode() const noexcept { return mode_; }
+  std::int32_t get_top_k() const noexcept { return top_k_; }
+
+ private:
+  MoeGroupedMatmulMode_t mode_ = MoeGroupedMatmulMode_t::NONE;
+  std::int32_t top_k_ = 1;
+};
+class Moe_grouped_matmul_bwd_attributes
+    : public Moe_matmul_attributes<Moe_grouped_matmul_bwd_attributes> {};
+
+class Matmul_fp8_attributes {
+ public:
+  Matmul_fp8_attributes& set_name(std::string value) {
+    name_ = std::move(value);
+    return *this;
+  }
+  Matmul_fp8_attributes& set_compute_data_type(DataType_t value) {
+    compute_ = value;
+    return *this;
+  }
+  Matmul_fp8_attributes& set_descale_a(
+      std::shared_ptr<Tensor_attributes> value) {
+    descale_a_ = std::move(value);
+    return *this;
+  }
+  Matmul_fp8_attributes& set_descale_b(
+      std::shared_ptr<Tensor_attributes> value) {
+    descale_b_ = std::move(value);
+    return *this;
+  }
+  Matmul_fp8_attributes& set_mxfp8(bool value) {
+    mxfp8_ = value;
+    return *this;
+  }
+
+ private:
+  friend class Graph;
+  std::string name_;
+  DataType_t compute_ = DataType_t::FLOAT;
+  std::shared_ptr<Tensor_attributes> descale_a_, descale_b_;
+  bool mxfp8_ = false;
+};
+
+class Concatenate_attributes {
+ public:
+  Concatenate_attributes& set_name(std::string value) {
+    name_ = std::move(value);
+    return *this;
+  }
+  Concatenate_attributes& set_axis(std::int64_t value) {
+    axis_ = value;
+    return *this;
+  }
+  [[nodiscard]] const std::string& get_name() const noexcept { return name_; }
+  [[nodiscard]] std::int64_t get_axis() const noexcept { return axis_; }
+
+ private:
+  std::string name_;
+  std::int64_t axis_ = 0;
+};
+
+// Shared attributes keep normalization APIs consistent without duplicating
+// state.
+template <class Derived>
+class Normalization_backward_attributes {
+ public:
+  Derived& set_name(std::string value) {
+    name_ = std::move(value);
+    return self();
+  }
+  Derived& set_compute_data_type(DataType_t value) {
+    compute_ = value;
+    return self();
+  }
+  Derived& set_saved_mean_and_inv_variance(
+      std::shared_ptr<Tensor_attributes> mean,
+      std::shared_ptr<Tensor_attributes> inverse) {
+    mean_ = std::move(mean);
+    inverse_ = std::move(inverse);
+    return self();
+  }
+  const std::string& get_name() const noexcept { return name_; }
+  DataType_t get_compute_data_type() const noexcept { return compute_; }
+  const std::shared_ptr<Tensor_attributes>& get_mean() const noexcept {
+    return mean_;
+  }
+  const std::shared_ptr<Tensor_attributes>& get_inv_variance() const noexcept {
+    return inverse_;
+  }
+
+ private:
+  Derived& self() { return static_cast<Derived&>(*this); }
+  std::string name_;
+  DataType_t compute_ = DataType_t::NOT_SET;
+  std::shared_ptr<Tensor_attributes> mean_, inverse_;
+};
+class Layernorm_backward_attributes
+    : public Normalization_backward_attributes<Layernorm_backward_attributes> {
+};
+class Batchnorm_backward_attributes
+    : public Normalization_backward_attributes<Batchnorm_backward_attributes> {
+};
+class Instancenorm_backward_attributes
+    : public Normalization_backward_attributes<
+          Instancenorm_backward_attributes> {};
+class AdaLayernorm_backward_attributes
+    : public Normalization_backward_attributes<
+          AdaLayernorm_backward_attributes> {};
+class Rmsnorm_backward_attributes
+    : public Normalization_backward_attributes<Rmsnorm_backward_attributes> {
+ public:
+  Rmsnorm_backward_attributes& has_dbias(bool value) {
+    use_dbias_ = value;
+    return *this;
+  }
+  bool get_has_dbias() const noexcept { return use_dbias_; }
+
+ private:
+  bool use_dbias_ = true;
+};
+template <class Derived>
+class Extended_normalization_attributes {
+ public:
+  Derived& set_name(std::string value) {
+    name_ = std::move(value);
+    return self();
+  }
+  Derived& set_compute_data_type(DataType_t value) {
+    compute_ = value;
+    return self();
+  }
+  Derived& set_forward_phase(NormFwdPhase_t value) {
+    phase_ = value;
+    return self();
+  }
+  Derived& set_epsilon(float value) {
+    epsilon_ = static_cast<double>(value);
+    epsilon_tensor_.reset();
+    return self();
+  }
+  Derived& set_epsilon(std::shared_ptr<Tensor_attributes> value) {
+    epsilon_tensor_ = std::move(value);
+    return self();
+  }
+  const std::string& get_name() const noexcept { return name_; }
+  DataType_t get_compute_data_type() const noexcept { return compute_; }
+  NormFwdPhase_t get_forward_phase() const noexcept { return phase_; }
+  double get_epsilon() const noexcept { return epsilon_; }
+  const std::shared_ptr<Tensor_attributes>& get_epsilon_tensor()
+      const noexcept {
+    return epsilon_tensor_;
+  }
+
+ private:
+  Derived& self() { return static_cast<Derived&>(*this); }
+  std::string name_;
+  DataType_t compute_ = DataType_t::NOT_SET;
+  NormFwdPhase_t phase_ = NormFwdPhase_t::TRAINING;
+  double epsilon_ = 1.0e-5;
+  std::shared_ptr<Tensor_attributes> epsilon_tensor_;
+};
+class Instancenorm_attributes
+    : public Extended_normalization_attributes<Instancenorm_attributes> {};
+class AdaLayernorm_attributes
+    : public Extended_normalization_attributes<AdaLayernorm_attributes> {};
+
+template <class Derived>
+class Rotary_position_attributes {
+ public:
+  Derived& set_name(std::string value) {
+    name_ = std::move(value);
+    return self();
+  }
+  Derived& set_compute_data_type(DataType_t value) {
+    compute_ = value;
+    return self();
+  }
+  Derived& set_output_scale(float value) {
+    scale_ = value;
+    return self();
+  }
+  Derived& set_rope_dim(std::int64_t value) {
+    dimension_ = value;
+    return self();
+  }
+  const std::string& get_name() const noexcept { return name_; }
+  DataType_t get_compute_data_type() const noexcept { return compute_; }
+  float get_output_scale() const noexcept { return scale_; }
+  std::int64_t get_rope_dim() const noexcept { return dimension_; }
+
+ private:
+  Derived& self() { return static_cast<Derived&>(*this); }
+  std::string name_;
+  DataType_t compute_ = DataType_t::NOT_SET;
+  float scale_ = 1.0F;
+  std::int64_t dimension_ = 0;
+};
+class RoPE_attributes : public Rotary_position_attributes<RoPE_attributes> {};
+class RoPE_backward_attributes
+    : public Rotary_position_attributes<RoPE_backward_attributes> {};
+
+class Causal_conv1d_attributes {
+ public:
+  Causal_conv1d_attributes& set_name(std::string value) {
+    name_ = std::move(value);
+    return *this;
+  }
+  Causal_conv1d_attributes& set_compute_data_type(DataType_t value) {
+    compute_ = value;
+    return *this;
+  }
+  Causal_conv1d_attributes& set_input_precision(InputPrecision_t value) {
+    precision_ = value;
+    return *this;
+  }
+  Causal_conv1d_attributes& set_dilation(std::int64_t value) {
+    dilation_ = value;
+    return *this;
+  }
+  Causal_conv1d_attributes& set_bias(std::shared_ptr<Tensor_attributes> value) {
+    bias_ = std::move(value);
+    return *this;
+  }
+  Causal_conv1d_attributes& set_activation(PointwiseMode_t value) {
+    activation_ = value;
+    return *this;
+  }
+
+ private:
+  friend class Graph;
+  std::string name_;
+  DataType_t compute_ = DataType_t::NOT_SET;
+  InputPrecision_t precision_ = InputPrecision_t::DEFAULT;
+  std::int64_t dilation_ = 1;
+  std::shared_ptr<Tensor_attributes> bias_;
+  PointwiseMode_t activation_ = PointwiseMode_t::IDENTITY;
+};
+
+class Resample_attributes {
+ public:
+  Resample_attributes& set_name(std::string value) {
+    name_ = std::move(value);
+    return *this;
+  }
+  Resample_attributes& set_compute_data_type(DataType_t value) {
+    compute_ = value;
+    return *this;
+  }
+  Resample_attributes& set_resampling_mode(ResampleMode_t value) {
+    mode_ = value;
+    return *this;
+  }
+  Resample_attributes& set_padding_mode(PaddingMode_t value) {
+    padding_ = value;
+    return *this;
+  }
+  Resample_attributes& set_window(std::vector<std::int64_t> value) {
+    window_ = std::move(value);
+    return *this;
+  }
+  Resample_attributes& set_stride(std::vector<std::int64_t> value) {
+    stride_ = std::move(value);
+    return *this;
+  }
+  Resample_attributes& set_pre_padding(std::vector<std::int64_t> value) {
+    pre_ = std::move(value);
+    return *this;
+  }
+  Resample_attributes& set_post_padding(std::vector<std::int64_t> value) {
+    post_ = std::move(value);
+    return *this;
+  }
+  Resample_attributes& set_generate_index(bool value) {
+    generate_index_ = value;
+    return *this;
+  }
+  Resample_attributes& set_is_inference(bool value) {
+    return set_generate_index(!value);
+  }
+  // Resize modes specify the output spatial dimensions directly. Bilinear uses
+  // half-pixel centers unless align_corners is enabled; nearest uses floor
+  // mapping.
+  Resample_attributes& set_output_dim(std::vector<std::int64_t> value) {
+    output_dim_ = std::move(value);
+    return *this;
+  }
+  Resample_attributes& set_align_corners(bool value) {
+    align_corners_ = value;
+    return *this;
+  }
+
+ private:
+  friend class Graph;
+  std::string name_;
+  DataType_t compute_ = DataType_t::NOT_SET;
+  ResampleMode_t mode_ = ResampleMode_t::MAXPOOL;
+  PaddingMode_t padding_ = PaddingMode_t::ZERO_PAD;
+  std::vector<std::int64_t> window_, stride_, pre_, post_, output_dim_;
+  bool generate_index_ = false, align_corners_ = false;
+};
+
+class Rng_attributes {
+ public:
+  Rng_attributes& set_name(std::string value) {
+    name_ = std::move(value);
+    return *this;
+  }
+  Rng_attributes& set_dim(std::vector<std::int64_t> value) {
+    dimensions_ = std::move(value);
+    return *this;
+  }
+  Rng_attributes& set_stride(std::vector<std::int64_t> value) {
+    strides_ = std::move(value);
+    return *this;
+  }
+  Rng_attributes& set_data_type(DataType_t value) {
+    data_type_ = value;
+    return *this;
+  }
+  Rng_attributes& set_distribution(RngDistribution_t value) {
+    distribution_ = value;
+    return *this;
+  }
+  Rng_attributes& set_seed(std::int64_t value) {
+    seed_ = value;
+    return *this;
+  }
+  Rng_attributes& set_offset(std::int64_t value) {
+    offset_ = value;
+    return *this;
+  }
+  Rng_attributes& set_bernoulli_probability(double value) {
+    probability_ = value;
+    return *this;
+  }
+
+ private:
+  friend class Graph;
+  std::string name_;
+  std::vector<std::int64_t> dimensions_, strides_;
+  DataType_t data_type_ = DataType_t::NOT_SET;
+  RngDistribution_t distribution_ = RngDistribution_t::UNIFORM;
+  std::int64_t seed_ = 0, offset_ = 0;
+  double probability_ = 0.5;
+};
+
+class BN_finalize_attributes {
+ public:
+  BN_finalize_attributes& set_name(std::string value) {
+    name_ = std::move(value);
+    return *this;
+  }
+  BN_finalize_attributes& set_compute_data_type(DataType_t value) {
+    compute_ = value;
+    return *this;
+  }
+  BN_finalize_attributes& set_previous_running_stats(
+      std::shared_ptr<Tensor_attributes> mean,
+      std::shared_ptr<Tensor_attributes> variance,
+      std::shared_ptr<Tensor_attributes> momentum) {
+    mean_ = std::move(mean);
+    variance_ = std::move(variance);
+    momentum_ = std::move(momentum);
+    return *this;
+  }
+
+ private:
+  friend class Graph;
+  std::string name_;
+  DataType_t compute_ = DataType_t::NOT_SET;
+  std::shared_ptr<Tensor_attributes> mean_, variance_, momentum_;
+};
+
+class Genstats_attributes {
+ public:
+  Genstats_attributes& set_name(std::string value) {
+    name_ = std::move(value);
+    return *this;
+  }
+  [[nodiscard]] const std::string& get_name() const noexcept { return name_; }
+
+ private:
+  std::string name_;
+};
+
+class Gen_index_attributes {
+ public:
+  Gen_index_attributes& set_name(std::string value) {
+    name_ = std::move(value);
+    return *this;
+  }
+  Gen_index_attributes& set_dim(std::vector<std::int64_t> value) {
+    dimensions_ = std::move(value);
+    return *this;
+  }
+  Gen_index_attributes& set_axis(std::int64_t value) {
+    axis_ = value;
+    return *this;
+  }
+  Gen_index_attributes& set_data_type(DataType_t value) {
+    data_type_ = value;
+    return *this;
+  }
+  [[nodiscard]] const std::string& get_name() const noexcept { return name_; }
+  [[nodiscard]] const std::vector<std::int64_t>& get_dim() const noexcept {
+    return dimensions_;
+  }
+  [[nodiscard]] std::int64_t get_axis() const noexcept { return axis_; }
+  [[nodiscard]] DataType_t get_data_type() const noexcept { return data_type_; }
+
+ private:
+  std::string name_;
+  std::vector<std::int64_t> dimensions_;
+  std::int64_t axis_ = 0;
+  DataType_t data_type_ = DataType_t::INT32;
 };
 
 class Reshape_attributes {
@@ -1480,10 +1995,10 @@ class Graph {
       throw std::invalid_argument(
           "pointwise alpha is only supported by ADD and SUB modes");
     }
-    if (attributes.get_mode() == PointwiseMode_t::SIGMOID_BWD &&
+    if (is_activation_backward_mode(attributes.get_mode()) &&
         left->get_dim() != right->get_dim()) {
       throw std::invalid_argument(
-          "sigmoid backward inputs must have equal shapes");
+          "activation backward inputs must have equal shapes");
     }
     Tensor output =
         inferred_binary_output(*left, *right, attributes.get_mode());
@@ -1697,6 +2212,401 @@ class Graph {
     return output;
   }
 
+  [[nodiscard]] std::array<Tensor, 3> instancenorm(
+      const Tensor& x, const Tensor& scale, const Tensor& bias,
+      const Instancenorm_attributes& attributes = {}) {
+    return extended_normalization_forward("instancenorm", x, scale, bias,
+                                          attributes);
+  }
+  [[nodiscard]] std::array<Tensor, 3> adalayernorm(
+      const Tensor& x, const Tensor& scale, const Tensor& bias,
+      const AdaLayernorm_attributes& attributes = {}) {
+    return extended_normalization_forward("adalayernorm", x, scale, bias,
+                                          attributes);
+  }
+  [[nodiscard]] std::array<Tensor, 3> layernorm_backward(
+      const Tensor& dy, const Tensor& x, const Tensor& scale,
+      const Layernorm_backward_attributes& attributes) {
+    return normalization_backward(
+        "layernorm_backward", dy, x, scale, attributes.get_mean(),
+        attributes.get_inv_variance(), attributes.get_name(),
+        attributes.get_compute_data_type());
+  }
+  [[nodiscard]] std::array<Tensor, 3> batchnorm_backward(
+      const Tensor& dy, const Tensor& x, const Tensor& scale,
+      const Batchnorm_backward_attributes& attributes) {
+    return normalization_backward(
+        "batchnorm_backward", dy, x, scale, attributes.get_mean(),
+        attributes.get_inv_variance(), attributes.get_name(),
+        attributes.get_compute_data_type());
+  }
+  [[nodiscard]] std::array<Tensor, 3> instancenorm_backward(
+      const Tensor& dy, const Tensor& x, const Tensor& scale,
+      const Instancenorm_backward_attributes& attributes) {
+    return normalization_backward(
+        "instancenorm_backward", dy, x, scale, attributes.get_mean(),
+        attributes.get_inv_variance(), attributes.get_name(),
+        attributes.get_compute_data_type());
+  }
+  [[nodiscard]] std::array<Tensor, 3> adalayernorm_backward(
+      const Tensor& dy, const Tensor& x, const Tensor& scale,
+      const AdaLayernorm_backward_attributes& attributes) {
+    return normalization_backward(
+        "adalayernorm_backward", dy, x, scale, attributes.get_mean(),
+        attributes.get_inv_variance(), attributes.get_name(),
+        attributes.get_compute_data_type());
+  }
+  [[nodiscard]] std::array<Tensor, 3> rmsnorm_backward(
+      const Tensor& dy, const Tensor& x, const Tensor& scale,
+      const Tensor& inv_variance,
+      const Rmsnorm_backward_attributes& attributes = {}) {
+    auto result = normalization_backward(
+        "rmsnorm_backward", dy, x, scale, nullptr, inv_variance,
+        attributes.get_name(), attributes.get_compute_data_type());
+    if (!attributes.get_has_dbias()) result[2].reset();
+    return result;
+  }
+
+  [[nodiscard]] Tensor causal_conv1d(
+      const Tensor& x, const Tensor& weight,
+      const Causal_conv1d_attributes& attributes = {}) {
+    if (!x || !weight)
+      throw std::invalid_argument("causal_conv1d requires input and filter");
+    if (attributes.activation_ != PointwiseMode_t::IDENTITY &&
+        attributes.activation_ != PointwiseMode_t::SWISH_FWD)
+      throw std::invalid_argument(
+          "causal_conv1d supports identity or SiLU activation");
+    auto output = make_virtual_tensor(x->get_dim(), resolved_data_type(*x),
+                                      "causal_conv1d_output");
+    std::vector<NamedTensor> inputs = {{"input", x}, {"weight", weight}};
+    if (attributes.bias_) inputs.push_back({"bias", attributes.bias_});
+    append_custom_node(
+        "causal_conv1d", attributes.name_, std::move(inputs),
+        {{"output", output}},
+        {{"has_bias", static_cast<std::int64_t>(attributes.bias_ != nullptr)},
+         {"activation", static_cast<std::int64_t>(attributes.activation_ ==
+                                                  PointwiseMode_t::SWISH_FWD)},
+         {"dilation", attributes.dilation_},
+         {"input_precision", static_cast<std::int64_t>(attributes.precision_)}},
+        attributes.compute_);
+    return output;
+  }
+
+  [[nodiscard]] std::array<Tensor, 2> resample(
+      const Tensor& input, const Resample_attributes& attributes) {
+    if (!input || input->get_dim().size() < 3 || input->get_dim().size() > 5)
+      throw std::invalid_argument(
+          "resample input must have 1..3 spatial dimensions");
+    const auto spatial = input->get_dim().size() - 2;
+    auto shape = input->get_dim();
+    const bool resize = attributes.mode_ == ResampleMode_t::NEAREST ||
+                        attributes.mode_ == ResampleMode_t::BILINEAR;
+    auto window = attributes.window_, stride = attributes.stride_,
+         pre = attributes.pre_, post = attributes.post_;
+    if (resize) {
+      if (!window.empty() || !stride.empty() || !pre.empty() || !post.empty())
+        throw std::invalid_argument(
+            "resize mode uses output dimensions instead of pooling windows");
+      if (attributes.output_dim_.size() != spatial)
+        throw std::invalid_argument(
+            "resize requires output spatial dimensions");
+      for (std::size_t axis = 0; axis < spatial; ++axis)
+        shape[axis + 2] = attributes.output_dim_[axis];
+      window.assign(spatial, 1);
+      stride.assign(spatial, 1);
+      pre.assign(spatial, 0);
+      post.assign(spatial, 0);
+    } else {
+      if (window.size() != spatial || !attributes.output_dim_.empty())
+        throw std::invalid_argument(
+            "pooling requires a spatial window and inferred output dimensions");
+      if (stride.empty()) stride.assign(spatial, 1);
+      if (pre.empty()) pre.assign(spatial, 0);
+      if (post.empty()) post.assign(spatial, 0);
+      if (stride.size() != spatial || pre.size() != spatial ||
+          post.size() != spatial)
+        throw std::invalid_argument("resample spatial parameter ranks differ");
+      for (std::size_t axis = 0; axis < spatial; ++axis) {
+        const auto dim = shape[axis + 2],
+                   max = std::numeric_limits<std::int64_t>::max();
+        if (window[axis] <= 0 || stride[axis] <= 0 || pre[axis] < 0 ||
+            post[axis] < 0 || pre[axis] > max - dim ||
+            post[axis] > max - dim - pre[axis] ||
+            dim + pre[axis] + post[axis] < window[axis])
+          throw std::invalid_argument(
+              "resample pooling parameters are invalid");
+        shape[axis + 2] =
+            (dim + pre[axis] + post[axis] - window[axis]) / stride[axis] + 1;
+      }
+    }
+    auto output = make_virtual_tensor(shape, resolved_data_type(*input),
+                                      "resample_output");
+    Tensor index;
+    std::vector<NamedTensor> outputs = {{"output", output}};
+    if (attributes.generate_index_) {
+      index = make_virtual_tensor(shape, DataType_t::INT32, "resample_index");
+      outputs.push_back({"index", index});
+    }
+    append_custom_node(
+        "resample", attributes.name_, {{"input", input}}, std::move(outputs),
+        {{"mode", static_cast<std::int64_t>(attributes.mode_)},
+         {"padding", static_cast<std::int64_t>(attributes.padding_)},
+         {"window", window},
+         {"stride", stride},
+         {"pre_padding", pre},
+         {"post_padding", post},
+         {"generate_index",
+          static_cast<std::int64_t>(attributes.generate_index_)},
+         {"align_corners",
+          static_cast<std::int64_t>(attributes.align_corners_)}},
+        attributes.compute_);
+    return {output, index};
+  }
+
+  [[nodiscard]] Tensor rng(const Rng_attributes& attributes) {
+    auto type = attributes.data_type_ == DataType_t::NOT_SET
+                    ? io_data_type_
+                    : attributes.data_type_;
+    if (type == DataType_t::NOT_SET) type = DataType_t::FLOAT;
+    auto output =
+        make_virtual_tensor(attributes.dimensions_, type, "rng_output");
+    if (!attributes.strides_.empty()) output->set_stride(attributes.strides_);
+    append_custom_node(
+        "rng", attributes.name_, {}, {{"output", output}},
+        {{"distribution", static_cast<std::int64_t>(attributes.distribution_)},
+         {"seed", attributes.seed_},
+         {"offset", attributes.offset_},
+         {"probability", attributes.probability_}});
+    return output;
+  }
+
+  [[nodiscard]] Tensor rope(const Tensor& input, const Tensor& freqs,
+                            const RoPE_attributes& attributes = {}) {
+    return rotary_position_embedding("rope", input, freqs, attributes);
+  }
+  [[nodiscard]] Tensor rope_backward(
+      const Tensor& dy, const Tensor& freqs,
+      const RoPE_backward_attributes& attributes = {}) {
+    return rotary_position_embedding("rope_backward", dy, freqs, attributes);
+  }
+
+  [[nodiscard]] std::array<Tensor, 6> bn_finalize(
+      const Tensor& sum, const Tensor& sq_sum, const Tensor& scale,
+      const Tensor& bias, const Tensor& epsilon, const Tensor& accum_count,
+      const BN_finalize_attributes& attributes = {}) {
+    if (!sum || !sq_sum || !scale || !bias)
+      throw std::invalid_argument(
+          "bn_finalize requires sum, squared sum, scale and bias");
+    const bool running =
+        attributes.mean_ || attributes.variance_ || attributes.momentum_;
+    if (running &&
+        (!attributes.mean_ || !attributes.variance_ || !attributes.momentum_))
+      throw std::invalid_argument(
+          "bn_finalize running statistics require mean, variance and momentum");
+    std::vector<NamedTensor> inputs = {
+        {"sum", sum}, {"sq_sum", sq_sum}, {"scale", scale}, {"bias", bias}};
+    if (running) {
+      inputs.push_back({"previous_running_mean", attributes.mean_});
+      inputs.push_back({"previous_running_variance", attributes.variance_});
+    }
+    const std::array<std::string, 6> names = {
+        "eq_scale",     "eq_bias",           "mean",
+        "inv_variance", "next_running_mean", "next_running_variance"};
+    std::array<Tensor, 6> result = {};
+    std::vector<NamedTensor> outputs;
+    for (std::size_t index = 0; index < (running ? 6U : 4U); ++index) {
+      result[index] = make_virtual_tensor(sum->get_dim(), DataType_t::FLOAT,
+                                          "bn_finalize_" + names[index]);
+      outputs.push_back({names[index], result[index]});
+    }
+    append_custom_node(
+        "bn_finalize", attributes.name_, std::move(inputs), std::move(outputs),
+        {{"epsilon", compile_time_scalar(epsilon, "bn_finalize epsilon")},
+         {"accum_count",
+          compile_time_scalar(accum_count, "bn_finalize accumulation count")},
+         {"has_running", static_cast<std::int64_t>(running)},
+         {"momentum", running ? compile_time_scalar(attributes.momentum_,
+                                                    "bn_finalize momentum")
+                              : 0.0}},
+        attributes.compute_);
+    return result;
+  }
+
+  [[nodiscard]] std::array<Tensor, 2> genstats(
+      const Tensor& x, const Genstats_attributes& attributes = {}) {
+    require_tensor(x, "genstats input");
+    if (x->get_dim().size() < 2)
+      throw std::invalid_argument("genstats input must have a channel axis");
+    auto shape = std::vector<std::int64_t>(x->get_dim().size(), 1);
+    shape[1] = x->get_dim()[1];
+    auto sum = make_virtual_tensor(shape, DataType_t::FLOAT, "genstats_sum");
+    auto sq_sum =
+        make_virtual_tensor(shape, DataType_t::FLOAT, "genstats_sq_sum");
+    append_custom_node("genstats", attributes.get_name(), {{"x", x}},
+                       {{"sum", sum}, {"sq_sum", sq_sum}}, {});
+    return {sum, sq_sum};
+  }
+
+  [[nodiscard]] Tensor concatenate(const std::vector<Tensor>& inputs,
+                                   const Concatenate_attributes& attributes) {
+    if (inputs.empty())
+      throw std::invalid_argument("concatenate requires at least one input");
+    require_tensor(inputs.front(), "concatenate input");
+    auto dimensions = inputs.front()->get_dim();
+    const auto axis = normalized_axis(attributes.get_axis(), dimensions.size());
+    const auto data_type = resolved_data_type(*inputs.front());
+    dimensions[axis] = 0;
+    std::vector<NamedTensor> ports;
+    for (std::size_t index = 0; index < inputs.size(); ++index) {
+      require_tensor(inputs[index], "concatenate input");
+      const auto& shape = inputs[index]->get_dim();
+      if (shape.size() != dimensions.size() ||
+          resolved_data_type(*inputs[index]) != data_type)
+        throw std::invalid_argument(
+            "concatenate input ranks and data types must match");
+      for (std::size_t dimension = 0; dimension < shape.size(); ++dimension) {
+        if (shape[dimension] <= 0 ||
+            (dimension != axis && shape[dimension] != dimensions[dimension]))
+          throw std::invalid_argument(
+              "concatenate non-axis dimensions must match");
+      }
+      if (dimensions[axis] >
+          std::numeric_limits<std::int64_t>::max() - shape[axis])
+        throw std::overflow_error("concatenate dimension overflow");
+      dimensions[axis] += shape[axis];
+      ports.emplace_back("input_" + std::to_string(index), inputs[index]);
+    }
+    auto output =
+        make_virtual_tensor(dimensions, data_type, "concatenate_output");
+    append_custom_node("concatenate", attributes.get_name(), std::move(ports),
+                       {{"output", output}},
+                       {{"axis", static_cast<std::int64_t>(axis)}});
+    return output;
+  }
+
+  [[nodiscard]] Tensor gen_index(const Gen_index_attributes& attributes) {
+    const auto& dimensions = attributes.get_dim();
+    const auto axis = normalized_axis(attributes.get_axis(), dimensions.size());
+    if (attributes.get_data_type() != DataType_t::INT32 &&
+        attributes.get_data_type() != DataType_t::FLOAT)
+      throw std::invalid_argument("gen_index output must be INT32 or FLOAT");
+    auto output = make_virtual_tensor(dimensions, attributes.get_data_type(),
+                                      "gen_index_output");
+    append_custom_node("gen_index", attributes.get_name(), {},
+                       {{"output", output}},
+                       {{"axis", static_cast<std::int64_t>(axis)}});
+    return output;
+  }
+
+  [[nodiscard]] Tensor gen_index(const Tensor& shape_like,
+                                 Gen_index_attributes attributes) {
+    require_tensor(shape_like, "gen_index shape template");
+    attributes.set_dim(shape_like->get_dim());
+    return gen_index(attributes);
+  }
+
+  [[nodiscard]] Tensor moe_grouped_matmul(
+      const Tensor& token, const Tensor& weight,
+      const Tensor& first_token_offset, const Tensor& token_index,
+      const Tensor& token_ks, const Moe_grouped_matmul_attributes& attributes) {
+    require_tensor(token, "MoE token");
+    require_tensor(weight, "MoE weight");
+    require_tensor(first_token_offset, "MoE first token offset");
+    if (token->get_dim().size() != 3 || weight->get_dim().size() != 3)
+      throw std::invalid_argument("MoE token and weight require rank three");
+    const auto mode = attributes.get_mode();
+    if (mode != MoeGroupedMatmulMode_t::NONE &&
+        mode != MoeGroupedMatmulMode_t::GATHER &&
+        mode != MoeGroupedMatmulMode_t::SCATTER)
+      throw std::invalid_argument("invalid MoE routing mode");
+    if ((mode != MoeGroupedMatmulMode_t::NONE) !=
+            static_cast<bool>(token_index) ||
+        (mode == MoeGroupedMatmulMode_t::SCATTER) !=
+            static_cast<bool>(token_ks))
+      throw std::invalid_argument("MoE routing tensors do not match mode");
+    if (token_index && token_index->get_dim().size() != 3)
+      throw std::invalid_argument("MoE token index requires rank three");
+    const auto rows = mode == MoeGroupedMatmulMode_t::GATHER
+                          ? token_index->get_dim()[1]
+                          : token->get_dim()[1];
+    const auto dtype = token->get_data_type();
+    auto output = make_virtual_tensor(
+        {1, rows, weight->get_dim()[2]},
+        dtype == DataType_t::FP8_E4M3 || dtype == DataType_t::FP8_E5M2
+            ? DataType_t::FLOAT
+            : dtype,
+        "moe_output");
+    std::vector<std::pair<std::string, Tensor>> inputs = {
+        {"token", token},
+        {"weight", weight},
+        {"first_token_offset", first_token_offset}};
+    if (token_index) inputs.emplace_back("token_index", token_index);
+    if (token_ks) inputs.emplace_back("token_ks", token_ks);
+    append_custom_node(
+        "moe_grouped_matmul", attributes.get_name(), std::move(inputs),
+        {{"output", output}},
+        {{"mode", static_cast<std::int64_t>(mode)},
+         {"top_k", static_cast<std::int64_t>(attributes.get_top_k())}},
+        attributes.get_compute_data_type());
+    return output;
+  }
+
+  // This operation returns the expert weight gradients. Token gradients can be
+  // expressed by a grouped forward matmul with transposed expert weights.
+  [[nodiscard]] Tensor moe_grouped_matmul_bwd(
+      const Tensor& doutput, const Tensor& token,
+      const Tensor& first_token_offset,
+      const Moe_grouped_matmul_bwd_attributes& attributes) {
+    require_tensor(doutput, "MoE output gradient");
+    require_tensor(token, "MoE token");
+    require_tensor(first_token_offset, "MoE first token offset");
+    if (doutput->get_dim().size() != 3 || token->get_dim().size() != 3 ||
+        first_token_offset->get_dim().size() != 3)
+      throw std::invalid_argument("MoE backward requires rank-three tensors");
+    const auto dtype = token->get_data_type();
+    auto output = make_virtual_tensor(
+        {first_token_offset->get_dim()[0], token->get_dim()[2],
+         doutput->get_dim()[2]},
+        dtype == DataType_t::FP8_E4M3 || dtype == DataType_t::FP8_E5M2
+            ? DataType_t::FLOAT
+            : dtype,
+        "moe_dweight");
+    append_custom_node("moe_grouped_matmul_bwd", attributes.get_name(),
+                       {{"doutput", doutput},
+                        {"token", token},
+                        {"first_token_offset", first_token_offset}},
+                       {{"dweight", output}}, {},
+                       attributes.get_compute_data_type());
+    return output;
+  }
+
+  // FP8 inputs accumulate in FP32. Optional scalar FP32 descales apply once
+  // after GEMM. MXFP8 instead requires E8M0 scales per 32 contraction elements.
+  [[nodiscard]] Tensor matmul_fp8(const Tensor& a, const Tensor& b,
+                                  const Matmul_fp8_attributes& attributes) {
+    require_tensor(a, "FP8 MatMul A");
+    require_tensor(b, "FP8 MatMul B");
+    auto output = inferred_matmul_output(*a, *b);
+    output->set_data_type(DataType_t::FLOAT);
+    const bool scaled = attributes.descale_a_ != nullptr;
+    if (scaled != (attributes.descale_b_ != nullptr) ||
+        (attributes.mxfp8_ && !scaled))
+      throw std::invalid_argument(
+          "FP8 MatMul requires both descales; MXFP8 requires block scales");
+    std::vector<std::pair<std::string, Tensor>> inputs = {{"a", a}, {"b", b}};
+    if (scaled) {
+      inputs.emplace_back("descale_a", attributes.descale_a_);
+      inputs.emplace_back("descale_b", attributes.descale_b_);
+    }
+    append_custom_node(
+        "matmul_fp8", attributes.name_, std::move(inputs), {{"output", output}},
+        {{"scale_mode", static_cast<std::int64_t>(attributes.mxfp8_ ? 2
+                                                  : scaled          ? 1
+                                                                    : 0)}},
+        attributes.compute_);
+    return output;
+  }
+
   [[nodiscard]] Tensor matmul(
       const Tensor& a,
       const Tensor& b,
@@ -1708,7 +2618,27 @@ class Graph {
       throw std::invalid_argument(
           "FlagDNN MatMul currently requires zero padding");
     }
+    if (a->get_data_type() == DataType_t::FP8_E4M3 ||
+        a->get_data_type() == DataType_t::FP8_E5M2) {
+      if (attributes.get_input_precision() != InputPrecision_t::DEFAULT)
+        throw std::invalid_argument(
+            "IEEE/TF32 precision applies only to FP32 inputs");
+      return matmul_fp8(
+          a, b,
+          Matmul_fp8_attributes()
+              .set_name(attributes.get_name())
+              .set_compute_data_type(attributes.get_compute_data_type()));
+    }
     Tensor output = inferred_matmul_output(*a, *b);
+    if (attributes.get_input_precision() != InputPrecision_t::DEFAULT) {
+      append_custom_node(
+          "matmul", attributes.get_name(), {{"a", a}, {"b", b}},
+          {{"output", output}},
+          {{"input_precision",
+            static_cast<std::int64_t>(attributes.get_input_precision())}},
+          attributes.get_compute_data_type());
+      return output;
+    }
     nodes_.push_back(Node::make_matmul(a, b, output, attributes));
     tensors_.push_back(output);
     invalidate();
@@ -1948,6 +2878,22 @@ class Graph {
     }
     Tensor output = inferred_convolution_output(
         *input, *filter, attributes);
+    if (attributes.get_input_precision() != InputPrecision_t::DEFAULT) {
+      append_custom_node(
+          "convolution_fprop", attributes.get_name(),
+          {{"input", input}, {"filter", filter}}, {{"output", output}},
+          {{"input_precision",
+            static_cast<std::int64_t>(attributes.get_input_precision())},
+           {"spatial_rank",
+            static_cast<std::int64_t>(input->get_dim().size() - 2)},
+           {"pre_padding", attributes.get_pre_padding()},
+           {"post_padding", attributes.get_post_padding()},
+           {"stride", attributes.get_stride()},
+           {"dilation", attributes.get_dilation()},
+           {"groups", attributes.get_groups()}},
+          attributes.get_compute_data_type());
+      return output;
+    }
     nodes_.push_back(
         Node::make_convolution(input, filter, output, attributes));
     tensors_.push_back(output);
@@ -2200,6 +3146,7 @@ class Graph {
 
  private:
   enum class NodeKind {
+    kCustom,
     kPointwise,
     kBinaryPointwise,
     kTernaryPointwise,
@@ -2221,7 +3168,21 @@ class Graph {
     kSdpaFp8Backward,
   };
 
+  using NamedTensor = std::pair<std::string, Tensor>;
+  using CustomAttribute = std::variant<std::int64_t, double, bool, std::string,
+                                       std::vector<std::int64_t>>;
+  using NamedAttribute = std::pair<std::string, CustomAttribute>;
+  struct CustomNode {
+    std::string operation;
+    std::string name;
+    std::vector<NamedTensor> inputs;
+    std::vector<NamedTensor> outputs;
+    std::vector<NamedAttribute> attributes;
+    DataType_t compute = DataType_t::NOT_SET;
+  };
+
   struct Node {
+    CustomNode custom;
     static Node make_pointwise(
         const Tensor& input,
         const Tensor& output,
@@ -2588,6 +3549,184 @@ class Graph {
     SDPA_backward_attributes sdpa_backward_attributes;
   };
 
+  template <class Attributes>
+  Tensor rotary_position_embedding(const std::string& operation,
+                                   const Tensor& input, const Tensor& freqs,
+                                   const Attributes& attributes) {
+    if (!input || !freqs)
+      throw std::invalid_argument("RoPE requires input and frequencies");
+    auto output = make_virtual_tensor(
+        input->get_dim(), resolved_data_type(*input), operation + "_output");
+    const bool backward = operation == "rope_backward";
+    append_custom_node(
+        operation, attributes.get_name(),
+        {{backward ? "dy" : "input", input}, {"freqs", freqs}},
+        {{backward ? "dx" : "output", output}},
+        {{"rope_dim", attributes.get_rope_dim()},
+         {"output_scale", static_cast<double>(attributes.get_output_scale())}},
+        attributes.get_compute_data_type());
+    return output;
+  }
+
+  static std::vector<std::int64_t> normalization_statistics_shape(
+      const std::string& operation, const Tensor& x, const Tensor& scale) {
+    if (!x || !scale)
+      throw std::invalid_argument("normalization requires X and scale");
+    auto shape = x->get_dim();
+    if (shape.empty() || shape.size() > 8 ||
+        scale->get_dim().size() > shape.size())
+      throw std::invalid_argument("normalization rank is invalid");
+    const auto leading = shape.size() - scale->get_dim().size();
+    bool reduced = false;
+    for (std::size_t axis = 0; axis < shape.size(); ++axis) {
+      const auto parameter =
+          axis < leading ? 1 : scale->get_dim()[axis - leading];
+      if (parameter != 1 && parameter != shape[axis])
+        throw std::invalid_argument(
+            "normalization scale cannot broadcast to X");
+      const bool reduce =
+          operation.starts_with("batchnorm") ? axis != 1
+          : operation.starts_with("instancenorm")
+              ? axis >= 2
+              : (parameter != 1 &&
+                 (!operation.starts_with("adalayernorm") || axis != 0));
+      if (reduce) {
+        shape[axis] = 1;
+        reduced = true;
+      }
+    }
+    if (!reduced && shape.back() != 1)
+      throw std::invalid_argument("normalization has no reduction axis");
+    return shape;
+  }
+
+  template <class Attributes>
+  std::array<Tensor, 3> extended_normalization_forward(
+      const std::string& operation, const Tensor& x, const Tensor& scale,
+      const Tensor& bias, const Attributes& attributes) {
+    if (!bias) throw std::invalid_argument("normalization requires bias");
+    const auto shape = normalization_statistics_shape(operation, x, scale);
+    auto y = make_virtual_tensor(x->get_dim(), resolved_data_type(*x),
+                                 operation + "_y");
+    auto mean =
+        make_virtual_tensor(shape, DataType_t::FLOAT, operation + "_mean");
+    auto inverse = make_virtual_tensor(shape, DataType_t::FLOAT,
+                                       operation + "_inv_variance");
+    const double epsilon =
+        attributes.get_epsilon_tensor()
+            ? compile_time_scalar(attributes.get_epsilon_tensor(),
+                                  "normalization epsilon")
+            : attributes.get_epsilon();
+    append_custom_node(operation, attributes.get_name(),
+                       {{"x", x}, {"scale", scale}, {"bias", bias}},
+                       {{"y", y}, {"mean", mean}, {"inv_variance", inverse}},
+                       {{"epsilon", epsilon},
+                        {"forward_phase", static_cast<std::int64_t>(
+                                              attributes.get_forward_phase())}},
+                       attributes.get_compute_data_type());
+    return {y, mean, inverse};
+  }
+
+  std::array<Tensor, 3> normalization_backward(
+      const std::string& operation, const Tensor& dy, const Tensor& x,
+      const Tensor& scale, const Tensor& mean, const Tensor& inverse,
+      const std::string& name, DataType_t compute) {
+    if (!dy || !x || !scale || !inverse ||
+        (operation != "rmsnorm_backward" && !mean))
+      throw std::invalid_argument(
+          "normalization backward requires gradients, X, scale and saved "
+          "statistics");
+    (void)normalization_statistics_shape(operation, x, scale);
+    auto dx = make_virtual_tensor(x->get_dim(), resolved_data_type(*x),
+                                  operation + "_dx");
+    auto dscale = make_virtual_tensor(scale->get_dim(), DataType_t::FLOAT,
+                                      operation + "_dscale");
+    auto dbias = make_virtual_tensor(scale->get_dim(), DataType_t::FLOAT,
+                                     operation + "_dbias");
+    std::vector<NamedTensor> inputs = {{"dy", dy}, {"x", x}, {"scale", scale}};
+    if (mean) inputs.push_back({"mean", mean});
+    inputs.push_back({"inv_variance", inverse});
+    append_custom_node(operation, name, std::move(inputs),
+                       {{"dx", dx}, {"dscale", dscale}, {"dbias", dbias}}, {},
+                       compute);
+    return {dx, dscale, dbias};
+  }
+
+  static std::size_t normalized_axis(std::int64_t axis, std::size_t rank) {
+    if (rank == 0 || rank > 8)
+      throw std::invalid_argument("tensor rank must be in [1, 8]");
+    if (axis < 0) axis += static_cast<std::int64_t>(rank);
+    if (axis < 0 || axis >= static_cast<std::int64_t>(rank))
+      throw std::invalid_argument("axis is outside tensor rank");
+    return static_cast<std::size_t>(axis);
+  }
+
+  static Tensor make_virtual_tensor(const std::vector<std::int64_t>& dimensions,
+                                    DataType_t data_type, std::string name) {
+    (void)logical_element_count(dimensions, "output");
+    auto output = std::make_shared<Tensor_attributes>();
+    output->set_name(std::move(name))
+        .set_data_type(data_type)
+        .set_dim(dimensions)
+        .set_stride(contiguous_strides(dimensions))
+        .set_is_virtual(true);
+    return output;
+  }
+
+  void append_custom_node(std::string operation, std::string name,
+                          std::vector<NamedTensor> inputs,
+                          std::vector<NamedTensor> outputs,
+                          std::vector<NamedAttribute> attributes,
+                          DataType_t compute = DataType_t::NOT_SET) {
+    Node node;
+    node.kind = NodeKind::kCustom;
+    node.custom = {std::move(operation),  std::move(name),
+                   std::move(inputs),     std::move(outputs),
+                   std::move(attributes), compute};
+    for (const auto& port : node.custom.outputs)
+      tensors_.push_back(port.second);
+    nodes_.push_back(std::move(node));
+    invalidate();
+  }
+
+  void lower_custom_node(const CustomNode& node, flagdnn::Graph& graph,
+                         std::vector<std::int64_t>& required_uids) const {
+    flagdnn::OperationDescriptor operation(node.operation);
+    for (const auto& [name, tensor] : node.inputs) {
+      auto descriptor = make_descriptor(*tensor, name);
+      operation.set_input(name, descriptor);
+      append_external_uid(required_uids, *tensor);
+    }
+    for (const auto& [name, tensor] : node.outputs) {
+      auto descriptor = make_descriptor(*tensor, name);
+      operation.set_output(name, descriptor);
+      append_external_uid(required_uids, *tensor);
+    }
+    for (const auto& [name, value] : node.attributes) {
+      std::visit(
+          [&](const auto& attribute) {
+            operation.set_attribute(name, attribute);
+          },
+          value);
+    }
+    set_operation_metadata(operation, node.name, node.compute,
+                           *(node.inputs.empty() ? node.outputs.front().second
+                                                 : node.inputs.front().second));
+    operation.finalize();
+    graph.add(operation);
+  }
+
+  static bool is_activation_backward_mode(PointwiseMode_t mode) noexcept {
+    return mode == PointwiseMode_t::SIGMOID_BWD ||
+           mode == PointwiseMode_t::RELU_BWD ||
+           mode == PointwiseMode_t::TANH_BWD ||
+           mode == PointwiseMode_t::ELU_BWD ||
+           mode == PointwiseMode_t::GELU_BWD ||
+           mode == PointwiseMode_t::SOFTPLUS_BWD ||
+           mode == PointwiseMode_t::SWISH_BWD ||
+           mode == PointwiseMode_t::GELU_APPROX_TANH_BWD;
+  }
+
   static bool is_unary_pointwise_mode(PointwiseMode_t mode) noexcept {
     switch (mode) {
       case PointwiseMode_t::RELU_FWD:
@@ -2615,6 +3754,13 @@ class Graph {
       case PointwiseMode_t::GELU_APPROX_TANH_FWD:
         return true;
       case PointwiseMode_t::NOT_SET:
+      case PointwiseMode_t::RELU_BWD:
+      case PointwiseMode_t::TANH_BWD:
+      case PointwiseMode_t::ELU_BWD:
+      case PointwiseMode_t::GELU_BWD:
+      case PointwiseMode_t::SOFTPLUS_BWD:
+      case PointwiseMode_t::SWISH_BWD:
+      case PointwiseMode_t::GELU_APPROX_TANH_BWD:
       case PointwiseMode_t::SIGMOID_BWD:
       case PointwiseMode_t::BINARY_SELECT:
       case PointwiseMode_t::ADD:
@@ -2641,6 +3787,13 @@ class Graph {
   static bool is_binary_pointwise_mode(PointwiseMode_t mode) noexcept {
     switch (mode) {
       case PointwiseMode_t::ADD:
+      case PointwiseMode_t::RELU_BWD:
+      case PointwiseMode_t::TANH_BWD:
+      case PointwiseMode_t::ELU_BWD:
+      case PointwiseMode_t::GELU_BWD:
+      case PointwiseMode_t::SOFTPLUS_BWD:
+      case PointwiseMode_t::SWISH_BWD:
+      case PointwiseMode_t::GELU_APPROX_TANH_BWD:
       case PointwiseMode_t::SIGMOID_BWD:
       case PointwiseMode_t::SUB:
       case PointwiseMode_t::MUL:
@@ -3088,9 +4241,9 @@ class Graph {
     return output;
   }
 
-  static Tensor inferred_reduction_output(
+  Tensor inferred_reduction_output(
       const Tensor_attributes& input,
-      const Reduction_attributes& attributes) {
+      const Reduction_attributes& attributes) const {
     auto output = std::make_shared<Tensor_attributes>();
     std::vector<std::int64_t> dimensions = input.get_dim();
     if (!dimensions.empty()) {
@@ -3108,8 +4261,12 @@ class Graph {
         dimensions.erase(dimensions.begin() + axis);
       }
     }
+    // Preserve the floating output default used by existing backends. The
+    // caller can request FP32 with set_data_type(); INT32 reduces to FP32.
     output->set_name("reduction_output")
-        .set_data_type(input.get_data_type())
+        .set_data_type(resolved_data_type(input) == DataType_t::INT32
+                           ? DataType_t::FLOAT
+                           : input.get_data_type())
         .set_dim(dimensions)
         .set_stride(contiguous_strides(dimensions))
         .set_is_virtual(true);
@@ -3272,6 +4429,10 @@ class Graph {
         return FLAGDNN_DATA_FP8_E4M3;
       case DataType_t::FP8_E5M2:
         return FLAGDNN_DATA_FP8_E5M2;
+      case DataType_t::FP8_E8M0:
+        return FLAGDNN_DATA_FP8_E8M0;
+      case DataType_t::INT32:
+        return FLAGDNN_DATA_INT32;
       case DataType_t::NOT_SET:
         break;
     }
@@ -3315,6 +4476,20 @@ class Graph {
         return FLAGDNN_POINTWISE_LOGICAL_AND;
       case PointwiseMode_t::LOGICAL_OR:
         return FLAGDNN_POINTWISE_LOGICAL_OR;
+      case PointwiseMode_t::RELU_BWD:
+        return FLAGDNN_POINTWISE_RELU_BWD;
+      case PointwiseMode_t::TANH_BWD:
+        return FLAGDNN_POINTWISE_TANH_BWD;
+      case PointwiseMode_t::ELU_BWD:
+        return FLAGDNN_POINTWISE_ELU_BWD;
+      case PointwiseMode_t::GELU_BWD:
+        return FLAGDNN_POINTWISE_GELU_BWD;
+      case PointwiseMode_t::SOFTPLUS_BWD:
+        return FLAGDNN_POINTWISE_SOFTPLUS_BWD;
+      case PointwiseMode_t::SWISH_BWD:
+        return FLAGDNN_POINTWISE_SWISH_BWD;
+      case PointwiseMode_t::GELU_APPROX_TANH_BWD:
+        return FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD;
       case PointwiseMode_t::SIGMOID_BWD:
         return FLAGDNN_POINTWISE_SIGMOID_BWD;
       case PointwiseMode_t::BINARY_SELECT:
@@ -3535,12 +4710,18 @@ class Graph {
     assign_missing_virtual_uids();
     std::vector<std::int64_t> required_uids;
     for (const Node& node : nodes_) {
+      if (node.kind == NodeKind::kCustom) {
+        lower_custom_node(node.custom, *native_graph, required_uids);
+        continue;
+      }
       flagdnn::TensorDescriptor input = make_descriptor(*node.input, "input");
       flagdnn::TensorDescriptor output = make_descriptor(*node.output, "output");
       append_external_uid(required_uids, *node.input);
       append_external_uid(required_uids, *node.output);
 
       switch (node.kind) {
+        case NodeKind::kCustom:
+          throw std::logic_error("custom node was not lowered");
         case NodeKind::kPointwise: {
           flagdnn::OperationDescriptor operation(FLAGDNN_OPERATION_POINTWISE);
           operation.set_pointwise(
@@ -3561,11 +4742,9 @@ class Graph {
           append_external_uid(required_uids, *node.second);
           flagdnn::OperationDescriptor operation(FLAGDNN_OPERATION_POINTWISE);
           operation.set_pointwise(
-              input,
-              second,
-              native_pointwise_mode(node.pointwise.get_mode()),
-              output,
-              node.pointwise.get_alpha());
+              input, second, native_pointwise_mode(node.pointwise.get_mode()),
+              output, node.pointwise.get_alpha(),
+              native_pointwise_attributes(node.pointwise));
           set_operation_metadata(operation,
                                  node.pointwise.get_name(),
                                  node.pointwise.get_compute_data_type(),
@@ -3957,6 +5136,10 @@ class Graph {
           const std::size_t spatial_rank =
               node.input->get_dim().size() - 2;
           flagdnn::OperationDescriptor operation("convolution_dgrad");
+          operation.set_attribute(
+              "input_precision",
+              static_cast<std::int64_t>(
+                  node.convolution_dgrad_attributes.get_input_precision()));
           operation.set_input("dy", input);
           operation.set_input("w", filter);
           operation.set_output("dx", output);
@@ -4017,6 +5200,10 @@ class Graph {
           const std::size_t spatial_rank =
               node.input->get_dim().size() - 2;
           flagdnn::OperationDescriptor operation("convolution_wgrad");
+          operation.set_attribute(
+              "input_precision",
+              static_cast<std::int64_t>(
+                  node.convolution_wgrad_attributes.get_input_precision()));
           operation.set_input("dy", input);
           operation.set_input("x", image);
           operation.set_output("dw", output);

@@ -3,15 +3,26 @@
 #include "common/add.hpp"
 #include "pointwise_runner_support.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <functional>
 #include <span>
+#include <vector>
 
 namespace flagdnn::testing {
 
 int run_add_functional_test(int argc, char **argv,
                             std::span<const AddTestCase> cases) {
+  // This backend's reference adapter currently accepts floating storage.
+  std::vector<AddTestCase> supported_cases(cases.begin(), cases.end());
+  std::erase_if(supported_cases, [](const AddTestCase &test_case) {
+    const auto type = test_case.left.data_type;
+    return type != FLAGDNN_DATA_FLOAT32 && type != FLAGDNN_DATA_FLOAT16 &&
+           type != FLAGDNN_DATA_BFLOAT16;
+  });
+  cases = supported_cases;
+
   namespace support = hygon_functional::pointwise;
   namespace hv = validation::hygon;
   return support::run_suite(

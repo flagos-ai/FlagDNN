@@ -471,7 +471,7 @@ Graph IR 交给 [`prepare_artifact_package()`](../src/runtime/cache.cpp#L168)。
 
 编译器子进程由 [`run_compiler_process()`](../src/runtime/compiler_client.cpp#L86) 启动。系统先调用 [`query_compiler_identity()`](../src/runtime/compiler_client.cpp#L211)，cache miss 时再调用 [`compile_external_artifact()`](../src/runtime/compiler_client.cpp#L240)。
 
-`compile_external_artifact` 是历史/通用命名。当 execution engine 是 `libtriton_jit` 时，它不会提前生成最终 cubin，而是生成：
+`compile_external_artifact` 是历史/通用命名。NVIDIA 的 `libtriton_jit` 路径生成：
 
 - materialized Triton source。
 - kernel 函数名。
@@ -481,9 +481,11 @@ Graph IR 交给 [`prepare_artifact_package()`](../src/runtime/cache.cpp#L168)。
 - autotune variants。
 - `manifest.json`。
 
-真正的 Triton 编译留给 `libtriton_jit`。
+`codegen/emit.py` 会调用 Triton 编译以取得实际资源信息；需要显式 TensorMap ABI 的
+variant 还会把编译缓存写入 artifact。`libtriton_jit` 复用相同的编译结果，负责
+kernel 加载和运行时准备。选核及执行规划由 `dispatch/` 完成。
 
-通用编译器入口是 [`compiler/flagdnn_codegen/main.py`](../compiler/flagdnn_codegen/main.py#L55)。它根据 Graph IR 的 `backend` 加载对应平台 provider；NVIDIA provider 是 [`backends/nvidia/compiler.py`](../backends/nvidia/compiler.py#L9384)。
+通用编译器入口是 [`compiler/flagdnn_codegen/main.py`](../compiler/flagdnn_codegen/main.py#L55)。它根据 Graph IR 的 `backend` 加载对应平台 provider；NVIDIA provider 是 [`backends/nvidia/compiler.py`](../backends/nvidia/compiler.py#L53)。
 
 ## 15. Add 选择哪个 Triton kernel
 
@@ -547,7 +549,7 @@ OP_KIND=DIV -> 除法
 
 ## 17. 连续和 strided kernel 的选择
 
-NVIDIA 编译器处理 binary 配置的位置是 [`backends/nvidia/compiler.py`](../backends/nvidia/compiler.py#L5298)。默认会准备：
+NVIDIA 处理 binary 选核和配置的位置是 [`backends/nvidia/dispatch/selection.py`](../backends/nvidia/dispatch/selection.py#L70)。默认会准备：
 
 ```text
 OP_KIND    = ADD
@@ -555,7 +557,7 @@ ALPHA      = test_case.alpha
 BLOCK_SIZE = 256
 ```
 
-然后通过 [`_can_use_dense_binary_kernel()`](../backends/nvidia/compiler.py#L444) 判断 Tensor 是否具有相同 shape、相同 strides 且物理 dense。
+然后通过 [`_can_use_dense_binary_kernel()`](../backends/nvidia/dispatch/common.py#L437) 判断 Tensor 是否具有相同 shape、相同 strides 且物理 dense。
 
 满足条件时选择 [`binary_contiguous_kernel`](../kernels/common/binary.py#L88)，否则选择 [`binary_strided_kernel`](../kernels/common/binary.py#L111)。
 
@@ -617,7 +619,7 @@ binary:
 = 36 个候选
 ```
 
-[`_expand_generated_tuning_entry()`](../backends/nvidia/compiler.py#L7779) 使用 `itertools.product` 展开完整笛卡尔积，随后 [`_prepare_tuning_variants()`](../backends/nvidia/compiler.py#L8559) 为每个候选重新生成：
+[`_expand_generated_tuning_entry()`](../backends/nvidia/dispatch/tuning.py#L87) 使用 `itertools.product` 展开完整笛卡尔积，随后 [`_prepare_tuning_variants()`](../backends/nvidia/dispatch/tuning.py#L898) 为每个候选重新生成：
 
 - constexpr 常量。
 - `num_warps`、`num_stages`。
@@ -848,7 +850,7 @@ cuLaunchKernel(...);
 2. FlagDNN autotune winner cache：保存特定设备的获胜 variant。
 3. `libtriton_jit` kernel cache：保存 full signature 和编译选项对应的 kernel。
 
-[`compiler_identity.py`](../backends/nvidia/compiler_identity.py#L22) 会哈希：
+[`codegen/identity.py`](../backends/nvidia/codegen/identity.py#L24) 会哈希：
 
 - kernel registry。
 - Triton kernel 源码。

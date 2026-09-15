@@ -1,14 +1,14 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
-#include "common/convolution.hpp"
-#include "validation/functional/cudnn_graph.hpp"
-
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <span>
 #include <stdexcept>
 #include <utility>
+
+#include "common/convolution.hpp"
+#include "validation/functional/cudnn_graph.hpp"
 
 namespace flagdnn::testing {
 namespace {
@@ -26,8 +26,7 @@ cuda::cfe::ConvolutionMode_t cudnn_convolution_mode(ConvolutionMode mode) {
 template <typename Attributes>
 Attributes apply_attributes(Attributes attributes,
                             const ConvolutionTestCase& test_case) {
-  return attributes
-      .set_name("convolution")
+  return attributes.set_name("convolution")
       .set_compute_data_type(cuda::cfe::DataType_t::FLOAT)
       .set_pre_padding(test_case.pre_padding)
       .set_post_padding(test_case.post_padding)
@@ -38,8 +37,7 @@ Attributes apply_attributes(Attributes attributes,
 
 class CudnnConvolutionExecutable final : public cuda::CudnnGraphExecutable {
  public:
-  explicit CudnnConvolutionExecutable(
-      const ConvolutionTestCase& test_case)
+  explicit CudnnConvolutionExecutable(const ConvolutionTestCase& test_case)
       : graph_(std::make_shared<cuda::cfe::graph::Graph>()) {
     validate_convolution_case(test_case);
     const cuda::cfe::DataType_t io_type =
@@ -62,24 +60,21 @@ class CudnnConvolutionExecutable final : public cuda::CudnnGraphExecutable {
     switch (test_case.direction) {
       case ConvolutionDirection::kFprop:
         output = graph_->conv_fprop(
-            x,
-            w,
-            apply_attributes(
-                cuda::cfe::graph::Conv_fprop_attributes(), test_case));
+            x, w,
+            apply_attributes(cuda::cfe::graph::Conv_fprop_attributes(),
+                             test_case));
         break;
       case ConvolutionDirection::kDgrad:
         output = graph_->conv_dgrad(
-            y,
-            w,
-            apply_attributes(
-                cuda::cfe::graph::Conv_dgrad_attributes(), test_case));
+            y, w,
+            apply_attributes(cuda::cfe::graph::Conv_dgrad_attributes(),
+                             test_case));
         break;
       case ConvolutionDirection::kWgrad:
         output = graph_->conv_wgrad(
-            y,
-            x,
-            apply_attributes(
-                cuda::cfe::graph::Conv_wgrad_attributes(), test_case));
+            y, x,
+            apply_attributes(cuda::cfe::graph::Conv_wgrad_attributes(),
+                             test_case));
         break;
     }
     const TestTensor& expected = convolution_output_tensor(test_case);
@@ -90,28 +85,38 @@ class CudnnConvolutionExecutable final : public cuda::CudnnGraphExecutable {
         .set_stride(expected.strides)
         .set_output(true);
 
-    cuda::check_cudnn_frontend(
-        graph_->build(handle(),
-                      {cuda::cfe::HeurMode_t::A,
-                       cuda::cfe::HeurMode_t::FALLBACK}),
-        "cuDNN convolution graph build");
+    std::vector<std::int64_t> rne_engines;
+    if (test_case.input_precision == 2 && cudnnGetVersion() >= 92400 &&
+        cudnnGetVersion() < 92500) {
+      // Numeric notes do not distinguish TF32 nearest-even, ties-away and
+      // truncating plans. These cuDNN 9.24 engines match nearest-even at
+      // halfway inputs; all qualified shapes execute with these engines.
+      switch (test_case.direction) {
+        case ConvolutionDirection::kFprop:
+          rne_engines = {67};
+          break;
+        case ConvolutionDirection::kDgrad:
+          rne_engines = {71, 76, 78};
+          break;
+        case ConvolutionDirection::kWgrad:
+          rne_engines = {70};
+          break;
+      }
+    }
+    cuda::build_cudnn_plans(*graph_, handle(), test_case.input_precision,
+                            rne_engines);
     std::int64_t workspace_size = 0;
-    cuda::check_cudnn_frontend(
-        graph_->get_workspace_size(workspace_size),
-        "cuDNN convolution workspace query");
+    cuda::check_cudnn_frontend(graph_->get_workspace_size(workspace_size),
+                               "cuDNN convolution workspace query");
     set_workspace_size(workspace_size);
   }
 
-  void execute(std::span<const flagdnnBinding_t> bindings,
-               void* workspace,
-               std::size_t workspace_size,
-               flagdnnStream_t stream) override {
+  void execute(std::span<const flagdnnBinding_t> bindings, void* workspace,
+               std::size_t workspace_size, flagdnnStream_t stream) override {
     begin_execute(workspace, workspace_size, stream);
-    cuda::CudnnBindingMap pointers =
-        cuda::make_cudnn_binding_map(bindings);
-    cuda::check_cudnn_frontend(
-        graph_->execute(handle(), pointers, workspace),
-        "cuDNN convolution graph execute");
+    cuda::CudnnBindingMap pointers = cuda::make_cudnn_binding_map(bindings);
+    cuda::check_cudnn_frontend(graph_->execute(handle(), pointers, workspace),
+                               "cuDNN convolution graph execute");
   }
 
  private:

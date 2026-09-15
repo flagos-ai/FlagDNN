@@ -69,9 +69,7 @@ def invoke_main(runner, arguments: list[str]) -> tuple[int, str, str]:
 
 def main() -> int:
     if len(sys.argv) != 2:
-        raise RuntimeError(
-            "usage: run_tests_adapter_contract.py SOURCE_ROOT"
-        )
+        raise RuntimeError("usage: run_tests_adapter_contract.py SOURCE_ROOT")
     source_root = Path(sys.argv[1]).resolve()
     runner = load_runner(source_root / "tools" / "run_tests.py")
     iluvatar = runner.load_platform_adapter("iluvatar")
@@ -84,9 +82,7 @@ def main() -> int:
         "Iluvatar adapter defaults changed unexpectedly",
     )
 
-    runner_source = Path(runner.__file__).read_text(
-        encoding="utf-8"
-    ).lower()
+    runner_source = Path(runner.__file__).read_text(encoding="utf-8").lower()
     for platform_detail in (
         "iluvatar",
         "corex_cudnn",
@@ -463,9 +459,7 @@ def main() -> int:
         "Iluvatar all-reference-SKIP accounting is inconsistent",
     )
 
-    speedup_pair = json.loads(
-        json.dumps(paired_records[benchmark_case])
-    )
+    speedup_pair = json.loads(json.dumps(paired_records[benchmark_case]))
     speedup_pair["flagdnn"]["median"] = 2.0
     speedup_pair["corex_cudnn"]["median"] = 3.0
     speedup_benchmark = {
@@ -480,12 +474,10 @@ def main() -> int:
     }
     speedup_results = {"add": {"benchmark": speedup_benchmark}}
     require(
-        iluvatar.iluvatar_speedup_summary(
-            speedup_results, 1.4
-        )["gate_passed"]
-        and not iluvatar.iluvatar_speedup_summary(
-            speedup_results, 1.6
-        )["gate_passed"],
+        iluvatar.iluvatar_speedup_summary(speedup_results, 1.4)["gate_passed"]
+        and not iluvatar.iluvatar_speedup_summary(speedup_results, 1.6)[
+            "gate_passed"
+        ],
         "Iluvatar per-case speedup gate did not enforce its threshold",
     )
     failed_speedup_results = {
@@ -515,9 +507,9 @@ def main() -> int:
         }
     }
     require(
-        iluvatar.iluvatar_speedup_summary(
-            skipped_speedup_results, None
-        )["gate_passed"]
+        iluvatar.iluvatar_speedup_summary(skipped_speedup_results, None)[
+            "gate_passed"
+        ]
         and not iluvatar.iluvatar_speedup_summary(
             skipped_speedup_results, 1.0
         )["gate_passed"],
@@ -598,9 +590,7 @@ def main() -> int:
         original_run_one = runner.run_one
 
         def passed_functional(**arguments: Any) -> dict[str, Any]:
-            cache_path = Path(
-                arguments["environment"]["FLAGDNN_CACHE_PATH"]
-            )
+            cache_path = Path(arguments["environment"]["FLAGDNN_CACHE_PATH"])
             require(
                 cache_path.is_dir(),
                 "Iluvatar main path did not create its run cache",
@@ -640,7 +630,9 @@ def main() -> int:
             )
         finally:
             runner.run_one = original_run_one
-        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary = json.loads(
+            runner.diagnostic_path(summary_path).read_text(encoding="utf-8")
+        )
         require(
             exit_code == 0
             and summary["overall_status"] == "passed"
@@ -653,9 +645,7 @@ def main() -> int:
         )
 
         def passed_benchmark(**arguments: Any) -> dict[str, Any]:
-            cache_path = Path(
-                arguments["environment"]["FLAGDNN_CACHE_PATH"]
-            )
+            cache_path = Path(arguments["environment"]["FLAGDNN_CACHE_PATH"])
             require(
                 cache_path.is_dir(),
                 "Iluvatar benchmark path did not create its run cache",
@@ -698,7 +688,7 @@ def main() -> int:
         finally:
             runner.run_one = original_run_one
         speedup_summary = json.loads(
-            summary_path.read_text(encoding="utf-8")
+            runner.diagnostic_path(summary_path).read_text(encoding="utf-8")
         )
         require(
             speedup_exit == 1

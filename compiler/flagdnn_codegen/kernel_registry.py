@@ -80,6 +80,13 @@ UNARY_POINTWISE_OPERATIONS = (
 BINARY_POINTWISE_OPERATIONS = (
     "sub",
     "sigmoid_backward",
+    "relu_backward",
+    "tanh_backward",
+    "elu_backward",
+    "gelu_backward",
+    "softplus_backward",
+    "swish_backward",
+    "gelu_approx_tanh_backward",
     "mul",
     "div",
     "min",

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 import hashlib
 import json
@@ -211,16 +212,12 @@ def _check_hcu_llvm_compatibility() -> None:
         raise AssertionError("negative clang major version was accepted")
 
     upstream_fixture = (
-        "prefix\n"
-        + _HCU_PATCH_ANCHOR
-        + "middle\n"
-        + _UPSTREAM
-        + "suffix\n"
+        "prefix\n" + _HCU_PATCH_ANCHOR + "middle\n" + _UPSTREAM + "suffix\n"
     )
     prepared = _prepare_source(upstream_fixture)
     assert _UPSTREAM not in prepared
     assert prepared.count(_HCU_PATCH) == 1
-    assert "if get_backend() == \"HCU\":" in prepared
+    assert 'if get_backend() == "HCU":' in prepared
     for invalid in (
         upstream_fixture.replace(_HCU_PATCH_ANCHOR, ""),
         upstream_fixture.replace(_HCU_PATCH_ANCHOR, _HCU_PATCH_ANCHOR * 2),
@@ -390,8 +387,7 @@ def _assert_mixed_stage_emission(
         for configuration in plan.stages:
             stage_id = len(emitted)
             dependencies = sorted(
-                local_stage_ids[name]
-                for name in configuration.dependencies
+                local_stage_ids[name] for name in configuration.dependencies
             )
             emitted.append(
                 compiler._compile_nn_stage(
@@ -438,16 +434,9 @@ def _convolution_case(
     assert len(dilations) == rank
     output = [image[0], weight[0]]
     for axis in range(rank):
-        effective_filter = (
-            (weight[axis + 2] - 1) * dilations[axis] + 1
-        )
+        effective_filter = (weight[axis + 2] - 1) * dilations[axis] + 1
         output.append(
-            (
-                image[axis + 2]
-                + padding[axis]
-                + post[axis]
-                - effective_filter
-            )
+            (image[axis + 2] + padding[axis] + post[axis] - effective_filter)
             // stride[axis]
             + 1
         )
@@ -488,9 +477,7 @@ def _convolution_case(
             "x": (data_type, image),
             "dw": (data_type, weight),
         }
-    return _parse_and_plan(
-        compiler_nn, operation, specifications, attributes
-    )
+    return _parse_and_plan(compiler_nn, operation, specifications, attributes)
 
 
 def _assert_workspace_layout(plan: Any) -> None:
@@ -1033,9 +1020,9 @@ def _check_private_convolution_autotune(
         assert generic_plan.stages[1].function_name == (
             "hygon_conv2d_fprop_im2col_kernel"
         )
-    assert [stage.function_name for stage in fprop_standard_grouped.stages] == [
-        "conv2d_spatial_nchw_kernel"
-    ]
+    assert [
+        stage.function_name for stage in fprop_standard_grouped.stages
+    ] == ["conv2d_spatial_nchw_kernel"]
     for noncontiguous in fprop_standard_noncontiguous:
         assert [stage.function_name for stage in noncontiguous.stages] == [
             "conv2d_spatial_nchw_kernel"
@@ -1053,10 +1040,7 @@ def _check_private_convolution_autotune(
         ("fprop_im2col",),
     ]
     assert fprop_yolo_x.stages[0].tuning.table == "conv_fprop"
-    assert (
-        fprop_yolo_x.stages[1].tuning.table
-        == "conv_fprop"
-    )
+    assert fprop_yolo_x.stages[1].tuning.table == "conv_fprop"
     assert (
         fprop_yolo_x.stages[1].tuning
         == compiler_nn.CONV_FPROP_YOLO_X_P5_GEMM_TUNING
@@ -1153,9 +1137,7 @@ def _check_private_convolution_autotune(
     assert [stage.function_name for stage in fprop_low_ci.stages] == [
         "hygon_conv2d_fprop_stride2_low_ci_nchw_kernel"
     ]
-    assert fprop_low_ci.stages[0].grid_spec.kind == (
-        "conv_private_fprop_rows"
-    )
+    assert fprop_low_ci.stages[0].grid_spec.kind == ("conv_private_fprop_rows")
     assert fprop_low_ci.workspace_size == 0
     assert [stage.stage_name for stage in fprop_low_ci_c4.stages] == [
         "fprop_im2col",
@@ -1218,10 +1200,7 @@ def _check_private_convolution_autotune(
     assert exact_columns.alignment == compiler_nn.WORKSPACE_ALIGNMENT
     assert exact_columns.size == 9_437_184
     assert exact_columns.size % compiler_nn.WORKSPACE_ALIGNMENT == 0
-    assert (
-        exact_columns.size
-        == compiler_nn.DGRAD_EXACT_3X3_S1_WORKSPACE_CAP
-    )
+    assert exact_columns.size == compiler_nn.DGRAD_EXACT_3X3_S1_WORKSPACE_CAP
     assert dgrad_exact.workspace_size == exact_columns.size
     assert dgrad_exact_bf16.workspace_tensors == dgrad_exact.workspace_tensors
     assert dgrad_exact_bf16.workspace_size == dgrad_exact.workspace_size
@@ -1412,9 +1391,9 @@ def _check_private_convolution_autotune(
             noncontiguous_node = copy.deepcopy(exact_node)
             noncontiguous_node["derived"][tensor_name]["strides"][-2] += 1
             noncontiguous = compiler_nn.plan_kernel_stages(noncontiguous_node)
-            assert [
-                stage.function_name for stage in noncontiguous.stages
-            ] == ["conv_dgrad_nd_kernel"]
+            assert [stage.function_name for stage in noncontiguous.stages] == [
+                "conv_dgrad_nd_kernel"
+            ]
 
     assert [stage.stage_name for stage in dgrad_stride2.stages] == [
         "dgrad_s2_contribution_gemm",
@@ -1656,9 +1635,7 @@ def _check_private_convolution_autotune(
     assert p5_tail_columns.dimensions == (20 * 20, 5 * 3 * 3)
     assert p5_tail_columns.strides == (5 * 3 * 3, 1)
 
-    assert [
-        stage.function_name for stage in wgrad_multirow_flip.stages
-    ] == [
+    assert [stage.function_name for stage in wgrad_multirow_flip.stages] == [
         "hygon_conv_wgrad2d_direct_split_kernel",
         "hygon_conv_wgrad2d_reduce_kernel",
     ]
@@ -1808,9 +1785,7 @@ def _check_private_convolution_autotune(
         assert "dy_ptr ABI token" in str(error)
     else:
         raise AssertionError("WGrad LDS contract accepted an invalid token")
-    assert [
-        stage.stage_name for stage in wgrad_packed_split.stages
-    ] == [
+    assert [stage.stage_name for stage in wgrad_packed_split.stages] == [
         "wgrad_im2col",
         "wgrad_split",
         "wgrad_reduce",
@@ -1855,9 +1830,10 @@ def _check_private_convolution_autotune(
         assert candidate.ownership == "platform"
         assert candidate.provider == "hygon_triton"
         assert candidate.source == "convolution.py"
-        assert candidate.functions == compiler_nn.REGISTRY_FUNCTIONS[
-            plan.operation
-        ]
+        assert (
+            candidate.functions
+            == compiler_nn.REGISTRY_FUNCTIONS[plan.operation]
+        )
         for stage in plan.stages:
             if not stage.function_name.startswith("hygon_"):
                 continue
@@ -2315,6 +2291,24 @@ def _check_large_normalization(
         )
         assert len(plan.stages) == 1
         stage = plan.stages[0]
+        candidate = select_kernel_candidate("hygon", operation)
+        source = compiler.resolve_kernel_source(
+            compiler._compiler_entry_path(), candidate
+        )
+        function = next(
+            node
+            for node in ast.parse(source.read_text()).body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == stage.function_name
+        )
+        signature = type(
+            "KernelSignature",
+            (),
+            {"arg_names": [argument.arg for argument in function.args.args]},
+        )()
+        compiler._jit_full_signature(
+            signature, stage.runtime_signature, stage.constants
+        )
         configurations = _tuning_configurations(
             compiler, select_kernel_candidate, operation, stage
         )
@@ -2406,6 +2400,52 @@ def _check_batchnorm_dispatch(
     ] == [256, 512, 1024, 1024, 2048, 4096]
 
 
+def _check_sigmoid_backward_common_source(compiler: ModuleType) -> None:
+    # Sigmoid backward shares the activation-gradient module. Exercise actual
+    # source materialization and the complete JIT ABI without a device SDK.
+    with tempfile.TemporaryDirectory(prefix="flagdnn-hygon-sigmoid-") as path:
+        for dtype in ("float32", "float16", "bfloat16"):
+            for strided in (False, True):
+                registry = {
+                    uid: _tensor(uid, dtype, [2, 3]) for uid in (1, 2, 3)
+                }
+                if strided:
+                    for tensor in registry.values():
+                        tensor["strides"] = [8, 2]
+                node = {
+                    "id": 0,
+                    "type": "sigmoid_backward",
+                    "compute_data_type": "float32",
+                    "attributes": {
+                        "n_elements": 6,
+                        "pointwise_mode": 40,
+                        "alpha": 1.0,
+                    },
+                    "inputs": [
+                        {"name": "left", "uid": 1},
+                        {"name": "right", "uid": 2},
+                    ],
+                    "outputs": [{"name": "output", "uid": 3}],
+                }
+                parsed = compiler._parse_pointwise_node(node, 0, 1, registry)
+                stage = compiler._compile_pointwise_stage(
+                    stage_id=0,
+                    node=parsed,
+                    dependencies=[],
+                    workspace={},
+                    compiler_path=compiler._compiler_entry_path(),
+                    output_directory=Path(path),
+                    enable_autotune=False,
+                )
+                assert stage["kernel"]["source"] == "activation_backward.py"
+                expected = (
+                    "activation_backward_strided_kernel"
+                    if strided
+                    else "activation_backward_contiguous_kernel"
+                )
+                assert stage["kernel"]["function"] == expected
+
+
 def _check_pointwise_kernel_ownership(
     compiler: ModuleType, select_kernel_candidate: Any
 ) -> None:
@@ -2486,8 +2526,7 @@ def _check_pointwise_kernel_ownership(
             )
 
         identity_registry = {
-            uid: _tensor(uid, "float32", [8, 1024, 2048])
-            for uid in (1, 2)
+            uid: _tensor(uid, "float32", [8, 1024, 2048]) for uid in (1, 2)
         }
         identity_node = {
             "id": 0,
@@ -2527,13 +2566,14 @@ def _check_pointwise_kernel_ownership(
             elements_per_program = (
                 meta["BLOCK_SIZE"] * meta["TILES_PER_PROGRAM"] * 2
             )
-            assert variant["launch"]["grid"][0] == (
-                8 * 1024 * 2048 + elements_per_program - 1
-            ) // elements_per_program
+            assert (
+                variant["launch"]["grid"][0]
+                == (8 * 1024 * 2048 + elements_per_program - 1)
+                // elements_per_program
+            )
 
         strided_registry = {
-            uid: _tensor(uid, "float32", [8, 1024, 2048])
-            for uid in (1, 2)
+            uid: _tensor(uid, "float32", [8, 1024, 2048]) for uid in (1, 2)
         }
         strided_registry[1]["strides"] = [1024 * 2049, 2049, 1]
         parsed_strided = compiler._parse_pointwise_node(
@@ -2557,9 +2597,11 @@ def _check_pointwise_kernel_ownership(
             elements_per_program = (
                 meta["BLOCK_SIZE"] * meta["TILES_PER_PROGRAM"]
             )
-            assert variant["launch"]["grid"][0] == (
-                8 * 1024 * 2048 + elements_per_program - 1
-            ) // elements_per_program
+            assert (
+                variant["launch"]["grid"][0]
+                == (8 * 1024 * 2048 + elements_per_program - 1)
+                // elements_per_program
+            )
 
 
 def _check_platform_kernel_identity_inputs(compiler: ModuleType) -> None:
@@ -2812,8 +2854,7 @@ def _check_private_build_mirror_layout(compiler: ModuleType) -> None:
             "flagdnn_hygon_compiler_environment.json"
         )
         assert not (
-            temporary_root
-            / "installed-sdk/share/triton_jit/scripts"
+            temporary_root / "installed-sdk/share/triton_jit/scripts"
         ).exists()
         installed_validated = compiler_identity._validate_compiler_environment(
             installed_environment,
@@ -2908,6 +2949,7 @@ def main(argv: list[str]) -> int:
     _check_large_normalization(compiler, compiler_nn, select_kernel_candidate)
     _check_batchnorm_dispatch(compiler, compiler_nn, select_kernel_candidate)
     _check_pointwise_kernel_ownership(compiler, select_kernel_candidate)
+    _check_sigmoid_backward_common_source(compiler)
     _check_platform_kernel_identity_inputs(compiler)
     _check_private_build_mirror_layout(compiler)
     print("Hygon compiler contract: PASS")

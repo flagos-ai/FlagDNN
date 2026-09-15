@@ -10,7 +10,10 @@
 
 namespace flagdnn::cuda {
 
-ContextGuard::ContextGuard(CUcontext context) {
+ContextGuard::ContextGuard(CUcontext context, bool required) {
+  if (!required) {
+    return;
+  }
   CUcontext current = nullptr;
   check_cuda(cuCtxGetCurrent(&current), "cuCtxGetCurrent");
   if (current == context) {

@@ -86,6 +86,13 @@ API。
 matmul、convolution、normalization 等算法族复用。common kernel 只能依赖 Triton 和
 Python 标准库，不能依赖 backend runtime、Torch 或旧 FlagDNN Python wrapper。
 
+PTX、TMA、NVIDIA MMA/Gluon 布局及平台专用精度实现放在
+`backends/<platform>/kernels/`，通过平台 registry 覆盖公共实现。例如 NVIDIA
+causal convolution 的 TF32 舍入和优化版本独立于公共浮点实现。
+公共 FP8/MXFP8、MoE 等 kernel 使用标准 Triton 运算；接入平台仍需检查
+目标设备的 dot、FP8、FP64 和数学函数支持，并提供 dtype 映射及 launch 配置。
+`triton.language.extra.libdevice` 是按编译目标解析的公共接口。
+
 ### `backends/` 根目录与 `backends/<platform>/`
 
 `backends/autotune_policy.*` 保存候选 ID、cache、repetition、选择策略等跨平台 backend
@@ -108,9 +115,13 @@ backends/<platform>/
     ├── CMakeLists.txt             # 该平台唯一测试装配入口
     ├── <device>_driver.hpp        # 功能/性能共享的 stream/buffer/event
     ├── tensor_io.cpp/.hpp          # 功能/性能共享的布局、编解码、padding 校验
-    ├── functional/                # DNN reference、host oracle、功能 runner
+    ├── functional/                # 厂商 reference、功能 runner
     └── benchmark/                 # DNN provider、计时与结果输出
 ```
+
+NVIDIA 的 `compiler.py` 保留 provider 入口；`dispatch/` 负责输入校验、选核和执行
+规划，`codegen/` 负责编译、产物与缓存。两个目录随生产 backend 安装，
+其 Python 模块均参与编译器指纹；`dispatch/` 不反向依赖 `codegen/`。
 
 NVIDIA 对应 `backends/nvidia/validation/`。`functional/` 和 `benchmark/` 是同一平台目录
 内部的两种验证模式，不是两个平台接入点。
@@ -139,6 +150,14 @@ benchmark/
 `tests/` 只表达“正确性测什么”，`benchmark/` 只表达“性能测什么”，均不知道由哪个设备
 SDK 完成验证。不存在 `tests/platforms/`、`benchmark/platforms/` 或 `test_support/`。
 唯一算子集合来自 `cmake/Operators.cmake`。
+
+新增算子的 shape、dtype、输入数据和 Graph builder 放在 `tests/common/`；
+其他平台实现对应 runner 的设备 I/O 与厂商参考，调用
+`flagdnn_register_functional_suite(PLATFORM ... OPERATORS ...)` 注册。
+性能入口通过 `benchmark/common/` 的 runner contract 接入，平台调用
+`flagdnn_register_benchmark_suite` 选择已具备对照的算子。尚未支持的算子不应
+链接缺失的 runner；可选择不注册或使用显式 capability gate。
+NVIDIA 的 cuDNN shape 筛选与未注册算子清单只属于 NVIDIA 适配层。
 
 根 CMake 的唯一平台选择项是：
 
@@ -174,7 +193,7 @@ cache identity 和调优空间会不确定。
 - `libtriton_jit` 编译、加载和启动选中的 Triton kernel。
 
 NVIDIA backend 先准备每个 JIT variant，过滤无法加载的候选。多个有效候选进入公共
-autotune，一个候选直接选择，零个候选返回聚合错误。未来 libtriton_jit 原生支持
+autotune，一个候选直接选择并持久化选择缓存（不计时），零个候选返回聚合错误。未来 libtriton_jit 原生支持
 autotune 后，只替换候选选择 adapter，不改变 Graph、registry 或验证契约。
 
 持久化选择只有在 policy identity、candidate identity、measurement identity 和 device
@@ -189,7 +208,8 @@ identity（包含 SM、设备、CUDA Driver）全部匹配时才命中。libtrit
 - cuDNN/CANN 等 reference SDK 只由
   `backends/<platform>/validation/CMakeLists.txt` 查找。
 - `tests/common`、`benchmark/common` 和 core library 的依赖边界由 CTest contract 检查。
-- 同一设备上的 GPU 功能测试和性能测试必须串行执行。
+- CPU 数值参考放在 `reference/cpu/`；NVIDIA 功能和性能测试只与 cuDNN 对照。
+- 同一设备上的功能回归与性能计时不得并行，性能基准之间也必须串行。
 
 ## 7. 禁止重新引入的结构
 

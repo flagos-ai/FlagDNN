@@ -1389,12 +1389,11 @@ int run_benchmark_suite(int argc,
         cases.front().operation == Operation::kMatmul;
     std::vector<BenchmarkCase> ascend_cases;
     if (reduction_suite) {
-      if (cases.size() != 9 ||
-          std::any_of(cases.begin(), cases.end(), [](const auto& item) {
+      if (std::any_of(cases.begin(), cases.end(), [](const auto& item) {
             return item.operation != Operation::kReduction;
           })) {
         throw std::invalid_argument(
-            "Ascend reduction benchmark common catalog must contain 9 cases");
+            "Ascend reduction benchmark common catalog must contain cases");
       }
       const std::size_t sum_count = static_cast<std::size_t>(std::count_if(
           cases.begin(), cases.end(), [](const auto& item) {
@@ -1408,23 +1407,21 @@ int run_benchmark_suite(int argc,
           cases.begin(), cases.end(), [](const auto& item) {
             return item.reduction_mode == FLAGDNN_REDUCTION_MUL;
           }));
-      if (sum_count != 3 || average_count != 3 || product_count != 3) {
+      if (sum_count == 0 || average_count == 0 || product_count == 0) {
         throw std::logic_error(
-            "Ascend reduction benchmark modes must split 3/3/3");
+            "Ascend reduction benchmark must cover SUM, AVG and MUL");
       }
       ascend_cases.assign(cases.begin(), cases.end());
     } else if (convolution_fprop_suite) {
 #if FLAGDNN_ASCEND_VALIDATION_ENABLE_CONVOLUTION_FPROP
-      if (cases.size() != 51U ||
-          std::any_of(cases.begin(), cases.end(), [](const auto& item) {
+      if (std::any_of(cases.begin(), cases.end(), [](const auto& item) {
             return item.operation != Operation::kConvolutionFprop ||
                    item.output_count != 1U || item.tensors.size() != 3U ||
                    item.convolution.mode !=
                        ConvolutionMode::kCrossCorrelation;
           })) {
         throw std::invalid_argument(
-            "Ascend convolution fprop benchmark common catalog must contain "
-            "51 cases");
+            "Ascend convolution fprop benchmark catalog is inconsistent");
       }
       std::array<std::size_t, 3> type_counts{};
       for (const BenchmarkCase& item : cases) {
@@ -1444,16 +1441,17 @@ int run_benchmark_suite(int argc,
                 "dtype");
         }
       }
-      if (type_counts != std::array<std::size_t, 3>({17U, 17U, 17U})) {
+      if (std::any_of(type_counts.begin(), type_counts.end(),
+                      [](std::size_t count) { return count == 0; })) {
         throw std::logic_error(
-            "Ascend convolution fprop benchmark dtype counts must be "
-            "17/17/17");
+            "Ascend convolution fprop benchmark must cover FP32, FP16 and "
+            "BF16");
       }
       ascend_cases.assign(cases.begin(), cases.end());
       for (BenchmarkCase& item : ascend_cases) {
         // The common GPU catalog batches ten convolutions per sample.  The
         // Ascend direct kernel reports one complete launch per sample so the
-        // 51-case matrix remains practical while retaining ten observations.
+        // expanded catalog remains practical while retaining ten observations.
         item.benchmark.warmup_iterations = 2;
         item.benchmark.sample_count = 10;
         item.benchmark.iterations_per_sample = 1;
@@ -1464,13 +1462,12 @@ int run_benchmark_suite(int argc,
 #endif
     } else if (matmul_suite) {
 #if FLAGDNN_ASCEND_VALIDATION_ENABLE_MATMUL
-      if (cases.size() != 24 ||
-          std::any_of(cases.begin(), cases.end(), [](const auto& item) {
+      if (std::any_of(cases.begin(), cases.end(), [](const auto& item) {
             return item.operation != Operation::kMatmul ||
                    item.output_count != 1 || item.tensors.size() != 3;
           })) {
         throw std::invalid_argument(
-            "Ascend MatMul benchmark common catalog must contain 24 cases");
+            "Ascend MatMul benchmark common catalog must contain cases");
       }
       std::array<std::size_t, 3> type_counts{};
       for (const BenchmarkCase& item : cases) {
@@ -1489,9 +1486,10 @@ int run_benchmark_suite(int argc,
                 "Ascend MatMul benchmark contains an invalid dtype");
         }
       }
-      if (type_counts != std::array<std::size_t, 3>({8, 8, 8})) {
+      if (std::any_of(type_counts.begin(), type_counts.end(),
+                      [](std::size_t count) { return count == 0; })) {
         throw std::logic_error(
-            "Ascend MatMul benchmark dtype counts must be 8/8/8");
+            "Ascend MatMul benchmark must cover FP32, FP16 and BF16");
       }
       ascend_cases.assign(cases.begin(), cases.end());
 #else
@@ -1499,22 +1497,6 @@ int run_benchmark_suite(int argc,
           "Ascend MatMul benchmark adapter is not enabled");
 #endif
     } else {
-      if (is_logical_mode(cases.front().pointwise_mode) &&
-          cases.size() != 8) {
-      throw std::invalid_argument(
-          "Ascend logical benchmark catalog must contain 8 cases");
-      }
-      if (is_comparison_mode(cases.front().pointwise_mode) &&
-          cases.size() != 24) {
-      throw std::invalid_argument(
-          "Ascend comparison benchmark common catalog must contain 24 cases");
-      }
-      if (cases.front().pointwise_mode == FLAGDNN_POINTWISE_BINARY_SELECT &&
-          cases.size() != 24) {
-      throw std::invalid_argument(
-          "Ascend binary-select benchmark common catalog must contain "
-          "24 cases");
-      }
       ascend_cases.assign(cases.begin(), cases.end());
     if (requires_unary_benchmark_extension(
             cases.front().pointwise_mode)) {
@@ -1552,21 +1534,6 @@ int run_benchmark_suite(int argc,
       ascend_cases.push_back(
           make_binary_select_benchmark_extension(cases.front()));
     }
-    if (is_logical_mode(cases.front().pointwise_mode) &&
-        ascend_cases.size() != 8) {
-      throw std::logic_error(
-          "Ascend logical benchmark catalog must contain 8 cases");
-    }
-    if (is_comparison_mode(cases.front().pointwise_mode) &&
-        ascend_cases.size() != 25) {
-      throw std::logic_error(
-          "Ascend comparison benchmark catalog must contain 25 cases");
-    }
-    if (cases.front().pointwise_mode == FLAGDNN_POINTWISE_BINARY_SELECT &&
-        ascend_cases.size() != 25) {
-      throw std::logic_error(
-          "Ascend binary-select benchmark catalog must contain 25 cases");
-      }
     }
     acl::DevelopmentEnvironment development(
         reduction_suite

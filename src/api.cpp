@@ -54,7 +54,8 @@ bool valid_data_type(flagdnnDataType_t data_type) {
          data_type == FLAGDNN_DATA_BFLOAT16 ||
          data_type == FLAGDNN_DATA_BOOLEAN ||
          data_type == FLAGDNN_DATA_FP8_E4M3 ||
-         data_type == FLAGDNN_DATA_FP8_E5M2;
+         data_type == FLAGDNN_DATA_FP8_E5M2 ||
+         data_type == FLAGDNN_DATA_INT32 || data_type == FLAGDNN_DATA_FP8_E8M0;
 }
 
 bool valid_operation(flagdnnOperation_t operation) {
@@ -181,23 +182,24 @@ bool valid_unary_pointwise_mode(flagdnnPointwiseMode_t mode) {
 }
 
 bool valid_binary_pointwise_mode(flagdnnPointwiseMode_t mode) {
-  return mode == FLAGDNN_POINTWISE_ADD ||
-         mode == FLAGDNN_POINTWISE_SUB ||
-         mode == FLAGDNN_POINTWISE_MUL ||
-         mode == FLAGDNN_POINTWISE_DIV ||
-         mode == FLAGDNN_POINTWISE_MIN ||
-         mode == FLAGDNN_POINTWISE_MAX ||
-         mode == FLAGDNN_POINTWISE_MOD ||
-         mode == FLAGDNN_POINTWISE_POW ||
+  return mode == FLAGDNN_POINTWISE_ADD || mode == FLAGDNN_POINTWISE_SUB ||
+         mode == FLAGDNN_POINTWISE_MUL || mode == FLAGDNN_POINTWISE_DIV ||
+         mode == FLAGDNN_POINTWISE_MIN || mode == FLAGDNN_POINTWISE_MAX ||
+         mode == FLAGDNN_POINTWISE_MOD || mode == FLAGDNN_POINTWISE_POW ||
          mode == FLAGDNN_POINTWISE_CMP_EQ ||
          mode == FLAGDNN_POINTWISE_CMP_NEQ ||
-         mode == FLAGDNN_POINTWISE_CMP_GT ||
-         mode == FLAGDNN_POINTWISE_CMP_GE ||
-         mode == FLAGDNN_POINTWISE_CMP_LT ||
-         mode == FLAGDNN_POINTWISE_CMP_LE ||
+         mode == FLAGDNN_POINTWISE_CMP_GT || mode == FLAGDNN_POINTWISE_CMP_GE ||
+         mode == FLAGDNN_POINTWISE_CMP_LT || mode == FLAGDNN_POINTWISE_CMP_LE ||
          mode == FLAGDNN_POINTWISE_LOGICAL_AND ||
          mode == FLAGDNN_POINTWISE_LOGICAL_OR ||
-         mode == FLAGDNN_POINTWISE_SIGMOID_BWD;
+         mode == FLAGDNN_POINTWISE_SIGMOID_BWD ||
+         mode == FLAGDNN_POINTWISE_RELU_BWD ||
+         mode == FLAGDNN_POINTWISE_TANH_BWD ||
+         mode == FLAGDNN_POINTWISE_ELU_BWD ||
+         mode == FLAGDNN_POINTWISE_GELU_BWD ||
+         mode == FLAGDNN_POINTWISE_SOFTPLUS_BWD ||
+         mode == FLAGDNN_POINTWISE_SWISH_BWD ||
+         mode == FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD;
 }
 
 bool valid_ternary_pointwise_mode(flagdnnPointwiseMode_t mode) {
@@ -664,70 +666,6 @@ void configure_sdpa_fp8_backward_operation(
   specification.configured = true;
 }
 
-void configure_pointwise_binary_operation(
-    flagdnnOperationDescriptor_t descriptor,
-    flagdnnTensorDescriptor_t left,
-    flagdnnTensorDescriptor_t right,
-    flagdnnPointwiseMode_t mode,
-    flagdnnTensorDescriptor_t output,
-    double alpha) {
-  require_operation_type(descriptor, FLAGDNN_OPERATION_POINTWISE);
-  require_configured_tensor(left, "left descriptor is null");
-  require_configured_tensor(right, "right descriptor is null");
-  require_configured_tensor(output, "output descriptor is null");
-  if (!valid_binary_pointwise_mode(mode)) {
-    throw flagdnn::native::ApiError(
-        FLAGDNN_STATUS_NOT_SUPPORTED,
-        "pointwise mode is not a supported binary operation");
-  }
-  const double maximum_alpha =
-      static_cast<double>(std::numeric_limits<float>::max());
-  if (!std::isfinite(alpha) || alpha < -maximum_alpha ||
-      alpha > maximum_alpha) {
-    throw flagdnn::native::ApiError(
-        FLAGDNN_STATUS_INVALID_VALUE,
-        "pointwise alpha must be finite and representable as float32");
-  }
-  if (mode != FLAGDNN_POINTWISE_ADD &&
-      mode != FLAGDNN_POINTWISE_SUB && alpha != 1.0) {
-    throw flagdnn::native::ApiError(
-        FLAGDNN_STATUS_INVALID_VALUE,
-        "pointwise alpha is only supported by ADD and SUB modes");
-  }
-  configure_operation_ports(
-      descriptor,
-      {{"left", left}, {"right", right}},
-      {{"output", output}});
-  set_integer_attribute(descriptor, "mode", static_cast<std::int64_t>(mode));
-  set_real_attribute(descriptor, "alpha", alpha);
-  descriptor->specification.configured = true;
-}
-
-void configure_pointwise_ternary_operation(
-    flagdnnOperationDescriptor_t descriptor,
-    flagdnnTensorDescriptor_t a,
-    flagdnnTensorDescriptor_t b,
-    flagdnnTensorDescriptor_t t,
-    flagdnnPointwiseMode_t mode,
-    flagdnnTensorDescriptor_t output) {
-  require_operation_type(descriptor, FLAGDNN_OPERATION_POINTWISE);
-  require_configured_tensor(a, "A descriptor is null");
-  require_configured_tensor(b, "B descriptor is null");
-  require_configured_tensor(t, "T descriptor is null");
-  require_configured_tensor(output, "output descriptor is null");
-  if (!valid_ternary_pointwise_mode(mode)) {
-    throw flagdnn::native::ApiError(
-        FLAGDNN_STATUS_NOT_SUPPORTED,
-        "pointwise mode is not a supported ternary operation");
-  }
-  configure_operation_ports(
-      descriptor,
-      {{"a", a}, {"b", b}, {"t", t}},
-      {{"output", output}});
-  set_integer_attribute(descriptor, "mode", static_cast<std::int64_t>(mode));
-  descriptor->specification.configured = true;
-}
-
 float checked_pointwise_attribute(double value, const char* name) {
   const double maximum =
       static_cast<double>(std::numeric_limits<float>::max());
@@ -740,21 +678,9 @@ float checked_pointwise_attribute(double value, const char* name) {
   return static_cast<float>(value);
 }
 
-void configure_pointwise_unary_operation(
-    flagdnnOperationDescriptor_t descriptor,
-    flagdnnTensorDescriptor_t input,
+flagdnn::native::AttributeMap normalized_pointwise_attributes(
     flagdnnPointwiseMode_t mode,
-    flagdnnTensorDescriptor_t output,
     const flagdnnPointwiseAttributes_t* attributes) {
-  require_operation_type(descriptor, FLAGDNN_OPERATION_POINTWISE);
-  require_configured_tensor(input, "input descriptor is null");
-  require_configured_tensor(output, "output descriptor is null");
-  if (!valid_unary_pointwise_mode(mode)) {
-    throw flagdnn::native::ApiError(
-        FLAGDNN_STATUS_NOT_SUPPORTED,
-        "pointwise mode is not a supported unary operation");
-  }
-
   flagdnnPointwiseAttributes_t normalized =
       FLAGDNN_POINTWISE_ATTRIBUTES_INITIALIZER;
   if (attributes != nullptr) {
@@ -774,18 +700,22 @@ void configure_pointwise_unary_operation(
 
   std::uint64_t allowed_flags = 0U;
   switch (mode) {
+    case FLAGDNN_POINTWISE_RELU_BWD:
     case FLAGDNN_POINTWISE_RELU_FWD:
       allowed_flags =
           FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP |
           FLAGDNN_POINTWISE_ATTRIBUTE_RELU_UPPER_CLIP |
           FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP_SLOPE;
       break;
+    case FLAGDNN_POINTWISE_SWISH_BWD:
     case FLAGDNN_POINTWISE_SWISH_FWD:
       allowed_flags = FLAGDNN_POINTWISE_ATTRIBUTE_SWISH_BETA;
       break;
+    case FLAGDNN_POINTWISE_ELU_BWD:
     case FLAGDNN_POINTWISE_ELU_FWD:
       allowed_flags = FLAGDNN_POINTWISE_ATTRIBUTE_ELU_ALPHA;
       break;
+    case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
     case FLAGDNN_POINTWISE_SOFTPLUS_FWD:
       allowed_flags = FLAGDNN_POINTWISE_ATTRIBUTE_SOFTPLUS_BETA;
       break;
@@ -844,18 +774,90 @@ void configure_pointwise_unary_operation(
         "ReLU upper clip must not be less than its lower clip");
   }
 
-  configure_operation_ports(
-      descriptor, {{"input", input}}, {{"output", output}});
+  return {{"relu_lower_clip", static_cast<double>(relu_lower_clip)},
+          {"relu_upper_clip", static_cast<double>(relu_upper_clip)},
+          {"relu_lower_clip_slope", static_cast<double>(relu_lower_clip_slope)},
+          {"relu_upper_clip_set", relu_upper_clip_set},
+          {"swish_beta", static_cast<double>(swish_beta)},
+          {"elu_alpha", static_cast<double>(elu_alpha)},
+          {"softplus_beta", static_cast<double>(softplus_beta)}};
+}
+
+void configure_pointwise_binary_operation(
+    flagdnnOperationDescriptor_t descriptor, flagdnnTensorDescriptor_t left,
+    flagdnnTensorDescriptor_t right, flagdnnPointwiseMode_t mode,
+    flagdnnTensorDescriptor_t output, double alpha,
+    const flagdnnPointwiseAttributes_t* attributes = nullptr) {
+  require_operation_type(descriptor, FLAGDNN_OPERATION_POINTWISE);
+  require_configured_tensor(left, "left descriptor is null");
+  require_configured_tensor(right, "right descriptor is null");
+  require_configured_tensor(output, "output descriptor is null");
+  if (!valid_binary_pointwise_mode(mode)) {
+    throw flagdnn::native::ApiError(
+        FLAGDNN_STATUS_NOT_SUPPORTED,
+        "pointwise mode is not a supported binary operation");
+  }
+  const double maximum_alpha =
+      static_cast<double>(std::numeric_limits<float>::max());
+  if (!std::isfinite(alpha) || alpha < -maximum_alpha ||
+      alpha > maximum_alpha) {
+    throw flagdnn::native::ApiError(
+        FLAGDNN_STATUS_INVALID_VALUE,
+        "pointwise alpha must be finite and representable as float32");
+  }
+  if (mode != FLAGDNN_POINTWISE_ADD && mode != FLAGDNN_POINTWISE_SUB &&
+      alpha != 1.0) {
+    throw flagdnn::native::ApiError(
+        FLAGDNN_STATUS_INVALID_VALUE,
+        "pointwise alpha is only supported by ADD and SUB modes");
+  }
+  auto normalized = normalized_pointwise_attributes(mode, attributes);
+  configure_operation_ports(descriptor, {{"left", left}, {"right", right}},
+                            {{"output", output}});
+  descriptor->specification.attributes = std::move(normalized);
   set_integer_attribute(descriptor, "mode", static_cast<std::int64_t>(mode));
-  set_real_attribute(descriptor, "relu_lower_clip", relu_lower_clip);
-  set_real_attribute(descriptor, "relu_upper_clip", relu_upper_clip);
-  set_real_attribute(
-      descriptor, "relu_lower_clip_slope", relu_lower_clip_slope);
-  set_boolean_attribute(
-      descriptor, "relu_upper_clip_set", relu_upper_clip_set);
-  set_real_attribute(descriptor, "swish_beta", swish_beta);
-  set_real_attribute(descriptor, "elu_alpha", elu_alpha);
-  set_real_attribute(descriptor, "softplus_beta", softplus_beta);
+  set_real_attribute(descriptor, "alpha", alpha);
+  descriptor->specification.configured = true;
+}
+
+void configure_pointwise_ternary_operation(
+    flagdnnOperationDescriptor_t descriptor, flagdnnTensorDescriptor_t a,
+    flagdnnTensorDescriptor_t b, flagdnnTensorDescriptor_t t,
+    flagdnnPointwiseMode_t mode, flagdnnTensorDescriptor_t output) {
+  require_operation_type(descriptor, FLAGDNN_OPERATION_POINTWISE);
+  require_configured_tensor(a, "A descriptor is null");
+  require_configured_tensor(b, "B descriptor is null");
+  require_configured_tensor(t, "T descriptor is null");
+  require_configured_tensor(output, "output descriptor is null");
+  if (!valid_ternary_pointwise_mode(mode)) {
+    throw flagdnn::native::ApiError(
+        FLAGDNN_STATUS_NOT_SUPPORTED,
+        "pointwise mode is not a supported ternary operation");
+  }
+  configure_operation_ports(descriptor, {{"a", a}, {"b", b}, {"t", t}},
+                            {{"output", output}});
+  set_integer_attribute(descriptor, "mode", static_cast<std::int64_t>(mode));
+  descriptor->specification.configured = true;
+}
+
+void configure_pointwise_unary_operation(
+    flagdnnOperationDescriptor_t descriptor, flagdnnTensorDescriptor_t input,
+    flagdnnPointwiseMode_t mode, flagdnnTensorDescriptor_t output,
+    const flagdnnPointwiseAttributes_t* attributes) {
+  require_operation_type(descriptor, FLAGDNN_OPERATION_POINTWISE);
+  require_configured_tensor(input, "input descriptor is null");
+  require_configured_tensor(output, "output descriptor is null");
+  if (!valid_unary_pointwise_mode(mode)) {
+    throw flagdnn::native::ApiError(
+        FLAGDNN_STATUS_NOT_SUPPORTED,
+        "pointwise mode is not a supported unary operation");
+  }
+
+  auto normalized = normalized_pointwise_attributes(mode, attributes);
+  configure_operation_ports(descriptor, {{"input", input}},
+                            {{"output", output}});
+  descriptor->specification.attributes = std::move(normalized);
+  set_integer_attribute(descriptor, "mode", static_cast<std::int64_t>(mode));
   descriptor->specification.configured = true;
 }
 
@@ -1470,6 +1472,17 @@ flagdnnSetPointwiseBinaryOperationDescriptorWithAlpha(
   return api_call([&] {
     configure_pointwise_binary_operation(
         descriptor, left, right, mode, output, alpha);
+  });
+}
+
+flagdnnStatus_t flagdnnSetPointwiseBinaryOperationDescriptorWithAttributes(
+    flagdnnOperationDescriptor_t descriptor, flagdnnTensorDescriptor_t left,
+    flagdnnTensorDescriptor_t right, flagdnnPointwiseMode_t mode,
+    flagdnnTensorDescriptor_t output, double alpha,
+    const flagdnnPointwiseAttributes_t* attributes) {
+  return api_call([&] {
+    configure_pointwise_binary_operation(descriptor, left, right, mode, output,
+                                         alpha, attributes);
   });
 }
 

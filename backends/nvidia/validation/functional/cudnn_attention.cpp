@@ -3,6 +3,7 @@
 #include "common/attention.hpp"
 #include "validation/functional/cudnn_graph.hpp"
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -18,11 +19,12 @@ namespace {
 namespace cfe = cuda::cfe;
 
 template <typename Attributes>
-void apply_options(Attributes& attributes,
-                   const AttentionOptions& options) {
-  if (options.attention_scale.has_value()) {
-    attributes.set_attn_scale(*options.attention_scale);
-  }
+void apply_options(Attributes &attributes, const AttentionOptions &options,
+                   std::int64_t head_dimension) {
+  // Match the public FlagDNN default when the scale option is absent.
+  const float scale = options.attention_scale.value_or(
+      static_cast<float>(1.0 / std::sqrt(static_cast<double>(head_dimension))));
+  attributes.set_attn_scale(scale);
   attributes.set_diagonal_alignment(
       options.diagonal_alignment == AttentionDiagonalAlignment::kTopLeft
           ? cfe::DiagonalAlignment_t::TOP_LEFT
@@ -65,7 +67,7 @@ class CudnnSdpaExecutable final : public cuda::CudnnGraphExecutable {
     cfe::graph::SDPA_attributes attributes;
     attributes.set_name("sdpa")
         .set_generate_stats(test_case.stats.has_value());
-    apply_options(attributes, test_case.options);
+    apply_options(attributes, test_case.options, test_case.q.dimensions[3]);
     if (test_case.bias.has_value()) {
       attributes.set_bias(
           cuda::make_cudnn_tensor(graph_, *test_case.bias, "bias"));
@@ -130,7 +132,7 @@ class CudnnSdpaBackwardExecutable final
     cfe::graph::SDPA_backward_attributes attributes;
     attributes.set_name("sdpa_backward")
         .set_deterministic_algorithm(test_case.deterministic);
-    apply_options(attributes, test_case.options);
+    apply_options(attributes, test_case.options, test_case.q.dimensions[3]);
     if (test_case.bias.has_value()) {
       attributes.set_bias(
           cuda::make_cudnn_tensor(graph_, *test_case.bias, "bias"));
@@ -192,7 +194,7 @@ class CudnnSdpaFp8Executable final : public cuda::CudnnGraphExecutable {
     cfe::graph::SDPA_fp8_attributes attributes;
     attributes.set_name("sdpa_fp8")
         .set_generate_stats(test_case.stats.has_value());
-    apply_options(attributes, test_case.options);
+    apply_options(attributes, test_case.options, test_case.q.dimensions[3]);
     if (test_case.bias.has_value()) {
       attributes.set_bias(
           cuda::make_cudnn_tensor(graph_, *test_case.bias, "bias"));
@@ -273,7 +275,7 @@ class CudnnSdpaFp8BackwardExecutable final
     };
     cfe::graph::SDPA_fp8_backward_attributes attributes;
     attributes.set_name("sdpa_fp8_backward");
-    apply_options(attributes, test_case.options);
+    apply_options(attributes, test_case.options, test_case.q.dimensions[3]);
     auto result = graph_->sdpa_fp8_backward(
         q,
         k,
@@ -327,7 +329,7 @@ class CudnnSdpaFp8BackwardExecutable final
   std::shared_ptr<cfe::graph::Graph> graph_;
 };
 
-}  // namespace
+} // namespace
 
 std::unique_ptr<AttentionExecutable> build_sdpa_reference(
     const SdpaTestCase& test_case) {
@@ -349,4 +351,4 @@ std::unique_ptr<AttentionExecutable> build_sdpa_fp8_backward_reference(
   return std::make_unique<CudnnSdpaFp8BackwardExecutable>(test_case);
 }
 
-}  // namespace flagdnn::testing
+} // namespace flagdnn::testing

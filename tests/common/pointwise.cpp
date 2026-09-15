@@ -2,14 +2,15 @@
 
 #include "common/pointwise.hpp"
 
-#include <flagdnn/flagdnn.hpp>
 #include <flagdnn_frontend.h>
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <flagdnn/flagdnn.hpp>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -33,42 +34,31 @@ constexpr std::array<flagdnnDataType_t, 3> kFloatingDataTypes = {
 
 const std::vector<Shape>& numeric_shapes() {
   static const std::vector<Shape> shapes = {
-      {1, 1, 16},
-      {2, 4, 8},
-      {1, 4, 8, 16},
-      {2, 4, 8, 16},
-      {1, 3, 17},
-      {3, 5, 7},
-      {1, 3, 5, 7},
-      {2, 3, 5, 7},
+      {1, 1, 16}, {2, 4, 8},    {1, 4, 8, 16}, {2, 4, 8, 16}, {1, 3, 17},
+      {3, 5, 7},  {1, 3, 5, 7}, {2, 3, 5, 7},  {1, 1, 31},    {1, 1, 32},
+      {1, 1, 33}, {2, 7, 16},   {1, 1, 1023},  {1, 1, 1025},
   };
   return shapes;
 }
 
 const std::vector<Shape>& identity_shapes() {
   static const std::vector<Shape> shapes = {
-      {2, 3, 4},
-      {4, 5, 6},
-      {1, 8, 16},
-      {3, 1, 17},
-      {2, 4, 8},
-      {5, 7, 11},
-      {1, 33, 65},
-      {2, 16, 257},
-      {4, 32, 128},
+      {2, 3, 4},    {4, 5, 6},  {1, 8, 16},  {3, 1, 17},
+      {2, 4, 8},    {5, 7, 11}, {1, 33, 65}, {2, 16, 257},
+      {4, 32, 128}, {1, 1, 2},  {1, 1, 3},   {2, 3, 17},
   };
   return shapes;
 }
 
-// Some platform Graph references store BOOLEAN tensors bit-packed.  Every shape below has a
-// contiguous logical extent divisible by eight, so both public Graph APIs can
-// be compared without a host fallback or an ABI-specific padding exception.
+// Some platform Graph references store BOOLEAN tensors bit-packed.  Every shape
+// below has a contiguous logical extent divisible by eight, so both public
+// Graph APIs can be compared without a host fallback or an ABI-specific padding
+// exception.
 const std::vector<Shape>& packed_boolean_shapes() {
   static const std::vector<Shape> shapes = {
-      {1, 1, 16},
-      {2, 8, 8},
-      {1, 8, 4, 8},
-      {2, 8, 4, 8},
+      {1, 1, 16}, {2, 8, 8},     {1, 8, 4, 8},  {2, 8, 4, 8},
+      {1, 1, 8},  {1, 1, 24},    {1, 1, 128},   {1, 1, 256},
+      {3, 5, 32}, {1, 16, 3, 5}, {2, 16, 7, 9}, {3, 32, 5, 7},
   };
   return shapes;
 }
@@ -79,8 +69,8 @@ std::vector<std::int64_t> contiguous_strides(const Shape& dimensions) {
   for (std::size_t axis = dimensions.size(); axis != 0; --axis) {
     result[axis - 1] = stride;
     if (dimensions[axis - 1] <= 0 ||
-        stride > std::numeric_limits<std::int64_t>::max() /
-                     dimensions[axis - 1]) {
+        stride >
+            std::numeric_limits<std::int64_t>::max() / dimensions[axis - 1]) {
       throw std::invalid_argument("pointwise shape is invalid or too large");
     }
     stride *= dimensions[axis - 1];
@@ -98,14 +88,15 @@ std::vector<std::int64_t> pointwise_strides(const Shape& dimensions) {
   return {channels * height * width, 1, width * channels, channels};
 }
 
-TestTensor make_tensor(std::int64_t uid,
-                       const Shape& dimensions,
+TestTensor make_tensor(std::int64_t uid, const Shape& dimensions,
                        flagdnnDataType_t data_type) {
   return TestTensor{uid, data_type, dimensions, pointwise_strides(dimensions)};
 }
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return "int32";
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
@@ -113,8 +104,11 @@ std::string data_type_name(flagdnnDataType_t data_type) {
     case FLAGDNN_DATA_BFLOAT16:
       return "bfloat16";
     case FLAGDNN_DATA_FP8_E4M3:
+      return "fp8_e4m3";
     case FLAGDNN_DATA_FP8_E5M2:
-      break;
+      return "fp8_e5m2";
+    case FLAGDNN_DATA_FP8_E8M0:
+      return "fp8_e8m0";
     case FLAGDNN_DATA_BOOLEAN:
       return "bool";
   }
@@ -135,10 +129,8 @@ std::string shape_name(const Shape& shape) {
 bool is_comparison_mode(flagdnnPointwiseMode_t mode) {
   return mode == FLAGDNN_POINTWISE_CMP_EQ ||
          mode == FLAGDNN_POINTWISE_CMP_NEQ ||
-         mode == FLAGDNN_POINTWISE_CMP_GT ||
-         mode == FLAGDNN_POINTWISE_CMP_GE ||
-         mode == FLAGDNN_POINTWISE_CMP_LT ||
-         mode == FLAGDNN_POINTWISE_CMP_LE;
+         mode == FLAGDNN_POINTWISE_CMP_GT || mode == FLAGDNN_POINTWISE_CMP_GE ||
+         mode == FLAGDNN_POINTWISE_CMP_LT || mode == FLAGDNN_POINTWISE_CMP_LE;
 }
 
 bool is_logical_binary_mode(flagdnnPointwiseMode_t mode) {
@@ -195,6 +187,13 @@ bool is_binary_mode(flagdnnPointwiseMode_t mode) {
     case FLAGDNN_POINTWISE_CMP_LE:
     case FLAGDNN_POINTWISE_LOGICAL_AND:
     case FLAGDNN_POINTWISE_LOGICAL_OR:
+    case FLAGDNN_POINTWISE_RELU_BWD:
+    case FLAGDNN_POINTWISE_TANH_BWD:
+    case FLAGDNN_POINTWISE_ELU_BWD:
+    case FLAGDNN_POINTWISE_GELU_BWD:
+    case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
+    case FLAGDNN_POINTWISE_SWISH_BWD:
+    case FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD:
     case FLAGDNN_POINTWISE_SIGMOID_BWD:
       return true;
     default:
@@ -203,8 +202,8 @@ bool is_binary_mode(flagdnnPointwiseMode_t mode) {
 }
 
 bool uses_boolean_compute(flagdnnPointwiseMode_t mode) {
-  return mode == FLAGDNN_POINTWISE_LOGICAL_NOT ||
-         is_comparison_mode(mode) || is_logical_binary_mode(mode);
+  return mode == FLAGDNN_POINTWISE_LOGICAL_NOT || is_comparison_mode(mode) ||
+         is_logical_binary_mode(mode);
 }
 
 flagdnnDataType_t output_data_type(flagdnnPointwiseMode_t mode,
@@ -231,11 +230,22 @@ void set_tolerance(PointwiseTestCase& test_case) {
 }
 
 std::vector<flagdnnDataType_t> input_data_types(flagdnnPointwiseMode_t mode) {
-  if (mode == FLAGDNN_POINTWISE_LOGICAL_NOT ||
-      is_logical_binary_mode(mode)) {
+  if (mode == FLAGDNN_POINTWISE_LOGICAL_NOT || is_logical_binary_mode(mode)) {
     return {FLAGDNN_DATA_BOOLEAN};
   }
-  return {kFloatingDataTypes.begin(), kFloatingDataTypes.end()};
+  std::vector<flagdnnDataType_t> types(kFloatingDataTypes.begin(),
+                                       kFloatingDataTypes.end());
+  if ((is_binary_mode(mode) && mode != FLAGDNN_POINTWISE_SIGMOID_BWD &&
+       mode < FLAGDNN_POINTWISE_RELU_BWD) ||
+      mode == FLAGDNN_POINTWISE_BINARY_SELECT ||
+      mode == FLAGDNN_POINTWISE_IDENTITY) {
+    types.push_back(FLAGDNN_DATA_INT32);
+  }
+  if (mode == FLAGDNN_POINTWISE_IDENTITY) {
+    types.insert(types.end(), {FLAGDNN_DATA_BOOLEAN, FLAGDNN_DATA_FP8_E4M3,
+                               FLAGDNN_DATA_FP8_E5M2, FLAGDNN_DATA_FP8_E8M0});
+  }
+  return types;
 }
 
 bool broadcasts_to(const TestTensor& input, const TestTensor& output) {
@@ -264,8 +274,8 @@ void validate_tensor(const TestTensor& tensor, std::string_view name) {
   }
   for (std::size_t axis = 0; axis < tensor.dimensions.size(); ++axis) {
     if (tensor.dimensions[axis] <= 0 || tensor.strides[axis] <= 0) {
-      throw std::invalid_argument(
-          std::string(name) + " dimensions and strides must be positive");
+      throw std::invalid_argument(std::string(name) +
+                                  " dimensions and strides must be positive");
     }
   }
   (void)data_type_name(tensor.data_type);
@@ -285,22 +295,23 @@ void validate_attributes(const flagdnnPointwiseAttributes_t& attributes) {
       attributes.elu_alpha,
       attributes.softplus_beta,
   };
-  if (!std::all_of(values.begin(), values.end(), [](double value) {
-        return std::isfinite(value);
-      })) {
+  if (!std::all_of(values.begin(), values.end(),
+                   [](double value) { return std::isfinite(value); })) {
     throw std::invalid_argument("pointwise attributes must be finite");
   }
 }
 
 void check_frontend(fe::error_t status, std::string_view operation) {
   if (status.is_bad()) {
-    throw std::runtime_error(
-        std::string(operation) + " failed: " + status.get_message());
+    throw std::runtime_error(std::string(operation) +
+                             " failed: " + status.get_message());
   }
 }
 
 fe::DataType_t frontend_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return fe::DataType_t::INT32;
     case FLAGDNN_DATA_FLOAT32:
       return fe::DataType_t::FLOAT;
     case FLAGDNN_DATA_FLOAT16:
@@ -308,8 +319,11 @@ fe::DataType_t frontend_data_type(flagdnnDataType_t data_type) {
     case FLAGDNN_DATA_BFLOAT16:
       return fe::DataType_t::BFLOAT16;
     case FLAGDNN_DATA_FP8_E4M3:
+      return fe::DataType_t::FP8_E4M3;
     case FLAGDNN_DATA_FP8_E5M2:
-      break;
+      return fe::DataType_t::FP8_E5M2;
+    case FLAGDNN_DATA_FP8_E8M0:
+      return fe::DataType_t::FP8_E8M0;
     case FLAGDNN_DATA_BOOLEAN:
       return fe::DataType_t::BOOLEAN;
   }
@@ -382,6 +396,20 @@ fe::PointwiseMode_t frontend_pointwise_mode(flagdnnPointwiseMode_t mode) {
       return fe::PointwiseMode_t::LOGICAL_AND;
     case FLAGDNN_POINTWISE_LOGICAL_OR:
       return fe::PointwiseMode_t::LOGICAL_OR;
+    case FLAGDNN_POINTWISE_RELU_BWD:
+      return fe::PointwiseMode_t::RELU_BWD;
+    case FLAGDNN_POINTWISE_TANH_BWD:
+      return fe::PointwiseMode_t::TANH_BWD;
+    case FLAGDNN_POINTWISE_ELU_BWD:
+      return fe::PointwiseMode_t::ELU_BWD;
+    case FLAGDNN_POINTWISE_GELU_BWD:
+      return fe::PointwiseMode_t::GELU_BWD;
+    case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
+      return fe::PointwiseMode_t::SOFTPLUS_BWD;
+    case FLAGDNN_POINTWISE_SWISH_BWD:
+      return fe::PointwiseMode_t::SWISH_BWD;
+    case FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD:
+      return fe::PointwiseMode_t::GELU_APPROX_TANH_BWD;
     case FLAGDNN_POINTWISE_SIGMOID_BWD:
       return fe::PointwiseMode_t::SIGMOID_BWD;
     case FLAGDNN_POINTWISE_BINARY_SELECT:
@@ -406,17 +434,15 @@ fe::PointwiseMode_t frontend_pointwise_mode(flagdnnPointwiseMode_t mode) {
   throw std::invalid_argument("unsupported FlagDNN pointwise mode");
 }
 
-void apply_pointwise_attributes(
-    fe::graph::Pointwise_attributes& output,
-    const flagdnnPointwiseAttributes_t& input) {
+void apply_pointwise_attributes(fe::graph::Pointwise_attributes& output,
+                                const flagdnnPointwiseAttributes_t& input) {
   if ((input.flags & FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP) != 0U) {
     output.set_relu_lower_clip(static_cast<float>(input.relu_lower_clip));
   }
   if ((input.flags & FLAGDNN_POINTWISE_ATTRIBUTE_RELU_UPPER_CLIP) != 0U) {
     output.set_relu_upper_clip(static_cast<float>(input.relu_upper_clip));
   }
-  if ((input.flags &
-       FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP_SLOPE) != 0U) {
+  if ((input.flags & FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP_SLOPE) != 0U) {
     output.set_relu_lower_clip_slope(
         static_cast<float>(input.relu_lower_clip_slope));
   }
@@ -432,16 +458,14 @@ void apply_pointwise_attributes(
 }
 
 std::shared_ptr<fe::graph::Tensor_attributes> make_frontend_tensor(
-    const std::shared_ptr<fe::graph::Graph>& graph,
-    const TestTensor& tensor,
+    const std::shared_ptr<fe::graph::Graph>& graph, const TestTensor& tensor,
     std::string name) {
-  return graph->tensor(
-      fe::graph::Tensor_attributes()
-          .set_name(std::move(name))
-          .set_uid(tensor.uid)
-          .set_data_type(frontend_data_type(tensor.data_type))
-          .set_dim(tensor.dimensions)
-          .set_stride(tensor.strides));
+  return graph->tensor(fe::graph::Tensor_attributes()
+                           .set_name(std::move(name))
+                           .set_uid(tensor.uid)
+                           .set_data_type(frontend_data_type(tensor.data_type))
+                           .set_dim(tensor.dimensions)
+                           .set_stride(tensor.strides));
 }
 
 class FlagdnnPointwiseExecutable final : public PointwiseExecutable {
@@ -452,7 +476,8 @@ class FlagdnnPointwiseExecutable final : public PointwiseExecutable {
     validate_pointwise_case(test_case);
 
     graph_->set_name(test_case.name)
-        .set_io_data_type(frontend_data_type(test_case.inputs.front().data_type))
+        .set_io_data_type(
+            frontend_data_type(test_case.inputs.front().data_type))
         .set_intermediate_data_type(fe::DataType_t::FLOAT)
         .set_compute_data_type(fe::DataType_t::FLOAT)
         .set_autotune(test_case.autotune);
@@ -469,8 +494,8 @@ class FlagdnnPointwiseExecutable final : public PointwiseExecutable {
     std::vector<std::shared_ptr<fe::graph::Tensor_attributes>> inputs;
     inputs.reserve(test_case.inputs.size());
     for (std::size_t index = 0; index < test_case.inputs.size(); ++index) {
-      inputs.push_back(make_frontend_tensor(
-          graph_, test_case.inputs[index], "input_" + std::to_string(index)));
+      inputs.push_back(make_frontend_tensor(graph_, test_case.inputs[index],
+                                            "input_" + std::to_string(index)));
     }
 
     std::shared_ptr<fe::graph::Tensor_attributes> output;
@@ -503,10 +528,8 @@ class FlagdnnPointwiseExecutable final : public PointwiseExecutable {
     return workspace_size_;
   }
 
-  void execute(std::span<const flagdnnBinding_t> bindings,
-               void* workspace,
-               std::size_t workspace_size,
-               flagdnnStream_t stream) override {
+  void execute(std::span<const flagdnnBinding_t> bindings, void* workspace,
+               std::size_t workspace_size, flagdnnStream_t stream) override {
     if (workspace_size < workspace_size_ ||
         (workspace_size_ != 0 && workspace == nullptr)) {
       throw std::invalid_argument("FlagDNN pointwise workspace is too small");
@@ -524,6 +547,26 @@ class FlagdnnPointwiseExecutable final : public PointwiseExecutable {
 
 }  // namespace
 
+std::int32_t pointwise_integer_input(std::size_t index, std::size_t input,
+                                     flagdnnPointwiseMode_t mode) {
+  constexpr std::array<std::int32_t, 16> values = {
+      0,  1,  -1,    16777217, -16777217,  2147483647,  -2147483647 - 1,
+      3,  -7, 65537, -65539,   1073741825, -1073741825, 2,
+      -2, 11};
+  if (mode == FLAGDNN_POINTWISE_POW && input == 1) {
+    constexpr std::array<std::int32_t, 16> exponents = {
+        0, -1, -2, 1, 2, 3, 4, 7, 8, 15, 31, 32, 63, 5, 6, 9};
+    return exponents[index % exponents.size()];
+  }
+  // Equal pairs and adjacent values above 2^24 catch float-based comparisons.
+  if (is_comparison_mode(mode) && input == 1) {
+    const auto value = values[index % values.size()];
+    return std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(value) +
+                                       static_cast<std::uint32_t>(index % 3));
+  }
+  return values[(index + input * 5) % values.size()];
+}
+
 std::vector<PointwiseTestCase> make_unary_pointwise_cases(
     const PointwiseCaseDefinition& definition) {
   if (!is_unary_mode(definition.mode) || definition.operation_name.empty()) {
@@ -540,8 +583,12 @@ std::vector<PointwiseTestCase> make_unary_pointwise_cases(
   std::vector<PointwiseTestCase> result;
   result.reserve(shapes.size() * data_types.size());
   std::int64_t uid = 1000;
-  for (const Shape& shape : shapes) {
+  for (std::size_t shape_index = 0; shape_index < shapes.size();
+       ++shape_index) {
     for (const flagdnnDataType_t data_type : data_types) {
+      const Shape& shape = data_type == FLAGDNN_DATA_BOOLEAN
+                               ? packed_boolean_shapes().at(shape_index)
+                               : shapes[shape_index];
       PointwiseTestCase test_case;
       test_case.name = definition.operation_name + "_" +
                        data_type_name(data_type) + "_" + shape_name(shape);
@@ -578,7 +625,6 @@ std::vector<PointwiseTestCase> make_unary_pointwise_cases(
     test_case.input_domains = {definition.input_domain};
     test_case.attributes = definition.attributes;
     test_case.autotune = true;
-    test_case.use_host_reference = true;
     set_tolerance(test_case);
     validate_pointwise_case(test_case);
     result.push_back(std::move(test_case));
@@ -593,15 +639,14 @@ std::vector<PointwiseTestCase> make_binary_pointwise_cases(
   }
   const bool packed_boolean = is_comparison_mode(definition.mode) ||
                               is_logical_binary_mode(definition.mode);
-  const auto& shapes = packed_boolean ? packed_boolean_shapes()
-                                      : numeric_shapes();
+  const auto& shapes =
+      packed_boolean ? packed_boolean_shapes() : numeric_shapes();
   const auto data_types = input_data_types(definition.mode);
   std::vector<PointwiseTestCase> result;
   std::int64_t uid = 3000;
-  const PointwiseInputDomain domain =
-      is_comparison_mode(definition.mode)
-          ? PointwiseInputDomain::kComparison
-          : definition.input_domain;
+  const PointwiseInputDomain domain = is_comparison_mode(definition.mode)
+                                          ? PointwiseInputDomain::kComparison
+                                          : definition.input_domain;
   for (const Shape& shape : shapes) {
     for (const flagdnnDataType_t data_type : data_types) {
       PointwiseTestCase test_case;
@@ -625,6 +670,9 @@ std::vector<PointwiseTestCase> make_binary_pointwise_cases(
   if (definition.mode == FLAGDNN_POINTWISE_SUB) {
     for (const double alpha : {0.5, -2.0}) {
       for (const flagdnnDataType_t data_type : data_types) {
+        if (data_type == FLAGDNN_DATA_INT32 && std::trunc(alpha) != alpha) {
+          continue;
+        }
         PointwiseTestCase test_case;
         test_case.name = definition.operation_name + "_" +
                          data_type_name(data_type) + "_2x4x8" +
@@ -664,6 +712,60 @@ std::vector<PointwiseTestCase> make_binary_pointwise_cases(
       uid += 3;
     }
   }
+  if (definition.mode == FLAGDNN_POINTWISE_SIGMOID_BWD ||
+      definition.mode >= FLAGDNN_POINTWISE_RELU_BWD) {
+    for (const auto data_type : kFloatingDataTypes) {
+      PointwiseTestCase test_case;
+      test_case.name = definition.operation_name + "_attributes_" +
+                       data_type_name(data_type) + "_1x1x65";
+      test_case.mode = definition.mode;
+      test_case.inputs = {make_tensor(uid, {1, 1, 65}, data_type),
+                          make_tensor(uid + 1, {1, 1, 65}, data_type)};
+      test_case.output = make_tensor(uid + 2, {1, 1, 65}, data_type);
+      test_case.input_domains = {PointwiseInputDomain::kReal,
+                                 PointwiseInputDomain::kScaled};
+      test_case.attributes = definition.attributes;
+      if (definition.mode == FLAGDNN_POINTWISE_RELU_BWD) {
+        test_case.attributes.flags =
+            FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP_SLOPE |
+            FLAGDNN_POINTWISE_ATTRIBUTE_RELU_UPPER_CLIP;
+        test_case.attributes.relu_lower_clip_slope = 0.2;
+        test_case.attributes.relu_upper_clip = 0.75;
+      } else if (definition.mode == FLAGDNN_POINTWISE_ELU_BWD) {
+        test_case.attributes.flags = FLAGDNN_POINTWISE_ATTRIBUTE_ELU_ALPHA;
+        test_case.attributes.elu_alpha = 0.25;
+      } else if (definition.mode == FLAGDNN_POINTWISE_SWISH_BWD) {
+        test_case.attributes.flags = FLAGDNN_POINTWISE_ATTRIBUTE_SWISH_BETA;
+        test_case.attributes.swish_beta = 2.0;
+      } else if (definition.mode == FLAGDNN_POINTWISE_SOFTPLUS_BWD) {
+        test_case.attributes.flags = FLAGDNN_POINTWISE_ATTRIBUTE_SOFTPLUS_BETA;
+        test_case.attributes.softplus_beta = 0.5;
+      }
+      set_tolerance(test_case);
+      validate_pointwise_case(test_case);
+      result.push_back(std::move(test_case));
+      uid += 3;
+    }
+  }
+  if (std::find(data_types.begin(), data_types.end(), FLAGDNN_DATA_INT32) !=
+      data_types.end()) {
+    PointwiseTestCase test_case;
+    test_case.name =
+        definition.operation_name + "_int32_broadcast_padded_2x3x17";
+    test_case.mode = definition.mode;
+    test_case.inputs = {
+        {uid, FLAGDNN_DATA_INT32, {2, 3, 17}, {137, 41, 2}},
+        {uid + 1, FLAGDNN_DATA_INT32, {1, 3, 17}, {127, 37, 1}}};
+    test_case.output = {uid + 2,
+                        output_data_type(definition.mode, FLAGDNN_DATA_INT32),
+                        {2, 3, 17},
+                        {151, 43, 2}};
+    test_case.input_domains = {domain, domain};
+    test_case.attributes = definition.attributes;
+    set_tolerance(test_case);
+    validate_pointwise_case(test_case);
+    result.push_back(std::move(test_case));
+  }
   return result;
 }
 
@@ -676,7 +778,8 @@ std::vector<PointwiseTestCase> make_binary_select_cases(
   std::vector<PointwiseTestCase> result;
   std::int64_t uid = 5000;
   for (const Shape& shape : packed_boolean_shapes()) {
-    for (const flagdnnDataType_t data_type : kFloatingDataTypes) {
+    for (const flagdnnDataType_t data_type :
+         input_data_types(definition.mode)) {
       PointwiseTestCase test_case;
       test_case.name = definition.operation_name + "_" +
                        data_type_name(data_type) + "_" + shape_name(shape);
@@ -708,14 +811,12 @@ std::vector<PointwiseTestCase> make_binary_select_cases(
         TestTensor{uid + 1, data_type, shape, {37, 11, 1}},
         make_tensor(uid + 2, shape, FLAGDNN_DATA_BOOLEAN),
     };
-    test_case.output =
-        TestTensor{uid + 3, data_type, shape, {43, 14, 1}};
+    test_case.output = TestTensor{uid + 3, data_type, shape, {43, 14, 1}};
     test_case.input_domains = {PointwiseInputDomain::kReal,
                                PointwiseInputDomain::kReal,
                                PointwiseInputDomain::kLogical};
     test_case.attributes = definition.attributes;
     test_case.autotune = true;
-    test_case.use_host_reference = true;
     set_tolerance(test_case);
     validate_pointwise_case(test_case);
     result.push_back(std::move(test_case));
@@ -729,8 +830,7 @@ void validate_pointwise_case(const PointwiseTestCase& test_case) {
     throw std::invalid_argument("pointwise case name or arity is invalid");
   }
   validate_attributes(test_case.attributes);
-  if (!std::isfinite(test_case.alpha) ||
-      test_case.absolute_tolerance < 0.0 ||
+  if (!std::isfinite(test_case.alpha) || test_case.absolute_tolerance < 0.0 ||
       test_case.relative_tolerance < 0.0) {
     throw std::invalid_argument("pointwise alpha or tolerance is invalid");
   }
@@ -739,8 +839,7 @@ void validate_pointwise_case(const PointwiseTestCase& test_case) {
           ? 1
           : (is_binary_mode(test_case.mode)
                  ? 2
-                 : (test_case.mode == FLAGDNN_POINTWISE_BINARY_SELECT ? 3
-                                                                      : 0));
+                 : (test_case.mode == FLAGDNN_POINTWISE_BINARY_SELECT ? 3 : 0));
   if (expected_inputs == 0 || test_case.inputs.size() != expected_inputs) {
     throw std::invalid_argument("pointwise case mode and arity disagree");
   }
@@ -754,13 +853,13 @@ void validate_pointwise_case(const PointwiseTestCase& test_case) {
 
   std::unordered_set<std::int64_t> uids;
   for (std::size_t index = 0; index < test_case.inputs.size(); ++index) {
-    validate_tensor(test_case.inputs[index],
-                    "input " + std::to_string(index));
+    validate_tensor(test_case.inputs[index], "input " + std::to_string(index));
     if (!uids.emplace(test_case.inputs[index].uid).second) {
       throw std::invalid_argument("pointwise tensor UIDs must be unique");
     }
     if (!broadcasts_to(test_case.inputs[index], test_case.output)) {
-      throw std::invalid_argument("pointwise input does not broadcast to output");
+      throw std::invalid_argument(
+          "pointwise input does not broadcast to output");
     }
   }
   validate_tensor(test_case.output, "output");
@@ -773,7 +872,8 @@ void validate_pointwise_case(const PointwiseTestCase& test_case) {
     if (test_case.inputs[1].data_type != value_type ||
         test_case.inputs[2].data_type != FLAGDNN_DATA_BOOLEAN ||
         test_case.output.data_type != value_type) {
-      throw std::invalid_argument("binary-select tensor data types are invalid");
+      throw std::invalid_argument(
+          "binary-select tensor data types are invalid");
     }
   } else if (test_case.mode == FLAGDNN_POINTWISE_LOGICAL_NOT ||
              is_logical_binary_mode(test_case.mode)) {
@@ -788,7 +888,8 @@ void validate_pointwise_case(const PointwiseTestCase& test_case) {
   } else {
     for (const TestTensor& input : test_case.inputs) {
       if (input.data_type != value_type ||
-          input.data_type == FLAGDNN_DATA_BOOLEAN) {
+          (input.data_type == FLAGDNN_DATA_BOOLEAN &&
+           test_case.mode != FLAGDNN_POINTWISE_IDENTITY)) {
         throw std::invalid_argument("numeric pointwise input types must match");
       }
     }
@@ -800,36 +901,8 @@ void validate_pointwise_case(const PointwiseTestCase& test_case) {
   }
 }
 
-int run_unary_pointwise_functional_test(
-    int argc,
-    char** argv,
-    const PointwiseCaseDefinition& definition,
-    std::string_view suite_name) {
-  const auto cases = make_unary_pointwise_cases(definition);
-  return run_pointwise_functional_test(argc, argv, cases, suite_name);
-}
-
-int run_binary_pointwise_functional_test(
-    int argc,
-    char** argv,
-    const PointwiseCaseDefinition& definition,
-    std::string_view suite_name) {
-  const auto cases = make_binary_pointwise_cases(definition);
-  return run_pointwise_functional_test(argc, argv, cases, suite_name);
-}
-
-int run_binary_select_functional_test(
-    int argc,
-    char** argv,
-    const PointwiseCaseDefinition& definition,
-    std::string_view suite_name) {
-  const auto cases = make_binary_select_cases(definition);
-  return run_pointwise_functional_test(argc, argv, cases, suite_name);
-}
-
 std::unique_ptr<PointwiseExecutable> build_flagdnn_pointwise(
-    flagdnn::Handle& handle,
-    const PointwiseTestCase& test_case) {
+    flagdnn::Handle& handle, const PointwiseTestCase& test_case) {
   return std::make_unique<FlagdnnPointwiseExecutable>(handle, test_case);
 }
 

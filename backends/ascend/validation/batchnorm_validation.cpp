@@ -275,9 +275,9 @@ BenchmarkCase batchnorm_reference_benchmark_case(
 
 std::vector<BatchnormTestCase> make_ascend_batchnorm_cases(
     std::span<const BatchnormTestCase> common_cases) {
-  if (common_cases.size() != 6) {
+  if (common_cases.empty()) {
     throw std::invalid_argument(
-        "common BatchNorm functional catalog must contain 6 cases");
+        "common BatchNorm functional catalog must contain cases");
   }
   std::vector<BatchnormTestCase> result(common_cases.begin(),
                                         common_cases.end());
@@ -289,9 +289,9 @@ std::vector<BatchnormTestCase> make_ascend_batchnorm_cases(
 
 std::vector<BenchmarkCase> make_ascend_batchnorm_benchmark_cases(
     std::span<const BenchmarkCase> common_cases) {
-  if (common_cases.size() != 24) {
+  if (common_cases.empty()) {
     throw std::invalid_argument(
-        "common BatchNorm benchmark catalog must contain 24 cases");
+        "common BatchNorm benchmark catalog must contain cases");
   }
   std::vector<BenchmarkCase> result(common_cases.begin(), common_cases.end());
   for (const BenchmarkCase& test_case : result) {

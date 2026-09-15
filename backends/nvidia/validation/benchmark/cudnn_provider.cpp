@@ -2,11 +2,11 @@
 
 #include "cudnn_provider.hpp"
 
-#include "ops.hpp"
-
 #include <cstddef>
 #include <memory>
 #include <stdexcept>
+
+#include "ops.hpp"
 
 namespace flagdnn::benchmarking {
 namespace {
@@ -25,8 +25,7 @@ std::size_t broadcast_axis_count(const TensorSpec& input,
     }
   }
   for (std::size_t axis = 0; axis < input.dimensions.size(); ++axis) {
-    if (input.dimensions[axis] == 1 &&
-        output.dimensions[leading + axis] > 1) {
+    if (input.dimensions[axis] == 1 && output.dimensions[leading + axis] > 1) {
       ++result;
     }
   }
@@ -46,9 +45,8 @@ bool has_gapped_layout(const TensorSpec& tensor) {
   std::size_t storage_elements = 1;
   for (std::size_t axis = 0; axis < tensor.dimensions.size(); ++axis) {
     elements *= static_cast<std::size_t>(tensor.dimensions[axis]);
-    storage_elements +=
-        static_cast<std::size_t>(tensor.dimensions[axis] - 1) *
-        static_cast<std::size_t>(tensor.strides[axis]);
+    storage_elements += static_cast<std::size_t>(tensor.dimensions[axis] - 1) *
+                        static_cast<std::size_t>(tensor.strides[axis]);
   }
   return storage_elements != elements;
 }
@@ -106,8 +104,7 @@ bool is_broadcast_compatible(const TensorSpec& input,
       output.dimensions.size() - input.dimensions.size();
   for (std::size_t axis = 0; axis < input.dimensions.size(); ++axis) {
     const std::int64_t input_dimension = input.dimensions[axis];
-    const std::int64_t output_dimension =
-        output.dimensions[leading + axis];
+    const std::int64_t output_dimension = output.dimensions[leading + axis];
     if (input_dimension != 1 && input_dimension != output_dimension) {
       return false;
     }
@@ -136,9 +133,8 @@ ProviderCapability graph_capability(const BenchmarkCase& specification) {
     }
 
     if (node.operation == Operation::kPointwise) {
-      const bool unary_relu =
-          node.input_uids.size() == 1 &&
-          node.pointwise_mode == FLAGDNN_POINTWISE_RELU_FWD;
+      const bool unary_relu = node.input_uids.size() == 1 &&
+                              node.pointwise_mode == FLAGDNN_POINTWISE_RELU_FWD;
       const bool binary_arithmetic =
           node.input_uids.size() == 2 &&
           (node.pointwise_mode == FLAGDNN_POINTWISE_ADD ||
@@ -153,16 +149,14 @@ ProviderCapability graph_capability(const BenchmarkCase& specification) {
             "ADD/MUL, and ternary BINARY_SELECT nodes");
       }
       for (const std::int64_t input_uid : node.input_uids) {
-        const TensorSpec* input =
-            find_graph_tensor(specification, input_uid);
+        const TensorSpec* input = find_graph_tensor(specification, input_uid);
         if (input == nullptr) {
           return ProviderCapability::unsupported(
               "cuDNN graph pointwise input tensor is missing");
         }
         const bool compatible =
-            has_convolution
-                ? is_broadcast_compatible(*input, *output)
-                : has_same_physical_mapping(*input, *output);
+            has_convolution ? is_broadcast_compatible(*input, *output)
+                            : has_same_physical_mapping(*input, *output);
         if (!compatible) {
           return ProviderCapability::unsupported(
               has_convolution
@@ -175,14 +169,13 @@ ProviderCapability graph_capability(const BenchmarkCase& specification) {
     }
 
     if (node.operation == Operation::kConvolutionFprop) {
-      const bool attributes_valid =
-          node.convolution.spatial_rank == 2 &&
-          node.convolution.pre_padding.size() == 2 &&
-          node.convolution.post_padding.size() == 2 &&
-          node.convolution.stride.size() == 2 &&
-          node.convolution.dilation.size() == 2;
-      if (node.input_uids.size() != 2 ||
-          node.convolution.groups != 1 || !attributes_valid) {
+      const bool attributes_valid = node.convolution.spatial_rank == 2 &&
+                                    node.convolution.pre_padding.size() == 2 &&
+                                    node.convolution.post_padding.size() == 2 &&
+                                    node.convolution.stride.size() == 2 &&
+                                    node.convolution.dilation.size() == 2;
+      if (node.input_uids.size() != 2 || node.convolution.groups != 1 ||
+          !attributes_valid) {
         return ProviderCapability::unsupported(
             "cuDNN graph reference requires rank-2 groups=1 convolution "
             "attributes");
@@ -192,8 +185,7 @@ ProviderCapability graph_capability(const BenchmarkCase& specification) {
       const TensorSpec* filter =
           find_graph_tensor(specification, node.input_uids[1]);
       if (input == nullptr || filter == nullptr ||
-          input->dimensions.size() != 4 ||
-          filter->dimensions.size() != 4 ||
+          input->dimensions.size() != 4 || filter->dimensions.size() != 4 ||
           output->dimensions.size() != 4) {
         return ProviderCapability::unsupported(
             "cuDNN graph convolution requires rank-4 tensors");
@@ -233,20 +225,17 @@ bool has_incompatible_packed_boolean_access(
 ProviderCapability CudnnProvider::capability(
     const BenchmarkCase& specification) const {
   if (specification.operation == Operation::kLayernorm &&
-      (specification.tensors.size() != 6 ||
-       specification.output_count != 3)) {
+      (specification.tensors.size() != 6 || specification.output_count != 3)) {
     return ProviderCapability::unsupported(
         "the cuDNN LayerNorm reference requires three inputs and outputs");
   }
   if (specification.operation == Operation::kRmsnorm &&
-      (specification.tensors.size() != 5 ||
-       specification.output_count != 2)) {
+      (specification.tensors.size() != 5 || specification.output_count != 2)) {
     return ProviderCapability::unsupported(
         "the cuDNN RMSNorm reference requires three inputs and two outputs");
   }
   if (specification.operation == Operation::kBatchnorm &&
-      (specification.tensors.size() != 10 ||
-       specification.output_count != 5 ||
+      (specification.tensors.size() != 10 || specification.output_count != 5 ||
        specification.tensors.front().dimensions.size() != 4 ||
        output_tensor(specification).dimensions.size() != 4)) {
     return ProviderCapability::unsupported(
@@ -270,7 +259,8 @@ ProviderCapability CudnnProvider::capability(
   if (specification.operation == Operation::kGraph) {
     if (has_any_gapped_layout(specification)) {
       return ProviderCapability::unsupported(
-          "cuDNN Frontend has no multi-node pointwise engine for gapped layouts");
+          "cuDNN Frontend has no multi-node pointwise engine for gapped "
+          "layouts");
     }
     return graph_capability(specification);
   }
@@ -340,21 +330,11 @@ ProviderCapability CudnnProvider::capability(
     return ProviderCapability::unsupported(
         "cuDNN Reduction requires a 16-byte-aligned input entrance");
   }
-  if (specification.reduction_mode != FLAGDNN_REDUCTION_MUL ||
-      input.data_type != FLAGDNN_DATA_BFLOAT16) {
-    return {};
-  }
-  std::int32_t axis = specification.reduction_axis;
-  const std::int32_t rank =
-      static_cast<std::int32_t>(input.dimensions.size());
-  if (axis < 0) {
-    axis += rank;
-  }
-  if (axis >= 0 && axis < rank &&
-      input.dimensions[static_cast<std::size_t>(axis)] > 1 &&
-      (input.strides[static_cast<std::size_t>(axis)] * 2) % 16 != 0) {
+  if (input.data_type == FLAGDNN_DATA_BFLOAT16 &&
+      (specification.reduction_mode != FLAGDNN_REDUCTION_ADD ||
+       specification.tensors[1].data_type != FLAGDNN_DATA_FLOAT32)) {
     return ProviderCapability::unsupported(
-        "cuDNN has no exact unaligned BF16 MUL reduction fallback");
+        "cuDNN BF16 reduction requires SUM with FP32 output on this stack");
   }
   return {};
 }

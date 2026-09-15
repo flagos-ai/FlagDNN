@@ -62,6 +62,8 @@ foreach(line IN LISTS symbol_lines)
   string(REGEX MATCH "[^ \t]+$" symbol "${line}")
   if(NOT symbol MATCHES "^FLAGDNN_BACKEND_${BACKEND_ABI_VERSION}$" AND
      NOT symbol MATCHES
+       "^flagdnnBackendGetBuildApiV1@@FLAGDNN_BACKEND_${BACKEND_ABI_VERSION}$" AND
+     NOT symbol MATCHES
        "^${_flagdnn_backend_getter}@@FLAGDNN_BACKEND_${BACKEND_ABI_VERSION}$")
     message(FATAL_ERROR
       "${BACKEND_NAME} backend exports unexpected symbol '${symbol}':\n${symbols}")

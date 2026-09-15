@@ -329,10 +329,9 @@ int run_convolution_functional_test(
   }
   try {
     std::cout << std::setprecision(9);
-    if (expected_direction != ConvolutionDirection::kFprop ||
-        cases.size() != 24U) {
+    if (expected_direction != ConvolutionDirection::kFprop || cases.empty()) {
       throw std::logic_error(
-          "Ascend convolution fprop functional catalog must contain 24 cases");
+          "Ascend convolution fprop functional catalog must contain cases");
     }
     acl::DevelopmentEnvironment development("convolution-fprop-functional");
     acl::AclRuntime runtime;

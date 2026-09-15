@@ -80,6 +80,23 @@ if(FLAGDNN_BUILD_TESTS OR FLAGDNN_BUILD_BENCHMARKS)
   flagdnn_enable_warnings(flagdnn_validation_thead_reference)
 endif()
 
+add_executable(flagdnn_test_thead_catalog_selection
+  catalog_selection_contract.cpp numeric_types.cpp)
+target_compile_features(flagdnn_test_thead_catalog_selection PRIVATE cxx_std_20)
+target_link_libraries(flagdnn_test_thead_catalog_selection PRIVATE FlagDNN::flagdnn)
+flagdnn_enable_warnings(flagdnn_test_thead_catalog_selection)
+add_test(NAME integration.thead.catalog_selection_contract
+  COMMAND flagdnn_test_thead_catalog_selection)
+set_tests_properties(integration.thead.catalog_selection_contract PROPERTIES
+  LABELS "integration;thead;catalog;host;contract")
+
+add_test(NAME integration.thead.compiler_plan_contract
+  COMMAND "${FLAGDNN_CODEGEN_PYTHON}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/compiler_contract.py" --case host_planning)
+set_tests_properties(integration.thead.compiler_plan_contract PROPERTIES
+  LABELS "integration;thead;compiler;host;contract"
+  ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+
 add_test(NAME integration.thead.cmake_configuration_contract
   COMMAND "${CMAKE_COMMAND}"
     "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
@@ -882,6 +899,8 @@ if(FLAGDNN_BUILD_TESTS)
   include("${PROJECT_SOURCE_DIR}/cmake/Operators.cmake")
   flagdnn_register_functional_suite(
     PLATFORM thead
+    UNSUPPORTED_OPERATORS
+      ${FLAGDNN_EXTENDED_OPERATORS} ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS}
     ADAPTER_TARGET flagdnn_test_thead_adapter
     BACKEND_TARGET flagdnn_backend_thead
     COMMAND_ARGS
@@ -929,8 +948,12 @@ if(FLAGDNN_BUILD_BENCHMARKS)
   flagdnn_enable_warnings(flagdnn_benchmark_thead_adapter)
 
   include("${PROJECT_SOURCE_DIR}/cmake/Operators.cmake")
+  set(_flagdnn_thead_benchmark_operators ${FLAGDNN_BENCHMARK_OPERATORS})
+  list(REMOVE_ITEM _flagdnn_thead_benchmark_operators
+    ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS})
   flagdnn_register_benchmark_suite(
     PLATFORM thead
+    OPERATORS ${_flagdnn_thead_benchmark_operators}
     ADAPTER_TARGET flagdnn_benchmark_thead_adapter
     BACKEND_TARGET flagdnn_backend_thead
     COMMAND_ARGS
@@ -942,7 +965,7 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     TIMEOUT 1800
     BUILD_RPATH
       "${_FLAGDNN_THEAD_PPU_SDK_ROOT}/lib;${_FLAGDNN_THEAD_PPU_SDK_ROOT}/CUDA_SDK/lib64")
-  foreach(_flagdnn_thead_operator IN LISTS FLAGDNN_BENCHMARK_OPERATORS)
+  foreach(_flagdnn_thead_operator IN LISTS _flagdnn_thead_benchmark_operators)
     set_tests_properties(
       "benchmark.thead.${_flagdnn_thead_operator}" PROPERTIES
       SKIP_RETURN_CODE 77)

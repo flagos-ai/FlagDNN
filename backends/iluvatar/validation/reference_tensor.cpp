@@ -22,35 +22,44 @@ int checked_int(std::int64_t value, const char *name) {
 
 cudnnDataType_t corex_cudnn_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
-  case FLAGDNN_DATA_FLOAT32:
-    return CUDNN_DATA_FLOAT;
-  case FLAGDNN_DATA_FLOAT16:
-    return CUDNN_DATA_HALF;
-  case FLAGDNN_DATA_BFLOAT16:
-    return CUDNN_DATA_BFLOAT16;
-  case FLAGDNN_DATA_BOOLEAN:
-    // FlagDNN BOOLEAN bindings use one byte per logical 0/1 value. CoreX
-    // cuDNN 7.6.5 exposes NOT over the matching signed one-byte storage.
-    return CUDNN_DATA_INT8;
-  case FLAGDNN_DATA_FP8_E4M3:
-  case FLAGDNN_DATA_FP8_E5M2:
-    throw std::invalid_argument(
-        "CoreX cudnn.h 7605 has no exact FP8 data type");
+    case FLAGDNN_DATA_INT32:
+      throw std::invalid_argument(
+          "INT32 is not supported by this validation adapter");
+
+    case FLAGDNN_DATA_FLOAT32:
+      return CUDNN_DATA_FLOAT;
+    case FLAGDNN_DATA_FLOAT16:
+      return CUDNN_DATA_HALF;
+    case FLAGDNN_DATA_BFLOAT16:
+      return CUDNN_DATA_BFLOAT16;
+    case FLAGDNN_DATA_BOOLEAN:
+      // FlagDNN BOOLEAN bindings use one byte per logical 0/1 value. CoreX
+      // cuDNN 7.6.5 exposes NOT over the matching signed one-byte storage.
+      return CUDNN_DATA_INT8;
+    case FLAGDNN_DATA_FP8_E8M0:
+    case FLAGDNN_DATA_FP8_E4M3:
+    case FLAGDNN_DATA_FP8_E5M2:
+      throw std::invalid_argument(
+          "CoreX cudnn.h 7605 has no exact FP8 data type");
   }
   throw std::invalid_argument("unknown FlagDNN data type");
 }
 
 std::size_t flagdnn_data_type_size(flagdnnDataType_t data_type) {
   switch (data_type) {
-  case FLAGDNN_DATA_FLOAT32:
-    return 4;
-  case FLAGDNN_DATA_FLOAT16:
-  case FLAGDNN_DATA_BFLOAT16:
-    return 2;
-  case FLAGDNN_DATA_BOOLEAN:
-  case FLAGDNN_DATA_FP8_E4M3:
-  case FLAGDNN_DATA_FP8_E5M2:
-    return 1;
+    case FLAGDNN_DATA_INT32:
+      return 4;
+
+    case FLAGDNN_DATA_FLOAT32:
+      return 4;
+    case FLAGDNN_DATA_FLOAT16:
+    case FLAGDNN_DATA_BFLOAT16:
+      return 2;
+    case FLAGDNN_DATA_BOOLEAN:
+    case FLAGDNN_DATA_FP8_E8M0:
+    case FLAGDNN_DATA_FP8_E4M3:
+    case FLAGDNN_DATA_FP8_E5M2:
+      return 1;
   }
   throw std::invalid_argument("unknown FlagDNN data type");
 }

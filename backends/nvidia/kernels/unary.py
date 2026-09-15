@@ -81,9 +81,13 @@ def _apply_cuda_unary(
         )
     elif OPERATION == 37:
         scaled = SOFTPLUS_BETA * value_f32
+        # Factoring out the positive term avoids overflow of beta * x when
+        # the final Softplus result is still representable.  log1p preserves
+        # the small positive correction for negative inputs.
         result = (
-            tl.maximum(scaled, 0.0) + tl.log(1.0 + tl.exp(-tl.abs(scaled)))
-        ) / SOFTPLUS_BETA
+            tl.maximum(value_f32, 0.0)
+            + libdevice.log1p(tl.exp(-tl.abs(scaled))) / SOFTPLUS_BETA
+        )
     elif OPERATION == 38:
         result = value_f32 * tl.sigmoid(SWISH_BETA * value_f32)
     elif OPERATION == 39:

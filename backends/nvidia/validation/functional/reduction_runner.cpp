@@ -1,11 +1,5 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
-#include "common/reduction.hpp"
-#include "validation/tensor_io.hpp"
-#include "validation/cuda_driver.hpp"
-
-#include <flagdnn/flagdnn.hpp>
-
 #include <unistd.h>
 
 #include <algorithm>
@@ -14,7 +8,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
+#include <flagdnn/flagdnn.hpp>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -24,16 +20,20 @@
 #include <string>
 #include <vector>
 
+#include "common/reduction.hpp"
+#include "validation/cuda_driver.hpp"
+#include "validation/functional/cudnn_reduction.hpp"
+#include "validation/tensor_io.hpp"
+
 namespace flagdnn::testing {
 namespace {
 
 class TemporaryCache {
  public:
   TemporaryCache() {
-    std::string pattern =
-        (std::filesystem::temp_directory_path() /
-         "flagdnn-reduction-functional-XXXXXX")
-            .string();
+    std::string pattern = (std::filesystem::temp_directory_path() /
+                           "flagdnn-reduction-functional-XXXXXX")
+                              .string();
     std::vector<char> writable(pattern.begin(), pattern.end());
     writable.push_back('\0');
     char* created = mkdtemp(writable.data());
@@ -56,15 +56,13 @@ class TemporaryCache {
   std::filesystem::path path_;
 };
 
-std::vector<float> make_input(std::size_t count,
-                              flagdnnReductionMode_t mode) {
+std::vector<float> make_input(std::size_t count, flagdnnReductionMode_t mode) {
   std::vector<float> result(count);
   for (std::size_t index = 0; index < count; ++index) {
     const int centered = static_cast<int>((index * 17) % 41) - 20;
     const float value = static_cast<float>(centered) / 13.0F;
-    result[index] = mode == FLAGDNN_REDUCTION_MUL
-                        ? 1.0F + value * 0.125F
-                        : value;
+    result[index] =
+        mode == FLAGDNN_REDUCTION_MUL ? 1.0F + value * 0.125F : value;
   }
   return result;
 }
@@ -89,9 +87,8 @@ Accuracy compare(std::span<const float> actual,
         absolute / std::max({std::abs(left), std::abs(right), 1.0e-30});
     result.maximum_absolute = std::max(result.maximum_absolute, absolute);
     result.maximum_relative = std::max(result.maximum_relative, relative);
-    if (!std::isfinite(absolute) ||
-        (absolute > test_case.absolute_tolerance &&
-         relative > test_case.relative_tolerance)) {
+    if (!std::isfinite(absolute) || (absolute > test_case.absolute_tolerance &&
+                                     relative > test_case.relative_tolerance)) {
       std::ostringstream message;
       message << test_case.name << " differs at output element " << index
               << ": FlagDNN=" << left << ", cuDNN=" << right
@@ -104,49 +101,38 @@ Accuracy compare(std::span<const float> actual,
   return result;
 }
 
-std::vector<std::uint8_t> encoded_input(
-    std::span<const float> logical,
-    const TestTensor& tensor) {
-  return cuda::encode(cuda::scatter(logical, tensor),
-                      tensor.data_type,
+std::vector<std::uint8_t> encoded_input(std::span<const float> logical,
+                                        const TestTensor& tensor) {
+  return cuda::encode(cuda::scatter(logical, tensor), tensor.data_type,
                       cuda::BooleanEncoding::kByte);
 }
 
 std::vector<std::uint8_t> encoded_output(const TestTensor& tensor) {
-  const std::vector<float> initial(
-      cuda::storage_element_count(tensor), cuda::padding_sentinel());
-  return cuda::encode(
-      initial, tensor.data_type, cuda::BooleanEncoding::kByte);
+  const std::vector<float> initial(cuda::storage_element_count(tensor),
+                                   cuda::padding_sentinel());
+  return cuda::encode(initial, tensor.data_type, cuda::BooleanEncoding::kByte);
 }
 
 std::vector<float> read_output(const DeviceBuffer& buffer,
-                               const TestTensor& tensor,
-                               Stream& stream) {
+                               const TestTensor& tensor, Stream& stream) {
   std::vector<std::uint8_t> encoded(
       cuda::encoded_byte_count(tensor, cuda::BooleanEncoding::kByte));
-  buffer.copy_to_host_at(encoded.data(),
-                         encoded.size(),
-                         tensor.binding_byte_offset,
-                         stream.get());
+  buffer.copy_to_host_at(encoded.data(), encoded.size(),
+                         tensor.binding_byte_offset, stream.get());
   stream.synchronize();
-  return cuda::decode(encoded,
-                      tensor.data_type,
+  return cuda::decode(encoded, tensor.data_type,
                       cuda::storage_element_count(tensor),
                       cuda::BooleanEncoding::kByte);
 }
 
 void execute(ReductionExecutable& executable,
              std::span<const flagdnnBinding_t> bindings,
-             DeviceBuffer& workspace,
-             Stream& stream) {
-  executable.execute(bindings,
-                     workspace.opaque(),
-                     executable.workspace_size(),
+             DeviceBuffer& workspace, Stream& stream) {
+  executable.execute(bindings, workspace.opaque(), executable.workspace_size(),
                      stream.opaque());
 }
 
-void run_case(const ReductionTestCase& test_case,
-              flagdnn::Handle& handle,
+void run_case(const ReductionTestCase& test_case, flagdnn::Handle& handle,
               Stream& stream) {
   validate_reduction_case(test_case);
   auto flagdnn = build_flagdnn_reduction(handle, test_case);
@@ -160,52 +146,46 @@ void run_case(const ReductionTestCase& test_case,
       encoded_input(logical_input, test_case.input);
   const std::vector<std::uint8_t> reference_input_bytes =
       encoded_input(logical_input, reference_input_specification);
-  DeviceBuffer flagdnn_input(
-      test_case.input.binding_byte_offset + flagdnn_input_bytes.size());
+  DeviceBuffer flagdnn_input(test_case.input.binding_byte_offset +
+                             flagdnn_input_bytes.size());
   DeviceBuffer reference_input(
       reference_input_specification.binding_byte_offset +
       reference_input_bytes.size());
-  flagdnn_input.copy_from_host_at(flagdnn_input_bytes.data(),
-                                  flagdnn_input_bytes.size(),
-                                  test_case.input.binding_byte_offset,
-                                  stream.get());
+  flagdnn_input.copy_from_host_at(
+      flagdnn_input_bytes.data(), flagdnn_input_bytes.size(),
+      test_case.input.binding_byte_offset, stream.get());
   reference_input.copy_from_host_at(
-      reference_input_bytes.data(),
-      reference_input_bytes.size(),
-      reference_input_specification.binding_byte_offset,
-      stream.get());
+      reference_input_bytes.data(), reference_input_bytes.size(),
+      reference_input_specification.binding_byte_offset, stream.get());
 
   const std::vector<std::uint8_t> output_bytes =
       encoded_output(test_case.output);
-  DeviceBuffer flagdnn_output(
-      test_case.output.binding_byte_offset + output_bytes.size());
-  DeviceBuffer reference_output(
-      test_case.output.binding_byte_offset + output_bytes.size());
-  flagdnn_output.copy_from_host_at(output_bytes.data(),
-                                   output_bytes.size(),
+  DeviceBuffer flagdnn_output(test_case.output.binding_byte_offset +
+                              output_bytes.size());
+  DeviceBuffer reference_output(test_case.output.binding_byte_offset +
+                                output_bytes.size());
+  flagdnn_output.copy_from_host_at(output_bytes.data(), output_bytes.size(),
                                    test_case.output.binding_byte_offset,
                                    stream.get());
-  reference_output.copy_from_host_at(output_bytes.data(),
-                                     output_bytes.size(),
+  reference_output.copy_from_host_at(output_bytes.data(), output_bytes.size(),
                                      test_case.output.binding_byte_offset,
                                      stream.get());
 
   const std::array<flagdnnBinding_t, 2> flagdnn_bindings = {
-      flagdnnBinding_t{test_case.input.uid,
-                       flagdnn_input.opaque_at(
-                           test_case.input.binding_byte_offset)},
-      flagdnnBinding_t{test_case.output.uid,
-                       flagdnn_output.opaque_at(
-                           test_case.output.binding_byte_offset)},
-  };
-  const std::array<flagdnnBinding_t, 2> reference_bindings = {
       flagdnnBinding_t{
           test_case.input.uid,
-          reference_input.opaque_at(
-              reference_input_specification.binding_byte_offset)},
-      flagdnnBinding_t{test_case.output.uid,
-                       reference_output.opaque_at(
-                           test_case.output.binding_byte_offset)},
+          flagdnn_input.opaque_at(test_case.input.binding_byte_offset)},
+      flagdnnBinding_t{
+          test_case.output.uid,
+          flagdnn_output.opaque_at(test_case.output.binding_byte_offset)},
+  };
+  const std::array<flagdnnBinding_t, 2> reference_bindings = {
+      flagdnnBinding_t{test_case.input.uid,
+                       reference_input.opaque_at(
+                           reference_input_specification.binding_byte_offset)},
+      flagdnnBinding_t{
+          test_case.output.uid,
+          reference_output.opaque_at(test_case.output.binding_byte_offset)},
   };
   DeviceBuffer flagdnn_workspace(flagdnn->workspace_size());
   DeviceBuffer reference_workspace(reference->workspace_size());
@@ -219,27 +199,25 @@ void run_case(const ReductionTestCase& test_case,
       read_output(flagdnn_output, test_case.output, stream);
   const std::vector<float> reference_physical =
       read_output(reference_output, test_case.output, stream);
-  cuda::require_padding_unchanged(
-      "FlagDNN", flagdnn_physical, test_case.output);
-  cuda::require_padding_unchanged(
-      "cuDNN", reference_physical, test_case.output);
-  const Accuracy accuracy = compare(
-      cuda::gather(flagdnn_physical, test_case.output),
-      cuda::gather(reference_physical, test_case.output),
-      test_case);
-  std::cout << test_case.name << ": FlagDNN Graph vs cuDNN Graph PASS"
+  cuda::require_padding_unchanged("FlagDNN", flagdnn_physical,
+                                  test_case.output);
+  cuda::require_padding_unchanged("cuDNN", reference_physical,
+                                  test_case.output);
+  const Accuracy accuracy =
+      compare(cuda::gather(flagdnn_physical, test_case.output),
+              cuda::gather(reference_physical, test_case.output), test_case);
+  std::cout << test_case.name << ": FlagDNN Graph vs cuDNN PASS"
             << " max_abs=" << accuracy.maximum_absolute
             << " max_rel=" << accuracy.maximum_relative << std::endl;
 }
 
 }  // namespace
 
-int run_reduction_functional_test(
-    int argc,
-    char** argv,
-    std::span<const ReductionTestCase> cases) {
+int run_reduction_functional_test(int argc, char** argv,
+                                  std::span<const ReductionTestCase> cases) {
   if (argc != 3) {
-    std::cerr << "usage: " << argv[0] << " COMPILER_EXECUTABLE COMPILER_ENTRY" << std::endl;
+    std::cerr << "usage: " << argv[0] << " COMPILER_EXECUTABLE COMPILER_ENTRY"
+              << std::endl;
     return 2;
   }
   try {
@@ -253,6 +231,7 @@ int run_reduction_functional_test(
     const char* filter = std::getenv("FLAGDNN_REDUCTION_CASE");
     std::size_t executed = 0;
     for (const ReductionTestCase& test_case : cases) {
+      if (!cuda::cudnn_reduction_case(test_case)) continue;
       if (filter != nullptr &&
           test_case.name.find(filter) == std::string::npos) {
         continue;

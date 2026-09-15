@@ -69,12 +69,15 @@ TestTensor tensor(std::int64_t uid,
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return "int32";
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
       return "fp16";
     case FLAGDNN_DATA_BFLOAT16:
       return "bfloat16";
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -97,12 +100,15 @@ std::string shape_name(const Shape& shape) {
 
 fe::DataType_t frontend_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return fe::DataType_t::INT32;
     case FLAGDNN_DATA_FLOAT32:
       return fe::DataType_t::FLOAT;
     case FLAGDNN_DATA_FLOAT16:
       return fe::DataType_t::HALF;
     case FLAGDNN_DATA_BFLOAT16:
       return fe::DataType_t::BFLOAT16;
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -310,10 +316,19 @@ void validate_common(const Case& test_case, std::string_view operation) {
 }  // namespace
 
 std::vector<LayernormTestCase> make_layernorm_cases() {
-  const std::array<std::pair<Shape, std::size_t>, 3> definitions = {
+  const std::array<std::pair<Shape, std::size_t>, 12> definitions = {
       std::pair<Shape, std::size_t>{{2, 5, 17}, 1},
       std::pair<Shape, std::size_t>{{2, 4, 4096}, 1},
       std::pair<Shape, std::size_t>{{2, 3, 4, 5}, 2},
+      std::pair<Shape, std::size_t>{{1, 1, 2}, 1},
+      std::pair<Shape, std::size_t>{{1, 3, 31}, 1},
+      std::pair<Shape, std::size_t>{{2, 4, 32}, 1},
+      std::pair<Shape, std::size_t>{{3, 5, 33}, 1},
+      std::pair<Shape, std::size_t>{{1, 7, 127}, 1},
+      std::pair<Shape, std::size_t>{{2, 8, 128}, 1},
+      std::pair<Shape, std::size_t>{{3, 4, 129}, 1},
+      std::pair<Shape, std::size_t>{{2, 2, 1023}, 1},
+      std::pair<Shape, std::size_t>{{1, 4, 1025}, 1},
   };
   std::vector<LayernormTestCase> result;
   std::int64_t uid = 71000;
@@ -324,6 +339,12 @@ std::vector<LayernormTestCase> make_layernorm_cases() {
       uid += 6;
     }
   }
+  // Exercise grouped normalization with incomplete row/column tiles.
+  for (const auto width : {127, 128, 511, 512}) {
+    result.push_back(
+        make_layernorm_case({1, 129, width}, 1, FLAGDNN_DATA_FLOAT16, uid));
+    uid += 6;
+  }
   result.front().autotune = true;
   for (const LayernormTestCase& test_case : result) {
     validate_normalization_case(test_case);
@@ -332,10 +353,19 @@ std::vector<LayernormTestCase> make_layernorm_cases() {
 }
 
 std::vector<RmsnormTestCase> make_rmsnorm_cases() {
-  const std::array<std::pair<Shape, std::size_t>, 3> definitions = {
+  const std::array<std::pair<Shape, std::size_t>, 12> definitions = {
       std::pair<Shape, std::size_t>{{2, 5, 17}, 1},
       std::pair<Shape, std::size_t>{{2, 4, 4096}, 1},
       std::pair<Shape, std::size_t>{{2, 3, 4, 5}, 2},
+      std::pair<Shape, std::size_t>{{1, 1, 2}, 1},
+      std::pair<Shape, std::size_t>{{1, 3, 31}, 1},
+      std::pair<Shape, std::size_t>{{2, 4, 32}, 1},
+      std::pair<Shape, std::size_t>{{3, 5, 33}, 1},
+      std::pair<Shape, std::size_t>{{1, 7, 127}, 1},
+      std::pair<Shape, std::size_t>{{2, 8, 128}, 1},
+      std::pair<Shape, std::size_t>{{3, 4, 129}, 1},
+      std::pair<Shape, std::size_t>{{2, 2, 1023}, 1},
+      std::pair<Shape, std::size_t>{{1, 4, 1025}, 1},
   };
   std::vector<RmsnormTestCase> result;
   std::int64_t uid = 72000;
@@ -354,41 +384,47 @@ std::vector<RmsnormTestCase> make_rmsnorm_cases() {
 }
 
 std::vector<BatchnormTestCase> make_batchnorm_cases() {
-  const Shape shape = {2, 8, 8, 8};
-  const Shape parameters = {1, 8, 1, 1};
+  const std::vector<Shape> shapes = {
+      {2, 8, 8, 8}, {1, 8, 3, 5}, {2, 8, 7, 9}, {3, 16, 4, 4},
+      {1, 32, 7, 7}, {2, 16, 15, 17}, {4, 8, 16, 16}, {2, 64, 3, 5},
+      {4, 32, 8, 8}, {2, 128, 4, 4}, {8, 16, 1, 1}, {1, 64, 16, 16},
+  };
   std::vector<BatchnormTestCase> result;
   std::int64_t uid = 73000;
-  for (const bool channels_last : {false, true}) {
-    const Shape data_strides = channels_last
-                                   ? channels_last_strides(shape)
-                                   : contiguous_strides(shape);
-    for (const flagdnnDataType_t data_type : kDataTypes) {
-      BatchnormTestCase test_case;
-      test_case.name = "batchnorm_" + data_type_name(data_type) + "_" +
-                       shape_name(shape) +
-                       (channels_last ? "_channels_last" : "_contiguous");
-      test_case.x = tensor(uid, shape, data_type, data_strides);
-      test_case.scale = tensor(uid + 1, parameters, data_type);
-      test_case.bias = tensor(uid + 2, parameters, data_type);
-      test_case.previous_running_mean =
-          tensor(uid + 3, parameters, FLAGDNN_DATA_FLOAT32);
-      test_case.previous_running_variance =
-          tensor(uid + 4, parameters, FLAGDNN_DATA_FLOAT32);
-      test_case.y = tensor(uid + 5, shape, data_type, data_strides);
-      test_case.mean = tensor(uid + 6, parameters, FLAGDNN_DATA_FLOAT32);
-      test_case.inv_variance =
-          tensor(uid + 7, parameters, FLAGDNN_DATA_FLOAT32);
-      test_case.next_running_mean =
-          tensor(uid + 8, parameters, FLAGDNN_DATA_FLOAT32);
-      test_case.next_running_variance =
-          tensor(uid + 9, parameters, FLAGDNN_DATA_FLOAT32);
-      test_case.absolute_tolerance =
-          data_type == FLAGDNN_DATA_FLOAT32
-              ? 2.0e-4
-              : (data_type == FLAGDNN_DATA_FLOAT16 ? 3.0e-2 : 7.0e-2);
-      test_case.relative_tolerance = test_case.absolute_tolerance;
-      result.push_back(std::move(test_case));
-      uid += 10;
+  for (const Shape& shape : shapes) {
+    const Shape parameters = {1, shape[1], 1, 1};
+    for (const bool channels_last : {false, true}) {
+      const Shape data_strides = channels_last
+                                     ? channels_last_strides(shape)
+                                     : contiguous_strides(shape);
+      for (const flagdnnDataType_t data_type : kDataTypes) {
+        BatchnormTestCase test_case;
+        test_case.name = "batchnorm_" + data_type_name(data_type) + "_" +
+                         shape_name(shape) +
+                         (channels_last ? "_channels_last" : "_contiguous");
+        test_case.x = tensor(uid, shape, data_type, data_strides);
+        test_case.scale = tensor(uid + 1, parameters, data_type);
+        test_case.bias = tensor(uid + 2, parameters, data_type);
+        test_case.previous_running_mean =
+            tensor(uid + 3, parameters, FLAGDNN_DATA_FLOAT32);
+        test_case.previous_running_variance =
+            tensor(uid + 4, parameters, FLAGDNN_DATA_FLOAT32);
+        test_case.y = tensor(uid + 5, shape, data_type, data_strides);
+        test_case.mean = tensor(uid + 6, parameters, FLAGDNN_DATA_FLOAT32);
+        test_case.inv_variance =
+            tensor(uid + 7, parameters, FLAGDNN_DATA_FLOAT32);
+        test_case.next_running_mean =
+            tensor(uid + 8, parameters, FLAGDNN_DATA_FLOAT32);
+        test_case.next_running_variance =
+            tensor(uid + 9, parameters, FLAGDNN_DATA_FLOAT32);
+        test_case.absolute_tolerance =
+            data_type == FLAGDNN_DATA_FLOAT32
+                ? 2.0e-4
+                : (data_type == FLAGDNN_DATA_FLOAT16 ? 3.0e-2 : 7.0e-2);
+        test_case.relative_tolerance = test_case.absolute_tolerance;
+        result.push_back(std::move(test_case));
+        uid += 10;
+      }
     }
   }
   result.front().autotune = true;
@@ -400,10 +436,19 @@ std::vector<BatchnormTestCase> make_batchnorm_cases() {
 
 std::vector<BatchnormInferenceTestCase>
 make_batchnorm_inference_cases() {
-  const std::array<Shape, 3> shapes = {
+  const std::array<Shape, 12> shapes = {
       Shape{2, 8, 16, 16},
       Shape{4, 16, 8, 8},
       Shape{2, 32, 7, 9},
+      Shape{1, 4, 3, 5},
+      Shape{2, 8, 7, 9},
+      Shape{3, 16, 4, 4},
+      Shape{1, 32, 7, 7},
+      Shape{2, 16, 15, 17},
+      Shape{4, 32, 8, 8},
+      Shape{2, 128, 4, 4},
+      Shape{8, 16, 1, 1},
+      Shape{1, 64, 16, 16},
   };
   std::vector<BatchnormInferenceTestCase> result;
   std::int64_t uid = 74000;

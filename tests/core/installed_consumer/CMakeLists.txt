@@ -43,10 +43,29 @@ if(FLAGDNN_INSTALLED_NVIDIA_ADD)
       "FLAGDNN_INSTALLED_CODEGEN_PYTHON must name the test Python containing Triton")
   endif()
   find_package(CUDAToolkit REQUIRED)
+  # The comparator is a consumer test dependency, never an installed FlagDNN
+  # dependency. Prefer explicitly configured SDK paths, then the test venv.
+  execute_process(COMMAND "${FLAGDNN_INSTALLED_CODEGEN_PYTHON}" -c
+    "import sysconfig; print(sysconfig.get_path('purelib'))"
+    OUTPUT_VARIABLE _flagdnn_consumer_python_packages
+    OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+  find_path(FLAGDNN_INSTALLED_CUDNN_FRONTEND_INCLUDE_DIR cudnn_frontend.h
+    HINTS "$ENV{CUDNN_FRONTEND_ROOT}" "${_flagdnn_consumer_python_packages}"
+    PATH_SUFFIXES include REQUIRED)
+  find_path(FLAGDNN_INSTALLED_CUDNN_INCLUDE_DIR cudnn.h
+    HINTS "$ENV{CUDNN_ROOT}" "${_flagdnn_consumer_python_packages}/nvidia/cudnn"
+    PATH_SUFFIXES include REQUIRED)
+  find_library(FLAGDNN_INSTALLED_CUDNN_LIBRARY NAMES cudnn libcudnn.so.9
+    HINTS "$ENV{CUDNN_ROOT}" "${_flagdnn_consumer_python_packages}/nvidia/cudnn"
+    PATH_SUFFIXES lib lib64 REQUIRED)
   add_executable(flagdnn_installed_nvidia_add nvidia_add.cpp)
   target_compile_features(flagdnn_installed_nvidia_add PRIVATE cxx_std_20)
   target_link_libraries(flagdnn_installed_nvidia_add PRIVATE
-    FlagDNN::flagdnn CUDA::cuda_driver)
+    FlagDNN::flagdnn CUDA::cuda_driver CUDA::cudart CUDA::nvrtc
+    "${FLAGDNN_INSTALLED_CUDNN_LIBRARY}")
+  target_include_directories(flagdnn_installed_nvidia_add SYSTEM PRIVATE
+    "${FLAGDNN_INSTALLED_CUDNN_FRONTEND_INCLUDE_DIR}"
+    "${FLAGDNN_INSTALLED_CUDNN_INCLUDE_DIR}")
 
   add_test(NAME installed.nvidia_add COMMAND flagdnn_installed_nvidia_add)
   set_tests_properties(installed.nvidia_add PROPERTIES

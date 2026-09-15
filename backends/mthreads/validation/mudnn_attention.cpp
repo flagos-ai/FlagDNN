@@ -38,6 +38,10 @@ bool is_io_type(flagdnnDataType_t data_type) noexcept {
 
 musa::dnn::Tensor::Type mudnn_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      throw std::invalid_argument(
+          "INT32 is not supported by this validation adapter");
+
     case FLAGDNN_DATA_FLOAT32:
       return musa::dnn::Tensor::Type::FLOAT;
     case FLAGDNN_DATA_FLOAT16:
@@ -46,6 +50,7 @@ musa::dnn::Tensor::Type mudnn_data_type(flagdnnDataType_t data_type) {
       return musa::dnn::Tensor::Type::BFLOAT16;
     case FLAGDNN_DATA_BOOLEAN:
       return musa::dnn::Tensor::Type::BOOL;
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;

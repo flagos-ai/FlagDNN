@@ -285,16 +285,21 @@ bool is_large_offset_batchnorm_case(const BatchnormTestCase &test_case) {
 
 float large_offset_base(flagdnnDataType_t data_type) {
   switch (data_type) {
-  case FLAGDNN_DATA_FLOAT32:
-    return 10000.0F;
-  case FLAGDNN_DATA_FLOAT16:
-    return 1024.0F;
-  case FLAGDNN_DATA_BFLOAT16:
-    return 128.0F;
-  case FLAGDNN_DATA_FP8_E4M3:
-  case FLAGDNN_DATA_FP8_E5M2:
-  case FLAGDNN_DATA_BOOLEAN:
-    break;
+    case FLAGDNN_DATA_INT32:
+      throw std::invalid_argument(
+          "INT32 is not supported by this validation adapter");
+
+    case FLAGDNN_DATA_FLOAT32:
+      return 10000.0F;
+    case FLAGDNN_DATA_FLOAT16:
+      return 1024.0F;
+    case FLAGDNN_DATA_BFLOAT16:
+      return 128.0F;
+    case FLAGDNN_DATA_FP8_E8M0:
+    case FLAGDNN_DATA_FP8_E4M3:
+    case FLAGDNN_DATA_FP8_E5M2:
+    case FLAGDNN_DATA_BOOLEAN:
+      break;
   }
   throw std::invalid_argument(
       "large-offset normalization case has an unsupported data type");
@@ -697,16 +702,21 @@ void run_cpu_oracle_stability_case(flagdnn::Handle &handle,
 
 double stability_tolerance(flagdnnDataType_t data_type) {
   switch (data_type) {
-  case FLAGDNN_DATA_FLOAT32:
-    return 5.0e-3;
-  case FLAGDNN_DATA_FLOAT16:
-    return 3.0e-2;
-  case FLAGDNN_DATA_BFLOAT16:
-    return 8.0e-2;
-  case FLAGDNN_DATA_FP8_E4M3:
-  case FLAGDNN_DATA_FP8_E5M2:
-  case FLAGDNN_DATA_BOOLEAN:
-    break;
+    case FLAGDNN_DATA_INT32:
+      throw std::invalid_argument(
+          "INT32 is not supported by this validation adapter");
+
+    case FLAGDNN_DATA_FLOAT32:
+      return 5.0e-3;
+    case FLAGDNN_DATA_FLOAT16:
+      return 3.0e-2;
+    case FLAGDNN_DATA_BFLOAT16:
+      return 8.0e-2;
+    case FLAGDNN_DATA_FP8_E8M0:
+    case FLAGDNN_DATA_FP8_E4M3:
+    case FLAGDNN_DATA_FP8_E5M2:
+    case FLAGDNN_DATA_BOOLEAN:
+      break;
   }
   throw std::invalid_argument(
       "normalization stability tolerance has an unsupported data type");

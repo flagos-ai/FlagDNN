@@ -15,16 +15,19 @@
 
 namespace flagdnn::cuda {
 
-enum class EngineKind {
-  kExternalArtifact,
-  kLibTritonJit,
-};
-
 enum class ArgumentKind {
   kTensor,
+  kTensorMap,
   kWorkspaceTensor,
   kScalarI32,
   kScalarF32,
+};
+
+inline constexpr std::size_t kMaximumTensorMaps = 4;
+
+struct TensorMapSpec {
+  std::array<std::int32_t, 2> shape = {0, 0};
+  std::array<unsigned int, 2> block_shape = {0, 0};
 };
 
 struct ArgumentSpec {
@@ -35,13 +38,14 @@ struct ArgumentSpec {
   std::size_t workspace_offset = 0;
   std::size_t storage_size = 0;
   std::size_t alignment = 1;
+  TensorMapSpec tensor_map{};
 };
 
 struct CudaKernelArtifact {
   std::string variant_id = "default";
-  std::filesystem::path binary;
-  std::string entry_symbol;
   std::string full_signature;
+  // Optional, artifact-owned cache consumed by libtriton_jit's public API.
+  std::filesystem::path compiled_cache;
   unsigned int num_warps = 0;
   unsigned int num_stages = 0;
   std::array<unsigned int, 3> grid = {1, 1, 1};
@@ -65,7 +69,6 @@ struct CudaStageArtifact {
 };
 
 struct CudaArtifact {
-  EngineKind engine = EngineKind::kExternalArtifact;
   std::vector<CudaStageArtifact> stages;
   std::vector<std::int64_t> binding_uids;
   std::size_t workspace_size = 0;

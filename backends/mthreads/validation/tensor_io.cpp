@@ -231,12 +231,16 @@ void append_u16(
 
 std::size_t data_type_size(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return 4;
+
     case FLAGDNN_DATA_FLOAT32:
       return 4;
     case FLAGDNN_DATA_FLOAT16:
     case FLAGDNN_DATA_BFLOAT16:
       return 2;
     case FLAGDNN_DATA_BOOLEAN:
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       return 1;
@@ -415,6 +419,12 @@ std::vector<float> decode(
 
 float quantize_scalar(float value, flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      throw std::invalid_argument(
+          "INT32 is not supported by this validation adapter");
+
+    case FLAGDNN_DATA_FP8_E8M0:
+      break;
     case FLAGDNN_DATA_FLOAT32:
       return value;
     case FLAGDNN_DATA_FLOAT16:

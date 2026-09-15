@@ -187,7 +187,8 @@ void RuntimeContext::set_compiler(std::string executable, std::string compiler,
 std::unique_ptr<BackendExecutable>
 RuntimeContext::create_executable(const ArtifactPackage &artifact) const {
   return backend_context_->create_executable(
-      artifact.build_request, artifact.directory, artifact.request_sha256);
+      artifact.build_request, artifact.directory, artifact.request_sha256,
+      execution_engine_);
 }
 
 } // namespace flagdnn::native

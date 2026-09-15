@@ -25,12 +25,15 @@ constexpr std::array<flagdnnReductionMode_t, 3> kModes = {
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return "int32";
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
       return "fp16";
     case FLAGDNN_DATA_BFLOAT16:
       return "bfloat16";
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -55,6 +58,7 @@ std::string mode_name(flagdnnReductionMode_t mode) {
 void set_tolerance(BenchmarkCase& specification,
                    flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
     case FLAGDNN_DATA_FLOAT32:
       specification.absolute_tolerance = 2.0e-5;
       specification.relative_tolerance = 1.0e-5;
@@ -67,6 +71,7 @@ void set_tolerance(BenchmarkCase& specification,
       specification.absolute_tolerance = 8.0e-2;
       specification.relative_tolerance = 1.0e-2;
       return;
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -138,18 +143,20 @@ BenchmarkCase make_unaligned_entrance_case(flagdnnDataType_t data_type,
 
 BenchmarkCase make_benchmark_case(flagdnnReductionMode_t mode,
                              flagdnnDataType_t data_type,
-                             std::int64_t uid) {
-  const bool multiply = mode == FLAGDNN_REDUCTION_MUL;
-  const std::int64_t channels = multiply ? 4 : 8;
-  const std::int64_t spatial = multiply ? 16 : 32;
-  const std::string shape = multiply ? "8x4x16x16" : "8x8x32x32";
+                             std::int64_t uid,
+                             const std::vector<std::int64_t>& dimensions) {
+  std::string shape;
+  for (const auto dimension : dimensions) {
+    if (!shape.empty()) shape += 'x';
+    shape += std::to_string(dimension);
+  }
   BenchmarkCase result;
   result.name = "reduction_" + mode_name(mode) + "_perf_" +
                 data_type_name(data_type) + "_axis1_keepdim_" + shape;
   result.operation = Operation::kReduction;
   result.tensors = {
-      tensor(uid, {8, channels, spatial, spatial}, data_type),
-      tensor(uid + 1, {8, 1, spatial, spatial}, data_type),
+      tensor(uid, {dimensions[0], dimensions[1], dimensions[2], dimensions[3]}, data_type),
+      tensor(uid + 1, {dimensions[0], 1, dimensions[2], dimensions[3]}, data_type),
   };
   result.reduction_mode = mode;
   result.reduction_axis = 1;
@@ -203,13 +210,21 @@ std::vector<BenchmarkCase> reduction_cases() {
 }
 
 std::vector<BenchmarkCase> reduction_benchmark_cases() {
+  const std::vector<std::vector<std::int64_t>> shapes = {
+      {8, 4, 16, 16}, {8, 8, 32, 32}, {1, 4, 8, 8},
+      {2, 8, 8, 16}, {3, 4, 16, 24}, {4, 8, 16, 32},
+      {2, 16, 8, 8}, {4, 16, 16, 16}, {1, 32, 32, 16},
+      {2, 8, 64, 32}, {8, 4, 32, 64}, {4, 8, 64, 64},
+  };
   std::vector<BenchmarkCase> result;
-  result.reserve(9);
+  result.reserve(shapes.size() * kModes.size() * kDataTypes.size());
   std::int64_t uid = 200;
-  for (const flagdnnReductionMode_t mode : kModes) {
-    for (const flagdnnDataType_t data_type : kDataTypes) {
-      result.push_back(make_benchmark_case(mode, data_type, uid));
-      uid += 2;
+  for (const auto& shape : shapes) {
+    for (const flagdnnReductionMode_t mode : kModes) {
+      for (const flagdnnDataType_t data_type : kDataTypes) {
+        result.push_back(make_benchmark_case(mode, data_type, uid, shape));
+        uid += 2;
+      }
     }
   }
   return result;

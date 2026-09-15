@@ -108,6 +108,10 @@ std::string backend_primitive(flagdnnPointwiseMode_t mode) {
 
 std::string capability_dtype(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+    case FLAGDNN_DATA_FP8_E8M0:
+      throw std::invalid_argument(
+          "THead validation does not support INT32 or E8M0 here");
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:

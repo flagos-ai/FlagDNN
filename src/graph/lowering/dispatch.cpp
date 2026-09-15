@@ -81,6 +81,10 @@ LoweredOperation lower_operation(const OperationSpec& operation) {
       if (operation.custom_operation_name == "relu") {
         return lower_unary_pointwise(operation);
       }
+      if (operation.custom_operation_name == "concatenate")
+        return lower_concatenate(operation);
+      if (operation.custom_operation_name == "gen_index")
+        return lower_gen_index(operation);
       if (operation.custom_operation_name == "reshape") {
         return lower_reshape(operation);
       }
@@ -90,6 +94,35 @@ LoweredOperation lower_operation(const OperationSpec& operation) {
       if (operation.custom_operation_name == "slice") {
         return lower_slice(operation);
       }
+      if (operation.custom_operation_name == "instancenorm" ||
+          operation.custom_operation_name == "adalayernorm" ||
+          operation.custom_operation_name == "instancenorm_backward" ||
+          operation.custom_operation_name == "adalayernorm_backward" ||
+          operation.custom_operation_name == "layernorm_backward" ||
+          operation.custom_operation_name == "rmsnorm_backward" ||
+          operation.custom_operation_name == "batchnorm_backward")
+        return lower_extended_normalization(operation);
+      if (operation.custom_operation_name == "bn_finalize")
+        return lower_bn_finalize(operation);
+      if (operation.custom_operation_name == "rope" ||
+          operation.custom_operation_name == "rope_backward")
+        return lower_rope(operation);
+      if (operation.custom_operation_name == "rng") return lower_rng(operation);
+      if (operation.custom_operation_name == "resample")
+        return lower_resample(operation);
+      if (operation.custom_operation_name == "moe_grouped_matmul" ||
+          operation.custom_operation_name == "moe_grouped_matmul_bwd")
+        return lower_moe_matmul(operation);
+      if (operation.custom_operation_name == "matmul_fp8")
+        return lower_matmul_fp8(operation);
+      if (operation.custom_operation_name == "matmul")
+        return lower_matmul(operation);
+      if (operation.custom_operation_name == "convolution_fprop")
+        return lower_convolution_fprop(operation);
+      if (operation.custom_operation_name == "causal_conv1d")
+        return lower_causal_conv1d(operation);
+      if (operation.custom_operation_name == "genstats")
+        return lower_genstats(operation);
       if (operation.custom_operation_name == "layernorm") {
         return lower_normalization_forward(operation, false);
       }
@@ -117,6 +150,9 @@ flagdnnDataType_t operation_compute_data_type(
     const OperationSpec& operation) {
   if (operation.has_compute_data_type) {
     return operation.compute_data_type;
+  }
+  if (operation.inputs.empty() && !operation.outputs.empty()) {
+    return operation.outputs.front().tensor.data_type;
   }
   if (operation.inputs.empty()) {
     throw ApiError(FLAGDNN_STATUS_INTERNAL_ERROR,

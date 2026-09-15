@@ -191,11 +191,11 @@ file(GLOB_RECURSE python_test_sources
   "${SOURCE_ROOT}/tests/*.py"
   "${SOURCE_ROOT}/reference/tests/*.py"
   "${SOURCE_ROOT}/benchmark/*.py")
-# tools/run_tests.py is itself Python, so retain one explicitly named Python
-# contract test for that tool while rejecting Python functional tests and
-# benchmarks everywhere else.
+# Host contracts may inspect Python compiler/tooling code. Operator functional
+# tests and benchmarks remain native C++ entrypoints.
 list(REMOVE_ITEM python_test_sources
-  "${SOURCE_ROOT}/tests/core/run_tests_contract.py")
+  "${SOURCE_ROOT}/tests/core/run_tests_contract.py"
+  "${SOURCE_ROOT}/tests/core/kernel_registry_contract.py")
 if(python_test_sources)
   message(FATAL_ERROR
     "Unexpected Python tests or benchmarks: ${python_test_sources}")
@@ -216,6 +216,24 @@ foreach(entry IN LISTS cpu_reference_sources)
   endif()
 endforeach()
 
+# Platforms may qualify additional functional operators for performance without
+# requiring every other backend to implement their benchmark adapters at once.
+# Extended operators keep their shared thin entry even when no platform has
+# qualified a vendor comparison yet. Registration remains platform-owned.
+set(platform_benchmark_operators ${FLAGDNN_EXTENDED_OPERATORS})
+file(GLOB platform_benchmark_manifests
+  "${SOURCE_ROOT}/backends/*/validation/benchmark/additional_operators.txt")
+foreach(manifest IN LISTS platform_benchmark_manifests)
+  file(STRINGS "${manifest}" operators)
+  foreach(operator IN LISTS operators)
+    if(NOT operator IN_LIST FLAGDNN_FUNCTIONAL_OPERATORS)
+      message(FATAL_ERROR "Unknown platform benchmark operator: ${operator}")
+    endif()
+    list(APPEND platform_benchmark_operators "${operator}")
+  endforeach()
+endforeach()
+list(REMOVE_DUPLICATES platform_benchmark_operators)
+
 file(GLOB benchmark_cpp_entries "${SOURCE_ROOT}/benchmark/test_*.cpp")
 set(actual_benchmark_operators)
 foreach(entry IN LISTS benchmark_cpp_entries)
@@ -223,15 +241,23 @@ foreach(entry IN LISTS benchmark_cpp_entries)
   string(REGEX REPLACE "^test_" "" operator "${stem}")
   file(READ "${entry}" source)
 
-  if(NOT source MATCHES
-     "#[ \\t]*include[ \\t]*\"common/cases\\.hpp\"")
-    message(FATAL_ERROR
-      "${entry} must consume the platform-neutral benchmark case catalog")
-  endif()
-  if(NOT source MATCHES
-     "#[ \\t]*include[ \\t]*\"common/runner\\.hpp\"")
-    message(FATAL_ERROR
-      "${entry} must use the shared benchmark runner contract")
+  if(operator IN_LIST platform_benchmark_operators)
+    if(NOT source MATCHES
+       "#[ \\t]*include[ \\t]*\"common/(attention_runner|native_runner)\\.hpp\"")
+      message(FATAL_ERROR
+        "${entry} must use the platform-neutral shared benchmark contract")
+    endif()
+  else()
+    if(NOT source MATCHES
+       "#[ \\t]*include[ \\t]*\"common/cases\\.hpp\"")
+      message(FATAL_ERROR
+        "${entry} must consume the platform-neutral benchmark case catalog")
+    endif()
+    if(NOT source MATCHES
+       "#[ \\t]*include[ \\t]*\"common/runner\\.hpp\"")
+      message(FATAL_ERROR
+        "${entry} must use the shared benchmark runner contract")
+    endif()
   endif()
   if(source MATCHES
      "#[ \\t]*include[ \\t]*\"(platforms|validation|backends)/")
@@ -240,7 +266,9 @@ foreach(entry IN LISTS benchmark_cpp_entries)
   list(APPEND actual_benchmark_operators "${operator}")
 endforeach()
 
-set(expected_benchmark_operators ${FLAGDNN_BENCHMARK_OPERATORS})
+set(expected_benchmark_operators
+  ${FLAGDNN_BENCHMARK_OPERATORS} ${platform_benchmark_operators})
+list(REMOVE_DUPLICATES expected_benchmark_operators)
 list(SORT actual_benchmark_operators)
 list(SORT expected_benchmark_operators)
 if(NOT "${actual_benchmark_operators}" STREQUAL

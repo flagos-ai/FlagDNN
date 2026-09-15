@@ -56,6 +56,7 @@ CONVOLUTION_CASE_PATTERN = re.compile(
 # each operator. PPU codegen/Graph/JIT/autotune and installed-consumer checks
 # exceed 30 minutes with a cold FlagTree cache; CTest still bounds each test.
 DEFAULT_TIMEOUT = 7200
+REPORT_DEVICE = "cuda"
 PREFLIGHT_BY_DEFAULT = True
 SUPPORTS_MIN_SPEEDUP = True
 FILTER_REGISTERED_TESTS = False
@@ -78,6 +79,26 @@ EXTENDED_UNARY_OPERATIONS = (
 
 def _ctest_line(raw_line: str) -> str:
     return re.sub(r"^\s*\d+:\s?", "", raw_line).strip()
+
+
+def select_operator_manifests(
+    manifests: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    root = Path(__file__).resolve().parent
+    catalogs = {
+        "functional": root / "capability.json",
+        "benchmark": COMPARABLE_CASE_CATALOG,
+    }
+    supported = {
+        suite: set(json.loads(path.read_text())["operators"])
+        for suite, path in catalogs.items()
+    }
+    return {
+        suite: [
+            operator for operator in operators if operator in supported[suite]
+        ]
+        for suite, operators in manifests.items()
+    }
 
 
 def configure_environment(
@@ -400,9 +421,7 @@ def thead_comparable_coverage(
             else "not_run"
         )
         records = (
-            benchmark.get("records", {})
-            if isinstance(benchmark, dict)
-            else {}
+            benchmark.get("records", {}) if isinstance(benchmark, dict) else {}
         )
         providers = records.get(case) if isinstance(records, dict) else None
         if (
@@ -538,7 +557,9 @@ def benchmark_speedup_summary(
     )
     speedups = [record["speedup"] for record in cases]
     geometric_mean = (
-        math.exp(sum(math.log(speedup) for speedup in speedups) / len(speedups))
+        math.exp(
+            sum(math.log(speedup) for speedup in speedups) / len(speedups)
+        )
         if speedups
         else None
     )
@@ -842,9 +863,7 @@ def finalize(
             failed = True
 
     performance = (
-        benchmark_speedup_summary(
-            results, min_speedup, comparable_coverage
-        )
+        benchmark_speedup_summary(results, min_speedup, comparable_coverage)
         if "benchmark" in suites
         else None
     )
@@ -880,9 +899,7 @@ def finalize(
     for operator_results in results.values():
         for result in operator_results.values():
             skip_record_errors += len(result.get("skip_record_errors", []))
-            accounting_errors += len(
-                result.get("case_accounting_errors", [])
-            )
+            accounting_errors += len(result.get("case_accounting_errors", []))
             reference_skips += len(result.get("skip_records", []))
     failed = failed or skip_record_errors > 0 or accounting_errors > 0
 

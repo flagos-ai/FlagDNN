@@ -3,8 +3,6 @@
 #ifndef FLAGDNN_BACKENDS_NVIDIA_VALIDATION_FUNCTIONAL_CUDNN_GRAPH_HPP_
 #define FLAGDNN_BACKENDS_NVIDIA_VALIDATION_FUNCTIONAL_CUDNN_GRAPH_HPP_
 
-#include "common/common.hpp"
-
 #include <cuda_runtime_api.h>
 #include <cudnn.h>
 #include <cudnn_frontend.h>
@@ -15,6 +13,8 @@
 #include <span>
 #include <string_view>
 #include <unordered_map>
+
+#include "common/common.hpp"
 
 namespace flagdnn::testing::cuda {
 
@@ -31,17 +31,22 @@ void check_cudnn_frontend(cfe::error_t status, std::string_view operation);
                                              std::size_t logical_rank);
 [[nodiscard]] TestTensor flatten_compact_tensor(const TestTensor& tensor);
 [[nodiscard]] TestTensor canonicalize_pointwise_tensor(
-    const TestTensor& tensor,
-    std::size_t logical_rank);
+    const TestTensor& tensor, std::size_t logical_rank);
 [[nodiscard]] bool has_same_physical_mapping(const TestTensor& left,
                                              const TestTensor& right);
 
 [[nodiscard]] std::shared_ptr<cfe::graph::Tensor_attributes> make_cudnn_tensor(
-    const std::shared_ptr<cfe::graph::Graph>& graph,
-    const TestTensor& tensor,
+    const std::shared_ptr<cfe::graph::Graph>& graph, const TestTensor& tensor,
     std::string_view name);
 [[nodiscard]] CudnnBindingMap make_cudnn_binding_map(
     std::span<const flagdnnBinding_t> bindings);
+
+void build_cudnn_plans(cfe::graph::Graph& graph, cudnnHandle_t handle,
+                       int input_precision = 0,
+                       std::span<const std::int64_t> allowed_engines = {});
+
+[[nodiscard]] std::unique_ptr<TestExecutable> build_cudnn_graph(
+    std::shared_ptr<cfe::graph::Graph> graph);
 
 class CudnnGraphExecutable : public TestExecutable {
  public:
@@ -55,8 +60,7 @@ class CudnnGraphExecutable : public TestExecutable {
 
  protected:
   [[nodiscard]] cudnnHandle_t handle() const noexcept;
-  void begin_execute(void* workspace,
-                     std::size_t workspace_size,
+  void begin_execute(void* workspace, std::size_t workspace_size,
                      flagdnnStream_t stream);
   void set_workspace_size(std::int64_t workspace_size);
 

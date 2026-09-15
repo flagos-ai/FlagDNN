@@ -3,8 +3,6 @@
 #ifndef FLAGDNN_TESTS_COMMON_LAYOUT_HPP_
 #define FLAGDNN_TESTS_COMMON_LAYOUT_HPP_
 
-#include "common/common.hpp"
-
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -12,6 +10,8 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "common/common.hpp"
 
 namespace flagdnn::testing {
 
@@ -35,16 +35,16 @@ using LayoutExecutable = TestExecutable;
 void validate_layout_case(const LayoutTestCase& test_case);
 
 [[nodiscard]] std::unique_ptr<LayoutExecutable> build_flagdnn_layout(
-    flagdnn::Handle& handle,
-    const LayoutTestCase& test_case);
+    flagdnn::Handle& handle, const LayoutTestCase& test_case);
 
-/* Implemented by the selected backends/<platform>/validation/functional adapter. */
+/* Implemented by the selected backends/<platform>/validation/functional
+ * adapter. */
 [[nodiscard]] std::unique_ptr<LayoutExecutable> build_layout_reference(
     const LayoutTestCase& test_case);
 
-/* Implemented by backends/<platform>/validation/functional/layout_runner.cpp. */
-int run_layout_functional_test(int argc,
-                               char** argv,
+/* Implemented by backends/<platform>/validation/functional/layout_runner.cpp.
+ */
+int run_layout_functional_test(int argc, char** argv,
                                std::span<const LayoutTestCase> cases,
                                std::string_view suite_name);
 

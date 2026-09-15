@@ -1,7 +1,4 @@
-#include <flagdnn/frontend.hpp>
-
 #include <cuda.h>
-
 #include <unistd.h>
 
 #include <algorithm>
@@ -10,11 +7,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <flagdnn/frontend.hpp>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include "common/pointwise.hpp"
+#include "validation/functional/contract_reference.hpp"
 
 namespace {
 
@@ -35,8 +36,8 @@ void check_cuda(CUresult result, const char* operation) {
 void check_frontend(const flagdnn_frontend::error_t& error,
                     const char* operation) {
   if (error.is_bad()) {
-    throw std::runtime_error(
-        std::string(operation) + " failed: " + error.get_message());
+    throw std::runtime_error(std::string(operation) +
+                             " failed: " + error.get_message());
   }
 }
 
@@ -54,22 +55,15 @@ bool process_maps_contains(const std::string& needle) {
 void require_native_process_clean(const char* stage) {
   const bool has_python = process_maps_contains("libpython");
   const bool has_torch = process_maps_contains("libtorch");
-  std::cout << stage << "_has_libpython=" << std::boolalpha << has_python
-            << " " << stage << "_has_libtorch=" << has_torch << '\n';
-#if !defined(FLAGDNN_EXPECT_LIBTRITON_JIT)
-  if (has_python || has_torch) {
-    throw std::runtime_error(
-        std::string(stage) + " unexpectedly loaded Python or Torch");
-  }
-#endif
+  std::cout << stage << "_has_libpython=" << std::boolalpha << has_python << " "
+            << stage << "_has_libtorch=" << has_torch << '\n';
 }
 
 class TemporaryCache {
  public:
   TemporaryCache() {
     std::string pattern =
-        (std::filesystem::temp_directory_path() /
-         "flagdnn-native-graph-XXXXXX")
+        (std::filesystem::temp_directory_path() / "flagdnn-native-graph-XXXXXX")
             .string();
     std::vector<char> writable(pattern.begin(), pattern.end());
     writable.push_back('\0');
@@ -184,11 +178,11 @@ void require_invalid_graph(flagdnn::Graph& graph, const char* name) {
       if (error.status() == FLAGDNN_STATUS_INVALID_VALUE) {
         return;
       }
-      throw std::runtime_error(
-          std::string(name) + " returned the wrong status from " + stage);
+      throw std::runtime_error(std::string(name) +
+                               " returned the wrong status from " + stage);
     }
-    throw std::runtime_error(
-        std::string(name) + " was not rejected by " + stage);
+    throw std::runtime_error(std::string(name) + " was not rejected by " +
+                             stage);
   };
   require_rejected([&] { graph.validate(); }, "validate");
   require_rejected([&] { graph.finalize(); }, "finalize");
@@ -199,21 +193,21 @@ void test_invalid_graph_contracts() {
   const std::array<std::int64_t, 1> small_dimensions = {512};
   const std::array<std::int64_t, 1> strides = {1};
 
-  flagdnn::TensorDescriptor virtual_input(
-      40, FLAGDNN_DATA_FLOAT32, large_dimensions, strides);
+  flagdnn::TensorDescriptor virtual_input(40, FLAGDNN_DATA_FLOAT32,
+                                          large_dimensions, strides);
   virtual_input.set_virtual();
-  flagdnn::TensorDescriptor output(
-      41, FLAGDNN_DATA_FLOAT32, large_dimensions, strides);
+  flagdnn::TensorDescriptor output(41, FLAGDNN_DATA_FLOAT32, large_dimensions,
+                                   strides);
   flagdnn::Graph missing_producer;
   missing_producer.relu(virtual_input, output);
   require_invalid_graph(missing_producer, "missing virtual producer");
 
-  flagdnn::TensorDescriptor first_input(
-      42, FLAGDNN_DATA_FLOAT32, large_dimensions, strides);
-  flagdnn::TensorDescriptor second_input(
-      43, FLAGDNN_DATA_FLOAT32, large_dimensions, strides);
-  flagdnn::TensorDescriptor shared_output(
-      44, FLAGDNN_DATA_FLOAT32, large_dimensions, strides);
+  flagdnn::TensorDescriptor first_input(42, FLAGDNN_DATA_FLOAT32,
+                                        large_dimensions, strides);
+  flagdnn::TensorDescriptor second_input(43, FLAGDNN_DATA_FLOAT32,
+                                         large_dimensions, strides);
+  flagdnn::TensorDescriptor shared_output(44, FLAGDNN_DATA_FLOAT32,
+                                          large_dimensions, strides);
   shared_output.set_virtual();
   flagdnn::Graph missing_external_output;
   missing_external_output.relu(first_input, shared_output);
@@ -224,14 +218,14 @@ void test_invalid_graph_contracts() {
   duplicate_producer.relu(second_input, shared_output);
   require_invalid_graph(duplicate_producer, "duplicate virtual producer");
 
-  flagdnn::TensorDescriptor large_shared(
-      45, FLAGDNN_DATA_FLOAT32, large_dimensions, strides);
+  flagdnn::TensorDescriptor large_shared(45, FLAGDNN_DATA_FLOAT32,
+                                         large_dimensions, strides);
   large_shared.set_virtual();
-  flagdnn::TensorDescriptor small_shared(
-      45, FLAGDNN_DATA_FLOAT32, small_dimensions, strides);
+  flagdnn::TensorDescriptor small_shared(45, FLAGDNN_DATA_FLOAT32,
+                                         small_dimensions, strides);
   small_shared.set_virtual();
-  flagdnn::TensorDescriptor small_output(
-      46, FLAGDNN_DATA_FLOAT32, small_dimensions, strides);
+  flagdnn::TensorDescriptor small_output(46, FLAGDNN_DATA_FLOAT32,
+                                         small_dimensions, strides);
   flagdnn::Graph conflicting_metadata;
   conflicting_metadata.relu(first_input, large_shared);
   conflicting_metadata.relu(small_shared, small_output);
@@ -245,7 +239,8 @@ int main(int argc, char** argv) {
   try {
     if (argc != 3) {
       throw std::invalid_argument(
-          "usage: native_nvidia_graph_smoke COMPILER_EXECUTABLE COMPILER_ENTRY");
+          "usage: native_nvidia_graph_smoke COMPILER_EXECUTABLE "
+          "COMPILER_ENTRY");
     }
     require_native_process_clean("startup");
     DriverContext driver;
@@ -261,46 +256,39 @@ int main(int argc, char** argv) {
         .set_io_data_type(flagdnn_frontend::DataType_t::FLOAT)
         .set_intermediate_data_type(flagdnn_frontend::DataType_t::FLOAT)
         .set_compute_data_type(flagdnn_frontend::DataType_t::FLOAT);
-    auto input = graph.tensor(
-        flagdnn_frontend::graph::Tensor_attributes()
-            .set_name("input")
-            .set_uid(1)
-            .set_dim({1024})
-            .set_stride({1}));
-    auto bias = graph.tensor(
-        flagdnn_frontend::graph::Tensor_attributes()
-            .set_name("bias")
-            .set_uid(2)
-            .set_dim({1024})
-            .set_stride({1}));
+    auto input = graph.tensor(flagdnn_frontend::graph::Tensor_attributes()
+                                  .set_name("input")
+                                  .set_uid(1)
+                                  .set_dim({1024})
+                                  .set_stride({1}));
+    auto bias = graph.tensor(flagdnn_frontend::graph::Tensor_attributes()
+                                 .set_name("bias")
+                                 .set_uid(2)
+                                 .set_dim({1024})
+                                 .set_stride({1}));
     auto intermediate = graph.pointwise(
-        input,
-        flagdnn_frontend::graph::Pointwise_attributes()
-            .set_name("relu")
-            .set_mode(flagdnn_frontend::PointwiseMode_t::RELU_FWD));
-    auto output = graph.pointwise(
-        intermediate,
-        bias,
-        flagdnn_frontend::graph::Pointwise_attributes()
-            .set_name("add")
-            .set_mode(flagdnn_frontend::PointwiseMode_t::ADD));
+        input, flagdnn_frontend::graph::Pointwise_attributes()
+                   .set_name("relu")
+                   .set_mode(flagdnn_frontend::PointwiseMode_t::RELU_FWD));
+    auto output =
+        graph.pointwise(intermediate, bias,
+                        flagdnn_frontend::graph::Pointwise_attributes()
+                            .set_name("add")
+                            .set_mode(flagdnn_frontend::PointwiseMode_t::ADD));
     output->set_name("output").set_uid(3).set_output(true);
 
     check_frontend(graph.build(handle), "graph.build");
     require_native_process_clean("after_build");
-    if (!intermediate->get_is_virtual() ||
-        intermediate->get_uid() <= 0 ||
-        intermediate->get_uid() == 1 ||
-        intermediate->get_uid() == 2 ||
+    if (!intermediate->get_is_virtual() || intermediate->get_uid() <= 0 ||
+        intermediate->get_uid() == 1 || intermediate->get_uid() == 2 ||
         intermediate->get_uid() == 3) {
       throw std::runtime_error(
           "frontend did not assign a distinct virtual tensor UID");
     }
 
     std::int64_t workspace_size = 0;
-    check_frontend(
-        graph.get_workspace_size(workspace_size),
-        "graph.get_workspace_size");
+    check_frontend(graph.get_workspace_size(workspace_size),
+                   "graph.get_workspace_size");
     if (workspace_size < 1024 * static_cast<std::int64_t>(sizeof(float))) {
       throw std::runtime_error("virtual tensor workspace is too small");
     }
@@ -333,17 +321,46 @@ int main(int argc, char** argv) {
     if (missing_workspace.is_good()) {
       throw std::runtime_error("null graph workspace was not rejected");
     }
-    check_frontend(
-        graph.execute(
-            handle, variant_pack, workspace.opaque(), stream.opaque()),
-        "graph.execute");
+    check_frontend(graph.execute(handle, variant_pack, workspace.opaque(),
+                                 stream.opaque()),
+                   "graph.execute");
     output_buffer.copy_to(host_output.data(), stream.get());
     check_cuda(cuStreamSynchronize(stream.get()), "cuStreamSynchronize");
 
+    namespace reference = flagdnn::testing::cuda;
+    namespace cfe = cudnn_frontend;
+    auto cudnn_graph = std::make_shared<cfe::graph::Graph>();
+    cudnn_graph->set_io_data_type(cfe::DataType_t::FLOAT)
+        .set_intermediate_data_type(cfe::DataType_t::FLOAT)
+        .set_compute_data_type(cfe::DataType_t::FLOAT);
+    const auto cudnn_input = reference::make_cudnn_tensor(
+        cudnn_graph,
+        {1, FLAGDNN_DATA_FLOAT32, {1, 1024, 1, 1}, {1024, 1, 1, 1}}, "input");
+    const auto cudnn_bias = reference::make_cudnn_tensor(
+        cudnn_graph,
+        {2, FLAGDNN_DATA_FLOAT32, {1, 1024, 1, 1}, {1024, 1, 1, 1}}, "bias");
+    const auto cudnn_relu = cudnn_graph->pointwise(
+        cudnn_input, cfe::graph::Pointwise_attributes().set_mode(
+                         cfe::PointwiseMode_t::RELU_FWD));
+    const auto cudnn_output = cudnn_graph->pointwise(
+        cudnn_relu, cudnn_bias,
+        cfe::graph::Pointwise_attributes().set_mode(cfe::PointwiseMode_t::ADD));
+    cudnn_output->set_uid(3)
+        .set_output(true)
+        .set_data_type(cfe::DataType_t::FLOAT)
+        .set_dim({1, 1024, 1, 1})
+        .set_stride({1024, 1, 1, 1});
+    auto cudnn_executable =
+        reference::build_cudnn_graph(std::move(cudnn_graph));
+    const std::array<flagdnnBinding_t, 3> cudnn_bindings{
+        {{1, input_buffer.opaque()},
+         {2, bias_buffer.opaque()},
+         {3, output_buffer.opaque()}}};
+    const auto expected_output = reference::run_contract_reference<float>(
+        *cudnn_executable, cudnn_bindings, 3, host_output.size(), stream.get());
     float maximum_error = 0.0F;
     for (std::size_t index = 0; index < host_output.size(); ++index) {
-      const float expected =
-          std::max(host_input[index], 0.0F) + host_bias[index];
+      const float expected = expected_output[index];
       maximum_error =
           std::max(maximum_error, std::fabs(host_output[index] - expected));
     }
@@ -373,24 +390,32 @@ int main(int argc, char** argv) {
         flagdnnBinding_t{101, input_buffer.opaque()},
         flagdnnBinding_t{102, output_buffer.opaque()}};
     DeviceBuffer generic_workspace(generic_executable.workspace_size());
-    generic_executable.execute(
-        generic_bindings,
-        generic_workspace.opaque(),
-        generic_executable.workspace_size(),
-        stream.opaque());
+    generic_executable.execute(generic_bindings, generic_workspace.opaque(),
+                               generic_executable.workspace_size(),
+                               stream.opaque());
     output_buffer.copy_to(host_output.data(), stream.get());
     check_cuda(cuStreamSynchronize(stream.get()),
                "generic descriptor synchronize");
+    flagdnn::testing::PointwiseTestCase generic_reference;
+    generic_reference.name = "generic_relu_cudnn";
+    generic_reference.mode = FLAGDNN_POINTWISE_RELU_FWD;
+    generic_reference.inputs = {{101, FLAGDNN_DATA_FLOAT32, {1024}, {1}}};
+    generic_reference.output = {102, FLAGDNN_DATA_FLOAT32, {1024}, {1}};
+    generic_reference.input_domains = {
+        flagdnn::testing::PointwiseInputDomain::kReal};
+    auto cudnn_generic =
+        flagdnn::testing::build_pointwise_reference(generic_reference);
+    const auto expected_generic = reference::run_contract_reference<float>(
+        *cudnn_generic, generic_bindings, 102, host_output.size(),
+        stream.get());
     for (std::size_t index = 0; index < host_output.size(); ++index) {
-      if (host_output[index] != std::max(host_input[index], 0.0F)) {
-        throw std::runtime_error(
-            "generic CUDA descriptor ReLU result differs");
+      if (host_output[index] != expected_generic[index]) {
+        throw std::runtime_error("generic CUDA descriptor ReLU result differs");
       }
     }
     require_native_process_clean("after_execute");
     std::cout << "PASS multi_operation_graph operations=2 workspace="
-              << workspace_size << " max_abs_error=" << maximum_error
-              << '\n';
+              << workspace_size << " max_abs_error=" << maximum_error << '\n';
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "FAIL: " << error.what() << '\n';

@@ -78,12 +78,15 @@ TestTensor tensor(std::int64_t uid,
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return "int32";
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
       return "fp16";
     case FLAGDNN_DATA_BFLOAT16:
       return "bfloat16";
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -186,6 +189,10 @@ const std::vector<Shape>& add_square_shapes() {
       {3, 5, 7},
       {1, 3, 5, 7},
       {2, 3, 5, 7},
+      {1, 1, 31},
+      {1, 1, 32},
+      {1, 1, 33},
+      {2, 7, 16},
   };
   return shapes;
 }
@@ -202,6 +209,8 @@ const std::vector<ConvBiasReluDefinition>& conv_bias_relu_definitions() {
       {{2, 8, 9, 11}, {4, 8, 1, 1}, {1, 1}, {0, 0}, {1, 1}},
       {{1, 4, 18, 18}, {4, 4, 3, 3}, {1, 1}, {0, 0}, {1, 1}},
       {{2, 12, 13, 15}, {10, 12, 3, 3}, {1, 1}, {1, 1}, {1, 1}},
+      {{1, 16, 32, 24}, {32, 16, 1, 1}, {1, 1}, {0, 0}, {1, 1}},
+      {{2, 16, 17, 19}, {24, 16, 3, 3}, {2, 2}, {1, 1}, {1, 1}},
   };
   return definitions;
 }
@@ -225,7 +234,8 @@ void validate_tensor(const TestTensor& tensor_specification,
   }
   if (tensor_specification.data_type != FLAGDNN_DATA_FLOAT32 &&
       tensor_specification.data_type != FLAGDNN_DATA_FLOAT16 &&
-      tensor_specification.data_type != FLAGDNN_DATA_BFLOAT16) {
+      tensor_specification.data_type != FLAGDNN_DATA_BFLOAT16 &&
+      tensor_specification.data_type != FLAGDNN_DATA_INT32) {
     throw std::invalid_argument(std::string(role) + " data type is invalid");
   }
 }
@@ -239,12 +249,15 @@ void validate_tolerance(double absolute, double relative) {
 
 fe::DataType_t frontend_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return fe::DataType_t::INT32;
     case FLAGDNN_DATA_FLOAT32:
       return fe::DataType_t::FLOAT;
     case FLAGDNN_DATA_FLOAT16:
       return fe::DataType_t::HALF;
     case FLAGDNN_DATA_BFLOAT16:
       return fe::DataType_t::BFLOAT16;
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -418,7 +431,9 @@ std::vector<AddSquareTestCase> make_add_square_cases() {
   result.reserve(add_square_shapes().size() * kDataTypes.size());
   std::int64_t uid = 75000;
   for (const Shape& shape : add_square_shapes()) {
-    for (const flagdnnDataType_t data_type : kDataTypes) {
+    for (const flagdnnDataType_t data_type :
+         {FLAGDNN_DATA_FLOAT32, FLAGDNN_DATA_FLOAT16, FLAGDNN_DATA_BFLOAT16,
+          FLAGDNN_DATA_INT32}) {
       result.push_back(make_add_square_case(shape, data_type, uid));
       uid += 3;
     }

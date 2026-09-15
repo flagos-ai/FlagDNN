@@ -337,9 +337,9 @@ int run_conv_bias_relu_functional_test(
     return 2;
   }
   try {
-    if (cases.size() != 30U) {
+    if (cases.empty()) {
       throw std::logic_error(
-          "Ascend ConvBiasRelu functional catalog must contain 30 cases");
+          "Ascend ConvBiasRelu functional catalog must contain cases");
     }
     const char* filter = std::getenv("FLAGDNN_ASCEND_COMPOSITE_CASE");
     std::vector<const ConvBiasReluTestCase*> selected;

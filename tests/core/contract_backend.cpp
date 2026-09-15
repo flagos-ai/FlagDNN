@@ -11,6 +11,7 @@
 #include "runtime/sha256.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -42,6 +43,11 @@ constexpr std::string_view kTargetFingerprint = "host_contract_v1";
 constexpr std::size_t kWorkspaceSize = 64;
 
 thread_local std::string last_error;
+
+#if defined(FLAGDNN_CONTRACT_PREPARED_ENVIRONMENT)
+std::atomic<bool> environment_prepared{false};
+std::atomic<unsigned int> concurrent_builds{0};
+#endif
 
 void write_marker(const std::filesystem::path &path, std::string_view value) {
   std::ofstream output(path, std::ios::binary | std::ios::trunc);
@@ -187,6 +193,43 @@ flagdnnBackendResult_t plugin_call(Function &&function) noexcept {
     return FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR;
   }
 }
+
+#if defined(FLAGDNN_CONTRACT_PREPARED_ENVIRONMENT)
+int is_environment_prepared(const char*) noexcept {
+  return environment_prepared.load(std::memory_order_acquire) ? 1 : 0;
+}
+
+flagdnnBackendResult_t prepare_environment(
+    void*, const char*, const flagdnnBackendBuildInputV2*) noexcept {
+  return plugin_call([] {
+    const char *mode = std::getenv("FLAGDNN_CONTRACT_PREPARATION");
+    if (mode != nullptr && std::string_view(mode) == "fail") {
+      fail(FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR,
+           "requested preparation failure");
+    }
+    if (mode == nullptr || std::string_view(mode) != "not_ready") {
+      environment_prepared.store(true, std::memory_order_release);
+    }
+  });
+}
+
+void require_concurrent_builds() {
+  require(is_environment_prepared(nullptr) != 0, "environment was not prepared");
+  if (std::getenv("FLAGDNN_CONTRACT_PARALLEL_BUILDS") == nullptr) {
+    return;
+  }
+  concurrent_builds.fetch_add(1, std::memory_order_acq_rel);
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (concurrent_builds.load(std::memory_order_acquire) < 2) {
+    if (std::chrono::steady_clock::now() >= deadline) {
+      fail(FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR,
+           "prepared builds were serialized");
+    }
+    std::this_thread::yield();
+  }
+}
+#endif
 
 std::string read_file(const std::filesystem::path &path) {
   std::ifstream input(path, std::ios::binary);
@@ -532,6 +575,9 @@ create_executable(void *context, const flagdnnBackendBuildInputV2 *input,
     require(workspace_size != nullptr, "workspace size output pointer is null");
     *executable = nullptr;
     *workspace_size = 0;
+#if defined(FLAGDNN_CONTRACT_PREPARED_ENVIRONMENT)
+    require_concurrent_builds();
+#endif
     std::unique_ptr<ContractExecutable> result;
     try {
       result = std::make_unique<ContractExecutable>(*input);
@@ -581,3 +627,13 @@ extern "C" FLAGDNN_BACKEND_EXPORT const flagdnnBackendApiV2 *
 flagdnnBackendGetApiV2(void) {
   return &api;
 }
+
+#if defined(FLAGDNN_CONTRACT_PREPARED_ENVIRONMENT)
+extern "C" FLAGDNN_BACKEND_EXPORT const flagdnnBackendBuildApiV1 *
+flagdnnBackendGetBuildApiV1(void) {
+  static const flagdnnBackendBuildApiV1 build_api = {
+      sizeof(flagdnnBackendBuildApiV1), 1,
+      &is_environment_prepared, &prepare_environment};
+  return &build_api;
+}
+#endif

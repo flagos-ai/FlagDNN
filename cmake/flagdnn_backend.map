@@ -1,6 +1,7 @@
 FLAGDNN_BACKEND_2 {
   global:
     flagdnnBackendGetApiV2;
+    flagdnnBackendGetBuildApiV1;
   local:
     *;
 };

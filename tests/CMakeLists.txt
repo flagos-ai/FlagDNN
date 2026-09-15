@@ -8,11 +8,21 @@ add_library(flagdnn_test_common_objects OBJECT
   common/attention.cpp
   common/composite.cpp
   common/convolution.cpp
+  common/index.cpp
   common/layout.cpp
   common/matmul.cpp
   common/normalization.cpp
   common/pointwise.cpp
-  common/reduction.cpp)
+  common/pointwise_runner.cpp
+  common/reduction.cpp
+  common/statistics.cpp
+  common/moe_matmul.cpp
+  common/fp8_matmul.cpp
+  common/causal_convolution.cpp
+  common/resample.cpp
+  common/random.cpp
+  common/position_embedding.cpp
+  common/normalization_extended.cpp)
 target_compile_features(flagdnn_test_common_objects PUBLIC cxx_std_20)
 target_include_directories(flagdnn_test_common_objects PUBLIC
   "${PROJECT_SOURCE_DIR}/tests")
@@ -25,7 +35,7 @@ function(flagdnn_register_functional_suite)
   set(options)
   set(one_value_arguments
     PLATFORM ADAPTER_TARGET BACKEND_TARGET TIMEOUT BUILD_RPATH)
-  set(multi_value_arguments COMMAND_ARGS ENVIRONMENT LABELS OPERATORS)
+  set(multi_value_arguments COMMAND_ARGS ENVIRONMENT LABELS OPERATORS UNSUPPORTED_OPERATORS)
   cmake_parse_arguments(
     FLAGDNN_SUITE
     "${options}"
@@ -63,8 +73,14 @@ function(flagdnn_register_functional_suite)
       message(FATAL_ERROR "Functional operator ${operator} has no C++ entry")
     endif()
     set(target "flagdnn_test_${FLAGDNN_SUITE_PLATFORM}_${operator}")
-    add_executable("${target}"
-      "${PROJECT_SOURCE_DIR}/tests/test_${operator}.cpp")
+    if(operator IN_LIST FLAGDNN_SUITE_UNSUPPORTED_OPERATORS)
+      add_executable("${target}" "${PROJECT_SOURCE_DIR}/tests/common/capability_gate.cpp")
+      target_compile_definitions("${target}" PRIVATE
+        FLAGDNN_CAPABILITY_PLATFORM="${FLAGDNN_SUITE_PLATFORM}"
+        FLAGDNN_CAPABILITY_OPERATOR="${operator}")
+    else()
+      add_executable("${target}" "${PROJECT_SOURCE_DIR}/tests/test_${operator}.cpp")
+    endif()
     target_compile_features("${target}" PRIVATE cxx_std_20)
     target_link_libraries("${target}" PRIVATE
       "${FLAGDNN_SUITE_ADAPTER_TARGET}")
@@ -84,11 +100,25 @@ function(flagdnn_register_functional_suite)
       RUN_SERIAL TRUE
       ENVIRONMENT "${FLAGDNN_SUITE_ENVIRONMENT}"
       TIMEOUT "${FLAGDNN_SUITE_TIMEOUT}")
+    if(operator IN_LIST FLAGDNN_SUITE_UNSUPPORTED_OPERATORS)
+      set_tests_properties("${test_name}" PROPERTIES SKIP_RETURN_CODE 77
+        LABELS "capability;${FLAGDNN_SUITE_PLATFORM};${operator}")
+    endif()
   endforeach()
 endfunction()
 
 # Core tests exercise public headers, the C ABI, JSON, and the backend plugin
 # contract without importing any real platform SDK.
+add_executable(flagdnn_autotune_policy_contract
+  core/autotune_policy_contract.cpp
+  "${PROJECT_SOURCE_DIR}/backends/autotune_policy.cpp"
+  "${PROJECT_SOURCE_DIR}/src/runtime/json.cpp")
+target_compile_features(flagdnn_autotune_policy_contract PRIVATE cxx_std_20)
+target_include_directories(flagdnn_autotune_policy_contract PRIVATE
+  "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}")
+flagdnn_enable_warnings(flagdnn_autotune_policy_contract)
+add_test(NAME core.autotune_policy COMMAND flagdnn_autotune_policy_contract)
+
 add_executable(flagdnn_json_contract
   core/json_contract.cpp
   "${PROJECT_SOURCE_DIR}/src/runtime/json.cpp")
@@ -141,6 +171,34 @@ set_tests_properties(core.backend_contract PROPERTIES
     "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_contract>;FLAGDNN_EXECUTION_ENGINE=external_artifact"
   TIMEOUT 60)
 
+# The original contract plugin remains a legacy environment writer. A separate,
+# uninstalled variant exercises the opt-in prepared-environment protocol.
+flagdnn_add_backend_plugin(prepared_contract
+  SOURCES core/contract_backend.cpp
+    "${PROJECT_SOURCE_DIR}/src/runtime/json.cpp"
+    "${PROJECT_SOURCE_DIR}/src/runtime/sha256.cpp")
+target_compile_definitions(flagdnn_backend_prepared_contract PRIVATE
+  FLAGDNN_CONTRACT_PREPARED_ENVIRONMENT=1)
+set_target_properties(flagdnn_backend_prepared_contract PROPERTIES
+  OUTPUT_NAME flagdnn_backend_contract
+  LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/prepared-contract")
+add_executable(flagdnn_build_environment_contract
+  core/build_environment_contract.cpp)
+target_compile_features(flagdnn_build_environment_contract PRIVATE cxx_std_20)
+target_link_libraries(flagdnn_build_environment_contract PRIVATE FlagDNN::flagdnn)
+flagdnn_enable_warnings(flagdnn_build_environment_contract)
+add_dependencies(flagdnn_build_environment_contract
+  flagdnn_backend_prepared_contract flagdnn_contract_compiler)
+foreach(mode IN ITEMS parallel parallel_handles parallel_cold_handles fail not_ready)
+  add_test(NAME "core.build_environment.${mode}"
+    COMMAND flagdnn_build_environment_contract
+      "$<TARGET_FILE:flagdnn_contract_compiler>" "${mode}")
+  set_tests_properties("core.build_environment.${mode}" PROPERTIES
+    ENVIRONMENT
+      "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_prepared_contract>;FLAGDNN_EXECUTION_ENGINE=external_artifact"
+    TIMEOUT 30)
+endforeach()
+
 add_executable(flagdnn_c_header_smoke core/c_header_smoke.c)
 target_link_libraries(flagdnn_c_header_smoke PRIVATE FlagDNN::flagdnn)
 set_target_properties(flagdnn_c_header_smoke PROPERTIES
@@ -186,12 +244,27 @@ target_link_libraries(flagdnn_frontend_contract PRIVATE FlagDNN::flagdnn)
 flagdnn_enable_warnings(flagdnn_frontend_contract)
 add_test(NAME core.frontend_api COMMAND flagdnn_frontend_contract)
 
+add_executable(flagdnn_operator_dtype_contract core/operator_dtype_contract.cpp)
+target_compile_features(flagdnn_operator_dtype_contract PRIVATE cxx_std_20)
+target_link_libraries(flagdnn_operator_dtype_contract PRIVATE FlagDNN::flagdnn)
+flagdnn_enable_warnings(flagdnn_operator_dtype_contract)
+add_test(NAME core.operator_dtype_contract COMMAND flagdnn_operator_dtype_contract)
+
+add_executable(flagdnn_normalization_extension_contract core/normalization_extension_contract.cpp)
+target_compile_features(flagdnn_normalization_extension_contract PRIVATE cxx_std_20)
+target_link_libraries(flagdnn_normalization_extension_contract PRIVATE FlagDNN::flagdnn)
+flagdnn_enable_warnings(flagdnn_normalization_extension_contract)
+add_test(NAME core.normalization_extension_contract COMMAND flagdnn_normalization_extension_contract)
+
 add_test(NAME core.test_architecture
   COMMAND "${CMAKE_COMMAND}"
     "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
     -P "${PROJECT_SOURCE_DIR}/cmake/VerifyPerOperatorTestLayout.cmake")
 
 if(FLAGDNN_CODEGEN_PYTHON)
+  add_test(NAME core.kernel_registry_contract
+    COMMAND "${FLAGDNN_CODEGEN_PYTHON}" -B
+      "${PROJECT_SOURCE_DIR}/tests/core/kernel_registry_contract.py")
   add_test(NAME core.run_tests_contract
     COMMAND "${FLAGDNN_CODEGEN_PYTHON}"
       "${PROJECT_SOURCE_DIR}/tests/core/run_tests_contract.py"
@@ -202,3 +275,9 @@ add_test(NAME core.default_backend_contract
   COMMAND "${CMAKE_COMMAND}"
     "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
     -P "${PROJECT_SOURCE_DIR}/cmake/DefaultBackendContract.cmake")
+
+add_executable(flagdnn_extended_matrix_contract core/extended_matrix_contract.cpp)
+target_compile_features(flagdnn_extended_matrix_contract PRIVATE cxx_std_20)
+target_link_libraries(flagdnn_extended_matrix_contract PRIVATE FlagDNN::flagdnn)
+flagdnn_enable_warnings(flagdnn_extended_matrix_contract)
+add_test(NAME core.extended_matrix_contract COMMAND flagdnn_extended_matrix_contract)

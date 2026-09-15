@@ -3,25 +3,26 @@
 #include "backends/nvidia/engines/engine.hpp"
 
 #include "backends/nvidia/error.hpp"
+#include "backends/nvidia/cuda_launch.hpp"
 
-#if defined(FLAGDNN_HAS_LIBTRITON_JIT)
+#include <Python.h>
 
 #include "backends/autotune_policy.hpp"
 
 #include <triton_jit/triton_jit_function.h>
+#include <triton_jit/triton_kernel.h>
 
-#include <Python.h>
 #include <dlfcn.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <mutex>
-#include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -38,10 +39,38 @@
 namespace flagdnn::cuda {
 namespace {
 
-std::shared_mutex libtriton_jit_mutex;
+std::mutex libtriton_jit_mutex;
+std::atomic<bool> environment_prepared{false};
+std::atomic<bool> owns_python_interpreter{false};
 std::once_flag python_path_once;
 std::once_flag python_runtime_once;
+std::once_flag jit_library_once;
 void* python_global_handle = nullptr;
+void* jit_library_handle = nullptr;
+
+void pin_jit_library() {
+  std::call_once(jit_library_once, [] {
+    Dl_info information{};
+    const auto address = reinterpret_cast<void*>(
+        reinterpret_cast<std::uintptr_t>(&pin_jit_library));
+    if (dladdr(address, &information) == 0 ||
+        information.dli_fname == nullptr) {
+      throw CudaError(FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
+                      "cannot locate the NVIDIA JIT plugin");
+    }
+    // Dependency caches and Python exit callbacks outlive individual handles.
+    // The backend owns this lifetime, including when loaded by an older core.
+    jit_library_handle = dlopen(
+        information.dli_fname, RTLD_NOW | RTLD_NOLOAD | RTLD_NODELETE);
+    if (jit_library_handle == nullptr) {
+      const char* detail = dlerror();
+      throw CudaError(
+          FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
+          "cannot retain the NVIDIA JIT plugin until process exit: " +
+              std::string(detail == nullptr ? "unknown dlopen error" : detail));
+    }
+  });
+}
 
 bool logging_enabled() noexcept {
   const char* value = std::getenv("FLAGDNN_PRINT_AUTOTUNING");
@@ -104,10 +133,44 @@ void configure_python_path() {
   });
 }
 
-struct TuningAllocation {
-  std::int64_t uid = 0;
-  std::size_t size = 0;
-  CUdeviceptr pointer = 0;
+// libtriton_jit may initialize CPython on this build thread. Release only the
+// initial GIL that we created; never release a Python caller's pre-existing GIL.
+void acquire_python_gil_at_shutdown() noexcept {
+  if (Py_IsInitialized()) {
+    // Native-process dependency destructors contain pybind11 objects. Keep the
+    // GIL for the remainder of teardown, without finalizing someone else's Python.
+    (void)PyGILState_Ensure();
+  }
+}
+
+class PythonInitializationGuard {
+ public:
+  PythonInitializationGuard()
+      : owns_initialization_(!Py_IsInitialized()),
+        initialization_attempt_(
+            !environment_prepared.load(std::memory_order_acquire)) {}
+  ~PythonInitializationGuard() {
+    if (owns_initialization_ && Py_IsInitialized()) {
+      owns_python_interpreter.store(true, std::memory_order_release);
+    }
+    if (initialization_attempt_ &&
+        owns_python_interpreter.load(std::memory_order_acquire) &&
+        Py_IsInitialized()) {
+      // Register after imports, including partially failed attempts, so the GIL
+      // is acquired before dependency destructors registered by those imports.
+      // The JIT library pin keeps this callback valid until process exit.
+      (void)std::atexit(acquire_python_gil_at_shutdown);
+    }
+    if (owns_initialization_ && Py_IsInitialized() && PyGILState_Check()) {
+      (void)PyEval_SaveThread();
+    }
+  }
+  PythonInitializationGuard(const PythonInitializationGuard&) = delete;
+  PythonInitializationGuard& operator=(const PythonInitializationGuard&) = delete;
+
+ private:
+  bool owns_initialization_;
+  bool initialization_attempt_;
 };
 
 class JitTuningResources {
@@ -126,7 +189,8 @@ class JitTuningResources {
               "libtriton_jit autotune kernel is null",
               FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
       for (const ArgumentSpec& argument : kernel->arguments) {
-        if (argument.kind != ArgumentKind::kTensor) {
+        if (argument.kind != ArgumentKind::kTensor &&
+            argument.kind != ArgumentKind::kTensorMap) {
           continue;
         }
         auto existing = std::find_if(
@@ -281,140 +345,63 @@ class CapturedLaunchBatch {
   unsigned int execution_count_ = 0;
 };
 
-struct ArgumentValue {
-  CUdeviceptr pointer = 0;
-  std::int32_t scalar_i32 = 0;
-  float scalar_f32 = 0.0F;
-};
-
-class RawArguments {
- public:
-  RawArguments(const CudaKernelArtifact& kernel,
-               const std::vector<TuningAllocation>& allocations,
-               CUdeviceptr workspace,
-               CUdeviceptr global_scratch) {
-    initialize(kernel);
-    for (std::size_t index = 0; index < kernel.arguments.size(); ++index) {
-      const ArgumentSpec& argument = kernel.arguments[index];
-      if (argument.kind == ArgumentKind::kTensor) {
-        const auto allocation = std::find_if(
-            allocations.begin(),
-            allocations.end(),
-            [&](const TuningAllocation& value) {
-              return value.uid == argument.uid;
-            });
-        if (allocation == allocations.end()) {
-          throw CudaError(FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
-                          "libtriton_jit autotune allocation is missing");
-        }
-        values_[index].pointer = allocation->pointer;
-        parameters_[index] = &values_[index].pointer;
-      } else if (argument.kind == ArgumentKind::kWorkspaceTensor) {
-        if (workspace == 0) {
-          throw CudaError(FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
-                          "libtriton_jit autotune workspace is missing");
-        }
-        values_[index].pointer = workspace + argument.workspace_offset;
-        parameters_[index] = &values_[index].pointer;
-      } else if (argument.kind == ArgumentKind::kScalarI32) {
-        values_[index].scalar_i32 = argument.scalar_i32;
-        parameters_[index] = &values_[index].scalar_i32;
-      } else if (argument.kind == ArgumentKind::kScalarF32) {
-        values_[index].scalar_f32 = argument.scalar_f32;
-        parameters_[index] = &values_[index].scalar_f32;
-      } else {
-        throw CudaError(FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
-                        "libtriton_jit argument kind is unsupported");
-      }
-    }
-    finish(kernel.arguments.size(), global_scratch);
-  }
-
-  RawArguments(const CudaKernelArtifact& kernel,
-               const flagdnnBackendBindingV2 bindings[],
-               std::size_t binding_count,
-               void* workspace,
-               CUdeviceptr global_scratch) {
-    initialize(kernel);
-    for (std::size_t index = 0; index < kernel.arguments.size(); ++index) {
-      const ArgumentSpec& argument = kernel.arguments[index];
-      if (argument.kind == ArgumentKind::kTensor) {
-        bool found = false;
-        for (std::size_t supplied = 0; supplied < binding_count; ++supplied) {
-          if (bindings[supplied].uid == argument.uid) {
-            values_[index].pointer = static_cast<CUdeviceptr>(
-                reinterpret_cast<std::uintptr_t>(
-                    bindings[supplied].device_pointer));
-            found = true;
-            break;
-          }
-        }
-        require(found, "a required tensor UID is missing from bindings");
-        require(
-            values_[index].pointer % argument.alignment == 0,
-            "a tensor binding does not satisfy its declared alignment");
-        parameters_[index] = &values_[index].pointer;
-      } else if (argument.kind == ArgumentKind::kWorkspaceTensor) {
-        values_[index].pointer = static_cast<CUdeviceptr>(
-            reinterpret_cast<std::uintptr_t>(workspace) +
-            argument.workspace_offset);
-        parameters_[index] = &values_[index].pointer;
-      } else if (argument.kind == ArgumentKind::kScalarI32) {
-        values_[index].scalar_i32 = argument.scalar_i32;
-        parameters_[index] = &values_[index].scalar_i32;
-      } else if (argument.kind == ArgumentKind::kScalarF32) {
-        values_[index].scalar_f32 = argument.scalar_f32;
-        parameters_[index] = &values_[index].scalar_f32;
-      } else {
-        throw CudaError(FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
-                        "libtriton_jit argument kind is unsupported");
-      }
-    }
-    finish(kernel.arguments.size(), global_scratch);
-  }
-
-  [[nodiscard]] void** data() noexcept { return parameters_.data(); }
-  [[nodiscard]] std::size_t size() const noexcept { return parameter_count_; }
-
- private:
-  void initialize(const CudaKernelArtifact& kernel) {
-    const std::size_t argument_count = kernel.arguments.size();
-    parameter_count_ = argument_count + 2;
-    require(argument_count <= FLAGDNN_BACKEND_MAX_KERNEL_ARGUMENTS,
-            "libtriton_jit kernel has too many arguments",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    std::fill_n(parameters_.data(), parameter_count_, nullptr);
-  }
-
-  void finish(std::size_t visible_argument_count,
-              CUdeviceptr global_scratch) {
-    global_scratch_ = global_scratch;
-    parameters_[visible_argument_count] = &global_scratch_;
-    parameters_[visible_argument_count + 1] = &profile_scratch_;
-  }
-
-  std::array<ArgumentValue, FLAGDNN_BACKEND_MAX_KERNEL_ARGUMENTS> values_{};
-  std::array<void*, FLAGDNN_BACKEND_MAX_KERNEL_ARGUMENTS + 2> parameters_{};
-  std::size_t parameter_count_ = 0;
-  CUdeviceptr global_scratch_ = 0;
-  CUdeviceptr profile_scratch_ = 0;
-};
+using RawArguments = KernelArguments;
 
 using JitFunction = triton_jit::TritonJITFunction;
 
-void launch_jit(const JitFunction& function,
+// Both forms are public libtriton_jit APIs. Raw signatures remain unchanged
+// for ordinary kernels; descriptor/Gluon kernels use artifact-owned caches.
+// This object lives with the prepared stage; selection happens only at build.
+class JitStage {
+ public:
+  explicit JitStage(const CudaStageArtifact& stage) {
+    // The cache loader itself does not initialize Python. Always initialize
+    // the public JIT function under the build-environment writer lock first,
+    // so a later raw stage cannot unexpectedly mutate the process environment.
+    const bool cached = !stage.variants.front().compiled_cache.empty();
+    const auto& function = JitFunction::get_instance(
+        stage.source.string(), cached ? "_flagdnn_jit_initialize" : stage.function_name);
+    if (!cached) {
+      function_ = &function;
+    } else {
+      for (const auto& variant : stage.variants) {
+        cached_.emplace_back(variant.variant_id, std::make_unique<CachedKernel>(
+            variant.compiled_cache.string(), stage.function_name));
+      }
+    }
+  }
+
+  void launch(const CudaKernelArtifact& kernel, CUstream stream,
+              RawArguments& arguments) const {
+    if (function_ != nullptr) {
+      function_->launch_with_raw_args(stream, kernel.grid[0], kernel.grid[1], kernel.grid[2],
+                                     kernel.num_warps, kernel.num_stages, kernel.full_signature,
+                                     arguments.data(), arguments.size());
+      return;
+    }
+    const auto cached = std::find_if(cached_.begin(), cached_.end(), [&](const auto& entry) {
+      return entry.first == kernel.variant_id;
+    });
+    require(cached != cached_.end(), "compiled JIT variant is missing",
+            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+    // The cache API does not parse the raw comma-separated signature.
+    cached->second->launch_with_signature(
+        kernel.grid[0], kernel.grid[1], kernel.grid[2],
+        static_cast<int>(kernel.num_warps), stream, arguments.data(),
+        kernel.full_signature, arguments.size());
+  }
+
+ private:
+  using CachedKernel = triton_jit::TritonKernelImpl<triton_jit::CudaBackend>;
+  const JitFunction* function_ = nullptr;
+  std::vector<std::pair<std::string, std::unique_ptr<CachedKernel>>> cached_;
+};
+
+void launch_jit(const JitStage& function,
                 const CudaKernelArtifact& kernel,
                 CUstream stream,
                 RawArguments& arguments) {
-  function.launch_with_raw_args(stream,
-                                kernel.grid[0],
-                                kernel.grid[1],
-                                kernel.grid[2],
-                                kernel.num_warps,
-                                kernel.num_stages,
-                                kernel.full_signature,
-                                arguments.data(),
-                                arguments.size());
+  function.launch(kernel, stream, arguments);
 }
 
 struct PreparedCudaLaunch {
@@ -424,8 +411,33 @@ struct PreparedCudaLaunch {
   unsigned int shared_memory = 0;
 };
 
+std::size_t jit_global_scratch_size(const CudaArtifact& artifact) {
+  std::size_t size = 0;
+  for (const auto& stage : artifact.stages) {
+    for (const auto& variant : stage.variants) {
+      size = std::max(size, variant.global_scratch_size);
+    }
+  }
+  require(size != 0 && size <= artifact.workspace_size,
+          "libtriton_jit global scratch exceeds workspace",
+          FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+  return size;
+}
+
+void prepare_jit_candidate(const JitStage& function,
+                           const CudaKernelArtifact& kernel,
+                           std::size_t workspace_size,
+                           std::size_t global_scratch_offset) {
+  JitTuningResources resources(kernel, workspace_size);
+  RawArguments arguments(kernel, resources.allocations(), resources.workspace(),
+                         resources.workspace() + global_scratch_offset);
+  launch_jit(function, kernel, resources.stream(), arguments);
+  check_cuda(cuStreamSynchronize(resources.stream()),
+             "cuStreamSynchronize(libtriton_jit prepare)");
+}
+
 PreparedCudaLaunch prepare_cuda_launch(
-    const JitFunction& function,
+    const JitStage& function,
     const CudaKernelArtifact& kernel,
     std::size_t workspace_size,
     std::size_t global_scratch_offset) {
@@ -521,33 +533,20 @@ void launch_prepared_cuda(const PreparedCudaLaunch& prepared,
 }
 
 struct LoadedJitKernel {
-  const JitFunction* function = nullptr;
   CudaKernelArtifact specification;
   PreparedCudaLaunch prepared;
+  std::unique_ptr<JitStage> source;
 };
 
-class LibTritonJitEngine final : public ExecutionEngine {
+}  // namespace
+
+class ExecutionEngine::Impl {
  public:
-  LibTritonJitEngine(const EngineBuildContext& context,
-                     CudaArtifact artifact)
+  Impl(const EngineBuildContext& context, CudaArtifact artifact)
       : context_(context),
         binding_uids_(std::move(artifact.binding_uids)),
         workspace_size_(artifact.workspace_size) {
-    require(artifact.engine == EngineKind::kLibTritonJit,
-            "libtriton_jit engine received another artifact",
-            FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
-
-    for (const CudaStageArtifact& stage : artifact.stages) {
-      for (const CudaKernelArtifact& variant : stage.variants) {
-        global_scratch_size_ =
-            std::max(global_scratch_size_, variant.global_scratch_size);
-      }
-    }
-    require(global_scratch_size_ != 0 &&
-                global_scratch_size_ <= workspace_size_,
-            "libtriton_jit global scratch exceeds workspace",
-            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-    global_scratch_offset_ = workspace_size_ - global_scratch_size_;
+    global_scratch_offset_ = workspace_size_ - jit_global_scratch_size(artifact);
 
     CUcontext retained_context = nullptr;
     check_cuda(cuDevicePrimaryCtxRetain(&retained_context, context_.device),
@@ -561,6 +560,8 @@ class LibTritonJitEngine final : public ExecutionEngine {
 
     try {
       std::unique_lock lock(libtriton_jit_mutex);
+      pin_jit_library();
+      PythonInitializationGuard python_initialization;
       promote_python_runtime();
       configure_python_path();
       ContextGuard guard(context_.context);
@@ -571,8 +572,8 @@ class LibTritonJitEngine final : public ExecutionEngine {
           throw CudaError(FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
                           "libtriton_jit stage is incomplete");
         }
-        const JitFunction& function = JitFunction::get_instance(
-            stage.source.string(), stage.function_name);
+        auto source = std::make_unique<JitStage>(stage);
+        const JitStage& function = *source;
         const std::size_t selected =
             stage.autotune ? select_candidate(function, stage) : 0;
         if (selected >= stage.variants.size()) {
@@ -589,8 +590,9 @@ class LibTritonJitEngine final : public ExecutionEngine {
             workspace_size_,
             global_scratch_offset_);
         kernels_.push_back(
-            {&function, std::move(specification), prepared});
+            {std::move(specification), prepared, std::move(source)});
       }
+      environment_prepared.store(true, std::memory_order_release);
     } catch (const CudaError&) {
       release_context();
       throw;
@@ -605,12 +607,12 @@ class LibTritonJitEngine final : public ExecutionEngine {
     }
   }
 
-  ~LibTritonJitEngine() override { release_context(); }
+  ~Impl() { release_context(); }
 
-  LibTritonJitEngine(const LibTritonJitEngine&) = delete;
-  LibTritonJitEngine& operator=(const LibTritonJitEngine&) = delete;
+  Impl(const Impl&) = delete;
+  Impl& operator=(const Impl&) = delete;
 
-  [[nodiscard]] std::size_t workspace_size() const noexcept override {
+  [[nodiscard]] std::size_t workspace_size() const noexcept {
     return workspace_size_;
   }
 
@@ -618,7 +620,7 @@ class LibTritonJitEngine final : public ExecutionEngine {
                const flagdnnBackendBindingV2 bindings[],
                std::size_t binding_count,
                void* workspace,
-               std::size_t workspace_size) const override {
+               std::size_t workspace_size) const {
     require(workspace_size >= workspace_size_,
             "workspace is smaller than CUDA executable requirement");
     require(workspace_size_ == 0 || workspace != nullptr,
@@ -633,6 +635,11 @@ class LibTritonJitEngine final : public ExecutionEngine {
             "binding array is null");
 
     try {
+      // Default-stream handles resolve against the calling thread's context.
+      // Explicit streams already carry their context and keep the fast path.
+      ContextGuard guard(context_.context,
+                         stream == nullptr || stream == CU_STREAM_LEGACY ||
+                             stream == CU_STREAM_PER_THREAD);
       for (const LoadedJitKernel& kernel : kernels_) {
         RawArguments arguments(kernel.specification,
                                bindings,
@@ -652,7 +659,7 @@ class LibTritonJitEngine final : public ExecutionEngine {
 
  private:
   [[nodiscard]] std::size_t select_candidate(
-      const JitFunction& function,
+      const JitStage& function,
       const CudaStageArtifact& stage) const {
     require(stage.autotune && stage.variants.size() >= 2,
             "invalid libtriton_jit autotune stage",
@@ -729,6 +736,10 @@ class LibTritonJitEngine final : public ExecutionEngine {
                    : std::string(": ") + rejected_candidates));
     }
     if (runnable_indices.size() == 1) {
+      auto singleton_request = full_request;
+      singleton_request.candidate_ids = {
+          stage.variants[runnable_indices.front()].variant_id};
+      (void)backend::autotune::select_best_candidate(singleton_request, {}, {});
       if (logging_enabled()) {
         std::cerr << "[FlagDNN autotune/JIT] only runnable candidate "
                   << stage.variants[runnable_indices.front()].variant_id
@@ -857,17 +868,10 @@ class LibTritonJitEngine final : public ExecutionEngine {
     return runnable_indices[result.candidate_index];
   }
 
-  void prepare_candidate(const JitFunction& function,
+  void prepare_candidate(const JitStage& function,
                          const CudaKernelArtifact& kernel) const {
-    JitTuningResources resources(kernel, workspace_size_);
-    RawArguments arguments(
-        kernel,
-        resources.allocations(),
-        resources.workspace(),
-        scratch_pointer(resources.workspace()));
-    launch_jit(function, kernel, resources.stream(), arguments);
-    check_cuda(cuStreamSynchronize(resources.stream()),
-               "cuStreamSynchronize(libtriton_jit prepare)");
+    prepare_jit_candidate(function, kernel, workspace_size_,
+                          global_scratch_offset_);
   }
 
   void release_context() noexcept {
@@ -893,41 +897,79 @@ class LibTritonJitEngine final : public ExecutionEngine {
   std::vector<LoadedJitKernel> kernels_;
   std::size_t workspace_size_ = 0;
   std::size_t global_scratch_offset_ = 0;
-  std::size_t global_scratch_size_ = 0;
   bool retained_ = false;
 };
 
-}  // namespace
-
-bool libtriton_jit_engine_available() noexcept {
-  return true;
+bool libtriton_jit_environment_prepared() noexcept {
+  return environment_prepared.load(std::memory_order_acquire);
 }
 
-std::unique_ptr<ExecutionEngine> create_libtriton_jit_engine(
+void prepare_libtriton_jit_environment(
+    const EngineBuildContext& context, const CudaArtifact& artifact) {
+  std::unique_lock lock(libtriton_jit_mutex);
+  if (environment_prepared.load(std::memory_order_acquire)) {
+    return;
+  }
+  require(!artifact.stages.empty(),
+          "environment preparation requires a nonempty JIT program",
+          FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+  pin_jit_library();
+  PythonInitializationGuard python_initialization;
+  promote_python_runtime();
+  configure_python_path();
+  ContextGuard guard(context.context);
+  const auto& stage = artifact.stages.front();
+  const auto scratch_offset =
+      artifact.workspace_size - jit_global_scratch_size(artifact);
+  try {
+    const JitStage function(stage);
+    std::string failures;
+    // The current dependency has no standalone initialization API. Prepare a
+    // real variant, so its Python environment writes and lazy CUDA initialization
+    // happen under the core's exclusive lock. Subsequent builds reuse this cache.
+    for (const auto& variant : stage.variants) {
+      try {
+        prepare_jit_candidate(function, variant, artifact.workspace_size,
+                              scratch_offset);
+        environment_prepared.store(true, std::memory_order_release);
+        return;
+      } catch (const std::exception& error) {
+        failures += variant.variant_id + ": " + error.what() + "\n";
+      }
+    }
+    throw CudaError(FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
+                    "no JIT variant could initialize the environment: " + failures);
+  } catch (const CudaError&) {
+    throw;
+  } catch (const std::exception& error) {
+    throw CudaError(FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
+                    "libtriton_jit initialization failed: " +
+                        std::string(error.what()));
+  }
+}
+
+ExecutionEngine::ExecutionEngine(
     const EngineBuildContext& context,
-    CudaArtifact artifact) {
-  return std::make_unique<LibTritonJitEngine>(context,
-                                              std::move(artifact));
+    const flagdnnBackendBuildInputV2& input)
+    : impl_(std::make_unique<Impl>(context, parse_cuda_artifact(context, input))) {}
+
+ExecutionEngine::~ExecutionEngine() = default;
+
+std::size_t ExecutionEngine::workspace_size() const noexcept {
+  return impl_->workspace_size();
+}
+
+void ExecutionEngine::execute(
+    CUstream stream, const flagdnnBackendBindingV2 bindings[],
+    std::size_t binding_count, void* workspace,
+    std::size_t workspace_size) const {
+  impl_->execute(stream, bindings, binding_count, workspace, workspace_size);
+}
+
+std::unique_ptr<ExecutionEngine> create_execution_engine(
+    const EngineBuildContext& context,
+    const flagdnnBackendBuildInputV2& input) {
+  return std::make_unique<ExecutionEngine>(context, input);
 }
 
 }  // namespace flagdnn::cuda
-
-#else
-
-namespace flagdnn::cuda {
-
-bool libtriton_jit_engine_available() noexcept {
-  return false;
-}
-
-std::unique_ptr<ExecutionEngine> create_libtriton_jit_engine(
-    const EngineBuildContext&,
-    CudaArtifact) {
-  throw CudaError(
-      FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
-      "libtriton_jit execution engine is not enabled in this NVIDIA plugin");
-}
-
-}  // namespace flagdnn::cuda
-
-#endif

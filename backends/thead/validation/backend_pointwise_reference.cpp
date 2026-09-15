@@ -63,6 +63,10 @@ class BackendDescriptor final {
 acdnnDataType_t backend_data_type(flagdnnDataType_t data_type,
                                    bool fp8_storage_bytes = false) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+    case FLAGDNN_DATA_FP8_E8M0:
+      throw std::invalid_argument(
+          "THead validation does not support INT32 or E8M0 here");
     case FLAGDNN_DATA_FLOAT32:
       return ACDNN_DATA_FLOAT;
     case FLAGDNN_DATA_FLOAT16:

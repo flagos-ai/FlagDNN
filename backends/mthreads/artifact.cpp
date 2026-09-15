@@ -3985,49 +3985,50 @@ std::string expected_signature(
   };
   if (request.family == PointwiseFamily::kNormalization) {
     if (request.operation == "layernorm") {
-      tokens = {
-          pointer_token(request.normalization_x),
-          pointer_token(request.normalization_y),
-          pointer_token(request.normalization_mean),
-          pointer_token(request.normalization_inv_variance),
-          pointer_token(request.normalization_scale),
-          pointer_token(request.normalization_bias),
-          "i32",
-          python_float_token(request.normalization_epsilon),
-          std::to_string(request.normalization_elements),
-          std::to_string(block_size),
-          "1",
-          "1",
-          "1",
-          "1"};
+      tokens = {pointer_token(request.normalization_x),
+                pointer_token(request.normalization_y),
+                pointer_token(request.normalization_mean),
+                pointer_token(request.normalization_inv_variance),
+                pointer_token(request.normalization_scale),
+                pointer_token(request.normalization_bias),
+                "i32",
+                python_float_token(request.normalization_epsilon),
+                std::to_string(request.normalization_elements),
+                std::to_string(block_size),
+                "1",
+                "1",
+                "1",
+                "1",
+                "0",
+                "0",
+                "0"};
     } else {
-      tokens = {
-          pointer_token(request.normalization_x),
-          pointer_token(request.normalization_y),
-          pointer_token(request.normalization_scale),
-          pointer_token(request.normalization_bias),
-          pointer_token(request.normalization_inv_variance),
-          "i32",
-          std::to_string(request.normalization_elements),
-          python_float_token(request.normalization_epsilon),
-          std::to_string(block_size),
-          "1",
-          "1",
-          "1",
-          "1"};
+      tokens = {pointer_token(request.normalization_x),
+                pointer_token(request.normalization_y),
+                pointer_token(request.normalization_scale),
+                pointer_token(request.normalization_bias),
+                pointer_token(request.normalization_inv_variance),
+                "i32",
+                std::to_string(request.normalization_elements),
+                python_float_token(request.normalization_epsilon),
+                std::to_string(block_size),
+                "1",
+                "1",
+                "1",
+                "1",
+                "0"};
     }
   } else if (request.family == PointwiseFamily::kBatchnorm) {
-    tokens = {
-        pointer_token(request.normalization_x),
-        pointer_token(request.normalization_y),
-        pointer_token(request.normalization_previous_running_mean),
-        pointer_token(request.normalization_previous_running_variance),
-        pointer_token(request.normalization_scale),
-        pointer_token(request.normalization_bias),
-        pointer_token(request.normalization_mean),
-        pointer_token(request.normalization_inv_variance),
-        pointer_token(request.normalization_next_running_mean),
-        pointer_token(request.normalization_next_running_variance)};
+    tokens = {pointer_token(request.normalization_x),
+              pointer_token(request.normalization_y),
+              pointer_token(request.normalization_previous_running_mean),
+              pointer_token(request.normalization_previous_running_variance),
+              pointer_token(request.normalization_scale),
+              pointer_token(request.normalization_bias),
+              pointer_token(request.normalization_mean),
+              pointer_token(request.normalization_inv_variance),
+              pointer_token(request.normalization_next_running_mean),
+              pointer_token(request.normalization_next_running_variance)};
     if (request.dense) {
       for (const std::string& value : {
                std::to_string(request.normalization_batch),

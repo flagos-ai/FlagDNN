@@ -17,18 +17,24 @@ namespace {
 
 hipdnnDataType_t hipdnn_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
-  case FLAGDNN_DATA_FLOAT32:
-    return HIPDNN_DATA_FLOAT;
-  case FLAGDNN_DATA_FLOAT16:
-    return HIPDNN_DATA_HALF;
-  case FLAGDNN_DATA_BFLOAT16:
-    return HIPDNN_DATA_BFLOAT16;
-  case FLAGDNN_DATA_BOOLEAN:
-    return HIPDNN_DATA_BOOLEAN;
-  case FLAGDNN_DATA_FP8_E4M3:
-    return HIPDNN_DATA_FP8_E4M3;
-  case FLAGDNN_DATA_FP8_E5M2:
-    return HIPDNN_DATA_FP8_E5M2;
+    case FLAGDNN_DATA_INT32:
+      throw std::invalid_argument(
+          "INT32 is not supported by this validation adapter");
+
+    case FLAGDNN_DATA_FP8_E8M0:
+      break;
+    case FLAGDNN_DATA_FLOAT32:
+      return HIPDNN_DATA_FLOAT;
+    case FLAGDNN_DATA_FLOAT16:
+      return HIPDNN_DATA_HALF;
+    case FLAGDNN_DATA_BFLOAT16:
+      return HIPDNN_DATA_BFLOAT16;
+    case FLAGDNN_DATA_BOOLEAN:
+      return HIPDNN_DATA_BOOLEAN;
+    case FLAGDNN_DATA_FP8_E4M3:
+      return HIPDNN_DATA_FP8_E4M3;
+    case FLAGDNN_DATA_FP8_E5M2:
+      return HIPDNN_DATA_FP8_E5M2;
   }
   throw std::invalid_argument("unsupported hipDNN tensor data type");
 }
@@ -278,6 +284,13 @@ make_hipdnn_pointwise_operation(flagdnnPointwiseMode_t mode,
   case FLAGDNN_POINTWISE_LOGICAL_NOT:
     return unavailable("hipDNN BOOLEAN tensor/OpTensor NOT is unavailable on "
                        "the validated DTK stack");
+  case FLAGDNN_POINTWISE_RELU_BWD:
+  case FLAGDNN_POINTWISE_TANH_BWD:
+  case FLAGDNN_POINTWISE_ELU_BWD:
+  case FLAGDNN_POINTWISE_GELU_BWD:
+  case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
+  case FLAGDNN_POINTWISE_SWISH_BWD:
+  case FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD:
   case FLAGDNN_POINTWISE_NOT_SET:
   case FLAGDNN_POINTWISE_ERF:
   case FLAGDNN_POINTWISE_EXP:

@@ -2,13 +2,13 @@
 
 #include "common/layout.hpp"
 
-#include <flagdnn/flagdnn.hpp>
 #include <flagdnn_frontend.h>
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <flagdnn/flagdnn.hpp>
 #include <limits>
 #include <memory>
 #include <numeric>
@@ -25,10 +25,10 @@ namespace {
 namespace fe = ::flagdnn_frontend;
 using Shape = std::vector<std::int64_t>;
 
-constexpr std::array<flagdnnDataType_t, 3> kDataTypes = {
-    FLAGDNN_DATA_FLOAT32,
-    FLAGDNN_DATA_FLOAT16,
-    FLAGDNN_DATA_BFLOAT16,
+constexpr std::array<flagdnnDataType_t, 8> kDataTypes = {
+    FLAGDNN_DATA_FLOAT32,  FLAGDNN_DATA_FLOAT16,  FLAGDNN_DATA_BFLOAT16,
+    FLAGDNN_DATA_INT32,    FLAGDNN_DATA_BOOLEAN,  FLAGDNN_DATA_FP8_E4M3,
+    FLAGDNN_DATA_FP8_E5M2, FLAGDNN_DATA_FP8_E8M0,
 };
 
 std::vector<std::int64_t> contiguous_strides(const Shape& dimensions) {
@@ -47,27 +47,22 @@ std::vector<std::int64_t> contiguous_strides(const Shape& dimensions) {
 }
 
 std::size_t element_count(const Shape& dimensions) {
-  return std::accumulate(
-      dimensions.begin(),
-      dimensions.end(),
-      std::size_t{1},
-      [](std::size_t result, std::int64_t dimension) {
-        return result * static_cast<std::size_t>(dimension);
-      });
+  return std::accumulate(dimensions.begin(), dimensions.end(), std::size_t{1},
+                         [](std::size_t result, std::int64_t dimension) {
+                           return result * static_cast<std::size_t>(dimension);
+                         });
 }
 
-TestTensor tensor(std::int64_t uid,
-                  Shape dimensions,
+TestTensor tensor(std::int64_t uid, Shape dimensions,
                   flagdnnDataType_t data_type) {
   auto strides = contiguous_strides(dimensions);
-  return {uid,
-          data_type,
-          std::move(dimensions),
-          std::move(strides)};
+  return {uid, data_type, std::move(dimensions), std::move(strides)};
 }
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return "int32";
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
@@ -75,10 +70,13 @@ std::string data_type_name(flagdnnDataType_t data_type) {
     case FLAGDNN_DATA_BFLOAT16:
       return "bfloat16";
     case FLAGDNN_DATA_FP8_E4M3:
+      return "fp8_e4m3";
     case FLAGDNN_DATA_FP8_E5M2:
-      break;
+      return "fp8_e5m2";
+    case FLAGDNN_DATA_FP8_E8M0:
+      return "fp8_e8m0";
     case FLAGDNN_DATA_BOOLEAN:
-      break;
+      return "bool";
   }
   throw std::invalid_argument("unsupported Layout data type");
 }
@@ -103,25 +101,21 @@ void validate_tensor(const TestTensor& tensor_specification,
           tensor_specification.strides.size()) {
     throw std::invalid_argument(std::string(name) + " metadata is invalid");
   }
-  for (std::size_t axis = 0;
-       axis < tensor_specification.dimensions.size();
+  for (std::size_t axis = 0; axis < tensor_specification.dimensions.size();
        ++axis) {
     if (tensor_specification.dimensions[axis] <= 0 ||
         tensor_specification.strides[axis] <= 0) {
-      throw std::invalid_argument(
-          std::string(name) + " dimensions and strides must be positive");
+      throw std::invalid_argument(std::string(name) +
+                                  " dimensions and strides must be positive");
     }
   }
-  if (tensor_specification.data_type != FLAGDNN_DATA_FLOAT32 &&
-      tensor_specification.data_type != FLAGDNN_DATA_FLOAT16 &&
-      tensor_specification.data_type != FLAGDNN_DATA_BFLOAT16) {
-    throw std::invalid_argument(
-        std::string(name) + " data type is not supported by Layout");
-  }
+  (void)data_type_name(tensor_specification.data_type);
 }
 
 fe::DataType_t frontend_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return fe::DataType_t::INT32;
     case FLAGDNN_DATA_FLOAT32:
       return fe::DataType_t::FLOAT;
     case FLAGDNN_DATA_FLOAT16:
@@ -129,18 +123,21 @@ fe::DataType_t frontend_data_type(flagdnnDataType_t data_type) {
     case FLAGDNN_DATA_BFLOAT16:
       return fe::DataType_t::BFLOAT16;
     case FLAGDNN_DATA_FP8_E4M3:
+      return fe::DataType_t::FP8_E4M3;
     case FLAGDNN_DATA_FP8_E5M2:
-      break;
+      return fe::DataType_t::FP8_E5M2;
+    case FLAGDNN_DATA_FP8_E8M0:
+      return fe::DataType_t::FP8_E8M0;
     case FLAGDNN_DATA_BOOLEAN:
-      break;
+      return fe::DataType_t::BOOLEAN;
   }
   throw std::invalid_argument("unsupported FlagDNN Layout data type");
 }
 
 void check_frontend(fe::error_t status, std::string_view operation) {
   if (status.is_bad()) {
-    throw std::runtime_error(
-        std::string(operation) + " failed: " + status.get_message());
+    throw std::runtime_error(std::string(operation) +
+                             " failed: " + status.get_message());
   }
 }
 
@@ -150,48 +147,45 @@ class FlagdnnLayoutExecutable final : public LayoutExecutable {
                           const LayoutTestCase& test_case)
       : handle_(handle), graph_(std::make_shared<fe::graph::Graph>()) {
     validate_layout_case(test_case);
-    const fe::DataType_t io_type = frontend_data_type(test_case.input.data_type);
+    const fe::DataType_t io_type =
+        frontend_data_type(test_case.input.data_type);
     graph_->set_name(test_case.name)
         .set_io_data_type(io_type)
         .set_intermediate_data_type(fe::DataType_t::FLOAT)
         .set_compute_data_type(fe::DataType_t::FLOAT)
         .set_autotune(test_case.autotune);
-    const auto input = graph_->tensor(
-        fe::graph::Tensor_attributes()
-            .set_name("input")
-            .set_uid(test_case.input.uid)
-            .set_data_type(io_type)
-            .set_dim(test_case.input.dimensions)
-            .set_stride(test_case.input.strides));
+    const auto input = graph_->tensor(fe::graph::Tensor_attributes()
+                                          .set_name("input")
+                                          .set_uid(test_case.input.uid)
+                                          .set_data_type(io_type)
+                                          .set_dim(test_case.input.dimensions)
+                                          .set_stride(test_case.input.strides));
 
     std::shared_ptr<fe::graph::Tensor_attributes> output;
     switch (test_case.operation) {
       case LayoutOperation::kReshape:
         output = graph_->reshape(
-            input,
-            fe::graph::Reshape_attributes()
-                .set_name("reshape")
-                .set_compute_data_type(fe::DataType_t::FLOAT)
-                .set_dim(test_case.output.dimensions)
-                .set_stride(test_case.output.strides)
-                .set_reshape_mode(fe::ReshapeMode_t::LOGICAL));
+            input, fe::graph::Reshape_attributes()
+                       .set_name("reshape")
+                       .set_compute_data_type(fe::DataType_t::FLOAT)
+                       .set_dim(test_case.output.dimensions)
+                       .set_stride(test_case.output.strides)
+                       .set_reshape_mode(fe::ReshapeMode_t::LOGICAL));
         break;
       case LayoutOperation::kTranspose:
         output = graph_->transpose(
-            input,
-            fe::graph::Transpose_attributes()
-                .set_name("transpose")
-                .set_compute_data_type(fe::DataType_t::FLOAT)
-                .set_permutation(test_case.permutation));
+            input, fe::graph::Transpose_attributes()
+                       .set_name("transpose")
+                       .set_compute_data_type(fe::DataType_t::FLOAT)
+                       .set_permutation(test_case.permutation));
         break;
       case LayoutOperation::kSlice:
-        output = graph_->slice(
-            input,
-            fe::graph::Slice_attributes()
-                .set_name("slice")
-                .set_compute_data_type(fe::DataType_t::FLOAT)
-                .set_slices(test_case.slices)
-                .set_strides(test_case.slice_strides));
+        output = graph_->slice(input,
+                               fe::graph::Slice_attributes()
+                                   .set_name("slice")
+                                   .set_compute_data_type(fe::DataType_t::FLOAT)
+                                   .set_slices(test_case.slices)
+                                   .set_strides(test_case.slice_strides));
         break;
     }
     output->set_name("output")
@@ -216,10 +210,8 @@ class FlagdnnLayoutExecutable final : public LayoutExecutable {
     return workspace_size_;
   }
 
-  void execute(std::span<const flagdnnBinding_t> bindings,
-               void* workspace,
-               std::size_t workspace_size,
-               flagdnnStream_t stream) override {
+  void execute(std::span<const flagdnnBinding_t> bindings, void* workspace,
+               std::size_t workspace_size, flagdnnStream_t stream) override {
     if (workspace_size < workspace_size_ ||
         (workspace_size_ != 0 && workspace == nullptr)) {
       throw std::invalid_argument("FlagDNN Layout workspace is too small");
@@ -236,10 +228,19 @@ class FlagdnnLayoutExecutable final : public LayoutExecutable {
 };
 
 std::vector<LayoutTestCase> reshape_cases() {
-  const std::array<std::pair<Shape, Shape>, 3> shapes = {
+  const std::array<std::pair<Shape, Shape>, 12> shapes = {
       std::pair{Shape{2, 3, 4}, Shape{6, 4}},
       std::pair{Shape{1, 8, 16}, Shape{4, 32}},
       std::pair{Shape{4, 5, 6}, Shape{2, 3, 20}},
+      std::pair{Shape{1}, Shape{1, 1}},
+      std::pair{Shape{2, 3}, Shape{6}},
+      std::pair{Shape{1, 1, 17}, Shape{17, 1}},
+      std::pair{Shape{2, 4, 8}, Shape{8, 8}},
+      std::pair{Shape{3, 5, 7}, Shape{15, 7}},
+      std::pair{Shape{2, 3, 4, 5}, Shape{6, 20}},
+      std::pair{Shape{1, 32, 33}, Shape{33, 32}},
+      std::pair{Shape{2, 16, 31}, Shape{32, 31}},
+      std::pair{Shape{4, 8, 65}, Shape{8, 4, 65}},
   };
   std::vector<LayoutTestCase> result;
   std::int64_t uid = 53000;
@@ -261,10 +262,19 @@ std::vector<LayoutTestCase> reshape_cases() {
 }
 
 std::vector<LayoutTestCase> transpose_cases() {
-  const std::array<std::pair<Shape, Shape>, 3> shapes = {
+  const std::array<std::pair<Shape, Shape>, 12> shapes = {
       std::pair{Shape{2, 3, 4}, Shape{2, 0, 1}},
       std::pair{Shape{1, 8, 16}, Shape{0, 2, 1}},
       std::pair{Shape{2, 3, 4, 5}, Shape{0, 2, 3, 1}},
+      std::pair{Shape{1}, Shape{0}},
+      std::pair{Shape{2, 3}, Shape{1, 0}},
+      std::pair{Shape{1, 1, 17}, Shape{2, 1, 0}},
+      std::pair{Shape{2, 4, 8}, Shape{1, 2, 0}},
+      std::pair{Shape{3, 5, 7}, Shape{2, 1, 0}},
+      std::pair{Shape{1, 32, 33}, Shape{1, 0, 2}},
+      std::pair{Shape{2, 16, 31}, Shape{2, 0, 1}},
+      std::pair{Shape{4, 8, 65}, Shape{0, 2, 1}},
+      std::pair{Shape{2, 4, 8, 16}, Shape{3, 2, 1, 0}},
   };
   std::vector<LayoutTestCase> result;
   std::int64_t uid = 55000;
@@ -273,8 +283,7 @@ std::vector<LayoutTestCase> transpose_cases() {
     Shape output_shape(input_shape.size());
     Shape output_strides(input_shape.size());
     for (std::size_t axis = 0; axis < permutation.size(); ++axis) {
-      const std::size_t source =
-          static_cast<std::size_t>(permutation[axis]);
+      const std::size_t source = static_cast<std::size_t>(permutation[axis]);
       output_shape[axis] = input_shape[source];
       output_strides[axis] = input_strides[source];
     }
@@ -284,8 +293,7 @@ std::vector<LayoutTestCase> transpose_cases() {
                        shape_name(input_shape);
       test_case.operation = LayoutOperation::kTranspose;
       test_case.input = tensor(uid, input_shape, data_type);
-      test_case.output =
-          {uid + 1, data_type, output_shape, output_strides};
+      test_case.output = {uid + 1, data_type, output_shape, output_strides};
       test_case.permutation = permutation;
       test_case.autotune = result.empty();
       result.push_back(std::move(test_case));
@@ -302,12 +310,21 @@ struct SliceDefinition {
 };
 
 std::vector<LayoutTestCase> slice_cases() {
-  const std::array<SliceDefinition, 3> shapes = {
+  const std::array<SliceDefinition, 12> shapes = {
       SliceDefinition{{2, 4, 5}, {{0, 2}, {1, 4}, {0, 5}}, {1, 2, 1}},
       SliceDefinition{{4, 6, 8}, {{1, 4}, {0, 6}, {2, 8}}, {1, 2, 3}},
-      SliceDefinition{{3, 5, 7, 2},
-                      {{0, 3}, {1, 5}, {0, 7}, {0, 2}},
-                      {1, 2, 1, 1}},
+      SliceDefinition{
+          {3, 5, 7, 2}, {{0, 3}, {1, 5}, {0, 7}, {0, 2}}, {1, 2, 1, 1}},
+      SliceDefinition{{1}, {{0, 1}}, {1}},
+      SliceDefinition{{17}, {{1, 17}}, {2}},
+      SliceDefinition{{3, 7}, {{0, 3}, {1, 7}}, {1, 2}},
+      SliceDefinition{{2, 3, 9}, {{0, 2}, {0, 3}, {1, 9}}, {1, 1, 2}},
+      SliceDefinition{{1, 8, 16}, {{0, 1}, {1, 8}, {0, 16}}, {1, 2, 3}},
+      SliceDefinition{{3, 5, 7}, {{1, 3}, {0, 5}, {1, 7}}, {1, 2, 2}},
+      SliceDefinition{{2, 16, 31}, {{0, 2}, {1, 16}, {0, 31}}, {1, 3, 2}},
+      SliceDefinition{{4, 8, 65}, {{1, 4}, {0, 8}, {1, 65}}, {2, 1, 4}},
+      SliceDefinition{
+          {2, 4, 8, 16}, {{0, 2}, {1, 4}, {0, 8}, {2, 16}}, {1, 1, 2, 3}},
   };
   std::vector<LayoutTestCase> result;
   std::int64_t uid = 57000;
@@ -329,8 +346,7 @@ std::vector<LayoutTestCase> slice_cases() {
                        shape_name(definition.input);
       test_case.operation = LayoutOperation::kSlice;
       test_case.input = tensor(uid, definition.input, data_type);
-      test_case.output =
-          {uid + 1, data_type, output_shape, output_strides};
+      test_case.output = {uid + 1, data_type, output_shape, output_strides};
       test_case.slices = definition.slices;
       test_case.slice_strides = definition.strides;
       test_case.autotune = result.empty();
@@ -384,8 +400,8 @@ void validate_layout_case(const LayoutTestCase& test_case) {
       break;
     case LayoutOperation::kTranspose: {
       if (test_case.output.dimensions.size() != rank ||
-          test_case.permutation.size() != rank ||
-          !test_case.slices.empty() || !test_case.slice_strides.empty()) {
+          test_case.permutation.size() != rank || !test_case.slices.empty() ||
+          !test_case.slice_strides.empty()) {
         throw std::invalid_argument("Transpose case attributes are invalid");
       }
       std::unordered_set<std::int64_t> axes;
@@ -422,8 +438,7 @@ void validate_layout_case(const LayoutTestCase& test_case) {
 }
 
 std::unique_ptr<LayoutExecutable> build_flagdnn_layout(
-    flagdnn::Handle& handle,
-    const LayoutTestCase& test_case) {
+    flagdnn::Handle& handle, const LayoutTestCase& test_case) {
   return std::make_unique<FlagdnnLayoutExecutable>(handle, test_case);
 }
 

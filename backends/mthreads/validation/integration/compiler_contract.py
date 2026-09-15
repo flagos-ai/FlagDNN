@@ -259,9 +259,7 @@ def uses_stride2_packed4_dgrad(request: dict[str, Any]) -> bool:
         return False
     graph = request["graph"]
     node = graph["nodes"][0]
-    tensor_by_uid = {
-        tensor["uid"]: tensor for tensor in graph["tensors"]
-    }
+    tensor_by_uid = {tensor["uid"]: tensor for tensor in graph["tensors"]}
     outputs = {port["name"]: port["uid"] for port in node["outputs"]}
     image = tensor_by_uid[outputs["dx"]]
     return image["dimensions"][1] // node["attributes"]["groups"] <= 4
@@ -272,9 +270,7 @@ def uses_dense_stride2_dgrad(request: dict[str, Any]) -> bool:
         return False
     graph = request["graph"]
     node = graph["nodes"][0]
-    tensor_by_uid = {
-        tensor["uid"]: tensor for tensor in graph["tensors"]
-    }
+    tensor_by_uid = {tensor["uid"]: tensor for tensor in graph["tensors"]}
     outputs = {port["name"]: port["uid"] for port in node["outputs"]}
     image = tensor_by_uid[outputs["dx"]]
     groups = node["attributes"]["groups"]
@@ -288,9 +284,7 @@ def uses_im2col_fprop(request: dict[str, Any]) -> bool:
     node = graph["nodes"][0]
     if node["type"] not in {"conv2d_fprop", "convolution_fprop"}:
         return False
-    tensor_by_uid = {
-        tensor["uid"]: tensor for tensor in graph["tensors"]
-    }
+    tensor_by_uid = {tensor["uid"]: tensor for tensor in graph["tensors"]}
     inputs = {port["name"]: port["uid"] for port in node["inputs"]}
     outputs = {port["name"]: port["uid"] for port in node["outputs"]}
     image = tensor_by_uid[inputs["input"]]
@@ -307,8 +301,7 @@ def uses_im2col_fprop(request: dict[str, Any]) -> bool:
         return False
     output_area = math.prod(result["dimensions"][2:])
     reduction_extent = (
-        image["dimensions"][1] // groups
-        * math.prod(weight["dimensions"][2:])
+        image["dimensions"][1] // groups * math.prod(weight["dimensions"][2:])
     )
     filter_area = math.prod(weight["dimensions"][2:])
     standard_stride2_3x3 = (
@@ -319,8 +312,7 @@ def uses_im2col_fprop(request: dict[str, Any]) -> bool:
         and attributes["dilation"] == [1, 1]
     )
     stride2_3x3 = (
-        standard_stride2_3x3
-        and image["dimensions"][1] // groups >= 64
+        standard_stride2_3x3 and image["dimensions"][1] // groups >= 64
     )
     fp32_stem = (
         standard_stride2_3x3
@@ -335,10 +327,7 @@ def uses_im2col_fprop(request: dict[str, Any]) -> bool:
         and 2 <= filter_area <= 15
     )
     workspace = (
-        image["dimensions"][0]
-        * reduction_extent
-        * output_area
-        * element_size
+        image["dimensions"][0] * reduction_extent * output_area * element_size
     )
     workspace = max(4096, (workspace + 255) // 256 * 256)
     return (
@@ -394,6 +383,7 @@ def uses_p5_wgrad(request: dict[str, Any]) -> bool:
         and attributes["dilation"] == [1, 1]
     )
 
+
 def uses_stem_wgrad(request: dict[str, Any]) -> bool:
     graph = request["graph"]
     if graph["node_count"] != 1:
@@ -416,8 +406,7 @@ def uses_stem_wgrad(request: dict[str, Any]) -> bool:
         and loss["dimensions"][0] == 1
         and loss["dimensions"][1] in {16, 32, 64, 96}
         and loss["dimensions"][2:] == [320, 320]
-        and output["dimensions"]
-        == [loss["dimensions"][1], 3, 3, 3]
+        and output["dimensions"] == [loss["dimensions"][1], 3, 3, 3]
         and all(
             tensor["strides"] == dense_strides(tensor["dimensions"])
             for tensor in (image, loss, output)
@@ -430,6 +419,7 @@ def uses_stem_wgrad(request: dict[str, Any]) -> bool:
         and attributes["post_padding"] == [1, 1]
         and attributes["dilation"] == [1, 1]
     )
+
 
 def uses_standard_wgrad(request: dict[str, Any]) -> bool:
     graph = request["graph"]
@@ -455,16 +445,28 @@ def uses_standard_wgrad(request: dict[str, Any]) -> bool:
     )
     supported_shapes = {
         (
-            (8, 64, 56, 56), (8, 128, 28, 28), (128, 64, 3, 3),
-            (2, 2), (1, 1), (1, 1),
+            (8, 64, 56, 56),
+            (8, 128, 28, 28),
+            (128, 64, 3, 3),
+            (2, 2),
+            (1, 1),
+            (1, 1),
         ),
         (
-            (8, 32, 32, 32), (8, 64, 32, 32), (64, 32, 3, 3),
-            (1, 1), (1, 1), (1, 1),
+            (8, 32, 32, 32),
+            (8, 64, 32, 32),
+            (64, 32, 3, 3),
+            (1, 1),
+            (1, 1),
+            (1, 1),
         ),
         (
-            (8, 64, 28, 28), (8, 128, 28, 28), (128, 64, 1, 1),
-            (1, 1), (0, 0), (0, 0),
+            (8, 64, 28, 28),
+            (8, 128, 28, 28),
+            (128, 64, 1, 1),
+            (1, 1),
+            (0, 0),
+            (0, 0),
         ),
     }
     return (
@@ -481,6 +483,7 @@ def uses_standard_wgrad(request: dict[str, Any]) -> bool:
         and attributes["convolution_mode"] == 0
         and attributes["dilation"] == [1, 1]
     )
+
 
 def uses_nd_packed_wgrad(request: dict[str, Any]) -> bool:
     graph = request["graph"]
@@ -507,18 +510,31 @@ def uses_nd_packed_wgrad(request: dict[str, Any]) -> bool:
     )
     supported_shapes = {
         (
-            (16, 32, 256), (16, 64, 256), (64, 32, 3),
-            (1,), (1,), (1,), (1,),
+            (16, 32, 256),
+            (16, 64, 256),
+            (64, 32, 3),
+            (1,),
+            (1,),
+            (1,),
+            (1,),
         ),
         (
-            (2, 8, 8, 16, 16), (2, 16, 8, 16, 16),
+            (2, 8, 8, 16, 16),
+            (2, 16, 8, 16, 16),
             (16, 8, 3, 3, 3),
-            (1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1),
+            (1, 1, 1),
+            (1, 1, 1),
+            (1, 1, 1),
+            (1, 1, 1),
         ),
         (
-            (1, 8, 10, 12, 14), (1, 12, 10, 11, 15),
+            (1, 8, 10, 12, 14),
+            (1, 12, 10, 11, 15),
             (12, 8, 2, 3, 3),
-            (1, 1, 1), (1, 0, 1), (0, 1, 2), (1, 1, 1),
+            (1, 1, 1),
+            (1, 0, 1),
+            (0, 1, 2),
+            (1, 1, 1),
         ),
     }
     return (
@@ -534,10 +550,6 @@ def uses_nd_packed_wgrad(request: dict[str, Any]) -> bool:
         and attributes["groups"] == 1
         and attributes["convolution_mode"] == 0
     )
-
-
-
-
 
 
 def captured_request(
@@ -594,16 +606,12 @@ def captured_request(
         if graph.get("node_count") != 1:
             fail("captured public Graph request has no single Add node")
         node = graph["nodes"][0]
-        if (
-            node.get("type") != "add"
-            or node.get("attributes")
-            != {
-                "alpha": -0.75,
-                "mode": 1,
-                "n_elements": 24,
-                "pointwise_mode": 1,
-            }
-        ):
+        if node.get("type") != "add" or node.get("attributes") != {
+            "alpha": -0.75,
+            "mode": 1,
+            "n_elements": 24,
+            "pointwise_mode": 1,
+        }:
             fail("captured public Add lowering fields differ")
     elif graph_kind == "add_square":
         nodes = graph.get("nodes")
@@ -617,15 +625,13 @@ def captured_request(
                 {"name": "left", "uid": 101},
                 {"name": "right", "uid": 101},
             ]
-            or nodes[0].get("outputs")
-            != [{"name": "output", "uid": 103}]
+            or nodes[0].get("outputs") != [{"name": "output", "uid": 103}]
             or nodes[1].get("inputs")
             != [
                 {"name": "left", "uid": 100},
                 {"name": "right", "uid": 103},
             ]
-            or nodes[1].get("outputs")
-            != [{"name": "output", "uid": 102}]
+            or nodes[1].get("outputs") != [{"name": "output", "uid": 102}]
             or not isinstance(tensors, list)
             or [
                 tensor["uid"]
@@ -649,8 +655,7 @@ def captured_request(
                 {"name": "input", "uid": 200},
                 {"name": "filter", "uid": 201},
             ]
-            or nodes[0].get("outputs")
-            != [{"name": "output", "uid": 204}]
+            or nodes[0].get("outputs") != [{"name": "output", "uid": 204}]
             or nodes[0].get("attributes")
             != {
                 "dilation": [1, 1],
@@ -666,12 +671,9 @@ def captured_request(
                 {"name": "left", "uid": 204},
                 {"name": "right", "uid": 202},
             ]
-            or nodes[1].get("outputs")
-            != [{"name": "output", "uid": 205}]
-            or nodes[2].get("inputs")
-            != [{"name": "input", "uid": 205}]
-            or nodes[2].get("outputs")
-            != [{"name": "output", "uid": 203}]
+            or nodes[1].get("outputs") != [{"name": "output", "uid": 205}]
+            or nodes[2].get("inputs") != [{"name": "input", "uid": 205}]
+            or nodes[2].get("outputs") != [{"name": "output", "uid": 203}]
             or not isinstance(tensors, list)
             or [
                 tensor["uid"]
@@ -1004,9 +1006,7 @@ def layout_case(
             fail("slice contract requires starts, limits, and strides")
         output_strides = [
             stride * step
-            for stride, step in zip(
-                input_strides, slice_strides, strict=True
-            )
+            for stride, step in zip(input_strides, slice_strides, strict=True)
         ]
     else:
         output_strides = dense_strides(output_dimensions)
@@ -1151,12 +1151,8 @@ def matmul_case(
     batch_rank = max(len(a_batch), len(b_batch))
     batch_dimensions = [1] * batch_rank
     for trailing in range(batch_rank):
-        a_dimension = (
-            a_batch[-1 - trailing] if trailing < len(a_batch) else 1
-        )
-        b_dimension = (
-            b_batch[-1 - trailing] if trailing < len(b_batch) else 1
-        )
+        a_dimension = a_batch[-1 - trailing] if trailing < len(a_batch) else 1
+        b_dimension = b_batch[-1 - trailing] if trailing < len(b_batch) else 1
         if (
             a_dimension != b_dimension
             and a_dimension != 1
@@ -1253,9 +1249,7 @@ def convolution_case(
     for axis in range(spatial_rank):
         effective = (filter_dimensions[axis + 2] - 1) * dilation[axis] + 1
         padded = (
-            image_dimensions[axis + 2]
-            + pre_padding[axis]
-            + post_padding[axis]
+            image_dimensions[axis + 2] + pre_padding[axis] + post_padding[axis]
         )
         if padded < effective:
             fail("convolution contract filter exceeds padded input")
@@ -1344,15 +1338,9 @@ def attention_expected_functions(request: dict[str, Any]) -> list[str]:
         ]
     graph = request["graph"]
     node = graph["nodes"][0]
-    tensor_by_uid = {
-        tensor["uid"]: tensor for tensor in graph["tensors"]
-    }
-    input_uids = {
-        port["name"]: port["uid"] for port in node["inputs"]
-    }
-    output_uids = {
-        port["name"]: port["uid"] for port in node["outputs"]
-    }
+    tensor_by_uid = {tensor["uid"]: tensor for tensor in graph["tensors"]}
+    input_uids = {port["name"]: port["uid"] for port in node["inputs"]}
+    output_uids = {port["name"]: port["uid"] for port in node["outputs"]}
     result: list[str] = []
     if node["attributes"]["has_dbias"]:
         dbias = tensor_by_uid[output_uids["dbias"]]
@@ -1383,9 +1371,7 @@ def compile_case(
     request_path = root / f"{name}.json"
     request_bytes = write_request(request_path, value)
     output = root / f"{name}-artifact"
-    result = provider.compile_request(
-        request_path, output, "libtriton_jit"
-    )
+    result = provider.compile_request(request_path, output, "libtriton_jit")
     if result.get("torch_loaded") is not False:
         fail("mthreads compiler imported Torch during artifact planning")
     operation = value["graph"]["nodes"][0]["type"]
@@ -1394,9 +1380,9 @@ def compile_case(
     standard_wgrad_stage_count = 2
     if standard_wgrad:
         node = value["graph"]["nodes"][0]
-        output_uid = {
-            port["name"]: port["uid"] for port in node["outputs"]
-        }["dw"]
+        output_uid = {port["name"]: port["uid"] for port in node["outputs"]}[
+            "dw"
+        ]
         weight = next(
             tensor
             for tensor in value["graph"]["tensors"]
@@ -1408,17 +1394,23 @@ def compile_case(
     expected_stage_count = (
         len(attention_expected_functions(value))
         if operation.startswith("sdpa")
-        else 3
-        if nd_packed_wgrad
-        else 3
-        if uses_dense_stride2_dgrad(value)
-        else standard_wgrad_stage_count
-        if standard_wgrad
-        else 2
-        if (uses_p5_wgrad(value) or uses_stem_wgrad(value))
-        else 2
-        if uses_im2col_fprop(value)
-        else 1
+        else (
+            3
+            if nd_packed_wgrad
+            else (
+                3
+                if uses_dense_stride2_dgrad(value)
+                else (
+                    standard_wgrad_stage_count
+                    if standard_wgrad
+                    else (
+                        2
+                        if (uses_p5_wgrad(value) or uses_stem_wgrad(value))
+                        else 2 if uses_im2col_fprop(value) else 1
+                    )
+                )
+            )
+        )
     )
     if (
         result.get("status") != "success"
@@ -1463,16 +1455,14 @@ def validate_add_square_manifest(
         fail("AddSquare manifest root schema is not closed")
     if (
         manifest["schema_version"] != 1
-        or manifest["artifact_kind"]
-        != "flagdnn_execution_program"
+        or manifest["artifact_kind"] != "flagdnn_execution_program"
         or manifest["flagdnn_version"] != request["flagdnn_version"]
         or manifest["backend"] != "mthreads"
         or manifest["target"] != TARGET
         or manifest["engine"] != "libtriton_jit"
         or manifest["request_sha256"]
         != hashlib.sha256(request_bytes).hexdigest()
-        or manifest["compiler_identity"]
-        != request["compiler_identity"]
+        or manifest["compiler_identity"] != request["compiler_identity"]
         or manifest["workspace_size"] != 4096
         or manifest["workspace_alignment"] != 256
         or manifest["external_binding_uids"] != expected_bindings
@@ -1601,8 +1591,7 @@ def validate_add_square_manifest(
             or variant["num_warps"] != num_warps
             or variant["num_stages"] != num_stages
             or len(signature_tokens) != 7
-            or signature_tokens[-4:]
-            != ["i32", "1", str(block_size), "1"]
+            or signature_tokens[-4:] != ["i32", "1", str(block_size), "1"]
         ):
             fail("AddSquare variant launch ABI differs")
     if actual_candidates != expected_candidates:
@@ -1801,8 +1790,7 @@ def validate_conv_bias_relu_manifest(
             ((output_spatial + block_size - 1) // block_size)
             * (
                 (
-                    filter_tensor["dimensions"][0]
-                    // attributes["groups"]
+                    filter_tensor["dimensions"][0] // attributes["groups"]
                     + block_size
                     - 1
                 )
@@ -1901,10 +1889,9 @@ def validate_normalization_manifest(
 
     x = tensor_by_uid[inputs["x"]]
     y = tensor_by_uid[outputs["y"]]
-    row_major = (
-        x["strides"] == dense_strides(x["dimensions"])
-        and y["strides"] == dense_strides(y["dimensions"])
-    )
+    row_major = x["strides"] == dense_strides(x["dimensions"]) and y[
+        "strides"
+    ] == dense_strides(y["dimensions"])
     batch_block = 1 << (x["dimensions"][0] - 1).bit_length()
     specialized = row_major and (
         operation != "batchnorm" or batch_block <= 256
@@ -1913,9 +1900,7 @@ def validate_normalization_manifest(
         "layernorm": "layer_norm_kernel",
         "rmsnorm": "rms_norm_kernel",
         "batchnorm": (
-            "batch_norm_nchw_kernel"
-            if specialized
-            else "batch_norm_kernel"
+            "batch_norm_nchw_kernel" if specialized else "batch_norm_kernel"
         ),
         "batchnorm_inference": (
             "batch_norm_inference_nchw_kernel"
@@ -1944,8 +1929,7 @@ def validate_normalization_manifest(
         fail(f"{operation} stage contract differs")
     tuning = stage["autotune"]
     if (
-        set(tuning)
-        != {"enabled", "warmup", "repetitions", "selection_cache"}
+        set(tuning) != {"enabled", "warmup", "repetitions", "selection_cache"}
         or tuning["enabled"] is not autotune
         or tuning["warmup"] != 3
         or tuning["repetitions"] != 10
@@ -1968,9 +1952,11 @@ def validate_normalization_manifest(
         expected_candidates = (
             {
                 steady_candidate,
-                *((block, warps, 1)
-                  for block in (256, 512)
-                  for warps in (4, 8)),
+                *(
+                    (block, warps, 1)
+                    for block in (256, 512)
+                    for warps in (4, 8)
+                ),
             }
             if autotune
             else {steady_candidate}
@@ -2149,6 +2135,9 @@ def validate_normalization_manifest(
                 "1",
                 "1",
                 "1",
+                "0",
+                "0",
+                "0",
             ]
             expected_grid = [attributes["rows"], 1, 1]
         elif operation == "rmsnorm":
@@ -2161,6 +2150,7 @@ def validate_normalization_manifest(
                 "1",
                 "1",
                 "1",
+                "0",
             ]
             expected_grid = [attributes["rows"], 1, 1]
         elif operation == "batchnorm":
@@ -2225,6 +2215,15 @@ def validate_normalization_manifest(
             or variant["source_sha256"] != manifest["source_sha256"]
             or variant["function"] != function
             or variant["full_signature"].split(",") != signature
+            or len(signature)
+            != len(
+                next(
+                    node.args.args
+                    for node in module.body
+                    if isinstance(node, ast.FunctionDef)
+                    and node.name == function
+                )
+            )
             or variant["grid"] != expected_grid
             or variant["num_warps"] != warps
             or variant["num_stages"] != stages
@@ -2320,20 +2319,21 @@ def validate_attention_manifest(
         expected_candidates = (
             [(1, 4, 1)]
             if fixed
-            else [
-                (block, warps, stages)
-                for block in (16, 32)
-                for warps in (2, 4)
-                for stages in (1, 2)
-            ]
-            if autotune
-            else [(32, 4, 2)]
+            else (
+                [
+                    (block, warps, stages)
+                    for block in (16, 32)
+                    for warps in (2, 4)
+                    for stages in (1, 2)
+                ]
+                if autotune
+                else [(32, 4, 2)]
+            )
         )
         if (
             set(stage) != STAGE_KEYS
             or stage["id"] != stage_index
-            or stage["node_id"]
-            != request["graph"]["nodes"][0]["id"]
+            or stage["node_id"] != request["graph"]["nodes"][0]["id"]
             or stage["operation"] != operation
             or stage["dependencies"] != expected_dependencies
             or stage["source"] != "kernels/attention.py"
@@ -2380,9 +2380,7 @@ def validate_attention_manifest(
                 or any(value <= 0 for value in variant["grid"])
             ):
                 fail(f"Attention {expected_function} variant differs")
-            for argument, token in zip(
-                arguments, runtime_tokens, strict=True
-            ):
+            for argument, token in zip(arguments, runtime_tokens, strict=True):
                 if set(argument) != ARGUMENT_KEYS:
                     fail("Attention argument schema is not closed")
                 if token.startswith("*"):
@@ -2392,7 +2390,6 @@ def validate_attention_manifest(
                     "scalar_i32" if token == "i32" else "scalar_f32"
                 ):
                     fail("Attention scalar argument kind differs")
-
 
 
 def validate_im2col_fprop_manifest(
@@ -2405,9 +2402,7 @@ def validate_im2col_fprop_manifest(
 ) -> None:
     graph = request["graph"]
     node = graph["nodes"][0]
-    tensor_by_uid = {
-        tensor["uid"]: tensor for tensor in graph["tensors"]
-    }
+    tensor_by_uid = {tensor["uid"]: tensor for tensor in graph["tensors"]}
     input_uids = {port["name"]: port["uid"] for port in node["inputs"]}
     output_uids = {port["name"]: port["uid"] for port in node["outputs"]}
     image = tensor_by_uid[input_uids["input"]]
@@ -2430,9 +2425,7 @@ def validate_im2col_fprop_manifest(
         "bfloat16": 2,
     }[image["data_type"]]
     raw_workspace = batch * reduction_extent * output_area * element_size
-    expected_workspace = max(
-        4096, (raw_workspace + 255) // 256 * 256
-    )
+    expected_workspace = max(4096, (raw_workspace + 255) // 256 * 256)
     expected_bindings = [tensor["uid"] for tensor in graph["tensors"]]
     if set(manifest) != ROOT_KEYS:
         fail("im2col Fprop manifest root schema is not closed")
@@ -2502,25 +2495,27 @@ def validate_im2col_fprop_manifest(
         (
             "_conv_fprop2d_im2col_kernel",
             [],
-            [("tensor", "input", image["uid"]),
-             ("workspace", "fprop_columns", None)],
+            [
+                ("tensor", "input", image["uid"]),
+                ("workspace", "fprop_columns", None),
+            ],
             (64, 4, 1),
         ),
         (
             "_conv_fprop2d_im2col_mm_kernel",
             [0],
-            [("tensor", "filter", weight["uid"]),
-             ("workspace", "fprop_columns", None),
-             ("tensor", "output", result["uid"])],
+            [
+                ("tensor", "filter", weight["uid"]),
+                ("workspace", "fprop_columns", None),
+                ("tensor", "output", result["uid"]),
+            ],
             (64, 8, 1),
         ),
     )
     large_reduction = batch == 1 and reduction_extent >= 1024
     mm_block_m = 32 if large_reduction else 64
     mm_block_k = (
-        64
-        if large_reduction or image["data_type"] == "float32"
-        else 32
+        64 if large_reduction or image["data_type"] == "float32" else 32
     )
     for stage_index, (stage, specification) in enumerate(
         zip(program["stages"], stage_specs, strict=True)
@@ -2560,7 +2555,10 @@ def validate_im2col_fprop_manifest(
                     str(filter_height),
                     str(filter_width),
                     *(str(value) for value in node["attributes"]["stride"]),
-                    *(str(value) for value in node["attributes"]["pre_padding"]),
+                    *(
+                        str(value)
+                        for value in node["attributes"]["pre_padding"]
+                    ),
                     *(str(value) for value in node["attributes"]["dilation"]),
                     *(str(value) for value in image["strides"]),
                     *(str(value) for value in column_strides),
@@ -2655,16 +2653,10 @@ def validate_dense_dgrad_manifest(
         "bfloat16": 2,
     }[image["data_type"]]
     packed_filter_bytes = 16 * cin * cout * element_size
-    aligned_filter_bytes = (
-        (packed_filter_bytes + 255) // 256 * 256
-    )
+    aligned_filter_bytes = (packed_filter_bytes + 255) // 256 * 256
     loss_offset = aligned_filter_bytes // element_size
-    raw_workspace = (
-        aligned_filter_bytes + 4 * cout * loss_rows * element_size
-    )
-    expected_workspace = max(
-        4096, (raw_workspace + 255) // 256 * 256
-    )
+    raw_workspace = aligned_filter_bytes + 4 * cout * loss_rows * element_size
+    expected_workspace = max(4096, (raw_workspace + 255) // 256 * 256)
     expected_bindings = [tensor["uid"] for tensor in graph["tensors"]]
     if set(manifest) != ROOT_KEYS:
         fail("dense Dgrad manifest root schema is not closed")
@@ -2744,29 +2736,31 @@ def validate_dense_dgrad_manifest(
         (
             "_conv_dgrad2d_dense_pack_filter_kernel",
             [],
-            [("tensor", "w", weight["uid"]),
-             ("workspace", "dgrad_dense_filter", None)],
+            [
+                ("tensor", "w", weight["uid"]),
+                ("workspace", "dgrad_dense_filter", None),
+            ],
             [(32, 8, 1)],
         ),
         (
             "_conv_dgrad2d_dense_pack_loss_kernel",
             [],
-            [("tensor", "dy", loss["uid"]),
-             ("workspace", "dgrad_dense_loss", None)],
+            [
+                ("tensor", "dy", loss["uid"]),
+                ("workspace", "dgrad_dense_loss", None),
+            ],
             [(32, 8, 1)],
         ),
         (
             "_conv_dgrad2d_dense_mm_kernel",
             [0, 1],
-            [("workspace", "dgrad_dense_filter", None),
-             ("workspace", "dgrad_dense_loss", None),
-             ("tensor", "dx", image["uid"])],
+            [
+                ("workspace", "dgrad_dense_filter", None),
+                ("workspace", "dgrad_dense_loss", None),
+                ("tensor", "dx", image["uid"]),
+            ],
             (
-                [
-                    (64, warps, stages)
-                    for warps in (4, 8)
-                    for stages in (1, 2)
-                ]
+                [(64, warps, stages) for warps in (4, 8) for stages in (1, 2)]
                 if autotune
                 else [(64, 8, 1)]
             ),
@@ -2858,8 +2852,7 @@ def validate_dense_dgrad_manifest(
                     ]
                 )
                 expected_grid = [
-                    math.ceil(4 * cin / block)
-                    * math.ceil(loss_rows / block),
+                    math.ceil(4 * cin / block) * math.ceil(loss_rows / block),
                     1,
                     1,
                 ]
@@ -2869,9 +2862,7 @@ def validate_dense_dgrad_manifest(
                 or any(set(item) != ARGUMENT_KEYS for item in arguments)
                 or any(item["scalar_bits"] is not None for item in arguments)
             ):
-                fail(
-                    f"dense Dgrad stage {stage_index} arguments differ"
-                )
+                fail(f"dense Dgrad stage {stage_index} arguments differ")
             actual_arguments = [
                 (item["kind"], item["semantic_name"], item["uid"])
                 for item in arguments
@@ -2994,17 +2985,19 @@ def validate_p5_wgrad_manifest(
     )
     stage_candidates = (
         base_candidates,
-        [
-            *base_candidates,
-            *(
-                (block, warps, stages)
-                for block in (64,)
-                for warps in (4, 8)
-                for stages in (1, 2)
-            ),
-        ]
-        if autotune and image["data_type"] != "float32"
-        else base_candidates,
+        (
+            [
+                *base_candidates,
+                *(
+                    (block, warps, stages)
+                    for block in (64,)
+                    for warps in (4, 8)
+                    for stages in (1, 2)
+                ),
+            ]
+            if autotune and image["data_type"] != "float32"
+            else base_candidates
+        ),
     )
     pointer_type = {
         "float32": "*fp32",
@@ -3130,6 +3123,7 @@ def validate_p5_wgrad_manifest(
             ):
                 fail(f"P5 Wgrad stage {stage_index} variant differs")
 
+
 def validate_stem_wgrad_manifest(
     manifest: dict[str, Any],
     *,
@@ -3227,11 +3221,7 @@ def validate_stem_wgrad_manifest(
         else [(64, 4, 2)]
     )
     reduce_candidates = (
-        [
-            (block, warps, 1)
-            for block in (128, 256)
-            for warps in (4, 8)
-        ]
+        [(block, warps, 1) for block in (128, 256) for warps in (4, 8)]
         if autotune
         else [(256, 4, 1)]
     )
@@ -3371,8 +3361,6 @@ def validate_stem_wgrad_manifest(
                 fail(f"stem Wgrad stage {stage_index} variant differs")
 
 
-
-
 def validate_nd_packed_wgrad_manifest(
     manifest: dict[str, Any],
     *,
@@ -3397,9 +3385,7 @@ def validate_nd_packed_wgrad_manifest(
     padding = [0] * (3 - spatial_rank) + node["attributes"]["pre_padding"]
     dilation = [1] * (3 - spatial_rank) + node["attributes"]["dilation"]
     input_strides = (
-        image["strides"][:2]
-        + [0] * (3 - spatial_rank)
-        + image["strides"][2:]
+        image["strides"][:2] + [0] * (3 - spatial_rank) + image["strides"][2:]
     )
     batch = image["dimensions"][0]
     cin = image["dimensions"][1]
@@ -3421,9 +3407,7 @@ def validate_nd_packed_wgrad_manifest(
     raw_workspace = (
         partial_aligned + total_rows * reduction_extent * element_size
     )
-    expected_workspace = max(
-        4096, (raw_workspace + 255) // 256 * 256
-    )
+    expected_workspace = max(4096, (raw_workspace + 255) // 256 * 256)
     expected_bindings = [tensor["uid"] for tensor in graph["tensors"]]
     if set(manifest) != ROOT_KEYS:
         fail("ND packed Wgrad manifest root schema is not closed")
@@ -3507,11 +3491,7 @@ def validate_nd_packed_wgrad_manifest(
         "bfloat16": 2,
     }[image["data_type"]]
     pack_candidates = (
-        [
-            (block, warps, 1)
-            for block in (32, 64)
-            for warps in (4, 8)
-        ]
+        [(block, warps, 1) for block in (32, 64) for warps in (4, 8)]
         if autotune
         else [(64, 4, 1)]
     )
@@ -3526,11 +3506,7 @@ def validate_nd_packed_wgrad_manifest(
         else [(64, 8, 1)]
     )
     reduce_candidates = (
-        [
-            (block, warps, 1)
-            for block in (128, 256)
-            for warps in (4, 8)
-        ]
+        [(block, warps, 1) for block in (128, 256) for warps in (4, 8)]
         if autotune
         else [(256, 4, 1)]
     )
@@ -3679,6 +3655,7 @@ def validate_nd_packed_wgrad_manifest(
             ):
                 fail(f"ND packed Wgrad stage {stage_index} variant differs")
 
+
 def validate_standard_wgrad_manifest(
     manifest: dict[str, Any],
     *,
@@ -3716,12 +3693,8 @@ def validate_standard_wgrad_manifest(
     if is_1x1:
         raw_workspace = partial_aligned
     else:
-        raw_workspace = (
-            partial_aligned + total_rows * cik * element_size
-        )
-    expected_workspace = max(
-        4096, (raw_workspace + 255) // 256 * 256
-    )
+        raw_workspace = partial_aligned + total_rows * cik * element_size
+    expected_workspace = max(4096, (raw_workspace + 255) // 256 * 256)
     expected_bindings = [tensor["uid"] for tensor in graph["tensors"]]
     if set(manifest) != ROOT_KEYS:
         fail("standard Wgrad manifest root schema is not closed")
@@ -3783,8 +3756,7 @@ def validate_standard_wgrad_manifest(
         set(program) != {"schema_version", "stage_count", "stages"}
         or program["schema_version"] != 1
         or program["stage_count"] != (2 if is_1x1 else 3)
-        or len(program["stages"])
-        != (2 if is_1x1 else 3)
+        or len(program["stages"]) != (2 if is_1x1 else 3)
     ):
         fail("standard Wgrad execution program schema differs")
     pointer_type = {
@@ -3816,11 +3788,7 @@ def validate_standard_wgrad_manifest(
             else [(16, 4, 2)]
         )
         reduce_candidates = (
-            [
-                (block, warps, 1)
-                for block in (128, 256)
-                for warps in (4, 8)
-            ]
+            [(block, warps, 1) for block in (128, 256) for warps in (4, 8)]
             if autotune
             else [(256, 4, 1)]
         )
@@ -3847,11 +3815,7 @@ def validate_standard_wgrad_manifest(
         )
     else:
         pack_candidates = (
-            [
-                (block, warps, 1)
-                for block in (32, 64)
-                for warps in (4, 8)
-            ]
+            [(block, warps, 1) for block in (32, 64) for warps in (4, 8)]
             if autotune
             else [(64, 4, 1)]
         )
@@ -3866,11 +3830,7 @@ def validate_standard_wgrad_manifest(
             else [(64, 8, 1)]
         )
         reduce_candidates = (
-            [
-                (block, warps, 1)
-                for block in (128, 256)
-                for warps in (4, 8)
-            ]
+            [(block, warps, 1) for block in (128, 256) for warps in (4, 8)]
             if autotune
             else [(256, 4, 1)]
         )
@@ -3931,14 +3891,27 @@ def validate_standard_wgrad_manifest(
         ):
             if function == "_conv_wgrad2d_im2row_kernel":
                 signature_tokens = [
-                    pointer(image), packed_pointer, str(oh * ow), str(xh),
-                    str(xw), str(ow), str(cin), str(kh), str(kw),
+                    pointer(image),
+                    packed_pointer,
+                    str(oh * ow),
+                    str(xh),
+                    str(xw),
+                    str(ow),
+                    str(cin),
+                    str(kh),
+                    str(kw),
                     *(str(value) for value in node["attributes"]["stride"]),
-                    *(str(value) for value in node["attributes"]["pre_padding"]),
+                    *(
+                        str(value)
+                        for value in node["attributes"]["pre_padding"]
+                    ),
                     *(str(value) for value in node["attributes"]["dilation"]),
                     *(str(value) for value in image["strides"]),
-                    str(cik), str(column_offset), "1",
-                    str(block), str(block),
+                    str(cik),
+                    str(column_offset),
+                    "1",
+                    str(block),
+                    str(block),
                 ]
                 expected_grid = [
                     math.ceil((oh * ow) / block) * math.ceil(cik / block),
@@ -3947,25 +3920,51 @@ def validate_standard_wgrad_manifest(
                 ]
             elif function == "_conv_wgrad2d_rowmajor_kernel":
                 signature_tokens = [
-                    pointer(loss), packed_pointer, partial_pointer,
-                    str(oh * ow), str(cout), str(cin), str(kh), str(kw),
+                    pointer(loss),
+                    packed_pointer,
+                    partial_pointer,
+                    str(oh * ow),
+                    str(cout),
+                    str(cin),
+                    str(kh),
+                    str(kw),
                     *(str(value) for value in loss["strides"]),
-                    str(column_offset), str(cik), "1",
-                    str(total), str(cik), "1",
-                    str(dtype_id), str(block), str(block), str(block),
+                    str(column_offset),
+                    str(cik),
+                    "1",
+                    str(total),
+                    str(cik),
+                    "1",
+                    str(dtype_id),
+                    str(block),
+                    str(block),
+                    str(block),
                 ]
                 expected_grid = [
                     math.ceil(cout / block) * math.ceil(cik / block),
-                    image["dimensions"][0], 1,
+                    image["dimensions"][0],
+                    1,
                 ]
             elif function == "_conv_wgrad2d_1x1_split_kernel":
                 signature_tokens = [
-                    pointer(loss), pointer(image), partial_pointer,
-                    str(total_rows), str(rows_per_split), str(oh * ow),
-                    str(image["dimensions"][1]), str(loss["dimensions"][1]),
-                    str(cin), str(cout), "1",
-                    str(partial_stride_split), str(cik), "1",
-                    str(dtype_id), str(block), str(block), "64",
+                    pointer(loss),
+                    pointer(image),
+                    partial_pointer,
+                    str(total_rows),
+                    str(rows_per_split),
+                    str(oh * ow),
+                    str(image["dimensions"][1]),
+                    str(loss["dimensions"][1]),
+                    str(cin),
+                    str(cout),
+                    "1",
+                    str(partial_stride_split),
+                    str(cik),
+                    "1",
+                    str(dtype_id),
+                    str(block),
+                    str(block),
+                    "64",
                 ]
                 expected_grid = [
                     math.ceil(cout / block) * math.ceil(cin / block),
@@ -3976,10 +3975,19 @@ def validate_standard_wgrad_manifest(
                 if function != "_conv_wgrad2d_stem_reduce_kernel":
                     fail("standard Wgrad selected an unknown stage function")
                 signature_tokens = [
-                    partial_pointer, pointer(weight), str(total), str(cik),
-                    str(cin), str(kh), str(kw), str(num_splits),
-                    str(partial_stride_split), str(cik), "1",
-                    *(str(value) for value in weight["strides"]), str(block),
+                    partial_pointer,
+                    pointer(weight),
+                    str(total),
+                    str(cik),
+                    str(cin),
+                    str(kh),
+                    str(kw),
+                    str(num_splits),
+                    str(partial_stride_split),
+                    str(cik),
+                    "1",
+                    *(str(value) for value in weight["strides"]),
+                    str(block),
                 ]
                 expected_grid = [math.ceil(total / block), 1, 1]
             expected_signature = ",".join(signature_tokens)
@@ -4135,17 +4143,27 @@ def validate_manifest(
     expected_source = (
         "kernels/unary.py"
         if unary
-        else "kernels/ternary.py"
-        if ternary
-        else "kernels/layout.py"
-        if layout
-        else "kernels/reduction.py"
-        if reduction
-        else "kernels/matmul.py"
-        if matmul
-        else "kernels/convolution.py"
-        if convolution
-        else "kernels/binary.py"
+        else (
+            "kernels/ternary.py"
+            if ternary
+            else (
+                "kernels/layout.py"
+                if layout
+                else (
+                    "kernels/reduction.py"
+                    if reduction
+                    else (
+                        "kernels/matmul.py"
+                        if matmul
+                        else (
+                            "kernels/convolution.py"
+                            if convolution
+                            else "kernels/binary.py"
+                        )
+                    )
+                )
+            )
+        )
     )
     expected_functions = (
         {
@@ -4153,46 +4171,74 @@ def validate_manifest(
             "unary_pointwise_strided_kernel",
         }
         if unary
-        else {
-            "binary_select_tensor_kernel",
-            "binary_select_strided_kernel",
-        }
-        if ternary
-        else {"reshape_contiguous_kernel", "layout_copy_kernel"}
-        if operation == "reshape"
-        else {"slice_copy_kernel", "layout_copy_kernel"}
-        if operation == "slice"
-        else {"transpose_physical_copy_kernel", "layout_copy_kernel"}
-        if operation == "transpose"
-        else {"layout_copy_kernel"}
-        if layout
-        else {
-            "reduction_2d_kernel",
-            "reduction_3d_kernel",
-            "reduction_strided_kernel",
-        }
-        if reduction
         else (
-            {"matmul_tle_kernel"}
-            if matmul_tle is not None
-            else {"matmul_descriptor_kernel"}
-            if matmul_descriptor
-            else {"matmul_strided_kernel"}
+            {
+                "binary_select_tensor_kernel",
+                "binary_select_strided_kernel",
+            }
+            if ternary
+            else (
+                {"reshape_contiguous_kernel", "layout_copy_kernel"}
+                if operation == "reshape"
+                else (
+                    {"slice_copy_kernel", "layout_copy_kernel"}
+                    if operation == "slice"
+                    else (
+                        {
+                            "transpose_physical_copy_kernel",
+                            "layout_copy_kernel",
+                        }
+                        if operation == "transpose"
+                        else (
+                            {"layout_copy_kernel"}
+                            if layout
+                            else (
+                                {
+                                    "reduction_2d_kernel",
+                                    "reduction_3d_kernel",
+                                    "reduction_strided_kernel",
+                                }
+                                if reduction
+                                else (
+                                    (
+                                        {"matmul_tle_kernel"}
+                                        if matmul_tle is not None
+                                        else (
+                                            {"matmul_descriptor_kernel"}
+                                            if matmul_descriptor
+                                            else {"matmul_strided_kernel"}
+                                        )
+                                    )
+                                    if matmul
+                                    else (
+                                        {"conv_dgrad_nd_kernel"}
+                                        if operation == "convolution_dgrad"
+                                        else (
+                                            {"conv_wgrad_nd_kernel"}
+                                            if operation == "convolution_wgrad"
+                                            else (
+                                                {
+                                                    "conv1d_gemm_kernel",
+                                                    "conv2d_spatial_nchw_kernel",
+                                                    "conv3d_spatial_ncdhw_m_kernel",
+                                                    "conv_dgrad_nd_kernel",
+                                                    "conv_wgrad_nd_kernel",
+                                                }
+                                                if convolution
+                                                else {
+                                                    "binary_contiguous_kernel",
+                                                    "binary_strided_kernel",
+                                                }
+                                            )
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
         )
-        if matmul
-        else {"conv_dgrad_nd_kernel"}
-        if operation == "convolution_dgrad"
-        else {"conv_wgrad_nd_kernel"}
-        if operation == "convolution_wgrad"
-        else {
-            "conv1d_gemm_kernel",
-            "conv2d_spatial_nchw_kernel",
-            "conv3d_spatial_ncdhw_m_kernel",
-            "conv_dgrad_nd_kernel",
-            "conv_wgrad_nd_kernel",
-        }
-        if convolution
-        else {"binary_contiguous_kernel", "binary_strided_kernel"}
     )
     if set(manifest) != ROOT_KEYS:
         fail("mthreads manifest root schema is not closed")
@@ -4239,10 +4285,9 @@ def validate_manifest(
         }
         if not expected_functions.issubset(materialized_functions):
             fail("materialized convolution source is missing an entry point")
-        if (
-            "conv1d_depthwise_kernel" in materialized_functions
-            or len(source_bytes) >= (128 << 10)
-        ):
+        if "conv1d_depthwise_kernel" in materialized_functions or len(
+            source_bytes
+        ) >= (128 << 10):
             fail("materialized convolution source was not candidate-sliced")
     program = manifest["program"]
     if (
@@ -4298,9 +4343,7 @@ def validate_manifest(
                 "slice_copy_kernel",
                 "transpose_physical_copy_kernel",
             }
-            else 4
-            if autotune
-            else 1
+            else 4 if autotune else 1
         )
     if len(variants) != expected_variants:
         fail("mthreads pointwise variant count differs")
@@ -4316,7 +4359,9 @@ def validate_manifest(
             or variant["function"] != stage["function"]
             or len(variant["grid"]) != 3
             or any(
-                isinstance(item, bool) or not isinstance(item, int) or item <= 0
+                isinstance(item, bool)
+                or not isinstance(item, int)
+                or item <= 0
                 for item in variant["grid"]
             )
         ):
@@ -4473,9 +4518,11 @@ def validate_manifest(
             expected_token_count = (
                 15
                 if matmul_tle is not None
-                else 14
-                if stage["function"] == "matmul_descriptor_kernel"
-                else 42
+                else (
+                    14
+                    if stage["function"] == "matmul_descriptor_kernel"
+                    else 42
+                )
             )
             mode_token_index = None
         elif reduction:
@@ -4516,11 +4563,16 @@ def validate_manifest(
             expected_token_count = (
                 4
                 if stage["function"] == "reshape_contiguous_kernel"
-                else 30
-                if stage["function"] == "slice_copy_kernel"
-                else 4
-                if stage["function"] == "transpose_physical_copy_kernel"
-                else 37
+                else (
+                    30
+                    if stage["function"] == "slice_copy_kernel"
+                    else (
+                        4
+                        if stage["function"]
+                        == "transpose_physical_copy_kernel"
+                        else 37
+                    )
+                )
             )
             mode_token_index = None
         elif ternary:
@@ -4546,9 +4598,7 @@ def validate_manifest(
                 None,
             ]
             expected_token_count = (
-                6
-                if stage["function"] == "binary_select_tensor_kernel"
-                else 46
+                6 if stage["function"] == "binary_select_tensor_kernel" else 46
             )
             mode_token_index = None
         elif unary:
@@ -4561,8 +4611,7 @@ def validate_manifest(
             ]
             expected_token_count = (
                 13
-                if stage["function"]
-                == "unary_pointwise_contiguous_kernel"
+                if stage["function"] == "unary_pointwise_contiguous_kernel"
                 else 38
             )
             mode_token_index = -10
@@ -4586,25 +4635,22 @@ def validate_manifest(
                 None,
             ]
             expected_token_count = (
-                7
-                if stage["function"] == "binary_contiguous_kernel"
-                else 39
+                7 if stage["function"] == "binary_contiguous_kernel" else 39
             )
             mode_token_index = -3
         expected_scalar_bits = None
         if not matmul and not convolution:
             scalar_value = (
                 node["attributes"]["outer"]
-                if reduction
-                and stage["function"] == "reduction_2d_kernel"
-                else node["attributes"]["output_elements"]
-                if reduction
-                else node["attributes"]["n_elements"]
+                if reduction and stage["function"] == "reduction_2d_kernel"
+                else (
+                    node["attributes"]["output_elements"]
+                    if reduction
+                    else node["attributes"]["n_elements"]
+                )
             )
             expected_scalar_bits = struct.pack("<i", scalar_value).hex()
-        expected_argument_scalar_bits = [None] * len(
-            expected_argument_kinds
-        )
+        expected_argument_scalar_bits = [None] * len(expected_argument_kinds)
         if expected_scalar_bits is not None:
             expected_argument_scalar_bits[-1] = expected_scalar_bits
         if (
@@ -4629,11 +4675,15 @@ def validate_manifest(
             )
             a_dimensions = request["graph"]["tensors"][0]["dimensions"]
             b_dimensions = request["graph"]["tensors"][1]["dimensions"]
-            uses_tf32 = input_is_float32 and min(
-                a_dimensions[-2],
-                b_dimensions[-1],
-                a_dimensions[-1],
-            ) >= 512
+            uses_tf32 = (
+                input_is_float32
+                and min(
+                    a_dimensions[-2],
+                    b_dimensions[-1],
+                    a_dimensions[-1],
+                )
+                >= 512
+            )
             if signature_tokens[36] != ("1" if input_is_float32 else "0"):
                 fail("mthreads Matmul input type flag differs")
             if signature_tokens[37] != ("1" if uses_tf32 else "0"):
@@ -4670,9 +4720,7 @@ def validate_manifest(
                 signature_tokens[precision_token_index]
                 != expected_input_precision
             ):
-                fail(
-                    "mthreads Fprop float32 input precision policy differs"
-                )
+                fail("mthreads Fprop float32 input precision policy differs")
         if operation == "convolution_wgrad":
             image_tensor = next(
                 tensor
@@ -4683,12 +4731,10 @@ def validate_manifest(
                 "1" if image_tensor["data_type"] == "float32" else "0"
             )
             if signature_tokens[39] != expected_input_precision:
-                fail(
-                    "mthreads Wgrad float32 input precision policy differs"
-                )
-        if uses_stride2_tile4_dgrad(
+                fail("mthreads Wgrad float32 input precision policy differs")
+        if uses_stride2_tile4_dgrad(request) or uses_stride2_packed2_1d_dgrad(
             request
-        ) or uses_stride2_packed2_1d_dgrad(request):
+        ):
             image_tensor = next(
                 tensor
                 for tensor in request["graph"]["tensors"]
@@ -4702,11 +4748,9 @@ def validate_manifest(
                     "mthreads packed stride-2 Dgrad float32 precision policy "
                     "differs"
                 )
-        if (
-            mode_token_index is not None
-            and signature_tokens[mode_token_index]
-            != str(pointwise_mode + 1 if reduction else pointwise_mode)
-        ):
+        if mode_token_index is not None and signature_tokens[
+            mode_token_index
+        ] != str(pointwise_mode + 1 if reduction else pointwise_mode):
             fail("mthreads pointwise mode is missing from full signature")
 
 
@@ -4867,12 +4911,10 @@ def run_rejection_matrix(
         parser, forward, identity=identity, label="forward dependency"
     )
 
-    canonical = json.dumps(
-        base, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
-    duplicate = canonical.replace(
-        b"{", b'{"schema_version":3,', 1
+    canonical = json.dumps(base, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
     )
+    duplicate = canonical.replace(b"{", b'{"schema_version":3,', 1)
     expect_rejected(
         parser, duplicate, identity=identity, label="duplicate JSON key"
     )
@@ -5315,7 +5357,9 @@ def run_matmul_rejection_matrix(
                 f"Matmul {attribute} attribute mismatch",
                 lambda value, name=attribute: value["graph"]["nodes"][0][
                     "attributes"
-                ].update({name: value["graph"]["nodes"][0]["attributes"][name] + 1}),
+                ].update(
+                    {name: value["graph"]["nodes"][0]["attributes"][name] + 1}
+                ),
             )
             for attribute in ("batch", "m", "n", "k")
         ],
@@ -5454,9 +5498,7 @@ def run_convolution_rejection_matrix(
         (
             "convolution output count mismatch",
             lambda value: value["graph"]["nodes"][0]["attributes"].update(
-                n_outputs=value["graph"]["nodes"][0]["attributes"][
-                    "n_outputs"
-                ]
+                n_outputs=value["graph"]["nodes"][0]["attributes"]["n_outputs"]
                 + 1
             ),
         ),
@@ -5509,7 +5551,9 @@ def installed_layout_contract(
     installed_backend = resource / "backends/mthreads"
     installed_common = resource / "kernels"
     shutil.copytree(compiler.parent, installed_compiler_package)
-    shutil.copytree(source_root / "kernels/common", installed_common / "common")
+    shutil.copytree(
+        source_root / "kernels/common", installed_common / "common"
+    )
     shutil.copy2(
         source_root / "kernels/registry.json",
         installed_common / "registry.json",
@@ -5536,12 +5580,8 @@ def installed_layout_contract(
     )
 
     installed_environment = dict(environment)
-    installed_environment.pop(
-        "FLAGDNN_MTHREADS_ENVIRONMENT_REPORT", None
-    )
-    installed_environment["FLAGDNN_BACKEND_ROOT"] = str(
-        resource / "backends"
-    )
+    installed_environment.pop("FLAGDNN_MTHREADS_ENVIRONMENT_REPORT", None)
+    installed_environment["FLAGDNN_BACKEND_ROOT"] = str(resource / "backends")
     identity_output = root / "installed-identity.txt"
     installed_identity = identify(
         compiler=installed_compiler_package / "main.py",
@@ -5558,10 +5598,7 @@ def installed_layout_contract(
         identity_output.read_text(encoding="utf-8").splitlines()[1]
     )
     forbidden = str(source_root)
-    if any(
-        path.startswith(forbidden)
-        for path in metadata.get("files", [])
-    ):
+    if any(path.startswith(forbidden) for path in metadata.get("files", [])):
         fail("installed identity reached the source tree")
     installed_request = root / "installed-request.json"
     write_request(installed_request, request)
@@ -5731,13 +5768,12 @@ def main() -> int:
             environment=environment,
             expect_success=False,
         )
-        negative_cases = run_rejection_matrix(
-            provider, fixture, identity
-        ) + run_ternary_rejection_matrix(
-            provider, fixture, identity
-        ) + run_layout_rejection_matrix(
-            provider, fixture, identity
-        ) + run_reduction_rejection_matrix(provider, fixture, identity)
+        negative_cases = (
+            run_rejection_matrix(provider, fixture, identity)
+            + run_ternary_rejection_matrix(provider, fixture, identity)
+            + run_layout_rejection_matrix(provider, fixture, identity)
+            + run_reduction_rejection_matrix(provider, fixture, identity)
+        )
         negative_cases += run_matmul_rejection_matrix(
             provider, fixture, identity
         )
@@ -5758,9 +5794,7 @@ def main() -> int:
         for request in normalization_requests.values():
             request["compiler_identity"] = identity
             request["build_options"]["autotune"] = True
-        long_row_layernorm = copy.deepcopy(
-            normalization_requests["layernorm"]
-        )
+        long_row_layernorm = copy.deepcopy(normalization_requests["layernorm"])
         long_row_graph = long_row_layernorm["graph"]
         long_row_graph["name"] = "layernorm-bf16-long-row-autotune"
         long_row_node = long_row_graph["nodes"][0]
@@ -5811,9 +5845,7 @@ def main() -> int:
             tensor_by_uid = {
                 tensor["uid"]: tensor for tensor in graph["tensors"]
             }
-            input_uids = {
-                port["name"]: port["uid"] for port in node["inputs"]
-            }
+            input_uids = {port["name"]: port["uid"] for port in node["inputs"]}
             output_uids = {
                 port["name"]: port["uid"] for port in node["outputs"]
             }
@@ -5894,9 +5926,7 @@ def main() -> int:
             normalization_requests["batchnorm_inference"]
         )
         successful_cases = {
-            "fp32-negative": add_case(
-                fixture, identity, alpha=-0.75
-            ),
+            "fp32-negative": add_case(fixture, identity, alpha=-0.75),
             "fp16-positive": add_case(
                 fixture, identity, data_type="float16", alpha=1.5
             ),
@@ -5915,9 +5945,7 @@ def main() -> int:
                 right_dimensions=[1, 3, 1],
                 right_strides=[3, 1, 1],
             ),
-            "autotune-dense": add_case(
-                fixture, identity, autotune=True
-            ),
+            "autotune-dense": add_case(fixture, identity, autotune=True),
             "autotune-strided": add_case(
                 fixture,
                 identity,
@@ -6455,9 +6483,7 @@ def main() -> int:
                 batchnorm_inference_row_major
             ),
             "sdpa-autotune": attention_requests["sdpa"],
-            "sdpa-backward-autotune": attention_requests[
-                "sdpa_backward"
-            ],
+            "sdpa-backward-autotune": attention_requests["sdpa_backward"],
             "sdpa-fp8-autotune": attention_requests["sdpa_fp8"],
             "sdpa-fp8-backward-autotune": attention_requests[
                 "sdpa_fp8_backward"
@@ -6522,13 +6548,12 @@ def main() -> int:
                     "_conv_dgrad2d_dense_pack_loss_kernel",
                     "_conv_dgrad2d_dense_mm_kernel",
                 ]:
-                    fail(
-                        f"{name} selected unexpected dense Dgrad stages"
-                    )
+                    fail(f"{name} selected unexpected dense Dgrad stages")
                 continue
             if uses_nd_packed_wgrad(request):
                 actual_functions = [
-                    stage["function"] for stage in manifest["program"]["stages"]
+                    stage["function"]
+                    for stage in manifest["program"]["stages"]
                 ]
                 if actual_functions != [
                     "_conv_wgrad_nd_im2row_kernel",
@@ -6560,7 +6585,8 @@ def main() -> int:
                     ]
                 )
                 actual_functions = [
-                    stage["function"] for stage in manifest["program"]["stages"]
+                    stage["function"]
+                    for stage in manifest["program"]["stages"]
                 ]
                 if actual_functions != expected_wgrad_functions:
                     fail(f"{name} selected unexpected standard Wgrad stages")
@@ -6600,19 +6626,16 @@ def main() -> int:
                     for tensor in request["graph"]["tensors"]
                 }
                 input_uids = {
-                    port["name"]: port["uid"]
-                    for port in node["inputs"]
+                    port["name"]: port["uid"] for port in node["inputs"]
                 }
                 output_uids = {
-                    port["name"]: port["uid"]
-                    for port in node["outputs"]
+                    port["name"]: port["uid"] for port in node["outputs"]
                 }
                 x = tensor_by_uid[input_uids["x"]]
                 y = tensor_by_uid[output_uids["y"]]
-                row_major = (
-                    x["strides"] == dense_strides(x["dimensions"])
-                    and y["strides"] == dense_strides(y["dimensions"])
-                )
+                row_major = x["strides"] == dense_strides(
+                    x["dimensions"]
+                ) and y["strides"] == dense_strides(y["dimensions"])
                 batch_block = 1 << (x["dimensions"][0] - 1).bit_length()
                 expected_normalization_function = {
                     "layernorm": "layer_norm_kernel",
@@ -6624,15 +6647,12 @@ def main() -> int:
                     ),
                     "batchnorm_inference": (
                         "batch_norm_inference_nchw_kernel"
-                        if row_major
-                        and math.prod(x["dimensions"][2:]) > 1
+                        if row_major and math.prod(x["dimensions"][2:]) > 1
                         else "batch_norm_inference_kernel"
                     ),
                 }[operation]
                 if function != expected_normalization_function:
-                    fail(
-                        f"{name} selected an unexpected normalization kernel"
-                    )
+                    fail(f"{name} selected an unexpected normalization kernel")
                 continue
             if request["graph"]["node_count"] == 2:
                 if function != "add_square_tensor_kernel":
@@ -6640,9 +6660,7 @@ def main() -> int:
                 continue
             if request["graph"]["node_count"] == 3:
                 if function != "conv_bias_relu_2d_kernel":
-                    fail(
-                        "ConvBiasRelu selected an unexpected fused kernel"
-                    )
+                    fail("ConvBiasRelu selected an unexpected fused kernel")
                 continue
             strided = name in {
                 "padded-strided",
@@ -6652,9 +6670,7 @@ def main() -> int:
                 "ternary-broadcast-autotune",
             }
             unary = request["graph"]["nodes"][0]["type"] in UNARY_OPERATIONS
-            ternary = (
-                request["graph"]["nodes"][0]["type"] == "binary_select"
-            )
+            ternary = request["graph"]["nodes"][0]["type"] == "binary_select"
             layout = request["graph"]["nodes"][0]["type"] in {
                 "reshape",
                 "transpose",
@@ -6673,9 +6689,7 @@ def main() -> int:
             tensors = request["graph"]["tensors"]
 
             def row_major(tensor: dict[str, Any]) -> bool:
-                return tensor["strides"] == dense_strides(
-                    tensor["dimensions"]
-                )
+                return tensor["strides"] == dense_strides(tensor["dimensions"])
 
             reduction_function = ""
             if reduction:
@@ -6691,46 +6705,76 @@ def main() -> int:
                     "conv_dgrad_nd_kernel"
                     if request["graph"]["nodes"][0]["type"]
                     == "convolution_dgrad"
-                    else "conv_wgrad_nd_kernel"
-                    if request["graph"]["nodes"][0]["type"]
-                    == "convolution_wgrad"
-                    else {
-                        1: "conv1d_gemm_kernel",
-                        2: "conv2d_spatial_nchw_kernel",
-                        3: "conv3d_spatial_ncdhw_m_kernel",
-                    }[request["graph"]["nodes"][0]["attributes"]["spatial_rank"]]
+                    else (
+                        "conv_wgrad_nd_kernel"
+                        if request["graph"]["nodes"][0]["type"]
+                        == "convolution_wgrad"
+                        else {
+                            1: "conv1d_gemm_kernel",
+                            2: "conv2d_spatial_nchw_kernel",
+                            3: "conv3d_spatial_ncdhw_m_kernel",
+                        }[
+                            request["graph"]["nodes"][0]["attributes"][
+                                "spatial_rank"
+                            ]
+                        ]
+                    )
                 )
                 if convolution
                 else (
-                    "matmul_tle_kernel"
-                    if matmul_tle_config(request) is not None
-                    else "matmul_descriptor_kernel"
-                    if uses_matmul_descriptor(request)
-                    else "matmul_strided_kernel"
+                    (
+                        "matmul_tle_kernel"
+                        if matmul_tle_config(request) is not None
+                        else (
+                            "matmul_descriptor_kernel"
+                            if uses_matmul_descriptor(request)
+                            else "matmul_strided_kernel"
+                        )
+                    )
+                    if matmul
+                    else (
+                        reduction_function
+                        if reduction
+                        else (
+                            "reshape_contiguous_kernel"
+                            if operation == "reshape"
+                            and all(row_major(tensor) for tensor in tensors)
+                            else (
+                                "slice_copy_kernel"
+                                if operation == "slice"
+                                else (
+                                    "transpose_physical_copy_kernel"
+                                    if operation == "transpose"
+                                    else (
+                                        "layout_copy_kernel"
+                                        if layout
+                                        else (
+                                            "unary_pointwise_strided_kernel"
+                                            if unary and strided
+                                            else (
+                                                "unary_pointwise_contiguous_kernel"
+                                                if unary
+                                                else (
+                                                    "binary_select_strided_kernel"
+                                                    if ternary and strided
+                                                    else (
+                                                        "binary_select_tensor_kernel"
+                                                        if ternary
+                                                        else (
+                                                            "binary_strided_kernel"
+                                                            if strided
+                                                            else "binary_contiguous_kernel"
+                                                        )
+                                                    )
+                                                )
+                                            )
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
                 )
-                if matmul
-                else reduction_function
-                if reduction
-                else "reshape_contiguous_kernel"
-                if operation == "reshape"
-                and all(row_major(tensor) for tensor in tensors)
-                else "slice_copy_kernel"
-                if operation == "slice"
-                else "transpose_physical_copy_kernel"
-                if operation == "transpose"
-                else "layout_copy_kernel"
-                if layout
-                else "unary_pointwise_strided_kernel"
-                if unary and strided
-                else "unary_pointwise_contiguous_kernel"
-                if unary
-                else "binary_select_strided_kernel"
-                if ternary and strided
-                else "binary_select_tensor_kernel"
-                if ternary
-                else "binary_strided_kernel"
-                if strided
-                else "binary_contiguous_kernel"
             )
             if function != expected_function:
                 fail(f"{name} selected an unexpected kernel")
@@ -6777,9 +6821,7 @@ def main() -> int:
         request_path = root / "nonempty-request.json"
         write_request(request_path, successful_cases["fp32-negative"])
         try:
-            provider.compile_request(
-                request_path, nonempty, "libtriton_jit"
-            )
+            provider.compile_request(request_path, nonempty, "libtriton_jit")
         except ValueError:
             pass
         else:

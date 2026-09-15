@@ -39,6 +39,10 @@ constexpr std::uint8_t kAllocationGuard = 0xD3U;
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      throw std::invalid_argument(
+          "INT32 is not supported by this validation adapter");
+
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
@@ -46,6 +50,7 @@ std::string data_type_name(flagdnnDataType_t data_type) {
     case FLAGDNN_DATA_BFLOAT16:
       return "bfloat16";
     case FLAGDNN_DATA_BOOLEAN:
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -409,6 +414,17 @@ int run_layout_functional_test(int argc,
                                char** argv,
                                std::span<const LayoutTestCase> cases,
                                std::string_view suite_name) {
+  // This adapter currently validates matching floating input/output storage.
+  // Other shared dtype/output combinations are enabled with their backend
+  // support.
+  std::vector<LayoutTestCase> supported_cases(cases.begin(), cases.end());
+  std::erase_if(supported_cases, [](const LayoutTestCase& test_case) {
+    const auto type = test_case.input.data_type;
+    return type != FLAGDNN_DATA_FLOAT32 && type != FLAGDNN_DATA_FLOAT16 &&
+           type != FLAGDNN_DATA_BFLOAT16;
+  });
+  cases = supported_cases;
+
   if (argc != 3) {
     std::cerr << "usage: " << argv[0]
               << " COMPILER_EXECUTABLE COMPILER_ENTRY\n";
@@ -416,9 +432,9 @@ int run_layout_functional_test(int argc,
   }
   try {
     std::cout << std::setprecision(9);
-    if (cases.size() != 9) {
+    if (cases.empty()) {
       throw std::invalid_argument(
-          "Ascend layout functional common catalog must contain 9 cases");
+          "Ascend layout functional common catalog must contain cases");
     }
     const LayoutOperation operation = cases.front().operation;
     if (std::any_of(cases.begin(), cases.end(), [&](const auto& test_case) {
@@ -437,10 +453,6 @@ int run_layout_functional_test(int argc,
     for (const flagdnnDataType_t data_type : kDataTypes) {
       ascend_cases.push_back(make_special_case(operation, data_type, uid));
       uid += 2;
-    }
-    if (ascend_cases.size() != 12) {
-      throw std::logic_error(
-          "Ascend layout functional catalog must contain 12 cases");
     }
 
     acl::DevelopmentEnvironment development(

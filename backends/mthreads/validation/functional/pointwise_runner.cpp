@@ -373,6 +373,26 @@ int run_pointwise_functional_test(
     char** argv,
     std::span<const PointwiseTestCase> cases,
     std::string_view suite_name) {
+  // This adapter currently validates floating storage (and logical BOOL).
+  // Other shared dtype/output combinations are enabled with their backend
+  // support.
+  std::vector<PointwiseTestCase> supported_cases(cases.begin(), cases.end());
+  std::erase_if(supported_cases, [](const PointwiseTestCase& test_case) {
+    const bool logical = test_case.mode == FLAGDNN_POINTWISE_LOGICAL_NOT ||
+                         test_case.mode == FLAGDNN_POINTWISE_LOGICAL_AND ||
+                         test_case.mode == FLAGDNN_POINTWISE_LOGICAL_OR ||
+                         test_case.mode == FLAGDNN_POINTWISE_BINARY_SELECT;
+    return std::any_of(test_case.inputs.begin(), test_case.inputs.end(),
+                       [logical](const TestTensor& tensor) {
+                         const auto type = tensor.data_type;
+                         return type != FLAGDNN_DATA_FLOAT32 &&
+                                type != FLAGDNN_DATA_FLOAT16 &&
+                                type != FLAGDNN_DATA_BFLOAT16 &&
+                                !(logical && type == FLAGDNN_DATA_BOOLEAN);
+                       });
+  });
+  cases = supported_cases;
+
   if (argc != 3) {
     std::cerr << "usage: " << argv[0]
               << " COMPILER_EXECUTABLE COMPILER_ENTRY\n";

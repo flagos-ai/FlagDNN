@@ -34,7 +34,8 @@ jobs:
           cmake -S . -B build-backend -G Ninja \
             -DFLAGDNN_BACKENDS=nvidia \
             -DFLAGDNN_BUILD_TESTS=ON \
-            -DFLAGDNN_BUILD_BENCHMARKS=OFF \
+            -DFLAGDNN_BUILD_BENCHMARKS=ON \
+            -DCMAKE_BUILD_TYPE=Release \
             -DFLAGDNN_EXECUTION_ENGINE=libtriton_jit \
             -DFLAGDNN_CODEGEN_PYTHON="$(command -v python3)" \
             -DFLAGDNN_WARNINGS_AS_ERRORS=ON
@@ -42,14 +43,14 @@ jobs:
       - name: Build
         run: cmake --build build-backend -j2
 
-      - name: Structural contracts
+      - name: Unified NVIDIA validation
+        env:
+          FLAGDNN_BENCHMARK_FRESH_CACHE: "1"
         run: |
-          ctest --test-dir build-backend \
-            -R 'core.test_architecture|integration.nvidia.dependency_boundary|core.backend_contract' \
-            -j1 --output-on-failure
-
-      - name: Functional tests
-        run: ctest --test-dir build-backend -L functional -j1 --output-on-failure
+          python3 tools/run_tests.py --build-dir build-backend \
+            --platform nvidia --ops all --suites functional,benchmark \
+            --preflight --min-speedup 0.9 --timeout 3600 \
+            --output build-backend/nvidia-results.json
 
       - name: Install SDK
         run: cmake --install build-backend --prefix build-backend/install

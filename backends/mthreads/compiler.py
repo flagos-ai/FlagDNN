@@ -154,8 +154,7 @@ def _definition_names(statement: ast.stmt) -> set[str]:
 def _statement_start(statement: ast.stmt) -> int:
     decorators = getattr(statement, "decorator_list", ())
     return min(
-        [statement.lineno]
-        + [decorator.lineno for decorator in decorators]
+        [statement.lineno] + [decorator.lineno for decorator in decorators]
     )
 
 
@@ -247,9 +246,9 @@ def _materialize_mthreads_kernel_source(
         segments.append(
             "".join(lines[start - 1 : statement.end_lineno]).rstrip()
         )
-    materialized = "\n\n".join(
-        segment for segment in segments if segment
-    ) + "\n"
+    materialized = (
+        "\n\n".join(segment for segment in segments if segment) + "\n"
+    )
     materialized_bytes = materialized.encode("utf-8")
 
     materialized_module = ast.parse(
@@ -362,19 +361,31 @@ def _load_tuning(
         defaults["block_size"], "default block_size"
     )
     default = (
-        1
-        if table_name == "reduction"
-        else (
-            32
-            if table_name == "attention"
-            else 64
-            if table_name == "matmul"
-            else (32 if table_name == "convolution" else default_block_size)
+        (
+            1
+            if table_name == "reduction"
+            else (
+                32
+                if table_name == "attention"
+                else (
+                    64
+                    if table_name == "matmul"
+                    else (
+                        32
+                        if table_name == "convolution"
+                        else default_block_size
+                    )
+                )
+            )
         ),
         _positive_integer(defaults["num_warps"], "default num_warps"),
-        2
-        if table_name in {"matmul", "convolution", "attention"}
-        else _positive_integer(defaults["num_stages"], "default num_stages"),
+        (
+            2
+            if table_name in {"matmul", "convolution", "attention"}
+            else _positive_integer(
+                defaults["num_stages"], "default num_stages"
+            )
+        ),
     )
 
     table = tables[table_name]
@@ -386,9 +397,7 @@ def _load_tuning(
             "mthreads pointwise tuning strategy must be cartesian"
         )
     warmup = _positive_integer(table["warmup"], "tuning warmup")
-    repetitions = _positive_integer(
-        table["repetitions"], "tuning repetitions"
-    )
+    repetitions = _positive_integer(table["repetitions"], "tuning repetitions")
     dimensions = table["dimensions"]
     if not isinstance(dimensions, dict):
         raise ValueError("tuning dimensions must be an object")
@@ -397,26 +406,14 @@ def _load_tuning(
         _TUNING_DIMENSION_KEYS,
         f"tuning.{table_name}.dimensions",
     )
-    blocks = _integer_dimension(
-        dimensions["block_size"], "tuning block_size"
-    )
-    warps = _integer_dimension(
-        dimensions["num_warps"], "tuning num_warps"
-    )
-    stages = _integer_dimension(
-        dimensions["num_stages"], "tuning num_stages"
-    )
+    blocks = _integer_dimension(dimensions["block_size"], "tuning block_size")
+    warps = _integer_dimension(dimensions["num_warps"], "tuning num_warps")
+    stages = _integer_dimension(dimensions["num_stages"], "tuning num_stages")
     candidates = tuple(itertools.product(blocks, warps, stages))
     if len(set(candidates)) != len(candidates) or len(candidates) > 32:
-        raise ValueError(
-            "mthreads pointwise tuning candidates are invalid"
-        )
+        raise ValueError("mthreads pointwise tuning candidates are invalid")
     for block_size, num_warps, num_stages in (*candidates, default):
-        if (
-            block_size > 1024
-            or num_warps * warp_size > 1024
-            or num_stages > 8
-        ):
+        if block_size > 1024 or num_warps * warp_size > 1024 or num_stages > 8:
             raise ValueError(
                 "mthreads pointwise tuning candidate exceeds device limits"
             )
@@ -504,14 +501,8 @@ def _binary_plan(
     request: ParsedBinaryRequest,
     source_sha256: str,
 ) -> ExecutionPlan:
-    dense = can_use_dense_binary(
-        request.left, request.right, request.output
-    )
-    function = (
-        "binary_contiguous_kernel"
-        if dense
-        else "binary_strided_kernel"
-    )
+    dense = can_use_dense_binary(request.left, request.right, request.output)
+    function = "binary_contiguous_kernel" if dense else "binary_strided_kernel"
     table = "binary_contiguous" if dense else "binary_strided"
     target_warp = int(request.target.rsplit("-w", 1)[1])
     default, candidates, warmup, repetitions = _load_tuning(
@@ -523,8 +514,7 @@ def _binary_plan(
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_size}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_BINARY_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -589,15 +579,9 @@ def _add_square_full_signature(
 ) -> str:
     return ",".join(
         (
-            _pointer_token(
-                request.left.data_type, request.left.alignment
-            ),
-            _pointer_token(
-                request.right.data_type, request.right.alignment
-            ),
-            _pointer_token(
-                request.output.data_type, request.output.alignment
-            ),
+            _pointer_token(request.left.data_type, request.left.alignment),
+            _pointer_token(request.right.data_type, request.right.alignment),
+            _pointer_token(request.output.data_type, request.output.alignment),
             "i32",
             "1",
             str(block_size),
@@ -620,8 +604,7 @@ def _add_square_plan(
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_size}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_COMPOSITE_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -751,8 +734,7 @@ def _identity_plan(
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_size}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_IDENTITY_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -853,8 +835,7 @@ def _unary_plan(
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_size}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_UNARY_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -866,11 +847,7 @@ def _unary_plan(
                 tiles_per_program=tiles_per_program,
             ),
             grid=(
-                (
-                    request.n_elements
-                    + block_size * tiles_per_program
-                    - 1
-                )
+                (request.n_elements + block_size * tiles_per_program - 1)
                 // (block_size * tiles_per_program),
                 1,
                 1,
@@ -973,8 +950,7 @@ def _ternary_plan(
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_size}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_TERNARY_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -1113,11 +1089,15 @@ def _layout_plan(
     function = (
         "reshape_contiguous_kernel"
         if contiguous_reshape
-        else "transpose_physical_copy_kernel"
-        if physical_transpose
-        else "slice_copy_kernel"
-        if specialized_slice
-        else "layout_copy_kernel"
+        else (
+            "transpose_physical_copy_kernel"
+            if physical_transpose
+            else (
+                "slice_copy_kernel"
+                if specialized_slice
+                else "layout_copy_kernel"
+            )
+        )
     )
     target_warp = int(request.target.rsplit("-w", 1)[1])
     default, candidates, warmup, repetitions = _load_tuning(
@@ -1129,8 +1109,7 @@ def _layout_plan(
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_size}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_LAYOUT_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -1195,9 +1174,7 @@ def _reduction_runtime_arguments(
         else request.output_elements
     )
     scalar_name = (
-        "outer"
-        if function == "reduction_2d_kernel"
-        else "output_elements"
+        "outer" if function == "reduction_2d_kernel" else "output_elements"
     )
     return (
         RuntimeArgument("tensor", "input", request.input.uid, None),
@@ -1289,8 +1266,7 @@ def _reduction_plan(
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_m}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_m}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_REDUCTION_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -1394,9 +1370,7 @@ def _matmul_tle_full_signature(
         (
             f"tensordesc<{dtype}[{block_m},{block_k}]>",
             f"tensordesc<{dtype}[{block_k},{block_n}]>",
-            _pointer_token(
-                request.output.data_type, request.output.alignment
-            ),
+            _pointer_token(request.output.data_type, request.output.alignment),
             str(request.m),
             str(request.n),
             str(request.k),
@@ -1479,37 +1453,38 @@ def _matmul_plan(
     launch = (
         (tle_config[0], 16, tle_config[3])
         if tle_config is not None
-        else (128, 4, 1)
-        if descriptor
         else (
-            (64, 8, 2)
-            if request.a.data_type != "float32"
-            and request.m >= 64
-            and request.n >= 128
-            and request.k >= 64
-            else default
+            (128, 4, 1)
+            if descriptor
+            else (
+                (64, 8, 2)
+                if request.a.data_type != "float32"
+                and request.m >= 64
+                and request.n >= 128
+                and request.k >= 64
+                else default
+            )
         )
     )
     selected = (
         (launch,)
         if descriptor
-        else candidates
-        if request.autotune
-        else (launch,)
+        else candidates if request.autotune else (launch,)
     )
     function = (
         "matmul_tle_kernel"
         if tle_config is not None
-        else "matmul_descriptor_kernel"
-        if descriptor
-        else "matmul_strided_kernel"
+        else (
+            "matmul_descriptor_kernel"
+            if descriptor
+            else "matmul_strided_kernel"
+        )
     )
     arguments = _matmul_runtime_arguments(request)
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_size}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_MATMUL_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -1517,40 +1492,42 @@ def _matmul_plan(
             full_signature=(
                 _matmul_tle_full_signature(request)
                 if tle_config is not None
-                else _matmul_descriptor_full_signature(
-                    request, block_m=block_size
-                )
-                if descriptor
-                else _matmul_full_signature(
-                    request, block_size=block_size
+                else (
+                    _matmul_descriptor_full_signature(
+                        request, block_m=block_size
+                    )
+                    if descriptor
+                    else _matmul_full_signature(request, block_size=block_size)
                 )
             ),
             grid=(
                 (
-                    request.batch
-                    * (request.m // tle_config[0])
-                    * (request.n // tle_config[1])
-                )
-                if tle_config is not None
-                else ((request.m + block_size - 1) // block_size)
-                * (
                     (
-                        request.n
-                        + (
+                        request.batch
+                        * (request.m // tle_config[0])
+                        * (request.n // tle_config[1])
+                    )
+                    if tle_config is not None
+                    else ((request.m + block_size - 1) // block_size)
+                    * (
+                        (
+                            request.n
+                            + (
+                                block_size * 2
+                                if request.a.data_type != "float32"
+                                and block_size <= 64
+                                and request.n >= block_size * 2
+                                else block_size
+                            )
+                            - 1
+                        )
+                        // (
                             block_size * 2
                             if request.a.data_type != "float32"
                             and block_size <= 64
                             and request.n >= block_size * 2
                             else block_size
                         )
-                        - 1
-                    )
-                    // (
-                        block_size * 2
-                        if request.a.data_type != "float32"
-                        and block_size <= 64
-                        and request.n >= block_size * 2
-                        else block_size
                     )
                 ),
                 1 if tle_config is not None else request.batch,
@@ -1658,9 +1635,7 @@ def _uses_stride2_packed2_1d_dgrad(
 def _uses_stride2_packed4_dgrad(
     request: ParsedConvolutionRequest,
 ) -> bool:
-    return (
-        _uses_stride2_tile4_dgrad(request) and request.in_per_group <= 4
-    )
+    return _uses_stride2_tile4_dgrad(request) and request.in_per_group <= 4
 
 
 def _stride2_packed4_dgrad_block_m(
@@ -1668,9 +1643,7 @@ def _stride2_packed4_dgrad_block_m(
     block_size: int,
 ) -> int:
     return (
-        block_size * 4
-        if _uses_stride2_packed4_dgrad(request)
-        else block_size
+        block_size * 4 if _uses_stride2_packed4_dgrad(request) else block_size
     )
 
 
@@ -1723,9 +1696,7 @@ def _convolution_full_signature(
     pad_front, pad_top, pad_left = _padded_convolution_spatial(
         request.pre_padding, 0
     )
-    dil_d, dil_h, dil_w = _padded_convolution_spatial(
-        request.dilation, 1
-    )
+    dil_d, dil_h, dil_w = _padded_convolution_spatial(request.dilation, 1)
     dtype_id = {
         "float32": 0,
         "float16": 1,
@@ -1894,14 +1865,16 @@ def _convolution_full_signature(
             *result_strides,
             *image_strides,
             *filter_strides,
-            1
-            if request.image.data_type == "float32"
-            and (
-                request.operation == "convolution_wgrad"
-                or _uses_stride2_tile4_dgrad(request)
-                or _uses_stride2_packed2_1d_dgrad(request)
-            )
-            else 0,
+            (
+                1
+                if request.image.data_type == "float32"
+                and (
+                    request.operation == "convolution_wgrad"
+                    or _uses_stride2_tile4_dgrad(request)
+                    or _uses_stride2_packed2_1d_dgrad(request)
+                )
+                else 0
+            ),
         )
         if function == "conv_dgrad_nd_kernel":
             constants = (
@@ -1957,8 +1930,7 @@ def _convolution_grid(
         )
     if function == "conv3d_spatial_ncdhw_m_kernel":
         return (
-            ceil(request.batch * od * oh * ow)
-            * ceil(request.out_per_group),
+            ceil(request.batch * od * oh * ow) * ceil(request.out_per_group),
             request.groups,
             1,
         )
@@ -1966,9 +1938,11 @@ def _convolution_grid(
         rows = (
             request.batch * ((xw + 1) // 2)
             if _uses_stride2_packed2_1d_dgrad(request)
-            else request.batch * od * oh * ow
-            if _uses_stride2_tile4_dgrad(request)
-            else request.batch * xd * xh * xw
+            else (
+                request.batch * od * oh * ow
+                if _uses_stride2_tile4_dgrad(request)
+                else request.batch * xd * xh * xw
+            )
         )
         block_m = _stride2_packed4_dgrad_block_m(request, block_size)
         channel_block = (
@@ -1998,9 +1972,7 @@ def _uses_im2col_fprop(request: ParsedConvolutionRequest) -> bool:
         and request.post_padding == (1, 1)
         and request.dilation == (1, 1)
     )
-    stride2_3x3 = (
-        standard_stride2_3x3 and request.in_per_group >= 64
-    )
+    stride2_3x3 = standard_stride2_3x3 and request.in_per_group >= 64
     fp32_stem = (
         standard_stride2_3x3
         and request.image.data_type == "float32"
@@ -2034,8 +2006,8 @@ def _im2col_fprop_geometry(
     request: ParsedConvolutionRequest,
 ) -> tuple[int, int, tuple[int, int, int]]:
     output_area = math.prod(request.result.dimensions[2:])
-    reduction_extent = (
-        request.in_per_group * math.prod(request.filter.dimensions[2:])
+    reduction_extent = request.in_per_group * math.prod(
+        request.filter.dimensions[2:]
     )
     column_strides = (
         reduction_extent * output_area,
@@ -2054,9 +2026,7 @@ def _im2col_fprop_workspace_size(
         "float16": 2,
         "bfloat16": 2,
     }[request.image.data_type]
-    raw_size = (
-        request.batch * reduction_extent * output_area * element_size
-    )
+    raw_size = request.batch * reduction_extent * output_area * element_size
     aligned_size = (
         (raw_size + _WORKSPACE_ALIGNMENT - 1)
         // _WORKSPACE_ALIGNMENT
@@ -2084,20 +2054,16 @@ def _im2col_fprop_signature(
     function: str,
     block_size: int,
 ) -> str:
-    output_area, reduction_extent, column_strides = (
-        _im2col_fprop_geometry(request)
+    output_area, reduction_extent, column_strides = _im2col_fprop_geometry(
+        request
     )
     _, _, input_height, input_width = request.image.dimensions
     _, _, output_height, output_width = request.result.dimensions
     _, _, filter_height, filter_width = request.filter.dimensions
-    workspace = _pointer_token(
-        request.image.data_type, _WORKSPACE_ALIGNMENT
-    )
+    workspace = _pointer_token(request.image.data_type, _WORKSPACE_ALIGNMENT)
     if function == "_conv_fprop2d_im2col_kernel":
         tokens = [
-            _pointer_token(
-                request.image.data_type, request.image.alignment
-            ),
+            _pointer_token(request.image.data_type, request.image.alignment),
             workspace,
             str(output_area),
             str(input_height),
@@ -2120,13 +2086,9 @@ def _im2col_fprop_signature(
         if block_oc != block_size:
             raise ValueError("im2col Fprop candidate block differs")
         tokens = [
-            _pointer_token(
-                request.filter.data_type, request.filter.alignment
-            ),
+            _pointer_token(request.filter.data_type, request.filter.alignment),
             workspace,
-            _pointer_token(
-                request.result.data_type, request.result.alignment
-            ),
+            _pointer_token(request.result.data_type, request.result.alignment),
             str(output_area),
             str(request.out_per_group),
             str(request.in_per_group),
@@ -2193,8 +2155,7 @@ def _im2col_fprop_stage(
         raise ValueError("unknown im2col Fprop stage function")
     variant = KernelVariant(
         variant_id=(
-            f"block-{block_size}-warps-{num_warps}-"
-            f"stages-{num_stages}"
+            f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
         ),
         source=_CONVOLUTION_SOURCE_RELATIVE_PATH,
         source_sha256=source_sha256,
@@ -2274,9 +2235,7 @@ def _dense_dgrad_geometry(
     request: ParsedConvolutionRequest,
 ) -> tuple[int, int, int, int]:
     loss_rows = request.batch * math.prod(request.result.dimensions[2:])
-    packed_filter_elements = (
-        16 * request.in_per_group * request.out_per_group
-    )
+    packed_filter_elements = 16 * request.in_per_group * request.out_per_group
     packed_loss_elements = 4 * request.out_per_group * loss_rows
     element_size = _dense_dgrad_element_size(request)
     packed_filter_bytes = packed_filter_elements * element_size
@@ -2315,14 +2274,10 @@ def _dense_dgrad_signature(
     block_size: int,
 ) -> str:
     loss_rows, _, _, loss_offset = _dense_dgrad_geometry(request)
-    workspace = _pointer_token(
-        request.image.data_type, _WORKSPACE_ALIGNMENT
-    )
+    workspace = _pointer_token(request.image.data_type, _WORKSPACE_ALIGNMENT)
     if function == "_conv_dgrad2d_dense_pack_filter_kernel":
         tokens = [
-            _pointer_token(
-                request.filter.data_type, request.filter.alignment
-            ),
+            _pointer_token(request.filter.data_type, request.filter.alignment),
             workspace,
             str(request.in_per_group),
             str(request.out_per_group),
@@ -2332,9 +2287,7 @@ def _dense_dgrad_signature(
         ]
     elif function == "_conv_dgrad2d_dense_pack_loss_kernel":
         tokens = [
-            _pointer_token(
-                request.result.data_type, request.result.alignment
-            ),
+            _pointer_token(request.result.data_type, request.result.alignment),
             workspace,
             str(loss_offset),
             str(loss_rows),
@@ -2388,9 +2341,7 @@ def _dense_dgrad_stage(
         candidates = ((32, 8, 1),)
         arguments = (
             RuntimeArgument("tensor", "w", request.filter.uid, None),
-            RuntimeArgument(
-                "workspace", "dgrad_dense_filter", None, None
-            ),
+            RuntimeArgument("workspace", "dgrad_dense_filter", None, None),
         )
         grid = lambda block: (  # noqa: E731
             (4 * request.in_per_group + block - 1) // block,
@@ -2413,18 +2364,12 @@ def _dense_dgrad_stage(
     elif function == "_conv_dgrad2d_dense_mm_kernel":
         default = (64, 8, 1)
         candidates = (
-            tuple(
-                (64, warps, stages)
-                for warps in (4, 8)
-                for stages in (1, 2)
-            )
+            tuple((64, warps, stages) for warps in (4, 8) for stages in (1, 2))
             if request.autotune
             else (default,)
         )
         arguments = (
-            RuntimeArgument(
-                "workspace", "dgrad_dense_filter", None, None
-            ),
+            RuntimeArgument("workspace", "dgrad_dense_filter", None, None),
             RuntimeArgument("workspace", "dgrad_dense_loss", None, None),
             RuntimeArgument("tensor", "dx", request.image.uid, None),
         )
@@ -2440,8 +2385,7 @@ def _dense_dgrad_stage(
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_size}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_CONVOLUTION_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -2512,18 +2456,31 @@ def _uses_nd_packed_wgrad(request: ParsedConvolutionRequest) -> bool:
     )
     supported_shapes = {
         (
-            (16, 32, 256), (16, 64, 256), (64, 32, 3),
-            (1,), (1,), (1,), (1,),
+            (16, 32, 256),
+            (16, 64, 256),
+            (64, 32, 3),
+            (1,),
+            (1,),
+            (1,),
+            (1,),
         ),
         (
-            (2, 8, 8, 16, 16), (2, 16, 8, 16, 16),
+            (2, 8, 8, 16, 16),
+            (2, 16, 8, 16, 16),
             (16, 8, 3, 3, 3),
-            (1, 1, 1), (1, 1, 1), (1, 1, 1), (1, 1, 1),
+            (1, 1, 1),
+            (1, 1, 1),
+            (1, 1, 1),
+            (1, 1, 1),
         ),
         (
-            (1, 8, 10, 12, 14), (1, 12, 10, 11, 15),
+            (1, 8, 10, 12, 14),
+            (1, 12, 10, 11, 15),
             (12, 8, 2, 3, 3),
-            (1, 1, 1), (1, 0, 1), (0, 1, 2), (1, 1, 1),
+            (1, 1, 1),
+            (1, 0, 1),
+            (0, 1, 2),
+            (1, 1, 1),
         ),
     }
     return (
@@ -2542,7 +2499,8 @@ def _uses_nd_packed_wgrad(request: ParsedConvolutionRequest) -> bool:
 
 
 def _nd_packed_wgrad_spatial3(
-    values: tuple[int, ...], fill: int,
+    values: tuple[int, ...],
+    fill: int,
 ) -> tuple[int, int, int]:
     return (fill,) * (3 - len(values)) + values
 
@@ -2558,8 +2516,8 @@ def _nd_packed_wgrad_geometry(
     request: ParsedConvolutionRequest,
 ) -> tuple[int, int, int, int, int]:
     output_area = math.prod(request.result.dimensions[2:])
-    reduction_extent = (
-        request.in_per_group * math.prod(request.filter.dimensions[2:])
+    reduction_extent = request.in_per_group * math.prod(
+        request.filter.dimensions[2:]
     )
     total_rows = request.batch * output_area
     total_weights = request.out_per_group * reduction_extent
@@ -2627,9 +2585,7 @@ def _nd_packed_wgrad_signature(
         _nd_packed_wgrad_geometry(request)
     )
     rows_per_split = (total_rows + num_splits - 1) // num_splits
-    input_spatial = _nd_packed_wgrad_spatial3(
-        request.image.dimensions[2:], 1
-    )
+    input_spatial = _nd_packed_wgrad_spatial3(request.image.dimensions[2:], 1)
     output_spatial = _nd_packed_wgrad_spatial3(
         request.result.dimensions[2:], 1
     )
@@ -2740,9 +2696,7 @@ def _nd_packed_wgrad_stage(
         )
     elif function == "_conv_wgrad_nd_rowmajor_kernel":
         default = (64, 8, 1)
-        candidates = tuple(
-            itertools.product((32, 64), (4, 8), (1, 2))
-        )
+        candidates = tuple(itertools.product((32, 64), (4, 8), (1, 2)))
         arguments = (
             RuntimeArgument("tensor", "dy", request.result.uid, None),
             RuntimeArgument("workspace", "wgrad_nd_columns", None, None),
@@ -2756,9 +2710,7 @@ def _nd_packed_wgrad_stage(
         )
     elif function == "_conv_wgrad_nd_reduce_kernel":
         default = (256, 4, 1)
-        candidates = tuple(
-            itertools.product((128, 256), (4, 8), (1,))
-        )
+        candidates = tuple(itertools.product((128, 256), (4, 8), (1,)))
         arguments = (
             RuntimeArgument("workspace", "wgrad_nd_partial", None, None),
             RuntimeArgument("tensor", "dw", request.filter.uid, None),
@@ -2774,8 +2726,7 @@ def _nd_packed_wgrad_stage(
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_size}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_CONVOLUTION_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -2845,16 +2796,28 @@ def _uses_standard_wgrad(request: ParsedConvolutionRequest) -> bool:
     )
     supported_shapes = {
         (
-            (8, 64, 56, 56), (8, 128, 28, 28), (128, 64, 3, 3),
-            (2, 2), (1, 1), (1, 1),
+            (8, 64, 56, 56),
+            (8, 128, 28, 28),
+            (128, 64, 3, 3),
+            (2, 2),
+            (1, 1),
+            (1, 1),
         ),
         (
-            (8, 32, 32, 32), (8, 64, 32, 32), (64, 32, 3, 3),
-            (1, 1), (1, 1), (1, 1),
+            (8, 32, 32, 32),
+            (8, 64, 32, 32),
+            (64, 32, 3, 3),
+            (1, 1),
+            (1, 1),
+            (1, 1),
         ),
         (
-            (8, 64, 28, 28), (8, 128, 28, 28), (128, 64, 1, 1),
-            (1, 1), (0, 0), (0, 0),
+            (8, 64, 28, 28),
+            (8, 128, 28, 28),
+            (128, 64, 1, 1),
+            (1, 1),
+            (0, 0),
+            (0, 0),
         ),
     }
     return (
@@ -3087,9 +3050,7 @@ def _standard_wgrad_stage(
     kh, kw = request.filter.dimensions[2:]
     if function == "_conv_wgrad2d_im2row_kernel":
         default = (64, 4, 1)
-        candidates = tuple(
-            itertools.product((32, 64), (4, 8), (1,))
-        )
+        candidates = tuple(itertools.product((32, 64), (4, 8), (1,)))
         arguments = (
             RuntimeArgument("tensor", "x", request.image.uid, None),
             RuntimeArgument("workspace", "wgrad_columns", None, None),
@@ -3097,16 +3058,13 @@ def _standard_wgrad_stage(
         cik = request.in_per_group * kh * kw
         _, _, oh, ow = request.result.dimensions
         grid = lambda block: (  # noqa: E731
-            ((oh * ow + block - 1) // block)
-            * ((cik + block - 1) // block),
+            ((oh * ow + block - 1) // block) * ((cik + block - 1) // block),
             request.batch,
             1,
         )
     elif function == "_conv_wgrad2d_rowmajor_kernel":
         default = (64, 8, 1)
-        candidates = tuple(
-            itertools.product((32, 64), (4, 8), (1, 2))
-        )
+        candidates = tuple(itertools.product((32, 64), (4, 8), (1, 2)))
         arguments = (
             RuntimeArgument("tensor", "dy", request.result.uid, None),
             RuntimeArgument("workspace", "wgrad_columns", None, None),
@@ -3121,9 +3079,7 @@ def _standard_wgrad_stage(
         )
     elif function == "_conv_wgrad2d_direct_split_kernel":
         default = (64, 8, 1)
-        candidates = tuple(
-            itertools.product((32, 64), (4, 8), (1, 2))
-        )
+        candidates = tuple(itertools.product((32, 64), (4, 8), (1, 2)))
         arguments = (
             RuntimeArgument("tensor", "dy", request.result.uid, None),
             RuntimeArgument("tensor", "x", request.image.uid, None),
@@ -3138,9 +3094,7 @@ def _standard_wgrad_stage(
         )
     elif function == "_conv_wgrad2d_1x1_split_kernel":
         default = (16, 4, 2)
-        candidates = tuple(
-            itertools.product((16, 32), (4, 8), (1, 2))
-        )
+        candidates = tuple(itertools.product((16, 32), (4, 8), (1, 2)))
         arguments = (
             RuntimeArgument("tensor", "dy", request.result.uid, None),
             RuntimeArgument("tensor", "x", request.image.uid, None),
@@ -3154,9 +3108,7 @@ def _standard_wgrad_stage(
         )
     elif function == "_conv_wgrad2d_stem_reduce_kernel":
         default = (256, 4, 1)
-        candidates = tuple(
-            itertools.product((128, 256), (4, 8), (1,))
-        )
+        candidates = tuple(itertools.product((128, 256), (4, 8), (1,)))
         arguments = (
             RuntimeArgument("workspace", "wgrad_partial", None, None),
             RuntimeArgument("tensor", "dw", request.filter.uid, None),
@@ -3173,8 +3125,7 @@ def _standard_wgrad_stage(
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_size}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_CONVOLUTION_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -3361,9 +3312,7 @@ def _stem_wgrad_stage(
     )
     if function == "_conv_wgrad2d_stem_split_kernel":
         default = (64, 4, 2)
-        candidates = tuple(
-            itertools.product((32, 64), (4, 8), (1, 2))
-        )
+        candidates = tuple(itertools.product((32, 64), (4, 8), (1, 2)))
         arguments = (
             RuntimeArgument("tensor", "dy", request.result.uid, None),
             RuntimeArgument("tensor", "x", request.image.uid, None),
@@ -3376,9 +3325,7 @@ def _stem_wgrad_stage(
         )
     elif function == "_conv_wgrad2d_stem_reduce_kernel":
         default = (256, 4, 1)
-        candidates = tuple(
-            itertools.product((128, 256), (4, 8), (1,))
-        )
+        candidates = tuple(itertools.product((128, 256), (4, 8), (1,)))
         arguments = (
             RuntimeArgument("workspace", "wgrad_partial", None, None),
             RuntimeArgument("tensor", "dw", request.filter.uid, None),
@@ -3395,8 +3342,7 @@ def _stem_wgrad_stage(
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_size}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_CONVOLUTION_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -3591,8 +3537,7 @@ def _p5_wgrad_stage(
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_size}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_CONVOLUTION_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -3652,7 +3597,6 @@ def _p5_wgrad_plan(
     )
 
 
-
 def _convolution_plan(
     request: ParsedConvolutionRequest,
     source_sha256: str,
@@ -3680,8 +3624,7 @@ def _convolution_plan(
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_size}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_CONVOLUTION_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -3804,12 +3747,13 @@ def _conv_bias_relu_plan(
     )
     selected = candidates if request.autotune else (default,)
     arguments = _conv_bias_relu_runtime_arguments(request)
-    output_spatial = request.output.dimensions[2] * request.output.dimensions[3]
+    output_spatial = (
+        request.output.dimensions[2] * request.output.dimensions[3]
+    )
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_size}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_CONV_BIAS_RELU_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -3819,10 +3763,7 @@ def _conv_bias_relu_plan(
             ),
             grid=(
                 ((output_spatial + block_size - 1) // block_size)
-                * (
-                    (request.out_per_group + block_size - 1)
-                    // block_size
-                ),
+                * ((request.out_per_group + block_size - 1) // block_size),
                 request.batch * request.groups,
                 1,
             ),
@@ -3914,6 +3855,9 @@ def _normalization_full_signature(
             1,
             1,
             1,
+            0,  # STATIC_ROWS
+            0,  # EVICT_INPUT_FIRST
+            0,  # PAIRED_REDUCTION
         )
     else:
         tensors = (
@@ -3931,6 +3875,7 @@ def _normalization_full_signature(
             1,
             1,
             1,
+            0,  # STATIC_ROWS
         )
     tokens = [
         _pointer_token(tensor.data_type, tensor.alignment)
@@ -3988,8 +3933,7 @@ def _normalization_plan(
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_size}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_NORMALIZATION_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -4051,9 +3995,7 @@ def _batchnorm_runtime_arguments(
     if specialized:
         return result
     return result + tuple(
-        RuntimeArgument(
-            "scalar_i32", name, None, _scalar_i32_bits(value)
-        )
+        RuntimeArgument("scalar_i32", name, None, _scalar_i32_bits(value))
         for name, value in (
             ("batch", request.batch),
             ("channels", request.channels),
@@ -4145,9 +4087,7 @@ def _batchnorm_plan(
         and is_row_major_contiguous(request.y)
         and batch_block <= 256
     )
-    function = (
-        "batch_norm_nchw_kernel" if specialized else "batch_norm_kernel"
-    )
+    function = "batch_norm_nchw_kernel" if specialized else "batch_norm_kernel"
     target_warp = int(request.target.rsplit("-w", 1)[1])
     default, candidates, warmup, repetitions = _load_tuning(
         table_name="batchnorm",
@@ -4182,14 +4122,11 @@ def _batchnorm_plan(
     else:
         autotune_candidates = valid_candidates
     selected = autotune_candidates if request.autotune else (default,)
-    arguments = _batchnorm_runtime_arguments(
-        request, specialized=specialized
-    )
+    arguments = _batchnorm_runtime_arguments(request, specialized=specialized)
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_size}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_NORMALIZATION_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -4249,9 +4186,7 @@ def _batchnorm_inference_runtime_arguments(
     if specialized:
         return result
     return result + tuple(
-        RuntimeArgument(
-            "scalar_i32", name, None, _scalar_i32_bits(value)
-        )
+        RuntimeArgument("scalar_i32", name, None, _scalar_i32_bits(value))
         for name, value in (
             ("n_elements", request.n_elements),
             ("channels", request.channels),
@@ -4358,8 +4293,7 @@ def _batchnorm_inference_plan(
     variants = tuple(
         KernelVariant(
             variant_id=(
-                f"block-{block_size}-warps-{num_warps}-"
-                f"stages-{num_stages}"
+                f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}"
             ),
             source=_NORMALIZATION_SOURCE_RELATIVE_PATH,
             source_sha256=source_sha256,
@@ -4813,9 +4747,11 @@ def _attention_full_signature(
             f"Attention signature coverage is invalid for {function}"
         )
     return ",".join(
-        runtime_tokens[name]
-        if name in runtime_tokens
-        else _attention_constexpr_token(constants[name])
+        (
+            runtime_tokens[name]
+            if name in runtime_tokens
+            else _attention_constexpr_token(constants[name])
+        )
         for name in parameters
     )
 
@@ -4833,9 +4769,7 @@ def _attention_tensor_pointer(
     return (
         parameter,
         _pointer_token(tensor.data_type, tensor.alignment),
-        RuntimeArgument(
-            "tensor", semantic_name or port, tensor.uid, None
-        ),
+        RuntimeArgument("tensor", semantic_name or port, tensor.uid, None),
     )
 
 
@@ -4861,9 +4795,7 @@ def _attention_scalar_argument(
         return (
             name,
             "i32",
-            RuntimeArgument(
-                "scalar_i32", name, None, _scalar_i32_bits(value)
-            ),
+            RuntimeArgument("scalar_i32", name, None, _scalar_i32_bits(value)),
         )
     if kind == "fp32":
         if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -4907,10 +4839,7 @@ def _attention_variant(
     variant_id = (
         "fixed-warps-4-stages-1"
         if fixed
-        else (
-            f"block-{block_size}-warps-{num_warps}-"
-            f"stages-{num_stages}"
-        )
+        else (f"block-{block_size}-warps-{num_warps}-" f"stages-{num_stages}")
     )
     return KernelVariant(
         variant_id=variant_id,
@@ -5117,12 +5046,8 @@ def _attention_forward_constants(
         "V_DIM": request.value_dimension,
         "BLOCK_M": block_size,
         "BLOCK_N": block_size,
-        "BLOCK_D": _attention_full_dimension_block(
-            request.head_dimension
-        ),
-        "BLOCK_DV": _attention_full_dimension_block(
-            request.value_dimension
-        ),
+        "BLOCK_D": _attention_full_dimension_block(request.head_dimension),
+        "BLOCK_DV": _attention_full_dimension_block(request.value_dimension),
         "HAS_BIAS": request.has_bias,
         "BANDED": request.banded,
         "GENERATE_STATS": request.generate_stats,
@@ -5152,9 +5077,7 @@ def _attention_stats_pointer(
     request: ParsedAttentionRequest,
 ) -> tuple[str, str, RuntimeArgument]:
     if request.tensor("stats").virtual:
-        return _attention_workspace_pointer(
-            "stats_ptr", "stats_placeholder"
-        )
+        return _attention_workspace_pointer("stats_ptr", "stats_placeholder")
     return _attention_tensor_pointer(request, "stats_ptr", "stats")
 
 
@@ -5210,12 +5133,8 @@ def _attention_fp8_forward_plan(
         dependencies=(),
         grid=(1, 1, 1),
         pointers=(
-            _attention_tensor_pointer(
-                request, "amax_s_ptr", "amax_s"
-            ),
-            _attention_tensor_pointer(
-                request, "amax_o_ptr", "amax_o"
-            ),
+            _attention_tensor_pointer(request, "amax_s_ptr", "amax_s"),
+            _attention_tensor_pointer(request, "amax_o_ptr", "amax_o"),
         ),
     )
     pointers = (
@@ -5227,18 +5146,10 @@ def _attention_fp8_forward_plan(
         _attention_stats_pointer(request),
         _attention_tensor_pointer(request, "amax_s_ptr", "amax_s"),
         _attention_tensor_pointer(request, "amax_o_ptr", "amax_o"),
-        _attention_tensor_pointer(
-            request, "descale_q_ptr", "descale_q"
-        ),
-        _attention_tensor_pointer(
-            request, "descale_k_ptr", "descale_k"
-        ),
-        _attention_tensor_pointer(
-            request, "descale_v_ptr", "descale_v"
-        ),
-        _attention_tensor_pointer(
-            request, "descale_s_ptr", "descale_s"
-        ),
+        _attention_tensor_pointer(request, "descale_q_ptr", "descale_q"),
+        _attention_tensor_pointer(request, "descale_k_ptr", "descale_k"),
+        _attention_tensor_pointer(request, "descale_v_ptr", "descale_v"),
+        _attention_tensor_pointer(request, "descale_s_ptr", "descale_s"),
         _attention_tensor_pointer(request, "scale_s_ptr", "scale_s"),
         _attention_tensor_pointer(request, "scale_o_ptr", "scale_o"),
     )
@@ -5273,19 +5184,11 @@ def _attention_backward_scalars(
     request: ParsedAttentionRequest,
 ) -> tuple[tuple[str, str, RuntimeArgument], ...]:
     return (
-        _attention_scalar_argument(
-            "attn_scale", "fp32", request.attn_scale
-        ),
+        _attention_scalar_argument("attn_scale", "fp32", request.attn_scale),
         _attention_scalar_argument("SQ", "i32", request.sequence_q),
-        _attention_scalar_argument(
-            "SKV", "i32", request.sequence_kv
-        ),
-        _attention_scalar_argument(
-            "min_diag", "i32", request.min_diag
-        ),
-        _attention_scalar_argument(
-            "max_diag", "i32", request.max_diag
-        ),
+        _attention_scalar_argument("SKV", "i32", request.sequence_kv),
+        _attention_scalar_argument("min_diag", "i32", request.min_diag),
+        _attention_scalar_argument("max_diag", "i32", request.max_diag),
     )
 
 
@@ -5360,9 +5263,7 @@ def _attention_dq_constants(
     request: ParsedAttentionRequest,
     block_size: int,
 ) -> dict[str, int | float | bool]:
-    constants = _attention_backward_base_constants(
-        request, block_size
-    )
+    constants = _attention_backward_base_constants(request, block_size)
     o = request.tensor("o")
     dq = request.tensor("dq")
     dbias = request.optional_tensor("dbias")
@@ -5389,12 +5290,8 @@ def _attention_dq_constants(
             "stride_dbias_m": dbias_strides[2],
             "stride_dbias_n": dbias_strides[3],
             "V_DIM": request.value_dimension,
-            "DBIAS_BATCHES": (
-                dbias.dimensions[0] if dbias is not None else 1
-            ),
-            "DBIAS_HEADS": (
-                dbias.dimensions[1] if dbias is not None else 1
-            ),
+            "DBIAS_BATCHES": (dbias.dimensions[0] if dbias is not None else 1),
+            "DBIAS_HEADS": (dbias.dimensions[1] if dbias is not None else 1),
             "BLOCK_D_OUT": _attention_output_dimension_block(
                 request.head_dimension, block_size
             ),
@@ -5440,9 +5337,7 @@ def _attention_dkdv_constants(
     request: ParsedAttentionRequest,
     block_size: int,
 ) -> dict[str, int | float | bool]:
-    constants = _attention_backward_base_constants(
-        request, block_size
-    )
+    constants = _attention_backward_base_constants(request, block_size)
     dk = request.tensor("dk")
     dv = request.tensor("dv")
     delta = _attention_delta_strides(request)
@@ -5489,9 +5384,7 @@ def _attention_dk_constants(
     request: ParsedAttentionRequest,
     block_size: int,
 ) -> dict[str, int | float | bool]:
-    constants = _attention_backward_base_constants(
-        request, block_size
-    )
+    constants = _attention_backward_base_constants(request, block_size)
     dk = request.tensor("dk")
     delta = _attention_delta_strides(request)
     constants.update(
@@ -5536,9 +5429,7 @@ def _attention_dv_constants(
     request: ParsedAttentionRequest,
     block_size: int,
 ) -> dict[str, int | float | bool]:
-    constants = _attention_backward_base_constants(
-        request, block_size
-    )
+    constants = _attention_backward_base_constants(request, block_size)
     for name in (
         "stride_vb",
         "stride_vh",
@@ -5599,9 +5490,7 @@ def _attention_backward_plan(
             function="_zero_contiguous_kernel",
             dependencies=(),
             grid=((dbias_elements + 255) // 256, 1, 1),
-            pointers=(
-                _attention_tensor_pointer(request, "ptr", "dbias"),
-            ),
+            pointers=(_attention_tensor_pointer(request, "ptr", "dbias"),),
             scalars=(
                 _attention_scalar_argument(
                     "n_elements", "i32", dbias_elements
@@ -5657,8 +5546,7 @@ def _attention_backward_plan(
                     _attention_dkdv_constants(request, block_size)
                 ),
                 grid_factory=lambda block_size: (
-                    (request.sequence_kv + block_size - 1)
-                    // block_size,
+                    (request.sequence_kv + block_size - 1) // block_size,
                     (
                         request.head_dimension
                         + _attention_output_dimension_block(
@@ -5687,8 +5575,7 @@ def _attention_backward_plan(
                     _attention_dk_constants(request, block_size)
                 ),
                 grid_factory=lambda block_size: (
-                    (request.sequence_kv + block_size - 1)
-                    // block_size,
+                    (request.sequence_kv + block_size - 1) // block_size,
                     (
                         request.head_dimension
                         + _attention_output_dimension_block(
@@ -5716,8 +5603,7 @@ def _attention_backward_plan(
                     _attention_dv_constants(request, block_size)
                 ),
                 grid_factory=lambda block_size: (
-                    (request.sequence_kv + block_size - 1)
-                    // block_size,
+                    (request.sequence_kv + block_size - 1) // block_size,
                     (
                         request.value_dimension
                         + _attention_output_dimension_block(
@@ -5732,9 +5618,7 @@ def _attention_backward_plan(
                 ),
             )
         )
-    raw_delta_size = (
-        4 * request.batch * request.heads * request.sequence_q
-    )
+    raw_delta_size = 4 * request.batch * request.heads * request.sequence_q
     aligned_delta_size = (
         (raw_delta_size + _WORKSPACE_ALIGNMENT - 1)
         // _WORKSPACE_ALIGNMENT
@@ -5785,9 +5669,7 @@ def _attention_fp8_backward_base_constants(
         "HEAD_DIM": request.head_dimension,
         "BLOCK_M": block_size,
         "BLOCK_N": block_size,
-        "BLOCK_D": _attention_full_dimension_block(
-            request.head_dimension
-        ),
+        "BLOCK_D": _attention_full_dimension_block(request.head_dimension),
         "BANDED": request.banded,
         "FULL_BLOCKS": False,
         "CAUSAL_TOP_LEFT": request.causal_top_left,
@@ -5798,9 +5680,7 @@ def _attention_fp8_dq_constants(
     request: ParsedAttentionRequest,
     block_size: int,
 ) -> dict[str, int | float | bool]:
-    constants = _attention_fp8_backward_base_constants(
-        request, block_size
-    )
+    constants = _attention_fp8_backward_base_constants(request, block_size)
     dq = request.tensor("dq")
     constants.update(
         {
@@ -5819,20 +5699,12 @@ def _attention_fp8_dq_scalars(
     request: ParsedAttentionRequest,
 ) -> tuple[tuple[str, str, RuntimeArgument], ...]:
     return (
-        _attention_scalar_argument(
-            "attn_scale", "fp32", request.attn_scale
-        ),
+        _attention_scalar_argument("attn_scale", "fp32", request.attn_scale),
         _attention_scalar_argument("HQ", "i32", request.heads),
         _attention_scalar_argument("SQ", "i32", request.sequence_q),
-        _attention_scalar_argument(
-            "SKV", "i32", request.sequence_kv
-        ),
-        _attention_scalar_argument(
-            "min_diag", "i32", request.min_diag
-        ),
-        _attention_scalar_argument(
-            "max_diag", "i32", request.max_diag
-        ),
+        _attention_scalar_argument("SKV", "i32", request.sequence_kv),
+        _attention_scalar_argument("min_diag", "i32", request.min_diag),
+        _attention_scalar_argument("max_diag", "i32", request.max_diag),
     )
 
 
@@ -5867,9 +5739,7 @@ def _attention_fp8_dkdv_constants(
     request: ParsedAttentionRequest,
     block_size: int,
 ) -> dict[str, int | float | bool]:
-    constants = _attention_fp8_backward_base_constants(
-        request, block_size
-    )
+    constants = _attention_fp8_backward_base_constants(request, block_size)
     dk = request.tensor("dk")
     dv = request.tensor("dv")
     constants.update(
@@ -6129,9 +5999,12 @@ def _publish_artifact(
         _write_and_sync(temporary / "manifest.json", manifest_bytes)
         if has_core_request:
             _write_and_sync(temporary / "request.json", request_bytes)
-        if json.loads(
-            (temporary / "manifest.json").read_text(encoding="utf-8")
-        ) != manifest:
+        if (
+            json.loads(
+                (temporary / "manifest.json").read_text(encoding="utf-8")
+            )
+            != manifest
+        ):
             raise RuntimeError("artifact manifest self-read differs")
 
         for directory in (source_path.parent, temporary):
@@ -6189,20 +6062,28 @@ def compile_request(
     )
 
     candidate = select_kernel_candidate("mthreads", request.operation)
-    platform_kernel = isinstance(
-        request,
-        (
-            ParsedBinaryRequest,
-            ParsedAddSquareRequest,
-            ParsedConvBiasReluRequest,
-            ParsedBatchnormInferenceRequest,
-        ),
-    ) or isinstance(
-        request,
-        (ParsedConvolutionRequest, ParsedUnaryRequest, ParsedMatmulRequest),
-    ) or (
-        isinstance(request, ParsedLayoutRequest)
-        and request.operation in {"reshape", "slice", "transpose"}
+    platform_kernel = (
+        isinstance(
+            request,
+            (
+                ParsedBinaryRequest,
+                ParsedAddSquareRequest,
+                ParsedConvBiasReluRequest,
+                ParsedBatchnormInferenceRequest,
+            ),
+        )
+        or isinstance(
+            request,
+            (
+                ParsedConvolutionRequest,
+                ParsedUnaryRequest,
+                ParsedMatmulRequest,
+            ),
+        )
+        or (
+            isinstance(request, ParsedLayoutRequest)
+            and request.operation in {"reshape", "slice", "transpose"}
+        )
     )
     if candidate.ownership not in {"common", "platform"} or (
         candidate.ownership == "platform" and not platform_kernel
@@ -6254,11 +6135,15 @@ def compile_request(
         required_functions = (
             {"reshape_contiguous_kernel", "layout_copy_kernel"}
             if request.operation == "reshape"
-            else {"slice_copy_kernel", "layout_copy_kernel"}
-            if request.operation == "slice"
-            else {"transpose_physical_copy_kernel", "layout_copy_kernel"}
-            if request.operation == "transpose"
-            else {"layout_copy_kernel"}
+            else (
+                {"slice_copy_kernel", "layout_copy_kernel"}
+                if request.operation == "slice"
+                else (
+                    {"transpose_physical_copy_kernel", "layout_copy_kernel"}
+                    if request.operation == "transpose"
+                    else {"layout_copy_kernel"}
+                )
+            )
         )
     elif isinstance(request, ParsedReductionRequest):
         expected_source = "reduction.py"
@@ -6303,9 +6188,11 @@ def compile_request(
         expected_source = "normalization.py"
         source_relative_path = _NORMALIZATION_SOURCE_RELATIVE_PATH
         required_functions = {
-            "layer_norm_kernel"
-            if request.operation == "layernorm"
-            else "rms_norm_kernel"
+            (
+                "layer_norm_kernel"
+                if request.operation == "layernorm"
+                else "rms_norm_kernel"
+            )
         }
     elif isinstance(request, ParsedBatchnormRequest):
         expected_source = "normalization.py"
@@ -6346,21 +6233,15 @@ def compile_request(
     else:
         raise TypeError("unknown mthreads compiler request family")
     if required_functions.difference(candidate.functions):
-        raise ValueError(
-            "kernel registry entry is incomplete"
-        )
-    source_path = resolve_kernel_source(
-        _compiler_entry_path(), candidate
-    )
+        raise ValueError("kernel registry entry is incomplete")
+    source_path = resolve_kernel_source(_compiler_entry_path(), candidate)
     if (
         Path(candidate.source).is_absolute()
         or ".." in Path(candidate.source).parts
         or candidate.source != expected_source
     ):
         raise ValueError("common kernel source path is unsafe")
-    source_bytes = _materialize_mthreads_kernel_source(
-        source_path, candidate
-    )
+    source_bytes = _materialize_mthreads_kernel_source(source_path, candidate)
     if not source_bytes or len(source_bytes) > (16 << 20):
         raise ValueError("common kernel source bytes are invalid")
     source_sha256 = hashlib.sha256(source_bytes).hexdigest()

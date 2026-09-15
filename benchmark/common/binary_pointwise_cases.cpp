@@ -25,12 +25,15 @@ constexpr std::array<flagdnnDataType_t, 3> kDataTypes = {
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return "int32";
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
       return "fp16";
     case FLAGDNN_DATA_BFLOAT16:
       return "bfloat16";
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -207,6 +210,13 @@ const std::vector<ShapePair>& benchmark_shapes() {
       {{3, 257, 513}, {3, 257, 513}},
       {{3, 7, 65, 129}, {3, 7, 65, 129}},
       {{5, 7, 65, 129}, {5, 7, 65, 129}},
+      {{1, 1, 4096}, {1, 1, 4096}},
+      {{3, 8, 128}, {3, 8, 128}},
+      {{2, 32, 17, 19}, {2, 32, 17, 19}},
+      {{4, 64, 31, 33}, {4, 64, 31, 33}},
+      {{16, 32, 64}, {16, 32, 64}},
+      {{8, 128, 128}, {8, 128, 128}},
+      {{2, 256, 63, 65}, {2, 256, 63, 65}},
   };
   return shapes;
 }
@@ -236,9 +246,8 @@ std::vector<BenchmarkCase> binary_pointwise_cases(
   };
 
   append_shapes(correctness_shapes());
-  if (mode != FLAGDNN_POINTWISE_POW &&
-      mode != FLAGDNN_POINTWISE_SIGMOID_BWD &&
-      !is_logical_mode(mode)) {
+  if (mode != FLAGDNN_POINTWISE_POW && mode != FLAGDNN_POINTWISE_SIGMOID_BWD &&
+      mode < FLAGDNN_POINTWISE_RELU_BWD && !is_logical_mode(mode)) {
     append_shapes(broadcast_shapes());
   }
 
@@ -275,8 +284,8 @@ std::vector<BenchmarkCase> binary_pointwise_cases(
   }
 
   for (const flagdnnDataType_t data_type : data_types) {
-    const bool requires_equal_shapes =
-        mode == FLAGDNN_POINTWISE_SIGMOID_BWD;
+    const bool requires_equal_shapes = mode == FLAGDNN_POINTWISE_SIGMOID_BWD ||
+                                       mode >= FLAGDNN_POINTWISE_RELU_BWD;
     BenchmarkCase strided;
     strided.name = std::string(operation_name) + "_strided_" +
                    data_type_name(data_type) + "_2x3x4";
@@ -312,9 +321,6 @@ std::vector<BenchmarkCase> binary_pointwise_benchmark_cases(
   std::int64_t uid = 4000;
   const std::vector<flagdnnDataType_t> data_types = input_data_types(mode);
   for (std::size_t index = 0; index < shapes.size(); ++index) {
-    if (mode == FLAGDNN_POINTWISE_MOD && index != 0 && index != 4) {
-      continue;
-    }
     for (const flagdnnDataType_t data_type : data_types) {
       result.push_back(make_case(shapes[index],
                                  data_type,
@@ -395,6 +401,13 @@ const std::vector<ShapeTriple>& binary_select_performance_shapes() {
       {{{5, 7, 65, 129},
         {5, 7, 65, 129},
         {5, 7, 65, 129}}},
+      {{{1, 1, 4096}, {1, 1, 4096}, {1, 1, 4096}}},
+      {{{3, 8, 128}, {3, 8, 128}, {3, 8, 128}}},
+      {{{2, 32, 17, 19}, {2, 32, 17, 19}, {2, 32, 17, 19}}},
+      {{{4, 64, 31, 33}, {4, 64, 31, 33}, {4, 64, 31, 33}}},
+      {{{16, 32, 64}, {16, 32, 64}, {16, 32, 64}}},
+      {{{8, 128, 128}, {8, 128, 128}, {8, 128, 128}}},
+      {{{2, 256, 63, 65}, {2, 256, 63, 65}, {2, 256, 63, 65}}},
   };
   return shapes;
 }

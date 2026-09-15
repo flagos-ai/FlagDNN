@@ -525,16 +525,12 @@ int run_benchmark_suite(int argc,
     return 2;
   }
   try {
-    if (cases.size() != 24) {
+    if (cases.empty()) {
       throw std::invalid_argument(
-          "common BatchNorm benchmark must contain 24 cases");
+          "common BatchNorm benchmark must contain cases");
     }
     const std::vector<BenchmarkCase> ascend_cases =
         acl::make_ascend_batchnorm_benchmark_cases(cases);
-    if (ascend_cases.size() != 24) {
-      throw std::logic_error(
-          "Ascend BatchNorm benchmark must contain 24 cases");
-    }
     acl::DevelopmentEnvironment development("batchnorm-benchmark");
     acl::AclRuntime runtime;
     development.prepare_target(acl::soc_name());

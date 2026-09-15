@@ -3,6 +3,7 @@
 #include "backend_loader.hpp"
 
 #include "error.hpp"
+#include "runtime/context.hpp"
 
 #include <dlfcn.h>
 
@@ -165,7 +166,7 @@ BackendApiDispatch validated_dispatch(const Api* api,
     throw ApiError(FLAGDNN_STATUS_NOT_SUPPORTED,
                    "backend plugin has an incompatible ABI");
   }
-  return BackendApiDispatch{api->get_last_error,
+  return BackendApiDispatch{{}, api->get_last_error,
                             api->create_context,
                             api->destroy_context,
                             api->get_target_fingerprint,
@@ -273,6 +274,24 @@ std::shared_ptr<BackendLibrary> BackendLibrary::load(
         reinterpret_cast<flagdnnBackendGetApiV3Function>(symbol);
     api = validate_backend_api_v3(get_api(), backend_name);
   }
+  dlerror();
+  void* build_symbol = dlsym(library.value,
+                            FLAGDNN_BACKEND_GET_BUILD_API_V1_SYMBOL);
+  const char* build_error = dlerror();
+  if (build_error == nullptr && build_symbol != nullptr) {
+    const auto get_build_api =
+        reinterpret_cast<flagdnnBackendGetBuildApiV1Function>(build_symbol);
+    const auto* build_api = get_build_api();
+    if (build_api == nullptr ||
+        build_api->struct_size < sizeof(flagdnnBackendBuildApiV1) ||
+        build_api->abi_version != 1 ||
+        build_api->is_environment_prepared == nullptr ||
+        build_api->prepare_environment == nullptr) {
+      throw ApiError(FLAGDNN_STATUS_NOT_SUPPORTED,
+                     "backend plugin has an incompatible build-environment ABI");
+    }
+    api.build_environment = *build_api;
+  }
   auto result = std::shared_ptr<BackendLibrary>(new BackendLibrary(
       library.release(), std::move(api), backend_name));
   if (process_lifetime_library) {
@@ -291,6 +310,31 @@ BackendLibrary::BackendLibrary(void* dynamic_library,
 BackendLibrary::~BackendLibrary() {
   if (dynamic_library_ != nullptr) {
     (void)dlclose(dynamic_library_);
+  }
+}
+
+void BackendLibrary::prepare_build_environment(
+    void* context, const char* execution_engine,
+    const flagdnnBackendBuildInputV2& input) {
+  const auto& environment = api_.build_environment;
+  if (environment.is_environment_prepared(execution_engine)) {
+    return;
+  }
+  // Several handles may own distinct wrappers around the same loaded plugin.
+  // Recheck readiness before waiting for the environment writer lock, so a
+  // second initializer never waits behind the first handle's entire JIT build.
+  static std::mutex preparation_mutex;
+  const std::lock_guard preparation_lock(preparation_mutex);
+  if (environment.is_environment_prepared(execution_engine)) {
+    return;
+  }
+  const std::unique_lock environment_lock(process_environment_mutex());
+  check_backend(*this,
+                environment.prepare_environment(context, execution_engine, &input),
+                "prepare_environment");
+  if (!environment.is_environment_prepared(execution_engine)) {
+    throw ApiError(FLAGDNN_STATUS_INTERNAL_ERROR,
+                   "backend did not finish environment preparation");
   }
 }
 
@@ -340,9 +384,11 @@ BackendContext::~BackendContext() {
 std::unique_ptr<BackendExecutable> BackendContext::create_executable(
     std::string_view graph_ir,
     const std::filesystem::path& artifact_directory,
-    std::string_view request_sha256) const {
+    std::string_view request_sha256,
+    std::string_view execution_engine) const {
   const std::string directory = artifact_directory.string();
   const std::string hash(request_sha256);
+  const std::string engine(execution_engine);
   flagdnnBackendBuildInputV2 input{};
   input.struct_size = sizeof(input);
   input.graph_ir = graph_ir.data();
@@ -352,10 +398,23 @@ std::unique_ptr<BackendExecutable> BackendContext::create_executable(
 
   void* executable = nullptr;
   std::size_t workspace_size = 0;
-  check_backend(*library_,
-                library_->api().create_executable(
-                    context_, &input, &executable, &workspace_size),
-                "create_executable");
+  const auto build = [&] {
+    check_backend(*library_,
+                  library_->api().create_executable(
+                      context_, &input, &executable, &workspace_size),
+                  "create_executable");
+  };
+  const auto& environment = library_->api().build_environment;
+  if (environment.prepare_environment == nullptr) {
+    const std::unique_lock lock(process_environment_mutex());
+    build();
+  } else {
+    library_->prepare_build_environment(context_, engine.c_str(), input);
+    // Protect environment readers against legacy backend writers, without
+    // serializing independent compiler subprocesses behind JIT/autotuning.
+    const std::shared_lock lock(process_environment_mutex());
+    build();
+  }
   if (executable == nullptr) {
     throw ApiError(FLAGDNN_STATUS_INTERNAL_ERROR,
                    "backend returned a null executable");

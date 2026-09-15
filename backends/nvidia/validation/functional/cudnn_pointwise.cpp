@@ -1,9 +1,5 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
-#include "common/pointwise.hpp"
-#include "validation/functional/cudnn_graph.hpp"
-#include "validation/tensor_io.hpp"
-
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 
@@ -16,6 +12,11 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "common/pointwise.hpp"
+#include "validation/functional/cudnn_graph.hpp"
+#include "validation/functional/cudnn_tensor.hpp"
+#include "validation/tensor_io.hpp"
 
 namespace flagdnn::testing {
 namespace {
@@ -88,6 +89,20 @@ cfe::PointwiseMode_t cudnn_pointwise_mode(flagdnnPointwiseMode_t mode) {
       return cfe::PointwiseMode_t::LOGICAL_AND;
     case FLAGDNN_POINTWISE_LOGICAL_OR:
       return cfe::PointwiseMode_t::LOGICAL_OR;
+    case FLAGDNN_POINTWISE_RELU_BWD:
+      return cfe::PointwiseMode_t::RELU_BWD;
+    case FLAGDNN_POINTWISE_TANH_BWD:
+      return cfe::PointwiseMode_t::TANH_BWD;
+    case FLAGDNN_POINTWISE_ELU_BWD:
+      return cfe::PointwiseMode_t::ELU_BWD;
+    case FLAGDNN_POINTWISE_GELU_BWD:
+      return cfe::PointwiseMode_t::GELU_BWD;
+    case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
+      return cfe::PointwiseMode_t::SOFTPLUS_BWD;
+    case FLAGDNN_POINTWISE_SWISH_BWD:
+      return cfe::PointwiseMode_t::SWISH_BWD;
+    case FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD:
+      return cfe::PointwiseMode_t::GELU_APPROX_TANH_BWD;
     case FLAGDNN_POINTWISE_SIGMOID_BWD:
       return cfe::PointwiseMode_t::SIGMOID_BWD;
     case FLAGDNN_POINTWISE_BINARY_SELECT:
@@ -120,17 +135,15 @@ bool uses_boolean_compute(flagdnnPointwiseMode_t mode) {
          mode == FLAGDNN_POINTWISE_LOGICAL_OR;
 }
 
-void apply_pointwise_attributes(
-    cfe::graph::Pointwise_attributes& output,
-    const flagdnnPointwiseAttributes_t& input) {
+void apply_pointwise_attributes(cfe::graph::Pointwise_attributes& output,
+                                const flagdnnPointwiseAttributes_t& input) {
   if ((input.flags & FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP) != 0U) {
     output.set_relu_lower_clip(static_cast<float>(input.relu_lower_clip));
   }
   if ((input.flags & FLAGDNN_POINTWISE_ATTRIBUTE_RELU_UPPER_CLIP) != 0U) {
     output.set_relu_upper_clip(static_cast<float>(input.relu_upper_clip));
   }
-  if ((input.flags &
-       FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP_SLOPE) != 0U) {
+  if ((input.flags & FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP_SLOPE) != 0U) {
     output.set_relu_lower_clip_slope(
         static_cast<float>(input.relu_lower_clip_slope));
   }
@@ -149,6 +162,9 @@ class DeviceScalar {
  public:
   DeviceScalar(flagdnnDataType_t data_type, double value) {
     switch (data_type) {
+      case FLAGDNN_DATA_INT32:
+        allocate_and_copy(static_cast<std::int32_t>(value));
+        return;
       case FLAGDNN_DATA_FLOAT32:
         allocate_and_copy(static_cast<float>(value));
         return;
@@ -158,6 +174,7 @@ class DeviceScalar {
       case FLAGDNN_DATA_BFLOAT16:
         allocate_and_copy(__float2bfloat16_rn(static_cast<float>(value)));
         return;
+      case FLAGDNN_DATA_FP8_E8M0:
       case FLAGDNN_DATA_FP8_E4M3:
       case FLAGDNN_DATA_FP8_E5M2:
         break;
@@ -227,9 +244,15 @@ class CudnnPointwiseExecutable final : public cuda::CudnnGraphExecutable {
     cfe::graph::Pointwise_attributes attributes;
     attributes.set_name(test_case.name)
         .set_mode(cudnn_pointwise_mode(test_case.mode))
-        .set_compute_data_type(uses_boolean_compute(test_case.mode)
-                                   ? cfe::DataType_t::BOOLEAN
-                                   : cfe::DataType_t::FLOAT);
+        .set_compute_data_type(
+            (uses_boolean_compute(test_case.mode) ||
+             (test_case.mode == FLAGDNN_POINTWISE_IDENTITY &&
+              test_case.inputs.front().data_type == FLAGDNN_DATA_BOOLEAN))
+                ? cfe::DataType_t::BOOLEAN
+            : test_case.mode == FLAGDNN_POINTWISE_IDENTITY &&
+                    test_case.inputs.front().data_type == FLAGDNN_DATA_INT32
+                ? cfe::DataType_t::INT32
+                : cfe::DataType_t::FLOAT);
     apply_pointwise_attributes(attributes, test_case.attributes);
 
     TestTensor output_spec;
@@ -263,10 +286,9 @@ class CudnnPointwiseExecutable final : public cuda::CudnnGraphExecutable {
       const auto right = cuda::make_cudnn_tensor(graph_, right_spec, "right");
 
       std::shared_ptr<cfe::graph::Tensor_attributes> right_operand = right;
-      const bool scale_right =
-          (test_case.mode == FLAGDNN_POINTWISE_ADD ||
-           test_case.mode == FLAGDNN_POINTWISE_SUB) &&
-          test_case.alpha != 1.0;
+      const bool scale_right = (test_case.mode == FLAGDNN_POINTWISE_ADD ||
+                                test_case.mode == FLAGDNN_POINTWISE_SUB) &&
+                               test_case.alpha != 1.0;
       if (scale_right) {
         scalar_uid_ = internal_scalar_uid(test_case);
         scalar_ = std::make_unique<DeviceScalar>(right_spec.data_type,
@@ -276,15 +298,13 @@ class CudnnPointwiseExecutable final : public cuda::CudnnGraphExecutable {
         const auto scalar =
             cuda::make_cudnn_tensor(graph_, scalar_spec, "alpha");
         auto scaled_right = graph_->pointwise(
-            right,
-            scalar,
+            right, scalar,
             cfe::graph::Pointwise_attributes()
                 .set_name(test_case.name + "::scale_right")
                 .set_mode(cfe::PointwiseMode_t::MUL)
                 .set_compute_data_type(cfe::DataType_t::FLOAT));
         scaled_right->set_name("scaled_right")
-            .set_data_type(
-                cuda::cudnn_frontend_data_type(right_spec.data_type))
+            .set_data_type(cuda::cudnn_frontend_data_type(right_spec.data_type))
             .set_dim(right_spec.dimensions)
             .set_stride(right_spec.strides);
         right_operand = std::move(scaled_right);
@@ -307,25 +327,21 @@ class CudnnPointwiseExecutable final : public cuda::CudnnGraphExecutable {
 
     output->set_name("output")
         .set_uid(output_spec.uid)
-        .set_data_type(
-            cuda::cudnn_frontend_data_type(output_spec.data_type))
+        .set_data_type(cuda::cudnn_frontend_data_type(output_spec.data_type))
         .set_dim(output_spec.dimensions)
         .set_stride(output_spec.strides)
         .set_output(true);
 
-    cuda::check_cudnn_frontend(
-        graph_->build(handle(), {cfe::HeurMode_t::A}),
-        "cuDNN pointwise graph build");
+    cuda::check_cudnn_frontend(graph_->build(handle(), {cfe::HeurMode_t::A}),
+                               "cuDNN pointwise graph build");
     std::int64_t workspace_size = 0;
     cuda::check_cudnn_frontend(graph_->get_workspace_size(workspace_size),
                                "cuDNN pointwise workspace query");
     set_workspace_size(workspace_size);
   }
 
-  void execute(std::span<const flagdnnBinding_t> bindings,
-               void* workspace,
-               std::size_t workspace_size,
-               flagdnnStream_t stream) override {
+  void execute(std::span<const flagdnnBinding_t> bindings, void* workspace,
+               std::size_t workspace_size, flagdnnStream_t stream) override {
     begin_execute(workspace, workspace_size, stream);
     cuda::CudnnBindingMap pointers = cuda::make_cudnn_binding_map(bindings);
     if (scalar_ != nullptr &&
@@ -343,11 +359,61 @@ class CudnnPointwiseExecutable final : public cuda::CudnnGraphExecutable {
   std::shared_ptr<cfe::graph::Graph> graph_;
 };
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+class CudnnLegacyAdd final : public cuda::CudnnGraphExecutable {
+ public:
+  explicit CudnnLegacyAdd(const PointwiseTestCase& test_case)
+      : left_(test_case.inputs.at(0)),
+        right_(test_case.inputs.at(1)),
+        output_(test_case.output),
+        left_uid_(test_case.inputs[0].uid),
+        right_uid_(test_case.inputs[1].uid),
+        output_uid_(test_case.output.uid),
+        alpha_(static_cast<float>(test_case.alpha)) {
+    cuda::check_cudnn(cudnnCreateOpTensorDescriptor(&operation_),
+                      "cudnnCreateOpTensorDescriptor");
+    const auto status = cudnnSetOpTensorDescriptor(
+        operation_, CUDNN_OP_TENSOR_ADD, CUDNN_DATA_FLOAT, CUDNN_PROPAGATE_NAN);
+    if (status != CUDNN_STATUS_SUCCESS) {
+      (void)cudnnDestroyOpTensorDescriptor(operation_);
+      cuda::check_cudnn(status, "cudnnSetOpTensorDescriptor");
+    }
+  }
+  ~CudnnLegacyAdd() override {
+    (void)cudnnDestroyOpTensorDescriptor(operation_);
+  }
+  void execute(std::span<const flagdnnBinding_t> bindings, void* workspace,
+               std::size_t size, flagdnnStream_t stream) override {
+    begin_execute(workspace, size, stream);
+    const auto pointers = cuda::make_cudnn_binding_map(bindings);
+    const float one = 1.0F, zero = 0.0F;
+    cuda::check_cudnn(
+        cudnnOpTensor(handle(), operation_, &one, left_.get(),
+                      pointers.at(left_uid_), &alpha_, right_.get(),
+                      pointers.at(right_uid_), &zero, output_.get(),
+                      pointers.at(output_uid_)),
+        "cudnnOpTensor(ADD)");
+  }
+
+ private:
+  cuda::TensorDescriptor left_, right_, output_;
+  std::int64_t left_uid_, right_uid_, output_uid_;
+  float alpha_;
+  cudnnOpTensorDescriptor_t operation_ = nullptr;
+};
+#pragma GCC diagnostic pop
+
 }  // namespace
 
 std::unique_ptr<PointwiseExecutable> build_pointwise_reference(
     const PointwiseTestCase& test_case) {
-  return std::make_unique<CudnnPointwiseExecutable>(test_case);
+  try {
+    return std::make_unique<CudnnPointwiseExecutable>(test_case);
+  } catch (const std::runtime_error&) {
+    if (test_case.mode != FLAGDNN_POINTWISE_ADD) throw;
+    return std::make_unique<CudnnLegacyAdd>(test_case);
+  }
 }
 
 }  // namespace flagdnn::testing

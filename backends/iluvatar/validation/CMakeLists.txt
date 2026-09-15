@@ -428,6 +428,8 @@ if(FLAGDNN_BUILD_BENCHMARKS)
   endif()
   set(_flagdnn_iluvatar_benchmark_expected
     ${FLAGDNN_BENCHMARK_OPERATORS})
+  list(REMOVE_ITEM _flagdnn_iluvatar_benchmark_expected
+    ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS})
   list(SORT _flagdnn_iluvatar_benchmark_unique)
   list(SORT _flagdnn_iluvatar_benchmark_expected)
   if(NOT "${_flagdnn_iluvatar_benchmark_unique}" STREQUAL
@@ -507,6 +509,7 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     "${FLAGDNN_ILUVATAR_RESOLVED_CUDNN_LIBRARY}" DIRECTORY)
   flagdnn_register_benchmark_suite(
     PLATFORM iluvatar
+    OPERATORS ${_flagdnn_iluvatar_benchmark_partition}
     ADAPTER_TARGET flagdnn_benchmark_iluvatar_adapter
     BACKEND_TARGET flagdnn_backend_iluvatar
     COMMAND_ARGS
@@ -517,7 +520,7 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     LABELS "corex;cudnn;cuda_graph;paired"
     TIMEOUT 3600
     BUILD_RPATH "${_flagdnn_iluvatar_benchmark_cudnn_directory}")
-  foreach(_operator IN LISTS FLAGDNN_BENCHMARK_OPERATORS)
+  foreach(_operator IN LISTS _flagdnn_iluvatar_benchmark_partition)
     set_tests_properties("benchmark.iluvatar.${_operator}" PROPERTIES
       SKIP_RETURN_CODE 77)
   endforeach()

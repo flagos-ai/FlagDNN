@@ -36,6 +36,7 @@ foreach(line IN LISTS symbol_lines)
   if(symbol MATCHES "^FLAGDNN_0\\.[12]$" OR
      symbol STREQUAL
        "flagdnnGetExecutionContractVersion@@FLAGDNN_0.2" OR
+     symbol STREQUAL "flagdnnSetPointwiseBinaryOperationDescriptorWithAttributes@@FLAGDNN_0.2" OR
      (symbol MATCHES "^flagdnn[A-Za-z0-9_]*@@FLAGDNN_0\\.1$" AND
       NOT symbol MATCHES "^flagdnnGetExecutionContractVersion"))
     continue()

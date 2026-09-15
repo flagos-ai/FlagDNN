@@ -53,6 +53,10 @@ bool is_supported_data_type(flagdnnDataType_t data_type) {
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      throw std::invalid_argument(
+          "INT32 is not supported by this validation adapter");
+
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
@@ -60,6 +64,7 @@ std::string data_type_name(flagdnnDataType_t data_type) {
     case FLAGDNN_DATA_BFLOAT16:
       return "bfloat16";
     case FLAGDNN_DATA_BOOLEAN:
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -294,9 +299,9 @@ BenchmarkCase batchnorm_inference_reference_benchmark_case(
 std::vector<BatchnormInferenceTestCase>
 make_ascend_batchnorm_inference_cases(
     std::span<const BatchnormInferenceTestCase> common_cases) {
-  if (common_cases.size() != 12) {
+  if (common_cases.empty()) {
     throw std::invalid_argument(
-        "common BatchNorm inference functional catalog must contain 12 cases");
+        "common BatchNorm inference functional catalog must contain cases");
   }
   std::vector<BatchnormInferenceTestCase> result(
       common_cases.begin(), common_cases.end());
@@ -316,9 +321,9 @@ make_ascend_batchnorm_inference_cases(
 std::vector<BenchmarkCase>
 make_ascend_batchnorm_inference_benchmark_cases(
     std::span<const BenchmarkCase> common_cases) {
-  if (common_cases.size() != 24) {
+  if (common_cases.empty()) {
     throw std::invalid_argument(
-        "common BatchNorm inference benchmark catalog must contain 24 cases");
+        "common BatchNorm inference benchmark catalog must contain cases");
   }
   std::vector<BenchmarkCase> result(common_cases.begin(), common_cases.end());
   const BatchnormInferenceTestCase local =

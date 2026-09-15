@@ -22,10 +22,14 @@ std::string_view data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
     case FLAGDNN_DATA_FLOAT32:
       return "float32";
+    case FLAGDNN_DATA_INT32:
+      return "int32";
     case FLAGDNN_DATA_FLOAT16:
       return "float16";
     case FLAGDNN_DATA_BFLOAT16:
       return "bfloat16";
+    case FLAGDNN_DATA_FP8_E8M0:
+      return "fp8_e8m0";
     case FLAGDNN_DATA_BOOLEAN:
       return "boolean";
     case FLAGDNN_DATA_FP8_E4M3:

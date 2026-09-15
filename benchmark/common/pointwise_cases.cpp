@@ -23,12 +23,15 @@ constexpr std::array<flagdnnDataType_t, 3> kDataTypes = {
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return "int32";
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
       return "fp16";
     case FLAGDNN_DATA_BFLOAT16:
       return "bfloat16";
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -163,6 +166,13 @@ const std::vector<Shape>& benchmark_shapes() {
       {3, 257, 513},
       {3, 7, 65, 129},
       {5, 7, 65, 129},
+      {1, 1, 4096},
+      {3, 8, 128},
+      {2, 32, 17, 19},
+      {4, 64, 31, 33},
+      {16, 32, 64},
+      {8, 128, 128},
+      {2, 256, 63, 65},
   };
   return shapes;
 }
@@ -180,29 +190,15 @@ const std::vector<Shape>& identity_benchmark_shapes() {
       {16, 512, 1024},
       {2, 2048, 2048},
       {8, 1024, 2048},
+      {1, 1, 32},
+      {3, 257, 513},
   };
   return shapes;
 }
 
 std::vector<Shape> selected_benchmark_shapes(flagdnnPointwiseMode_t mode) {
-  const std::vector<Shape>& all = benchmark_shapes();
-  switch (mode) {
-    case FLAGDNN_POINTWISE_RECIPROCAL:
-      return {all[0], all[5]};
-    case FLAGDNN_POINTWISE_CEIL:
-      return {all[2], all[5]};
-    case FLAGDNN_POINTWISE_FLOOR:
-      return {all[2]};
-    case FLAGDNN_POINTWISE_ERF:
-    case FLAGDNN_POINTWISE_SIN:
-    case FLAGDNN_POINTWISE_COS:
-    case FLAGDNN_POINTWISE_TAN:
-      return {all[5]};
-    case FLAGDNN_POINTWISE_IDENTITY:
-      return identity_benchmark_shapes();
-    default:
-      return all;
-  }
+  return mode == FLAGDNN_POINTWISE_IDENTITY ? identity_benchmark_shapes()
+                                            : benchmark_shapes();
 }
 
 }  // namespace

@@ -219,6 +219,7 @@ if(FLAGDNN_BUILD_TESTS)
 
   flagdnn_register_functional_suite(
     PLATFORM mthreads
+    UNSUPPORTED_OPERATORS ${FLAGDNN_EXTENDED_OPERATORS} ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS}
     OPERATORS ${FLAGDNN_FUNCTIONAL_OPERATORS}
     ADAPTER_TARGET flagdnn_test_mthreads_adapter
     BACKEND_TARGET flagdnn_backend_mthreads
@@ -333,9 +334,12 @@ if(FLAGDNN_BUILD_BENCHMARKS)
       flagdnn_validation_mthreads_support)
   flagdnn_enable_warnings(flagdnn_benchmark_mthreads_adapter)
 
+  set(_flagdnn_mthreads_benchmark_operators ${FLAGDNN_BENCHMARK_OPERATORS})
+  list(REMOVE_ITEM _flagdnn_mthreads_benchmark_operators
+    ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS})
   flagdnn_register_benchmark_suite(
     PLATFORM mthreads
-    OPERATORS ${FLAGDNN_BENCHMARK_OPERATORS}
+    OPERATORS ${_flagdnn_mthreads_benchmark_operators}
     ADAPTER_TARGET flagdnn_benchmark_mthreads_adapter
     BACKEND_TARGET flagdnn_backend_mthreads
     COMMAND_ARGS

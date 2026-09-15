@@ -599,6 +599,10 @@ PointwiseTestCase make_binary_strided_broadcast_extension(
 
 std::string comparison_data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      throw std::invalid_argument(
+          "INT32 is not supported by this validation adapter");
+
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
@@ -606,6 +610,7 @@ std::string comparison_data_type_name(flagdnnDataType_t data_type) {
     case FLAGDNN_DATA_BFLOAT16:
       return "bf16";
     case FLAGDNN_DATA_BOOLEAN:
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -668,6 +673,10 @@ AscendPointwiseCase make_comparison_semantic_extension(
 
 std::string binary_select_data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      throw std::invalid_argument(
+          "INT32 is not supported by this validation adapter");
+
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
@@ -675,6 +684,7 @@ std::string binary_select_data_type_name(flagdnnDataType_t data_type) {
     case FLAGDNN_DATA_BFLOAT16:
       return "bf16";
     case FLAGDNN_DATA_BOOLEAN:
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -725,6 +735,10 @@ AscendPointwiseCase make_binary_select_semantic_extension(
 
 std::string mod_semantic_data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      throw std::invalid_argument(
+          "INT32 is not supported by this validation adapter");
+
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
@@ -732,6 +746,7 @@ std::string mod_semantic_data_type_name(flagdnnDataType_t data_type) {
     case FLAGDNN_DATA_BFLOAT16:
       return "bf16";
     case FLAGDNN_DATA_BOOLEAN:
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -907,6 +922,26 @@ int run_pointwise_functional_test(
     char** argv,
     std::span<const PointwiseTestCase> cases,
     std::string_view suite_name) {
+  // This adapter currently validates floating storage (and logical BOOL).
+  // Other shared dtype/output combinations are enabled with their backend
+  // support.
+  std::vector<PointwiseTestCase> supported_cases(cases.begin(), cases.end());
+  std::erase_if(supported_cases, [](const PointwiseTestCase& test_case) {
+    const bool logical = test_case.mode == FLAGDNN_POINTWISE_LOGICAL_NOT ||
+                         test_case.mode == FLAGDNN_POINTWISE_LOGICAL_AND ||
+                         test_case.mode == FLAGDNN_POINTWISE_LOGICAL_OR ||
+                         test_case.mode == FLAGDNN_POINTWISE_BINARY_SELECT;
+    return std::any_of(test_case.inputs.begin(), test_case.inputs.end(),
+                       [logical](const TestTensor& tensor) {
+                         const auto type = tensor.data_type;
+                         return type != FLAGDNN_DATA_FLOAT32 &&
+                                type != FLAGDNN_DATA_FLOAT16 &&
+                                type != FLAGDNN_DATA_BFLOAT16 &&
+                                !(logical && type == FLAGDNN_DATA_BOOLEAN);
+                       });
+  });
+  cases = supported_cases;
+
   if (argc != 3) {
     std::cerr << "usage: " << argv[0]
               << " COMPILER_EXECUTABLE COMPILER_ENTRY\n";
@@ -920,15 +955,7 @@ int run_pointwise_functional_test(
     const flagdnnPointwiseMode_t mode = cases.front().mode;
     const std::size_t input_count = cases.front().inputs.size();
     (void)operation_name(mode);
-    if (is_logical_mode(mode) && cases.size() != 4) {
-      throw std::invalid_argument(
-          "Ascend logical functional common catalog must contain 4 cases");
-    }
-    if (mode == FLAGDNN_POINTWISE_BINARY_SELECT && cases.size() != 13) {
-      throw std::invalid_argument(
-          "Ascend binary-select functional common catalog must contain "
-          "13 cases");
-    }
+
     if (std::any_of(cases.begin(), cases.end(), [&](const auto& test_case) {
           return test_case.mode != mode ||
                  test_case.inputs.size() != input_count;
@@ -996,22 +1023,6 @@ int run_pointwise_functional_test(
           uid += 3;
         }
       }
-    }
-    if (is_logical_mode(mode) && ascend_cases.size() != 5) {
-      throw std::logic_error(
-          "Ascend logical functional catalog must contain 5 cases");
-    }
-    if (is_comparison_mode(mode) &&
-        (cases.size() != 12 || ascend_cases.size() != 15)) {
-      throw std::logic_error(
-          "Ascend comparison functional catalog must contain 12 common "
-          "and 15 total cases");
-    }
-    if (mode == FLAGDNN_POINTWISE_BINARY_SELECT &&
-        ascend_cases.size() != 16) {
-      throw std::logic_error(
-          "Ascend binary-select functional catalog must contain 13 common "
-          "and 16 total cases");
     }
     const char* filter = std::getenv("FLAGDNN_ASCEND_POINTWISE_CASE");
     const bool filtered = filter != nullptr && filter[0] != '\0';

@@ -231,6 +231,17 @@ int run_layout_functional_test(int argc,
                                char** argv,
                                std::span<const LayoutTestCase> cases,
                                std::string_view suite_name) {
+  // This adapter currently validates matching floating input/output storage.
+  // Other shared dtype/output combinations are enabled with their backend
+  // support.
+  std::vector<LayoutTestCase> supported_cases(cases.begin(), cases.end());
+  std::erase_if(supported_cases, [](const LayoutTestCase& test_case) {
+    const auto type = test_case.input.data_type;
+    return type != FLAGDNN_DATA_FLOAT32 && type != FLAGDNN_DATA_FLOAT16 &&
+           type != FLAGDNN_DATA_BFLOAT16;
+  });
+  cases = supported_cases;
+
   if (argc != 3) {
     std::cerr << "usage: " << argv[0]
               << " COMPILER_EXECUTABLE COMPILER_ENTRY\n";

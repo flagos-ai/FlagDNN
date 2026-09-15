@@ -31,6 +31,8 @@ inline void check_frontend(fe::error_t status,
 
 inline fe::DataType_t frontend_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return fe::DataType_t::INT32;
     case FLAGDNN_DATA_FLOAT32:
       return fe::DataType_t::FLOAT;
     case FLAGDNN_DATA_FLOAT16:
@@ -41,6 +43,8 @@ inline fe::DataType_t frontend_data_type(flagdnnDataType_t data_type) {
       return fe::DataType_t::BOOLEAN;
     case FLAGDNN_DATA_FP8_E4M3:
       return fe::DataType_t::FP8_E4M3;
+    case FLAGDNN_DATA_FP8_E8M0:
+      return fe::DataType_t::FP8_E8M0;
     case FLAGDNN_DATA_FP8_E5M2:
       return fe::DataType_t::FP8_E5M2;
   }
@@ -114,6 +118,20 @@ inline fe::PointwiseMode_t frontend_pointwise_mode(
       return fe::PointwiseMode_t::LOGICAL_AND;
     case FLAGDNN_POINTWISE_LOGICAL_OR:
       return fe::PointwiseMode_t::LOGICAL_OR;
+    case FLAGDNN_POINTWISE_RELU_BWD:
+      return fe::PointwiseMode_t::RELU_BWD;
+    case FLAGDNN_POINTWISE_TANH_BWD:
+      return fe::PointwiseMode_t::TANH_BWD;
+    case FLAGDNN_POINTWISE_ELU_BWD:
+      return fe::PointwiseMode_t::ELU_BWD;
+    case FLAGDNN_POINTWISE_GELU_BWD:
+      return fe::PointwiseMode_t::GELU_BWD;
+    case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
+      return fe::PointwiseMode_t::SOFTPLUS_BWD;
+    case FLAGDNN_POINTWISE_SWISH_BWD:
+      return fe::PointwiseMode_t::SWISH_BWD;
+    case FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD:
+      return fe::PointwiseMode_t::GELU_APPROX_TANH_BWD;
     case FLAGDNN_POINTWISE_SIGMOID_BWD:
       return fe::PointwiseMode_t::SIGMOID_BWD;
     case FLAGDNN_POINTWISE_BINARY_SELECT:

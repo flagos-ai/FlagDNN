@@ -9,8 +9,11 @@ import importlib.util
 import io
 import json
 import os
+import re
 from pathlib import Path
 import signal
+import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -69,13 +72,395 @@ def invoke_main(runner, arguments: list[str]) -> tuple[int, str, str]:
     return exit_code, stdout.getvalue(), stderr.getvalue()
 
 
+def check_real_ctest_selectors(adapter) -> None:
+    ctest = shutil.which("ctest")
+    if ctest is None:
+        adjacent = Path(sys.executable).with_name("ctest")
+        if adjacent.is_file():
+            ctest = str(adjacent)
+    require(ctest is not None, "CTest is required to verify test selectors")
+    # CTest uses its own regular-expression engine. Python re accepting a
+    # selector does not prove that CTest can parse it or discover its tests.
+    functional = [
+        "functional.nvidia.matmul" + suffix
+        for suffix in (
+            "",
+            ".ieee",
+            ".tf32",
+            ".fp8",
+            ".host",
+            ".precision",
+            "_fp8",
+        )
+    ]
+    suffixes = (
+        "",
+        ".boolean",
+        ".copy",
+        ".ieee",
+        ".tf32",
+        ".fp32_output",
+        ".fp8",
+        ".int32",
+        ".host",
+        ".precision",
+        ".unknown",
+    )
+    operators = ("add", "matmul", "identity", "reduction")
+    benchmark = [
+        "benchmark.nvidia." + operator + suffix
+        for operator in operators
+        for suffix in suffixes
+    ]
+    with tempfile.TemporaryDirectory(prefix="flagdnn-ctest-selectors-") as tmp:
+        directory = Path(tmp)
+        (directory / "CTestTestfile.cmake").write_text(
+            "\n".join(
+                f'add_test({name} "{sys.executable}" "-c" "pass")'
+                for name in functional + benchmark
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        checks = [
+            ("functional", "matmul", set(functional[:4])),
+            *[
+                (
+                    "benchmark",
+                    operator,
+                    {
+                        "benchmark.nvidia." + operator + suffix
+                        for suffix in suffixes[:7]
+                    },
+                )
+                for operator in operators
+            ],
+        ]
+        for suite, operator, expected in checks:
+            output = subprocess.run(
+                [
+                    ctest,
+                    "--test-dir",
+                    str(directory),
+                    "--show-only=json-v1",
+                    "-R",
+                    adapter.test_expression(suite, operator),
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=20,
+            )
+            try:
+                selected = {
+                    test["name"] for test in json.loads(output.stdout)["tests"]
+                }
+            except (ValueError, KeyError) as error:
+                raise RuntimeError(
+                    f"CTest rejected {suite}/{operator} selector: "
+                    + output.stdout
+                    + output.stderr
+                ) from error
+            require(
+                selected == expected,
+                f"CTest selected wrong tests for {suite}/{operator}: "
+                f"{sorted(selected)} != {sorted(expected)}",
+            )
+
+
+def check_legacy_summary(runner) -> None:
+    # These keys and values are the public contract of the former runner,
+    # independent of the native diagnostic document and its internal names.
+    report = runner
+    case = "add_perf_bfloat16_2x3_by_2x3"
+    pair = {
+        name: {"median": value, "unit": "us"}
+        for name, value in (("flagdnn", 2.0), ("reference", 6.0))
+    }
+    functional = {
+        "status": "passed",
+        "duration_seconds": 0.25,
+        "exit_code": 0,
+        "case_counts": {
+            "passed": 12,
+            "failed": 0,
+            "skipped": 0,
+            "errors": 0,
+            "xfailed": 0,
+            "xpassed": 0,
+        },
+    }
+    benchmark = {
+        "status": "passed",
+        "duration_seconds": 1.5,
+        "exit_code": 0,
+        "test_case": "benchmark/test_add.cpp",
+        "records": {case: pair, case + "_strided": pair},
+    }
+    native = {
+        "timestamp_utc": "2026-09-14T00:00:00+00:00",
+        "overall_status": "passed",
+        "exit_code": 0,
+        "env": {"python": "3.12.0"},
+        "suite_operators": {"functional": ["add"], "benchmark": ["add"]},
+        "results": {"add": {"functional": functional, "benchmark": benchmark}},
+    }
+    public = report.summary_document(native)
+    require(
+        set(public) == {"timestamp", "env", "selected_suites", "result"},
+        "legacy report top-level contract changed",
+    )
+    require(
+        re.fullmatch(
+            r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", public["timestamp"]
+        )
+        is not None,
+        "legacy timestamp is not a local second-resolution string",
+    )
+    require(
+        public["selected_suites"] == {"add": ["accuracy", "performance"]},
+        "legacy suite mapping changed",
+    )
+    op = public["result"]["add"]
+    require(
+        op["implemented"] is True
+        and set(op) == {"implemented", "accuracy", "performance"},
+        "legacy operator keys changed",
+    )
+    require(
+        op["accuracy"]
+        == {
+            "status": "Passed",
+            "duration": 0.25,
+            "exit_code": 0,
+            "total": 12,
+            **functional["case_counts"],
+        },
+        "legacy accuracy counts/status/duration changed",
+    )
+    perf = op["performance"]
+    require(
+        set(perf) == {"status", "duration", "exit_code", "test_case", "data"},
+        "native performance fields leaked into legacy suite",
+    )
+    dtype = perf["data"]["bf16"]
+    require(
+        set(dtype) == {"result", "details", "speedup"}
+        and dtype["result"] == "OK"
+        and dtype["speedup"] == 3.0,
+        "legacy dtype grouping or arithmetic mean changed",
+    )
+    require(
+        len(dtype["details"]) == 2,
+        "same-shape layout variants were overwritten",
+    )
+    require(
+        dtype["details"][case]
+        == {"base": 0.006, "flag_dnn": 0.002, "gems": 0.002, "speedup": 3.0},
+        "legacy latency names, millisecond units or speedup changed",
+    )
+    rounding_records = {
+        f"add_fp32_case{index}": {
+            "flagdnn": {"median": 1.0, "unit": "us"},
+            "reference": {"median": speedup, "unit": "us"},
+        }
+        for index, speedup in enumerate((1.0e16, 1.0, 1.0))
+    }
+    require(
+        report.performance_data({"records": rounding_records})["fp32"][
+            "speedup"
+        ]
+        == 1.0e16 / 3,
+        "legacy sequential floating-point average changed",
+    )
+    for state, expected in (
+        ("failed", "Failed"),
+        ("skipped", "Skipped"),
+        ("timeout", "Timeout"),
+        ("not_found", "NotFound"),
+    ):
+        row = report.suite_result(
+            {"status": state, "duration_seconds": 2.0, "exit_code": None},
+            "benchmark",
+        )
+        require(
+            row["status"] == expected and row["data"] == {},
+            "legacy non-success status changed",
+        )
+        if state == "timeout":
+            require(
+                row["exit_code"] == -100, "legacy timeout sentinel changed"
+            )
+        elif state == "not_found":
+            require(row["exit_code"] == 5, "legacy no-tests sentinel changed")
+    require(
+        report.case_dtype("reduction_fp16_to_fp32_2_3") == "fp16"
+        and report.case_dtype("matmul_ae4m3_be4m3_mode3_16_16_32_out_bf16")
+        == "f8-e4m3fn",
+        "output dtype was mistaken for input dtype",
+    )
+    require(
+        public["env"]["flag_gems"] == public["env"]["flag_dnn"]
+        and isinstance(public["env"]["triton"], dict),
+        "psum_text environment aliases or fallback are incompatible",
+    )
+    for suite, task, missing in (
+        ("functional", functional, "performance"),
+        ("benchmark", benchmark, "accuracy"),
+    ):
+        partial = report.summary_document(
+            {
+                **native,
+                "env": {"triton": None},
+                "suite_operators": {suite: ["add"]},
+                "results": {"add": {suite: task}},
+            }
+        )
+        suites = partial["result"]["add"]
+        require(
+            suites[missing]["status"] == "Skipped"
+            and suites[missing]["reason"] == "Suite not selected"
+            and partial["selected_suites"]
+            == {"add": [report.SUITE_NAMES[suite]]}
+            and partial["env"]["triton"]["version"] == "unknown",
+            "single-suite report fabricated execution or cannot be rendered",
+        )
+        # Match psum_text's mandatory multi-operator lookups.
+        require(
+            all(
+                isinstance(suites["accuracy"][key], int)
+                for key in ("passed", "failed", "skipped")
+            )
+            and isinstance(suites["performance"]["data"], dict),
+            "single-suite report is missing mandatory psum_text fields",
+        )
+        if missing == "accuracy":
+            require(
+                suites[missing]["total"] == 0,
+                "unselected functional suite was counted as executed",
+            )
+    fp8_data = report.performance_data(
+        {
+            "records": {
+                f"matmul_a{fmt}_b{fmt}_16_16_32": pair
+                for fmt in ("e4m3", "e5m2")
+            }
+        }
+    )
+    require(
+        set(fp8_data) == {"f8-e4m3fn", "f8-e5m2"},
+        "FP8 measurements would be omitted by psum_text's dtype columns",
+    )
+    output = (
+        "12: a: reference PASS\n12: b: reference PASS\n"
+        "12: FLAGDNN_SUITE: PASS cases=2\n"
+        "12: FLAGDNN_SUITE: PASS cases=2\n"
+        "13: c: reference PASS\n13: ERROR: stopped\n"
+    )
+    counts = report.functional_counts(output, "failed")
+    require(
+        counts["passed"] == 3
+        and counts["errors"] == 1
+        and counts["total"] == 4,
+        "partial functional output was lost or counted twice",
+    )
+    for output, expected in (
+        ("7: SUITE: PASS cases=10 executed=7 skipped=3\n", (7, 3)),
+        ("7: SUITE: SKIP cases=10 executed=0 skipped=10\n", (0, 10)),
+        (
+            "8: SKIP case=unsupported_fp16 reason=not_supported\n"
+            "8: SKIP case=unsupported_fp16 reason=not_supported\n"
+            "8: SUITE: PASS cases=2 catalog_cases=3\n",
+            (2, 1),
+        ),
+    ):
+        counts = report.functional_counts(output, "passed")
+        require(
+            (counts["passed"], counts["skipped"]) == expected
+            and counts["total"] == sum(expected),
+            "native partial coverage was miscounted as successful cases",
+        )
+    with tempfile.TemporaryDirectory(prefix="flagdnn-legacy-report-") as tmp:
+        path = Path(tmp) / "summary.json"
+        runner.publish_summary(path, native)
+        published = json.loads(path.read_text())
+        require(
+            published["result"]["add"]["performance"]["data"] == perf["data"],
+            "published legacy data differs from the contract",
+        )
+        raw_path = (
+            path.parent
+            / published["result"]["add"]["performance"]["data_file"]
+        )
+        raw = json.loads(raw_path.read_text())["add"]
+        require(
+            raw["result"] == "passed"
+            and raw["details"][0]["dtype"] == "torch.bfloat16"
+            and raw["details"][0]["result"][0]["latency_base"] == 0.006,
+            "legacy performance data_file is missing or incompatible",
+        )
+        require(
+            json.loads(report.diagnostic_path(path).read_text()) == native,
+            "native diagnostics lost information",
+        )
+        original_raw = raw_path.read_bytes()
+        changed = json.loads(json.dumps(native))
+        changed["results"]["add"]["benchmark"]["records"][case]["flagdnn"][
+            "median"
+        ] = 4.0
+        # Separate reports and repeated publication of the same report must
+        # both preserve the data referenced by an earlier copied summary.
+        for destination in (path.with_name("second.json"), path):
+            runner.publish_summary(destination, changed)
+            require(
+                raw_path.read_bytes() == original_raw,
+                "publishing another report overwrote historical measurements",
+            )
+
+        runner.publish_summary(path, {"overall_status": "running"})
+        old_public = path.read_bytes()
+        old_native = report.diagnostic_path(path).read_bytes()
+        original_write = runner.atomic_write_summary
+        for failure_target in ("performance_result.json", path.name):
+            directories = set(path.parent.iterdir())
+
+            def fail_write(destination, document):
+                if destination.name == failure_target:
+                    raise OSError("injected publication failure")
+                original_write(destination, document)
+
+            runner.atomic_write_summary = fail_write
+            try:
+                try:
+                    runner.publish_summary(path, native)
+                except OSError:
+                    pass
+                else:
+                    raise RuntimeError("publication failure was ignored")
+            finally:
+                runner.atomic_write_summary = original_write
+            require(
+                path.read_bytes() == old_public
+                and report.diagnostic_path(path).read_bytes() == old_native
+                and set(path.parent.iterdir()) == directories,
+                "failed publication exposed success or left unused data files",
+            )
+        runner.publish_summary(path, {"overall_status": "running"})
+        require(
+            json.loads(path.read_text())["result"] == {},
+            "starting another run left stale public success",
+        )
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         raise RuntimeError("usage: run_tests_contract.py RUN_TESTS_PY")
     runner = load_runner(Path(sys.argv[1]).resolve())
+    check_legacy_summary(runner)
     hygon = runner.load_platform_adapter("hygon")
     ascend = runner.load_platform_adapter("ascend")
     nvidia = runner.load_platform_adapter("nvidia")
+    check_real_ctest_selectors(nvidia)
     iluvatar = runner.load_platform_adapter("iluvatar")
     require(
         hygon is not None
@@ -84,12 +469,289 @@ def main() -> int:
         and iluvatar is not None,
         "repository platform test adapters are incomplete",
     )
+    runtime_record = json.loads(timing("runtime_profile", "flagdnn"))
+    runtime_record.update(
+        {
+            "schema_version": 3,
+            "host_submit_us": {
+                "median": 2.0,
+                "p90": 3.0,
+                "samples": [1.0, 2.0, 3.0],
+            },
+            "build_us": 1000.0,
+            "warm_build_us": 100.0,
+            "workspace_bytes": 0,
+            "build_cache": "fresh_artifact_cache",
+        }
+    )
+    records, errors = runner.benchmark_records(
+        json.dumps(runtime_record), nvidia
+    )
+    require(
+        not errors and records["runtime_profile"]["flagdnn"] == runtime_record,
+        "NVIDIA runtime metrics were rejected or lost",
+    )
+    native_record = {
+        **runtime_record,
+        "case": "native/test",
+        "comparison": "none",
+    }
+    records, errors = runner.benchmark_records(
+        json.dumps(native_record), nvidia
+    )
+    require(
+        bool(errors) and not records,
+        "NVIDIA accepted a benchmark record without a cuDNN comparison",
+    )
+    for field, invalid in (
+        ("case", "ordinary"),
+        ("case", "native/"),
+        ("provider", "cudnn"),
+        ("comparison", "unknown"),
+        ("median", 0.0),
+    ):
+        _, errors = runner.benchmark_records(
+            json.dumps({**native_record, field: invalid}), nvidia
+        )
+        require(bool(errors), f"invalid native record {field} was accepted")
+    for operator in (
+        "logical_not",
+        "add",
+        "matmul",
+        "reduction",
+        "matmul_fp8",
+    ):
+        expression = nvidia.test_expression("benchmark", operator)
+        require(
+            re.fullmatch(expression, f"benchmark.nvidia.{operator}")
+            is not None,
+            "base benchmark is missing from the NVIDIA test expression",
+        )
+        for suffix in (
+            "boolean",
+            "copy",
+            "ieee",
+            "tf32",
+            "fp32_output",
+            "fp8",
+        ):
+            require(
+                re.fullmatch(
+                    expression, f"benchmark.nvidia.{operator}.{suffix}"
+                )
+                is not None,
+                "dtype benchmark is missing from the NVIDIA test expression",
+            )
+        require(
+            re.fullmatch(
+                expression, f"benchmark.nvidia.{operator}.unregistered"
+            )
+            is None,
+            "NVIDIA test expression accepted an unknown dtype suffix",
+        )
+    for field, invalid in (
+        ("schema_version", 99),
+        ("schema_version", 3.0),
+        ("workspace_bytes", -1),
+        ("workspace_bytes", True),
+        ("build_us", 0),
+        ("warm_build_us", float("nan")),
+        ("build_cache", "unknown"),
+        ("build_cache", []),
+        ("build_cache", {}),
+        ("host_submit_us", {"median": 1.0, "p90": 1.0, "samples": [2.0]}),
+    ):
+        malformed = {**runtime_record, field: invalid}
+        _, errors = runner.benchmark_records(json.dumps(malformed), nvidia)
+        require(bool(errors), f"invalid runtime metric {field} was accepted")
+
+    require(nvidia.SUPPORTS_MIN_SPEEDUP, "NVIDIA speedup gate is unavailable")
+
+    def nvidia_outcome(
+        records,
+        threshold=0.9,
+        *,
+        reasons=None,
+        status="passed",
+        preflight=True,
+    ):
+        return nvidia.finalize(
+            results={
+                "add": {
+                    "benchmark": {
+                        "status": status,
+                        "records": records,
+                        "reference_unsupported": reasons or {},
+                    }
+                }
+            },
+            suite_operators={"benchmark": ["add"]},
+            suites=["benchmark"],
+            state={},
+            min_speedup=threshold,
+            preflight_passed=preflight,
+        )
+
+    pair = {
+        "flagdnn": {"median": 10.0, "unit": "us"},
+        "cudnn": {"median": 9.0, "unit": "us"},
+    }
+    exact = nvidia_outcome({"exact": pair})
+    require(
+        not exact["failed"] and exact["summary"]["performance"]["gate_passed"],
+        "speedup exactly at 0.9 must pass",
+    )
+    native_providers = {"flagdnn": native_record}
+    native_outcome = nvidia_outcome({"native/test": native_providers})
+    require(
+        native_outcome["failed"]
+        and native_outcome["summary"]["comparable_coverage"]["incomplete"],
+        "NVIDIA accepted a single-provider benchmark outcome",
+    )
+    mixed = nvidia_outcome({"exact": pair, "native/test": native_providers})
+    require(
+        mixed["failed"]
+        and mixed["summary"]["performance"]["case_count"] == 1
+        and not mixed["summary"]["comparable_coverage"]["complete"],
+        "a valid pair concealed an unpaired NVIDIA benchmark",
+    )
+    for invalid in (0, float("nan"), float("inf"), True):
+        require(
+            nvidia_outcome(
+                {
+                    "native/test": {
+                        "flagdnn": {**native_record, "median": invalid}
+                    }
+                }
+            )["failed"],
+            "invalid native timing passed finalization",
+        )
+    task = {"status": "passed"}
+    nvidia.postprocess_result(
+        result=task,
+        ctest_reported_status="passed",
+        output="",
+        operator="add",
+        suite="benchmark",
+        records={"native/test": native_providers},
+        manifest_operators=["add"],
+    )
+    require(
+        task["status"] == "failed",
+        "single-provider NVIDIA benchmark bypassed postprocessing",
+    )
+    slow_pair = {**pair, "cudnn": {"median": 8.0, "unit": "us"}}
+    slow = nvidia_outcome(
+        {
+            "slow": slow_pair,
+            "fast": {**pair, "cudnn": {"median": 90.0, "unit": "us"}},
+        }
+    )
+    require(
+        slow["failed"]
+        and slow["summary"]["performance"]["failed_case_count"] == 1
+        and slow["summary"]["performance"]["failures"][0]["case"] == "slow",
+        "fast cases must not hide a below-target NVIDIA case",
+    )
+    unpaired = {"flagdnn": pair["flagdnn"]}
+    mixed = nvidia_outcome(
+        {"exact": pair, "unsupported": unpaired},
+        reasons={"unsupported": "layout"},
+    )
+    require(
+        mixed["failed"]
+        and mixed["summary"]["performance"]["case_count"] == 1
+        and mixed["summary"]["comparable_coverage"]["unsupported_case_count"]
+        == 1
+        and not mixed["summary"]["comparable_coverage"][
+            "all_cases_comparable"
+        ],
+        "unsupported references must fail the NVIDIA benchmark run",
+    )
+    require(
+        nvidia_outcome(
+            {"exact": pair, "unsupported": unpaired},
+            threshold=None,
+            reasons={"unsupported": "layout"},
+        )["failed"],
+        "missing NVIDIA references must fail even without a speedup threshold",
+    )
+    for records, reasons in (
+        ({}, {}),
+        ({"missing": unpaired}, {}),
+        ({"unsupported": unpaired}, {"unsupported": "layout"}),
+    ):
+        require(
+            nvidia_outcome(records, reasons=reasons)["failed"],
+            "empty/missing/unsupported-only NVIDIA timings "
+            "produced a false-green gate",
+        )
+    for status in ("failed", "timeout", "skipped", "not_found"):
+        require(
+            nvidia_outcome({"exact": pair}, status=status)["failed"],
+            "unsuccessful NVIDIA benchmark passed its speedup gate",
+        )
+    require(
+        nvidia_outcome({"exact": pair}, preflight=False)["failed"],
+        "NVIDIA speedup gate ignored failed preflight",
+    )
+    for invalid in (0.0, -1.0, float("nan"), float("inf"), True):
+        require(
+            nvidia_outcome(
+                {
+                    "invalid": {
+                        **pair,
+                        "flagdnn": {"median": invalid, "unit": "us"},
+                    }
+                }
+            )["failed"],
+            "invalid NVIDIA GPU timing passed its speedup gate",
+        )
+    require(
+        nvidia_outcome(
+            {
+                "overflow": {
+                    "flagdnn": {"median": 1.0e-300, "unit": "us"},
+                    "cudnn": {"median": 1.0e300, "unit": "us"},
+                }
+            }
+        )["failed"],
+        "nonfinite NVIDIA speedup produced a false-green gate",
+    )
+    informational = nvidia_outcome({"slow": slow_pair}, threshold=None)
+    require(
+        not informational["failed"]
+        and informational["summary"]["performance"]["gate_passed"] is None,
+        "NVIDIA informational performance reporting must not "
+        "invent a threshold",
+    )
+    for output, providers, expected in (
+        ("1: case: cuDNN UNSUPPORTED: layout\n", unpaired, "failed"),
+        ("case: cuDNN UNSUPPORTED: layout\n", unpaired, "failed"),
+        ("", unpaired, "failed"),
+        ("case: cuDNN UNSUPPORTED: layout\n", pair, "failed"),
+    ):
+        task = {"status": "passed"}
+        nvidia.postprocess_result(
+            result=task,
+            ctest_reported_status="passed",
+            output=output,
+            operator="add",
+            suite="benchmark",
+            records={"case": providers},
+            manifest_operators=["add"],
+        )
+        require(
+            task["status"] == expected,
+            "NVIDIA missing-reference evidence was mishandled",
+        )
     require(
         hygon.PREFLIGHT_BY_DEFAULT
         and iluvatar.PREFLIGHT_BY_DEFAULT
         and not ascend.PREFLIGHT_BY_DEFAULT
         and not nvidia.PREFLIGHT_BY_DEFAULT
-        and ascend.DEFAULT_TIMEOUT == 7200,
+        and ascend.DEFAULT_TIMEOUT == 7200
+        and nvidia.DEFAULT_TIMEOUT == 3600,
         "platform adapter defaults changed unexpectedly",
     )
     runner_source = Path(runner.__file__).read_text(encoding="utf-8").lower()
@@ -109,6 +771,23 @@ def main() -> int:
             f"generic runner contains platform policy: {platform_detail}",
         )
     manifests = runner.operator_manifests()
+    nvidia_manifests = nvidia.select_operator_manifests(manifests)
+    unsupported_nvidia = {
+        "genstats",
+        "rng",
+        "rope",
+        "rope_backward",
+        "moe_grouped_matmul_bwd",
+    }
+    require(
+        set(nvidia_manifests["functional"])
+        == set(manifests["functional"]) - unsupported_nvidia
+        and set(nvidia_manifests["benchmark"])
+        == set(manifests["functional"]) - unsupported_nvidia
+        and not nvidia.FILTER_REGISTERED_TESTS,
+        "NVIDIA cuDNN qualification must exclude unsupported standalone "
+        "operators and retain missing-test errors",
+    )
     manifest_operators = list(
         dict.fromkeys(
             operator
@@ -116,12 +795,11 @@ def main() -> int:
             for operator in manifest
         )
     )
-    repository_comparable_catalog = (
-        hygon.load_hygon_comparable_case_catalog(manifests["benchmark"])
+    repository_comparable_catalog = hygon.load_hygon_comparable_case_catalog(
+        manifests["benchmark"]
     )
     require(
-        repository_comparable_catalog["metric"]
-        == hygon.SPEEDUP_METRIC
+        repository_comparable_catalog["metric"] == hygon.SPEEDUP_METRIC
         and repository_comparable_catalog["declared_operator_count"] > 0
         and repository_comparable_catalog["declared_case_count"] > 0
         and repository_comparable_catalog["declared_case_count"]
@@ -154,9 +832,7 @@ def main() -> int:
             "benchmark": {
                 "status": "passed",
                 "records": {
-                    "add_perf_required_a": provider_pair(
-                        "add_perf_required_a"
-                    )
+                    "add_perf_required_a": provider_pair("add_perf_required_a")
                 },
             }
         }
@@ -266,7 +942,7 @@ def main() -> int:
                             "flagdnn": flagdnn_record,
                             "hipdnn": hipdnn_record,
                         }
-                    }
+                    },
                 }
             }
         },
@@ -375,14 +1051,13 @@ def main() -> int:
             "valid comparable-case catalog was rejected",
         )
         require(
-            parsed_catalog["catalog_path"] == str(valid_catalog_path.resolve()),
+            parsed_catalog["catalog_path"]
+            == str(valid_catalog_path.resolve()),
             "parsed comparable-case catalog lost its source path",
         )
 
         malformed_catalogs = {
-            "wrong-owner": catalog_document(
-                {"add": ["mul_perf_wrong_owner"]}
-            ),
+            "wrong-owner": catalog_document({"add": ["mul_perf_wrong_owner"]}),
             "duplicate-case": catalog_document(
                 {"add": ["add_perf_duplicate", "add_perf_duplicate"]}
             ),
@@ -468,9 +1143,10 @@ def main() -> int:
 
         def recording_replace(source, destination) -> None:
             original_replace(source, destination)
-            observed_states.append(
-                json.loads(Path(destination).read_text(encoding="utf-8"))
-            )
+            if Path(destination) == runner.diagnostic_path(summary_path):
+                observed_states.append(
+                    json.loads(Path(destination).read_text(encoding="utf-8"))
+                )
 
         runner.os.replace = recording_replace
         try:
@@ -492,7 +1168,9 @@ def main() -> int:
             "summary did not atomically invalidate stale success before "
             "publishing early failure",
         )
-        early_failure = json.loads(summary_path.read_text(encoding="utf-8"))
+        early_failure = json.loads(
+            runner.diagnostic_path(summary_path).read_text(encoding="utf-8")
+        )
         require(
             early_failure["schema_version"] == 2
             and early_failure["overall_status"] == "failed"
@@ -508,7 +1186,9 @@ def main() -> int:
         exit_code, _, _ = invoke_main(
             runner, ["--list", "--output", str(summary_path)]
         )
-        listed_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        listed_summary = json.loads(
+            runner.diagnostic_path(summary_path).read_text(encoding="utf-8")
+        )
         require(
             exit_code == 0
             and listed_summary["schema_version"] == 2
@@ -530,7 +1210,7 @@ def main() -> int:
             ],
         )
         argument_failure = json.loads(
-            summary_path.read_text(encoding="utf-8")
+            runner.diagnostic_path(summary_path).read_text(encoding="utf-8")
         )
         require(
             exit_code == 2
@@ -543,7 +1223,9 @@ def main() -> int:
         exit_code, _, _ = invoke_main(
             runner, ["--help", "--output", str(summary_path)]
         )
-        help_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        help_summary = json.loads(
+            runner.diagnostic_path(summary_path).read_text(encoding="utf-8")
+        )
         require(
             exit_code == 0
             and help_summary["overall_status"] == "passed"
@@ -611,7 +1293,7 @@ def main() -> int:
         finally:
             hygon.load_hygon_comparable_case_catalog = original_catalog_loader
         malformed_main_summary = json.loads(
-            summary_path.read_text(encoding="utf-8")
+            runner.diagnostic_path(summary_path).read_text(encoding="utf-8")
         )
         require(
             exit_code == 2
@@ -622,7 +1304,9 @@ def main() -> int:
         )
 
         original_run_one = runner.run_one
-        required_add_case = repository_comparable_catalog["operators"]["add"][0]
+        required_add_case = repository_comparable_catalog["operators"]["add"][
+            0
+        ]
 
         def partial_add_benchmark(**_arguments):
             return {
@@ -656,7 +1340,7 @@ def main() -> int:
         finally:
             runner.run_one = original_run_one
         partial_main_summary = json.loads(
-            summary_path.read_text(encoding="utf-8")
+            runner.diagnostic_path(summary_path).read_text(encoding="utf-8")
         )
         require(
             exit_code == 1
@@ -697,7 +1381,7 @@ def main() -> int:
         finally:
             runner.run_one = original_run_one
         undeclared_main_summary = json.loads(
-            summary_path.read_text(encoding="utf-8")
+            runner.diagnostic_path(summary_path).read_text(encoding="utf-8")
         )
         undeclared_coverage = undeclared_main_summary["comparable_coverage"]
         require(
@@ -737,7 +1421,7 @@ def main() -> int:
         finally:
             runner.run_one = original_run_one
         functional_only_summary = json.loads(
-            summary_path.read_text(encoding="utf-8")
+            runner.diagnostic_path(summary_path).read_text(encoding="utf-8")
         )
         require(
             exit_code == 0
@@ -775,7 +1459,7 @@ def main() -> int:
         finally:
             runner.run_one = original_run_one
         nvidia_skip_summary = json.loads(
-            summary_path.read_text(encoding="utf-8")
+            runner.diagnostic_path(summary_path).read_text(encoding="utf-8")
         )
         require(
             exit_code == 1
@@ -869,11 +1553,13 @@ def main() -> int:
             except AssertionError:
                 pass
             else:
-                raise RuntimeError("synthetic unexpected failure was swallowed")
+                raise RuntimeError(
+                    "synthetic unexpected failure was swallowed"
+                )
         finally:
             runner.operator_manifests = original_operator_manifests
         interrupted_summary = json.loads(
-            summary_path.read_text(encoding="utf-8")
+            runner.diagnostic_path(summary_path).read_text(encoding="utf-8")
         )
         require(
             interrupted_summary["overall_status"] == "running"
@@ -883,6 +1569,7 @@ def main() -> int:
 
     hygon_preflight = runner.required_preflight_tests("hygon")
     for required_contract in (
+        "core.kernel_registry_contract",
         "integration.hygon.jit_candidate_compatibility_contract",
         "integration.hygon.jit_global_state_contract",
         "integration.hygon.convolution_validation_static_contract",
@@ -893,8 +1580,8 @@ def main() -> int:
             f"Hygon preflight omits {required_contract}",
         )
     require(
-        len(hygon_preflight) == 28,
-        "Hygon preflight required-test count is not 28",
+        len(hygon_preflight) == 29,
+        "Hygon preflight required-test count is not 29",
     )
     functional_preflight = runner.required_preflight_tests(
         "hygon", ["functional"]
@@ -909,6 +1596,18 @@ def main() -> int:
         "nvidia", ["functional"]
     )
     for required_contract in (
+        "core.autotune_policy",
+        "core.library_abi",
+        "core.build_environment.parallel",
+        "core.build_environment.parallel_handles",
+        "core.build_environment.parallel_cold_handles",
+        "core.build_environment.fail",
+        "core.build_environment.not_ready",
+        "integration.nvidia.compiler_contract",
+        "integration.nvidia.artifact_contract",
+        "integration.nvidia.tensor_map_first",
+        "integration.nvidia.short_map_first",
+        "integration.nvidia.execution_contract",
         "integration.nvidia.dependency_boundary",
         "integration.nvidia.reference_dependency_boundary",
         "integration.nvidia.runtime",
@@ -950,8 +1649,13 @@ def main() -> int:
         nvidia_matmul_command.index("-R") + 1
     ]
     require(
-        "matmul(\\.host)?" in nvidia_matmul_expression,
-        "NVIDIA functional matmul command omits the host-oracle test",
+        all(
+            re.fullmatch(
+                nvidia_matmul_expression, "functional.nvidia.matmul" + suffix
+            )
+            for suffix in ("", ".ieee", ".tf32", ".fp8")
+        ),
+        "NVIDIA matmul selection omits a functional dtype branch",
     )
 
     discovery_commands: list[list[str]] = []
@@ -987,7 +1691,8 @@ def main() -> int:
     finally:
         runner.run_process_group = original_run_process_group
     require(
-        filtered_manifests == {
+        filtered_manifests
+        == {
             "functional": ["add"],
             "benchmark": ["matmul"],
         }
@@ -1006,8 +1711,7 @@ def main() -> int:
         + timing("add_fp32_2x3", "flagdnn")
     )
     require(
-        not diagnostic_errors
-        and set(diagnostic_records) == {"add_fp32_2x3"},
+        not diagnostic_errors and set(diagnostic_records) == {"add_fp32_2x3"},
         "non-timing structured diagnostic was treated as benchmark data",
     )
     _, malformed_timing_errors = runner.benchmark_records(
@@ -1113,7 +1817,7 @@ def main() -> int:
         ("batchnorm_inference", "batchnorm"),
         ("sdpa_backward", "sdpa"),
     ):
-        overlapping = {
+        overlapping: dict[str, dict[str, dict[str, object]]] = {
             f"{longer}_fp32_case": {
                 "flagdnn": {},
                 "hipdnn": {},
@@ -1130,7 +1834,7 @@ def main() -> int:
         operator = f"conv_{direction}"
         for spatial_rank in (1, 2, 3):
             case = f"conv{spatial_rank}d_{direction}_fp32_case"
-            convolution_records = {
+            convolution_records: dict[str, dict[str, dict[str, object]]] = {
                 case: {"flagdnn": {}, "hipdnn": {}}
             }
             require(
@@ -1179,9 +1883,7 @@ def main() -> int:
         "xconv2d_dgrad_fp32_case",
     ):
         require(
-            hygon.benchmark_case_operator(
-                invalid_case, manifest_operators
-            )
+            hygon.benchmark_case_operator(invalid_case, manifest_operators)
             is None,
             f"invalid convolution case alias accepted: {invalid_case}",
         )
@@ -1198,9 +1900,7 @@ def main() -> int:
         "valid Hygon skip rejected",
     )
     require(
-        hygon.validate_hygon_skip_records(
-            skips, "mul", manifest_operators
-        ),
+        hygon.validate_hygon_skip_records(skips, "mul", manifest_operators),
         "wrong-operator Hygon skip accepted",
     )
     require(
@@ -1214,8 +1914,7 @@ def main() -> int:
         "reason=HIPDNN_STATUS_NOT_SUPPORTED",
         "[SKIP][hipdnn] reason=HIPDNN_STATUS_NOT_SUPPORTED "
         "op=add case=add_fp32_2x3",
-        "[SKIP][hipdnn] op=add reason=missing-case "
-        "case=add_fp32_2x3",
+        "[SKIP][hipdnn] op=add reason=missing-case " "case=add_fp32_2x3",
     ):
         malformed_records = hygon.hipdnn_skip_records(malformed_skip)
         require(
@@ -1475,9 +2174,7 @@ def main() -> int:
         "FLAGDNN_SDPA_FP8_BACKWARD_CASE": "small",
         "FLAGDNN_BENCHMARK_CASE": "add_fp32_case",
     }
-    explicit = runner.device_environment(
-        "hygon", "0", operator_environment
-    )
+    explicit = runner.device_environment("hygon", "0", operator_environment)
     require(
         explicit.get("HIP_VISIBLE_DEVICES") == "0"
         and not any(
@@ -1486,14 +2183,9 @@ def main() -> int:
         ),
         "explicit Hygon device selection is not isolated",
     )
-    unmasked = runner.device_environment(
-        "hygon", None, operator_environment
-    )
+    unmasked = runner.device_environment("hygon", None, operator_environment)
     require(
-        not any(
-            hygon.CASE_FILTER_PATTERN.fullmatch(name)
-            for name in unmasked
-        )
+        not any(hygon.CASE_FILTER_PATTERN.fullmatch(name) for name in unmasked)
         and unmasked.get("HIP_VISIBLE_DEVICES") == "0"
         and unmasked.get("CUDA_VISIBLE_DEVICES") == "stale",
         "Hygon runner retained a FLAGDNN_*_CASE filter",
@@ -1586,9 +2278,7 @@ while True:
                 encoding="utf-8",
             )
 
-            original_term_grace = (
-                runner.PROCESS_TERMINATION_GRACE_SECONDS
-            )
+            original_term_grace = runner.PROCESS_TERMINATION_GRACE_SECONDS
             original_kill_grace = runner.PROCESS_KILL_GRACE_SECONDS
             original_poll = runner.PROCESS_CLEANUP_POLL_SECONDS
             runner.PROCESS_TERMINATION_GRACE_SECONDS = 0.1
@@ -1688,9 +2378,7 @@ while True:
                 ):
                     time.sleep(0.02)
                 require(
-                    not any(
-                        process_is_live(pid, session_id) for pid in pids
-                    )
+                    not any(process_is_live(pid, session_id) for pid in pids)
                     and not runner._session_process_groups(session_id),
                     f"{label} left a live nested process-group orphan",
                 )
@@ -1700,9 +2388,7 @@ while True:
                 exercise_session_cleanup("sigterm", signal.SIGTERM)
                 exercise_session_cleanup("sighup", signal.SIGHUP)
             finally:
-                runner.PROCESS_TERMINATION_GRACE_SECONDS = (
-                    original_term_grace
-                )
+                runner.PROCESS_TERMINATION_GRACE_SECONDS = original_term_grace
                 runner.PROCESS_KILL_GRACE_SECONDS = original_kill_grace
                 runner.PROCESS_CLEANUP_POLL_SECONDS = original_poll
 

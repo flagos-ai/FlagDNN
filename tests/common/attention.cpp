@@ -60,6 +60,8 @@ TestTensor stats_tensor(std::int64_t uid,
 
 fe::DataType_t frontend_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return fe::DataType_t::INT32;
     case FLAGDNN_DATA_FLOAT32:
       return fe::DataType_t::FLOAT;
     case FLAGDNN_DATA_FLOAT16:
@@ -70,6 +72,8 @@ fe::DataType_t frontend_data_type(flagdnnDataType_t data_type) {
       break;
     case FLAGDNN_DATA_FP8_E4M3:
       return fe::DataType_t::FP8_E4M3;
+    case FLAGDNN_DATA_FP8_E8M0:
+      return fe::DataType_t::FP8_E8M0;
     case FLAGDNN_DATA_FP8_E5M2:
       return fe::DataType_t::FP8_E5M2;
   }
@@ -501,6 +505,99 @@ SdpaFp8BackwardTestCase make_fp8_backward_case(
   return result;
 }
 
+// Distinct Q/K/V shapes exercise batch size, grouped heads, rectangular
+// sequences, and several tile boundaries. Performance uses longer sequences.
+std::vector<AttentionShape> coverage_shapes(bool benchmark, bool fp8) {
+  std::vector<AttentionShape> shapes = {
+      {1, 1, 1, 1, 16, 16, 32, 32},
+      {1, 2, 2, 2, 24, 32, 32, 32},
+      {1, 2, 2, 2, 32, 48, 64, 64},
+      {1, 4, 2, 2, 48, 48, 64, 64},
+      {1, 2, 2, 2, 64, 64, 64, 64},
+      {2, 2, 2, 2, 32, 32, 64, 64},
+      {2, 4, 2, 2, 48, 64, 64, 64},
+      {1, 2, 2, 2, 80, 96, 128, 128},
+      {1, 4, 4, 4, 96, 96, 64, 64},
+      {1, 4, 2, 2, 112, 128, 64, 64},
+      {2, 2, 2, 2, 64, 80, 128, 128},
+      {1, 8, 2, 2, 128, 128, 64, 64},
+  };
+  for (auto& shape : shapes) {
+    if (fp8) shape.head_dimension = shape.value_dimension = 128;
+    if (benchmark) {
+      shape.sequence_q *= 4;
+      shape.sequence_kv *= 4;
+    }
+  }
+  return shapes;
+}
+
+template <typename Case, typename Factory>
+void append_coverage_cases(std::vector<Case>& cases,
+                           std::string_view operation,
+                           Factory&& factory,
+                           bool benchmark,
+                           bool fp8) {
+  std::vector<flagdnnDataType_t> types =
+      fp8 ? std::vector{FLAGDNN_DATA_FP8_E4M3, FLAGDNN_DATA_FP8_E5M2}
+          : std::vector{FLAGDNN_DATA_FLOAT16, FLAGDNN_DATA_BFLOAT16};
+  // FP32 has functional coverage; cuDNN cannot execute its SDPA references.
+  if (!fp8 && !benchmark) {
+    types.push_back(FLAGDNN_DATA_FLOAT32);
+  }
+  std::int64_t uid = 80000;
+  for (const AttentionShape& shape : coverage_shapes(benchmark, fp8)) {
+    for (const auto data_type : types) {
+      const char* type_name = data_type == FLAGDNN_DATA_FLOAT32 ? "fp32" :
+          data_type == FLAGDNN_DATA_FLOAT16 ? "fp16" :
+          data_type == FLAGDNN_DATA_BFLOAT16 ? "bfloat16" :
+          data_type == FLAGDNN_DATA_FP8_E4M3 ? "e4m3" : "e5m2";
+      std::string name = std::string(operation) +
+                         (benchmark ? "_perf_" : "_coverage_") + type_name;
+      for (const auto dimension : {shape.batch, shape.query_heads,
+               shape.key_heads, shape.sequence_q, shape.sequence_kv,
+               shape.head_dimension}) {
+        name += "_" + std::to_string(dimension);
+      }
+      Case test_case = factory(name, uid, data_type,
+          Shape{shape.batch, shape.query_heads, shape.sequence_q, shape.head_dimension},
+          Shape{shape.batch, shape.key_heads, shape.sequence_kv, shape.head_dimension},
+          Shape{shape.batch, shape.value_heads, shape.sequence_kv, shape.value_dimension});
+      test_case.options.attention_scale =
+          1.0F / std::sqrt(static_cast<float>(shape.head_dimension));
+      if (shape.query_heads != shape.key_heads &&
+          shape.sequence_q == shape.sequence_kv) {
+        test_case.options.diagonal_band_right_bound = 0;
+      }
+      if (data_type == FLAGDNN_DATA_FLOAT32) {
+        // FLOAT dot products may use TF32 in either implementation.
+        if constexpr (requires { test_case.output_absolute_tolerance; }) {
+          test_case.output_absolute_tolerance = 5.0e-4;
+          test_case.output_relative_tolerance = 5.0e-4;
+          test_case.stats_absolute_tolerance = 5.0e-4;
+          test_case.stats_relative_tolerance = 5.0e-4;
+        }
+        if constexpr (requires { test_case.absolute_tolerance; }) {
+          test_case.absolute_tolerance = 5.0e-4;
+          test_case.relative_tolerance = 5.0e-4;
+        }
+      }
+      test_case.autotune = benchmark;
+      cases.push_back(test_case);
+      if (!benchmark && operation == "sdpa_fp8" &&
+          shape.batch == 2 && shape.query_heads == 4 &&
+          shape.sequence_q == 48 && shape.sequence_kv == 64) {
+        // Exercise the complete search as well as the untuned default on
+        // the rectangular GQA shape that exposed unsafe FP8 tile layouts.
+        test_case.name += "_autotune";
+        test_case.autotune = true;
+        cases.push_back(std::move(test_case));
+      }
+      uid += 40;
+    }
+  }
+}
+
 }  // namespace
 
 std::vector<SdpaTestCase> make_sdpa_cases() {
@@ -550,6 +647,7 @@ std::vector<SdpaTestCase> make_sdpa_cases() {
   inference.stats.reset();
   result.push_back(std::move(inference));
 
+  append_coverage_cases(result, "sdpa", make_forward_case, false, false);
   for (const SdpaTestCase& test_case : result) {
     validate_sdpa_case(test_case);
   }
@@ -593,19 +691,75 @@ std::vector<SdpaBackwardTestCase> make_sdpa_backward_cases() {
   different_v_dimension.autotune = true;
   result.push_back(std::move(different_v_dimension));
 
+  // Exercise both output-width relations in the separate dK/dV pipeline.
+  std::int64_t mismatch_uid = 71201;
+  for (const auto data_type : {FLAGDNN_DATA_FLOAT16, FLAGDNN_DATA_BFLOAT16}) {
+    for (const bool wider_value : {false, true}) {
+      if (data_type == FLAGDNN_DATA_FLOAT16 && wider_value)
+        continue;
+      const std::int64_t head_dimension = wider_value ? 32 : 64;
+      const std::int64_t value_dimension = wider_value ? 64 : 32;
+      auto mismatch = make_backward_case(
+          std::string("sdpa_backward_dimension_mismatch_") +
+              (data_type == FLAGDNN_DATA_FLOAT16 ? "fp16" : "bfloat16") + "_q" +
+              std::to_string(head_dimension) + "_v" +
+              std::to_string(value_dimension),
+          mismatch_uid, data_type, {1, 2, 24, head_dimension},
+          {1, 2, 32, head_dimension}, {1, 2, 32, value_dimension});
+      mismatch.options.attention_scale = 0.2F;
+      mismatch.autotune = true;
+      mismatch.absolute_tolerance = 5.0e-4;
+      result.push_back(std::move(mismatch));
+      mismatch_uid += 20;
+    }
+  }
+
+  for (const auto data_type : {FLAGDNN_DATA_FLOAT16, FLAGDNN_DATA_BFLOAT16}) {
+    auto split = make_backward_case(data_type == FLAGDNN_DATA_FLOAT16
+                                        ? "sdpa_backward_fp16_causal_split"
+                                        : "sdpa_backward_bfloat16_causal_split",
+                                    mismatch_uid, data_type, {1, 8, 512, 64},
+                                    {1, 2, 512, 64}, {1, 2, 512, 64});
+    split.options.diagonal_band_right_bound = 0;
+    if (data_type == FLAGDNN_DATA_FLOAT16) {
+      split.absolute_tolerance = 5.0e-4;
+    }
+    result.push_back(std::move(split));
+    mismatch_uid += 20;
+  }
+
   SdpaBackwardTestCase biased = make_backward_case(
-      "sdpa_backward_fp16_broadcast_dbias",
-      71061,
-      FLAGDNN_DATA_FLOAT16,
-      {2, 4, 32, 64},
-      {2, 4, 40, 64},
-      {2, 4, 40, 64});
+      "sdpa_backward_fp16_broadcast_dbias", 71061, FLAGDNN_DATA_FLOAT16,
+      {2, 4, 32, 64}, {2, 4, 40, 64}, {2, 4, 40, 64});
   biased.options.attention_scale = 0.125F;
   biased.bias = tensor(71070, {1, 4, 32, 40}, FLAGDNN_DATA_FLOAT16);
   biased.dbias = tensor(71071, {1, 4, 32, 40}, FLAGDNN_DATA_FLOAT16);
   biased.autotune = true;
   result.push_back(std::move(biased));
 
+  append_coverage_cases(result, "sdpa_backward", make_backward_case, false, false);
+  const std::size_t coverage_count = result.size();
+  for (std::size_t index = 0; index < coverage_count; ++index) {
+    if (result[index].q.data_type == FLAGDNN_DATA_FLOAT32 &&
+        (result[index].q.dimensions == Shape{1, 2, 80, 128} ||
+         result[index].q.dimensions == Shape{1, 8, 128, 64})) {
+      auto tuned = result[index];
+      tuned.name += "_autotune";
+      tuned.autotune = true;
+      result.push_back(std::move(tuned));
+    }
+  }
+  for (const bool autotune : {false, true}) {
+    auto split = make_backward_case(
+        std::string("sdpa_backward_fp32_different_value_dimension") +
+            (autotune ? "_autotune" : ""),
+        71101, FLAGDNN_DATA_FLOAT32,
+        {1, 2, 80, 128}, {1, 2, 96, 128}, {1, 2, 96, 64});
+    split.autotune = autotune;
+    split.absolute_tolerance = 5.0e-4;
+    split.relative_tolerance = 5.0e-4;
+    result.push_back(std::move(split));
+  }
   for (const SdpaBackwardTestCase& test_case : result) {
     validate_sdpa_backward_case(test_case);
   }
@@ -654,6 +808,7 @@ std::vector<SdpaFp8TestCase> make_sdpa_fp8_cases() {
   inference.stats.reset();
   result.push_back(std::move(inference));
 
+  append_coverage_cases(result, "sdpa_fp8", make_fp8_forward_case, false, true);
   for (const SdpaFp8TestCase& test_case : result) {
     validate_sdpa_fp8_case(test_case);
   }
@@ -683,9 +838,35 @@ std::vector<SdpaFp8BackwardTestCase> make_sdpa_fp8_backward_cases() {
   causal_gqa.options.diagonal_band_right_bound = 0;
   result.push_back(std::move(causal_gqa));
 
-  for (const SdpaFp8BackwardTestCase& test_case : result) {
+  append_coverage_cases(result, "sdpa_fp8_backward", make_fp8_backward_case, false, true);
+  // Long causal GQA crosses partial-gradient chunks. Check both launch modes
+  // with tolerances that expose repeated rows while allowing FP8 rounding.
+  std::int64_t uid = 74001;
+  for (const auto data_type : {FLAGDNN_DATA_FP8_E4M3, FLAGDNN_DATA_FP8_E5M2}) {
+    const bool e4m3 = data_type == FLAGDNN_DATA_FP8_E4M3;
+    auto split = make_fp8_backward_case(
+        e4m3 ? "sdpa_fp8_backward_e4m3_causal_split"
+             : "sdpa_fp8_backward_e5m2_causal_split",
+        uid, data_type, {1, 8, 512, 128}, {1, 2, 512, 128}, {1, 2, 512, 128});
+    split.options.diagonal_band_right_bound = 0;
+    split.gradient_absolute_tolerance = 0.02;
+    split.gradient_relative_tolerance = e4m3 ? 0.125 : 0.25;
+    result.push_back(split);
+    split.name += "_autotune";
+    split.autotune = true;
+    result.push_back(std::move(split));
+    uid += 40;
+  }
+  for (const SdpaFp8BackwardTestCase &test_case : result) {
     validate_sdpa_fp8_backward_case(test_case);
   }
+  return result;
+}
+
+std::vector<SdpaTestCase> make_sdpa_benchmark_cases() {
+  std::vector<SdpaTestCase> result;
+  append_coverage_cases(result, "sdpa", make_forward_case, true, false);
+  for (const auto& test_case : result) validate_sdpa_case(test_case);
   return result;
 }
 
@@ -742,6 +923,13 @@ void validate_sdpa_case(const SdpaTestCase& test_case) {
       &test_case.output,
       stats};
   validate_unique_uids(tensors);
+}
+
+std::vector<SdpaBackwardTestCase> make_sdpa_backward_benchmark_cases() {
+  std::vector<SdpaBackwardTestCase> result;
+  append_coverage_cases(result, "sdpa_backward", make_backward_case, true, false);
+  for (const auto& test_case : result) validate_sdpa_backward_case(test_case);
+  return result;
 }
 
 void validate_sdpa_backward_case(const SdpaBackwardTestCase& test_case) {
@@ -820,6 +1008,13 @@ void validate_sdpa_backward_case(const SdpaBackwardTestCase& test_case) {
       &test_case.dv,
       dbias};
   validate_unique_uids(tensors);
+}
+
+std::vector<SdpaFp8TestCase> make_sdpa_fp8_benchmark_cases() {
+  std::vector<SdpaFp8TestCase> result;
+  append_coverage_cases(result, "sdpa_fp8", make_fp8_forward_case, true, true);
+  for (const auto& test_case : result) validate_sdpa_fp8_case(test_case);
+  return result;
 }
 
 void validate_sdpa_fp8_case(const SdpaFp8TestCase& test_case) {
@@ -903,6 +1098,13 @@ void validate_sdpa_fp8_case(const SdpaFp8TestCase& test_case) {
       &test_case.amax_o,
   }};
   validate_unique_uids(tensors);
+}
+
+std::vector<SdpaFp8BackwardTestCase> make_sdpa_fp8_backward_benchmark_cases() {
+  std::vector<SdpaFp8BackwardTestCase> result;
+  append_coverage_cases(result, "sdpa_fp8_backward", make_fp8_backward_case, true, true);
+  for (const auto& test_case : result) validate_sdpa_fp8_backward_case(test_case);
+  return result;
 }
 
 void validate_sdpa_fp8_backward_case(

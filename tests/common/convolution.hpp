@@ -3,13 +3,13 @@
 #ifndef FLAGDNN_TESTS_COMMON_CONVOLUTION_HPP_
 #define FLAGDNN_TESTS_COMMON_CONVOLUTION_HPP_
 
-#include "common/common.hpp"
-
 #include <cstdint>
 #include <memory>
 #include <span>
 #include <string>
 #include <vector>
+
+#include "common/common.hpp"
 
 namespace flagdnn::testing {
 
@@ -46,30 +46,31 @@ struct ConvolutionTestCase {
   double absolute_tolerance = 0.0;
   double relative_tolerance = 0.0;
   bool autotune = false;
+  int input_precision = 0;
 };
 
 using ConvolutionExecutable = TestExecutable;
 
 [[nodiscard]] std::vector<ConvolutionTestCase> make_convolution_cases(
     ConvolutionDirection direction);
+
 void validate_convolution_case(const ConvolutionTestCase& test_case);
 [[nodiscard]] const TestTensor& convolution_output_tensor(
     const ConvolutionTestCase& test_case);
 
-[[nodiscard]] std::unique_ptr<ConvolutionExecutable>
-build_flagdnn_convolution(flagdnn::Handle& handle,
-                          const ConvolutionTestCase& test_case);
+[[nodiscard]] std::unique_ptr<ConvolutionExecutable> build_flagdnn_convolution(
+    flagdnn::Handle& handle, const ConvolutionTestCase& test_case);
 
-/* Implemented by the selected backends/<platform>/validation/functional adapter. */
+/* Implemented by the selected backends/<platform>/validation/functional
+ * adapter. */
 [[nodiscard]] std::unique_ptr<ConvolutionExecutable>
 build_convolution_reference(const ConvolutionTestCase& test_case);
 
-/* Implemented by backends/<platform>/validation/functional/convolution_runner.cpp. */
-int run_convolution_functional_test(
-    int argc,
-    char** argv,
-    std::span<const ConvolutionTestCase> cases,
-    ConvolutionDirection expected_direction);
+/* Implemented by
+ * backends/<platform>/validation/functional/convolution_runner.cpp. */
+int run_convolution_functional_test(int argc, char** argv,
+                                    std::span<const ConvolutionTestCase> cases,
+                                    ConvolutionDirection expected_direction);
 
 }  // namespace flagdnn::testing
 

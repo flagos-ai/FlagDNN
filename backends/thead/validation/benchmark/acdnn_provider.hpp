@@ -5,6 +5,7 @@
 #define FLAGDNN_BACKENDS_THEAD_VALIDATION_BENCHMARK_ACDNN_PROVIDER_HPP_
 
 #include "common/benchmark_provider.hpp"
+#include "capability.hpp"
 
 #include <map>
 #include <memory>
@@ -38,6 +39,11 @@ class AcdnnProvider final : public flagdnn::benchmarking::BenchmarkProvider {
       const flagdnn::benchmarking::BenchmarkCase &specification) const override;
   [[nodiscard]] std::unique_ptr<flagdnn::benchmarking::BenchmarkExecutable>
   build(const flagdnn::benchmarking::BenchmarkCase &specification) override;
+
+  [[nodiscard]] std::vector<flagdnn::benchmarking::BenchmarkCase> select_cases(
+      std::span<const flagdnn::benchmarking::BenchmarkCase> cases) const {
+    return select_catalog_cases(cases, records_);
+  }
 
   void require_exact_cases(
       std::span<const flagdnn::benchmarking::BenchmarkCase> cases) const;

@@ -1,9 +1,5 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
-#include "common/matmul.hpp"
-#include "validation/functional/cudnn_graph.hpp"
-#include "validation/tensor_io.hpp"
-
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -11,13 +7,16 @@
 #include <span>
 #include <stdexcept>
 
+#include "common/matmul.hpp"
+#include "validation/functional/cudnn_graph.hpp"
+#include "validation/tensor_io.hpp"
+
 namespace flagdnn::testing {
 namespace {
 
 namespace cfe = cuda::cfe;
 
-TestTensor padded_matmul_tensor(const TestTensor& tensor,
-                                std::size_t rank) {
+TestTensor padded_matmul_tensor(const TestTensor& tensor, std::size_t rank) {
   if (tensor.dimensions.size() > rank) {
     throw std::invalid_argument("cuDNN MatMul tensor rank is invalid");
   }
@@ -48,12 +47,11 @@ class CudnnMatmulExecutable final : public cuda::CudnnGraphExecutable {
         .set_compute_data_type(cfe::DataType_t::FLOAT);
     const auto a = cuda::make_cudnn_tensor(graph_, a_specification, "a");
     const auto b = cuda::make_cudnn_tensor(graph_, b_specification, "b");
-    auto output = graph_->matmul(
-        a,
-        b,
-        cfe::graph::Matmul_attributes()
-            .set_name("matmul")
-            .set_compute_data_type(cfe::DataType_t::FLOAT));
+    auto output =
+        graph_->matmul(a, b,
+                       cfe::graph::Matmul_attributes()
+                           .set_name("matmul")
+                           .set_compute_data_type(cfe::DataType_t::FLOAT));
     output->set_name("output")
         .set_uid(output_specification.uid)
         .set_data_type(
@@ -62,22 +60,22 @@ class CudnnMatmulExecutable final : public cuda::CudnnGraphExecutable {
         .set_stride(output_specification.strides)
         .set_output(true);
 
-    cuda::check_cudnn_frontend(
-        graph_->build(handle(), {cfe::HeurMode_t::A}),
-        "cuDNN MatMul graph build");
+    // cuDNN 9.24 engine 7 rounds TF32 ties away from zero. Engine 4
+    // implements the nearest-even contract required by explicit TF32 tests.
+    if (test_case.input_precision == 2 && cudnnGetVersion() >= 92400 &&
+        cudnnGetVersion() < 92500)
+      graph_->deselect_engines({"eng7_"});
+    cuda::build_cudnn_plans(*graph_, handle(), test_case.input_precision);
     std::int64_t workspace_size = 0;
     cuda::check_cudnn_frontend(graph_->get_workspace_size(workspace_size),
                                "cuDNN MatMul workspace query");
     set_workspace_size(workspace_size);
   }
 
-  void execute(std::span<const flagdnnBinding_t> bindings,
-               void* workspace,
-               std::size_t workspace_size,
-               flagdnnStream_t stream) override {
+  void execute(std::span<const flagdnnBinding_t> bindings, void* workspace,
+               std::size_t workspace_size, flagdnnStream_t stream) override {
     begin_execute(workspace, workspace_size, stream);
-    cuda::CudnnBindingMap pointers =
-        cuda::make_cudnn_binding_map(bindings);
+    cuda::CudnnBindingMap pointers = cuda::make_cudnn_binding_map(bindings);
     cuda::check_cudnn_frontend(graph_->execute(handle(), pointers, workspace),
                                "cuDNN MatMul graph execute");
   }

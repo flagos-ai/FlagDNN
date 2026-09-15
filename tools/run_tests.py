@@ -6,13 +6,16 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import importlib.metadata
 import importlib.util
 import json
 import math
 import os
+import platform
 from pathlib import Path
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -60,19 +63,334 @@ PROCESS_CLEANUP_POLL_SECONDS = 0.05
 _PLATFORM_ADAPTERS: dict[str, ModuleType | None] = {}
 
 
+SUITE_NAMES = {"functional": "accuracy", "benchmark": "performance"}
+STATUS_NAMES = {
+    "passed": "Passed",
+    "failed": "Failed",
+    "skipped": "Skipped",
+    "timeout": "Timeout",
+    "not_found": "NotFound",
+}
+COUNT_NAMES = ("passed", "failed", "skipped", "errors", "xfailed", "xpassed")
+DTYPE_NAMES = {
+    "bfloat16": "bf16",
+    "float16": "fp16",
+    "float32": "fp32",
+    "float64": "fp64",
+    "e4m3": "f8-e4m3fn",
+    "e5m2": "f8-e5m2",
+    "e8m0": "fp8_e8m0",
+}
+DTYPE_PATTERN = re.compile(
+    r"(?:^|_)(bfloat16|float16|float32|float64|bf16|fp16|fp32|fp64|"
+    r"tf32|int8|int16|int32|int64|uint8|bool|e4m3|e5m2|e8m0)(?:_|$)"
+)
+
+
+def diagnostic_path(output: Path) -> Path:
+    return output.with_name(output.stem + ".native.json")
+
+
+def case_dtype(case: str) -> str:
+    # FP8 matrix names specify both input formats before any output dtype.
+    fp8 = re.search(r"_a(e4m3|e5m2|e8m0)_b(e4m3|e5m2|e8m0)_", case)
+    if fp8:
+        return DTYPE_NAMES[fp8.group(1)]
+    match = DTYPE_PATTERN.search(case)
+    return DTYPE_NAMES.get(match[1], match[1]) if match else "unknown"
+
+
+def functional_counts(output: str, status: str) -> dict[str, int]:
+    """Count native cases across CTest groups, including partial failures."""
+    groups: dict[str, dict[str, Any]] = {}
+    for raw in output.splitlines():
+        prefix = re.match(r"^\s*(\d+):\s?(.*)$", raw)
+        group_id, line = (prefix[1], prefix[2]) if prefix else ("", raw)
+        group = groups.setdefault(
+            group_id, {"totals": {}, "passed": set(), "skipped": set()}
+        )
+        total = re.match(r"^(\S+): (PASS|SKIP) cases=(\d+)\b", line)
+        if total:
+            accounting = dict(
+                re.findall(r"\b(executed|skipped)=(\d+)\b", line)
+            )
+            if "executed" in accounting and "skipped" in accounting:
+                group["totals"][(total[1], "PASS")] = int(
+                    accounting["executed"]
+                )
+                group["totals"][(total[1], "SKIP")] = int(
+                    accounting["skipped"]
+                )
+            else:
+                group["totals"][(total[1], total[2])] = int(total[3])
+        elif skip := re.match(r"^SKIP case=(\S+)\b", line):
+            group["skipped"].add(skip[1])
+        elif re.match(r"^\S+: .*\bPASS\b", line):
+            group["passed"].add(line.split(":", 1)[0])
+    counts = dict.fromkeys(COUNT_NAMES, 0)
+    for group in groups.values():
+        counts["passed"] += max(
+            len(group["passed"]),
+            sum(
+                value
+                for (_, kind), value in group["totals"].items()
+                if kind == "PASS"
+            ),
+        )
+        counts["skipped"] += max(
+            len(group["skipped"]),
+            sum(
+                value
+                for (_, kind), value in group["totals"].items()
+                if kind == "SKIP"
+            ),
+        )
+    # An aborted native executable does not expose a pytest-style failing
+    # parameter count. Report its execution error, without inventing cases.
+    if status == "failed":
+        counts["errors"] = 1
+    return {"total": sum(counts.values()), **counts}
+
+
+def performance_data(task: dict[str, Any]) -> dict[str, Any]:
+    data: dict[str, Any] = {}
+    for case, providers in task.get("records", {}).items():
+        if "flagdnn" not in providers or len(providers) != 2:
+            continue
+        actual = providers["flagdnn"]
+        reference = next(
+            value for key, value in providers.items() if key != "flagdnn"
+        )
+        values = (actual.get("median"), reference.get("median"))
+        if any(record.get("unit") != "us" for record in (actual, reference)):
+            raise ValueError(f"unsupported latency unit for {case}")
+        if not all(
+            type(value) in (int, float) and math.isfinite(value) and value > 0
+            for value in values
+        ):
+            raise ValueError(f"invalid latency for {case}")
+        dtype = case_dtype(case)
+        entry = data.setdefault(dtype, {"result": "OK", "details": {}})
+        # The old parser accepts arbitrary string shape_detail values. Keep
+        # the complete native case identity so layout/mode variants cannot
+        # overwrite each other when their input dimensions are equal.
+        entry["details"][case] = {
+            "base": float(reference["median"]) / 1000.0,
+            "flag_dnn": float(actual["median"]) / 1000.0,
+            "gems": float(actual["median"]) / 1000.0,
+            "speedup": float(reference["median"]) / float(actual["median"]),
+        }
+    for entry in data.values():
+        details = entry["details"]
+        total_speedup = 0.0
+        for row in details.values():
+            total_speedup += row["speedup"]
+        entry["speedup"] = total_speedup / len(details)
+    return data
+
+
+def suite_result(task: dict[str, Any], suite: str) -> dict[str, Any]:
+    status = task.get("status", "error")
+    exit_code = task.get("exit_code")
+    if status == "timeout":
+        exit_code = -100
+    elif status == "not_found":
+        exit_code = 5
+    elif exit_code is None:
+        exit_code = 0 if status in {"passed", "skipped"} else 1
+    result: dict[str, Any] = {
+        "status": STATUS_NAMES.get(status, "Error"),
+        "duration": float(task.get("duration_seconds", 0.0)),
+        "exit_code": exit_code,
+    }
+    if suite == "functional":
+        counts = task.get("case_counts", dict.fromkeys(COUNT_NAMES, 0))
+        result.update({name: int(counts.get(name, 0)) for name in COUNT_NAMES})
+        result["total"] = sum(result[name] for name in COUNT_NAMES)
+    else:
+        result["data"] = performance_data(task) if status == "passed" else {}
+        if status not in {"timeout", "not_found"}:
+            result["test_case"] = task.get("test_case", "Unknown")
+        if status not in {"passed", "timeout", "not_found"}:
+            result["reason"] = (
+                "; ".join(task.get("record_errors", [])) or status
+            )
+    return result
+
+
+def summary_document(summary: dict[str, Any]) -> dict[str, Any]:
+    timestamp = summary.get("timestamp_utc")
+    instant = (
+        dt.datetime.fromisoformat(timestamp)
+        if timestamp
+        else dt.datetime.now().astimezone()
+    )
+    selected: dict[str, list[str]] = {}
+    for suite, operators in summary.get("suite_operators", {}).items():
+        for operator in operators:
+            selected.setdefault(operator, []).append(SUITE_NAMES[suite])
+    results = {
+        operator: {
+            # Like the old hasattr check, this tracks public operator
+            # availability, not test success or device support.
+            "implemented": True,
+            **{
+                SUITE_NAMES[suite]: suite_result(task, suite)
+                for suite, task in suites.items()
+            },
+        }
+        for operator, suites in summary.get("results", {}).items()
+    }
+    # psum_text indexes both suites, including for single-suite runs.
+    # Keep selection metadata and case counts faithful to what was executed.
+    for suites in results.values():
+        for suite, name in SUITE_NAMES.items():
+            if name not in suites:
+                suites[name] = {
+                    **suite_result({"status": "skipped"}, suite),
+                    "reason": "Suite not selected",
+                }
+    environment = {**empty_environment(), **(summary.get("env") or {})}
+    if not isinstance(environment.get("triton"), dict):
+        environment["triton"] = {"version": "unknown"}
+    # FlagGems' psum_text uses these aliases for the tested implementation.
+    environment["flag_gems"] = dict(environment["flag_dnn"])
+    return {
+        "timestamp": instant.astimezone().strftime("%Y-%m-%d %H:%M:%S"),
+        "env": environment,
+        "selected_suites": selected,
+        "result": results,
+    }
+
+
+def performance_file(
+    operator: str, task: dict[str, Any], result: dict[str, Any]
+) -> dict[str, Any]:
+    dtype_names = {
+        "fp16": "torch.float16",
+        "fp32": "torch.float32",
+        "bf16": "torch.bfloat16",
+        "fp64": "torch.float64",
+        "bool": "torch.bool",
+        "int32": "torch.int32",
+    }
+    return {
+        operator: {
+            "result": task["status"],
+            "test_case": result.get("test_case", "Unknown"),
+            "reason": result.get("reason"),
+            "details": [
+                {
+                    "dtype": dtype_names.get(dtype, dtype),
+                    "result": [
+                        {
+                            "shape_detail": case,
+                            "latency_base": row["base"],
+                            "latency": row["flag_dnn"],
+                            "speedup": row["speedup"],
+                        }
+                        for case, row in entry["details"].items()
+                    ],
+                }
+                for dtype, entry in result["data"].items()
+            ],
+        }
+    }
+
+
+def empty_environment() -> dict[str, Any]:
+    return {
+        "architecture": platform.machine(),
+        "os_name": platform.system(),
+        "os_release": platform.release(),
+        "python": platform.python_version(),
+        "torch": {
+            "version": "unknown",
+            "cuda_available": False,
+            "device_name": "N/A",
+            "device_count": 0,
+        },
+        "flagtree": None,
+        "triton": {"version": "unknown"},
+        "flag_dnn": {
+            "version": "unknown",
+            "vendor": "unknown",
+            "device": "unknown",
+        },
+    }
+
+
+def probe_environment() -> dict[str, Any]:
+    """Collect legacy env fields without requiring a Python FlagDNN."""
+    result = empty_environment()
+    try:
+        result["flagtree"] = importlib.metadata.version("flagtree")
+    except importlib.metadata.PackageNotFoundError:
+        pass
+    try:
+        import torch
+
+        result["torch"]["version"] = str(torch.__version__)
+        result["torch"]["cuda_available"] = torch.cuda.is_available()
+        result["torch"]["device_count"] = torch.cuda.device_count()
+        if result["torch"]["cuda_available"]:
+            result["torch"]["device_name"] = torch.cuda.get_device_name()
+    except (ImportError, RuntimeError, AssertionError):
+        pass
+    try:
+        import triton
+
+        result["triton"] = {"version": str(triton.__version__)}
+    except ImportError:
+        pass
+    return result
+
+
+def report_environment(
+    root: Path,
+    build_dir: Path,
+    vendor: str,
+    environment: dict[str, str],
+    device: str,
+) -> dict[str, Any]:
+    cache = build_dir / "CMakeCache.txt"
+    text = cache.read_text() if cache.exists() else ""
+    python = re.search(r"^FLAGDNN_CODEGEN_PYTHON:[^=]+=(.+)$", text, re.M)
+    try:
+        process = subprocess.run(
+            [
+                python[1] if python else sys.executable,
+                str(Path(__file__)),
+                "--report-environment",
+            ],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        result = json.loads(process.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        result = empty_environment()
+        result["python"] = "unknown"
+    version = re.search(
+        r"\bVERSION\s+(\d+\.\d+\.\d+)", (root / "CMakeLists.txt").read_text()
+    )
+    result["flag_dnn"] = {
+        "version": version[1] if version else "unknown",
+        "vendor": vendor,
+        "device": device,
+    }
+    return result
+
+
 def load_platform_adapter(platform: str) -> ModuleType | None:
     """Load optional test policy owned by backends/<platform>/validation."""
     if PLATFORM_PATTERN.fullmatch(platform) is None:
         raise ValueError("platform name must match [a-z][a-z0-9_]*")
     if platform in _PLATFORM_ADAPTERS:
         return _PLATFORM_ADAPTERS[platform]
-    path = (
-        ROOT
-        / "backends"
-        / platform
-        / "validation"
-        / PLATFORM_ADAPTER_FILE
-    )
+    path = ROOT / "backends" / platform / "validation" / PLATFORM_ADAPTER_FILE
     if not path.is_file():
         _PLATFORM_ADAPTERS[platform] = None
         return None
@@ -104,7 +422,9 @@ def operator_manifests() -> dict[str, list[str]]:
         "functional": "FLAGDNN_FUNCTIONAL_OPERATORS",
     }
     raw_sets: dict[str, list[str]] = {}
-    for set_name in set_names.values():
+    for set_name in dict.fromkeys(
+        re.findall(r"set\((FLAGDNN_[A-Z0-9_]+)\s", source)
+    ):
         match = re.search(
             rf"set\({re.escape(set_name)}(?P<body>.*?)\)",
             source,
@@ -621,9 +941,7 @@ class _TerminationSignal(SystemExit):
 def _linux_process_identity(pid: int) -> tuple[str, int, int] | None:
     """Return (state, process-group, session) from procfs, if available."""
     try:
-        stat = (Path("/proc") / str(pid) / "stat").read_text(
-            encoding="utf-8"
-        )
+        stat = (Path("/proc") / str(pid) / "stat").read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return None
     # The comm field is parenthesized and may itself contain whitespace or
@@ -757,9 +1075,8 @@ def _terminate_process_session(
                 )
             except subprocess.TimeoutExpired:
                 pass
-            if (
-                process.poll() is not None
-                and not _session_process_groups(session_id)
+            if process.poll() is not None and not _session_process_groups(
+                session_id
             ):
                 if not latest_output and not latest_error:
                     latest_output, latest_error = process.communicate()
@@ -920,6 +1237,22 @@ def run_one(
             manifest_operators=manifest_operators,
         )
     status = result["status"]
+    if suite == "functional":
+        result["case_counts"] = functional_counts(combined_output, status)
+        accounting = result.get("case_accounting", {})
+        if accounting:
+            counts = result["case_counts"]
+            counts["skipped"] = accounting.get(
+                "reference_skipped",
+                accounting.get("skipped", counts["skipped"]),
+            )
+            counts["passed"] = accounting.get(
+                "reference_executed",
+                accounting.get("executed", counts["passed"]),
+            )
+            counts["total"] = sum(counts[name] for name in COUNT_NAMES)
+    else:
+        result["test_case"] = f"benchmark/test_{operator}.cpp"
     if verbose or status != "passed":
         if stdout:
             print(stdout, end="" if stdout.endswith("\n") else "\n")
@@ -959,6 +1292,7 @@ def required_preflight_tests(
         "core.cpp_header",
         "core.frontend_api",
         "core.test_architecture",
+        "core.kernel_registry_contract",
         "core.run_tests_contract",
         "core.default_backend_contract",
     }
@@ -1158,12 +1492,47 @@ def atomic_write_summary(output: Path, summary: dict[str, Any]) -> None:
                 pass
 
 
+def publish_summary(output: Path, summary: dict[str, Any]) -> None:
+    document = summary_document(summary)
+    snapshot: Path | None = None
+    published = False
+    try:
+        for operator, suites in document["result"].items():
+            result = suites.get("performance")
+            if result is None or not result["data"]:
+                continue
+            if snapshot is None:
+                output.parent.mkdir(parents=True, exist_ok=True)
+                snapshot = Path(
+                    tempfile.mkdtemp(
+                        dir=output.parent, prefix=f"{output.name}.data-"
+                    )
+                )
+            relative = (
+                Path(snapshot.name) / operator / "performance_result.json"
+            )
+            raw = performance_file(
+                operator, summary["results"][operator]["benchmark"], result
+            )
+            atomic_write_summary(output.parent / relative, raw)
+            result["data_file"] = relative.as_posix()
+        # Commit only after all referenced files exist. Each publication owns
+        # an immutable snapshot so earlier reports keep their original data.
+        atomic_write_summary(output, document)
+        published = True
+        # Do not mark diagnostics complete before the public report commits.
+        atomic_write_summary(diagnostic_path(output), summary)
+    finally:
+        if snapshot is not None and not published:
+            shutil.rmtree(snapshot)
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         allow_abbrev=False,
         description=(
             "Run FlagDNN native functional tests and benchmarks " "serially"
-        )
+        ),
     )
     parser.add_argument(
         "--build-dir",
@@ -1238,7 +1607,9 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.set_defaults(preflight=None)
     parser.add_argument(
-        "--output", type=Path, help="optional JSON summary path"
+        "--output",
+        type=Path,
+        help="legacy-compatible JSON summary path (also writes <stem>.native.json diagnostics)",
     )
     parser.add_argument(
         "--list",
@@ -1255,7 +1626,7 @@ def _run_main() -> int:
     if preliminary_output is not None:
         try:
             output = preliminary_output.expanduser().resolve()
-            atomic_write_summary(
+            publish_summary(
                 output,
                 {
                     **summary_status_fields("running", None),
@@ -1274,7 +1645,7 @@ def _run_main() -> int:
         exit_code = error.code if isinstance(error.code, int) else 2
         if output is not None:
             try:
-                atomic_write_summary(
+                publish_summary(
                     output,
                     {
                         **summary_status_fields(
@@ -1302,7 +1673,7 @@ def _run_main() -> int:
                 file=sys.stderr,
             )
             return 2
-        atomic_write_summary(
+        publish_summary(
             output,
             summary_envelope(arguments, "running", None),
         )
@@ -1313,12 +1684,10 @@ def _run_main() -> int:
         **fields: Any,
     ) -> int:
         if output is not None:
-            summary = summary_envelope(
-                arguments, overall_status, exit_code
-            )
+            summary = summary_envelope(arguments, overall_status, exit_code)
             summary.update(fields)
             try:
-                atomic_write_summary(output, summary)
+                publish_summary(output, summary)
             except OSError as error:
                 print(
                     f"error: cannot finalize --output summary: {error}",
@@ -1332,12 +1701,17 @@ def _run_main() -> int:
         return finish_early(2, "failed", error=message)
 
     if PLATFORM_PATTERN.fullmatch(arguments.platform) is None:
-        return validation_error(
-            "--platform must match [a-z][a-z0-9_]*"
-        )
+        return validation_error("--platform must match [a-z][a-z0-9_]*")
     try:
         adapter = load_platform_adapter(arguments.platform)
         manifests = operator_manifests()
+        select_manifests = (
+            None
+            if adapter is None
+            else getattr(adapter, "select_operator_manifests", None)
+        )
+        if select_manifests is not None:
+            manifests = select_manifests(manifests)
         suites = requested_suites(arguments.suites)
         if arguments.list:
             listed = dict.fromkeys(
@@ -1423,8 +1797,7 @@ def _run_main() -> int:
     if arguments.min_speedup is not None and "benchmark" not in suites:
         return validation_error("--min-speedup requires the benchmark suite")
     supports_min_speedup = bool(
-        adapter is not None
-        and getattr(adapter, "SUPPORTS_MIN_SPEEDUP", False)
+        adapter is not None and getattr(adapter, "SUPPORTS_MIN_SPEEDUP", False)
     )
     if arguments.min_speedup is not None and not supports_min_speedup:
         return validation_error(
@@ -1434,9 +1807,7 @@ def _run_main() -> int:
 
     prepare = None if adapter is None else getattr(adapter, "prepare", None)
     try:
-        platform_state = (
-            {} if prepare is None else prepare(manifests, suites)
-        )
+        platform_state = {} if prepare is None else prepare(manifests, suites)
     except (OSError, RuntimeError, ValueError) as error:
         return validation_error(str(error))
     if not isinstance(platform_state, dict):
@@ -1488,8 +1859,7 @@ def _run_main() -> int:
     failed = False
     preflight_result: dict[str, Any] | None = None
     preflight_default = bool(
-        adapter is not None
-        and getattr(adapter, "PREFLIGHT_BY_DEFAULT", False)
+        adapter is not None and getattr(adapter, "PREFLIGHT_BY_DEFAULT", False)
     )
     should_run_preflight = (
         preflight_default
@@ -1633,11 +2003,22 @@ def _run_main() -> int:
         "comparable_coverage": None,
         "performance": None,
         "results": results,
+        "env": (
+            report_environment(
+                ROOT,
+                build_dir,
+                arguments.platform,
+                environment,
+                getattr(adapter, "REPORT_DEVICE", arguments.platform),
+            )
+            if output is not None
+            else {}
+        ),
         **platform_summary,
     }
     if output is not None:
         try:
-            atomic_write_summary(output, summary)
+            publish_summary(output, summary)
         except OSError as error:
             print(
                 f"error: cannot finalize --output summary: {error}",
@@ -1647,6 +2028,7 @@ def _run_main() -> int:
         print(f"summary: {output}")
 
     return final_exit_code
+
 
 def main() -> int:
     previous_handlers: dict[signal.Signals, Any] = {}
@@ -1664,7 +2046,7 @@ def main() -> int:
         requested_output = preliminary_output_argument(sys.argv[1:])
         if requested_output is not None:
             try:
-                atomic_write_summary(
+                publish_summary(
                     requested_output.expanduser().resolve(),
                     {
                         **summary_status_fields("failed", exit_code),
@@ -1684,4 +2066,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    if sys.argv[1:] == ["--report-environment"]:
+        print(json.dumps(probe_environment()))
+    else:
+        raise SystemExit(main())

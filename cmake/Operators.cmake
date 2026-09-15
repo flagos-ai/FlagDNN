@@ -2,6 +2,16 @@
 # name here requires benchmark/test_<name>.cpp and a platform benchmark
 # provider. Functional coverage is tracked separately because a correct
 # operator may intentionally precede performance qualification.
+set(FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS
+  relu_backward
+  tanh_backward
+  elu_backward
+  gelu_backward
+  softplus_backward
+  swish_backward
+  gelu_approx_tanh_backward
+  leaky_relu_backward)
+
 set(FLAGDNN_BENCHMARK_OPERATORS
   abs
   add
@@ -51,6 +61,7 @@ set(FLAGDNN_BENCHMARK_OPERATORS
   scale
   sigmoid
   sigmoid_backward
+  ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS}
   sin
   slice
   softplus
@@ -65,7 +76,29 @@ set(FLAGDNN_BENCHMARK_OPERATORS
 # here is a correctness contract: tests/test_<name>.cpp must exercise the
 # public Graph API and every enabled platform must provide a real reference
 # adapter or an explicit capability gate.
+set(FLAGDNN_EXTENDED_OPERATORS
+  moe_grouped_matmul
+  moe_grouped_matmul_bwd
+  matmul_fp8
+  causal_conv1d
+  resample
+  rng
+  rope
+  rope_backward
+  bn_finalize
+  instancenorm
+  adalayernorm
+  instancenorm_backward
+  adalayernorm_backward
+  layernorm_backward
+  rmsnorm_backward
+  batchnorm_backward
+  concatenate
+  gen_index
+  genstats)
+
 set(FLAGDNN_FUNCTIONAL_OPERATORS
+  ${FLAGDNN_EXTENDED_OPERATORS}
   ${FLAGDNN_BENCHMARK_OPERATORS}
   sdpa
   sdpa_backward

@@ -61,6 +61,8 @@ set(_flagdnn_hygon_normalization_operators
 # evolves.  Sorting also makes duplicate or misspelled registrations fail the
 # equality check instead of silently disappearing from tools/run_tests.py.
 set(_flagdnn_hygon_functional_catalog
+  ${FLAGDNN_EXTENDED_OPERATORS}
+  ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS}
   ${_flagdnn_hygon_operators}
   ${_flagdnn_hygon_tensor_operators}
   ${_flagdnn_hygon_convolution_operators}
@@ -83,6 +85,8 @@ set(_flagdnn_hygon_benchmark_catalog
   ${_flagdnn_hygon_normalization_operators})
 set(_flagdnn_hygon_expected_benchmark_catalog
   ${FLAGDNN_BENCHMARK_OPERATORS})
+list(REMOVE_ITEM _flagdnn_hygon_expected_benchmark_catalog
+  ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS})
 list(SORT _flagdnn_hygon_benchmark_catalog)
 list(SORT _flagdnn_hygon_expected_benchmark_catalog)
 if(NOT "${_flagdnn_hygon_benchmark_catalog}" STREQUAL
@@ -213,6 +217,7 @@ if(FLAGDNN_BUILD_TESTS)
 
   flagdnn_register_functional_suite(
     PLATFORM hygon
+    UNSUPPORTED_OPERATORS ${FLAGDNN_EXTENDED_OPERATORS} ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS}
     ADAPTER_TARGET flagdnn_test_hygon_adapter
     BACKEND_TARGET flagdnn_backend_hygon
     COMMAND_ARGS
@@ -455,6 +460,7 @@ if(FLAGDNN_BUILD_BENCHMARKS)
 
   flagdnn_register_benchmark_suite(
     PLATFORM hygon
+    OPERATORS ${_flagdnn_hygon_benchmark_catalog}
     ADAPTER_TARGET flagdnn_benchmark_hygon_adapter
     BACKEND_TARGET flagdnn_backend_hygon
     COMMAND_ARGS
@@ -466,7 +472,7 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     TIMEOUT 1800
     BUILD_RPATH "${_flagdnn_hipdnn_library_directory}")
 
-  foreach(operator IN LISTS FLAGDNN_BENCHMARK_OPERATORS)
+  foreach(operator IN LISTS _flagdnn_hygon_benchmark_catalog)
     set_tests_properties("benchmark.hygon.${operator}" PROPERTIES
       SKIP_RETURN_CODE 77)
   endforeach()

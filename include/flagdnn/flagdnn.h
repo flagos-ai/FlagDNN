@@ -73,7 +73,10 @@ typedef enum flagdnnDataType {
   FLAGDNN_DATA_BOOLEAN = 3,
   /* NVIDIA-compatible finite E4M3 and IEEE-like E5M2 FP8 encodings. */
   FLAGDNN_DATA_FP8_E4M3 = 4,
-  FLAGDNN_DATA_FP8_E5M2 = 5
+  FLAGDNN_DATA_FP8_E5M2 = 5,
+  FLAGDNN_DATA_INT32 = 6,
+  /* OCP MX unsigned power-of-two scale: exponent bias 127; 255 is NaN. */
+  FLAGDNN_DATA_FP8_E8M0 = 7
 } flagdnnDataType_t;
 
 typedef enum flagdnnOperation {
@@ -183,7 +186,14 @@ typedef enum flagdnnPointwiseMode {
   FLAGDNN_POINTWISE_SWISH_FWD = 38,
   FLAGDNN_POINTWISE_GELU_APPROX_TANH_FWD = 39,
   FLAGDNN_POINTWISE_SIGMOID_BWD = 40,
-  FLAGDNN_POINTWISE_BINARY_SELECT = 41
+  FLAGDNN_POINTWISE_BINARY_SELECT = 41,
+  FLAGDNN_POINTWISE_RELU_BWD = 42,
+  FLAGDNN_POINTWISE_TANH_BWD = 43,
+  FLAGDNN_POINTWISE_ELU_BWD = 44,
+  FLAGDNN_POINTWISE_GELU_BWD = 45,
+  FLAGDNN_POINTWISE_SOFTPLUS_BWD = 46,
+  FLAGDNN_POINTWISE_SWISH_BWD = 47,
+  FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD = 48
 } flagdnnPointwiseMode_t;
 
 #define FLAGDNN_POINTWISE_ATTRIBUTES_VERSION 1U
@@ -464,6 +474,14 @@ flagdnnSetPointwiseBinaryOperationDescriptorWithAlpha(
     flagdnnPointwiseMode_t mode,
     flagdnnTensorDescriptor_t output,
     double alpha);
+/* Activation gradients take (dy, preactivation x), with identical shapes.
+ * Attributes use the same meanings/defaults as their forward operations. */
+FLAGDNN_API flagdnnStatus_t
+flagdnnSetPointwiseBinaryOperationDescriptorWithAttributes(
+    flagdnnOperationDescriptor_t descriptor, flagdnnTensorDescriptor_t left,
+    flagdnnTensorDescriptor_t right, flagdnnPointwiseMode_t mode,
+    flagdnnTensorDescriptor_t output, double alpha,
+    const flagdnnPointwiseAttributes_t* attributes);
 /*
  * Describes cuDNN-compatible ternary pointwise operations. BINARY_SELECT
  * computes output = T ? A : B, where T is a BOOLEAN predicate tensor.

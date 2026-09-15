@@ -202,8 +202,9 @@ sdpa:
       - 3
 
 sdpa_fp8:
-  # Generic fp8 (e4m3/e5m2) SDPA forward on H100. fp8 wgmma favours larger
-  # KV tiles and deeper pipelines than the fp16/bf16 generic path.
+  # Four-warp/N128 layouts pass the complete FP8 correctness matrix on SM90.
+  # N64 layouts can access invalid shared memory; eight-warp layouts can
+  # silently corrupt causal outputs. Keep only validated configurations.
   - gen: true
     param_map:
       META:
@@ -211,18 +212,10 @@ sdpa_fp8:
         BLOCK_N: block_n
       num_warps: warps
       num_stages: stages
-    block_m:
-      - 64
-      - 128
-    block_n:
-      - 64
-      - 128
-    warps:
-      - 4
-      - 8
-    stages:
-      - 3
-      - 4
+    block_m: [32, 64]
+    block_n: [128]
+    warps: [4]
+    stages: [3, 4]
 
 sdpa_fp8_tma:
   # TMA-descriptor fp8 SDPA forward (FA3-style): hardware K/V loads + deep
@@ -795,6 +788,17 @@ sdpa_backward_dv:
       - 4
     stages:
       - 2
+# FP32 backward uses smaller row/output tiles to fit SM90 shared memory.
+sdpa_backward_dq_fp32: &sdpa_backward_fp32
+  - META: {BLOCK_M: 32, BLOCK_N: 32, BLOCK_D_OUT: 64}
+    num_warps: 4
+    num_stages: 2
+sdpa_backward_dkdv_fp32: *sdpa_backward_fp32
+sdpa_backward_dk_fp32: *sdpa_backward_fp32
+sdpa_backward_dv_fp32:
+  - META: {BLOCK_M: 32, BLOCK_N: 32, BLOCK_DV_OUT: 64}
+    num_warps: 4
+    num_stages: 2
 sdpa_fp8_backward_dq:
   # Current-scaling fp8 SDPA backward dQ path for dense/top-left causal BHSD.
   - gen: true
@@ -816,6 +820,23 @@ sdpa_fp8_backward_dq:
       - 8
     stages:
       - 2
+  - META: {BLOCK_M: 32, BLOCK_N: 64, BLOCK_D: 128}
+    num_warps: 4
+    num_stages: 2
+
+  - META:
+      BLOCK_M: 16
+      BLOCK_N: 64
+      BLOCK_D: 128
+    num_warps: 4
+    num_stages: 2
+  - META:
+      BLOCK_M: 16
+      BLOCK_N: 128
+      BLOCK_D: 128
+    num_warps: 4
+    num_stages: 2
+
 sdpa_fp8_backward_dkdv:
   # Current-scaling fp8 SDPA backward fused dK/dV path.
   - gen: true
@@ -836,6 +857,23 @@ sdpa_fp8_backward_dkdv:
       - 8
     stages:
       - 2
+  - META: {BLOCK_M: 32, BLOCK_N: 64, BLOCK_D: 128}
+    num_warps: 4
+    num_stages: 2
+
+  - META:
+      BLOCK_M: 64
+      BLOCK_N: 16
+      BLOCK_D: 128
+    num_warps: 4
+    num_stages: 2
+  - META:
+      BLOCK_M: 128
+      BLOCK_N: 16
+      BLOCK_D: 128
+    num_warps: 4
+    num_stages: 2
+
 sdpa_fp8_backward_gqa_accum:
   # GQA fp8 SDPA backward partial dK/dV accumulation per query head.
   - gen: true
@@ -1076,7 +1114,57 @@ unary:
     stages:
       - 2
       - 3
+conv_dgrad_p5_k_contiguous:
+  - META: {BLOCK_M: 32, BLOCK_CI: 64, BLOCK_CO: 64}
+    num_warps: 4
+    num_stages: 3
+  - META: {BLOCK_M: 64, BLOCK_CI: 64, BLOCK_CO: 32}
+    num_warps: 4
+    num_stages: 3
+  - META: {BLOCK_M: 64, BLOCK_CI: 64, BLOCK_CO: 64}
+    num_warps: 4
+    num_stages: 3
+  - META: {BLOCK_M: 64, BLOCK_CI: 64, BLOCK_CO: 128}
+    num_warps: 8
+    num_stages: 2
+  - META: {BLOCK_M: 32, BLOCK_CI: 64, BLOCK_CO: 128}
+    num_warps: 4
+    num_stages: 3
+  - META: {BLOCK_M: 64, BLOCK_CI: 64, BLOCK_CO: 32}
+    num_warps: 4
+    num_stages: 4
+
+matrix_transpose:
+  - META: {BLOCK_SIZE: 16}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_SIZE: 32}
+    num_warps: 4
+    num_stages: 1
+
 layer_norm:
+  - META: {BLOCK_SIZE: 1024, ROWS_PER_PROGRAM: 2, PAIRED_REDUCTION: true}
+    num_warps: 4
+    num_stages: 1
+  # Preserve the original arithmetic while exploring row-level parallelism.
+  - META: {BLOCK_SIZE: 1024, ROWS_PER_PROGRAM: 1}
+    num_warps: 1
+    num_stages: 1
+  - META: {BLOCK_SIZE: 1024, ROWS_PER_PROGRAM: 2}
+    num_warps: 1
+    num_stages: 1
+  - META: {BLOCK_SIZE: 1024, ROWS_PER_PROGRAM: 2}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_SIZE: 1024, ROWS_PER_PROGRAM: 2}
+    num_warps: 8
+    num_stages: 1
+  - META: {BLOCK_SIZE: 4096, ROWS_PER_PROGRAM: 2}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_SIZE: 4096, ROWS_PER_PROGRAM: 2}
+    num_warps: 8
+    num_stages: 1
   - gen: true
     param_map:
       META:
@@ -1101,6 +1189,11 @@ layer_norm:
     num_warps: 4
     num_stages: 1
 rms_norm:
+  - META:
+      BLOCK_SIZE: 4096
+      ROWS_PER_PROGRAM: 2
+    num_warps: 8
+    num_stages: 1
   - gen: true
     param_map:
       META:
@@ -1848,6 +1941,67 @@ mv_wide_fp64:
       - 3
       - 4
       - 5
+matmul_tf32_pack:
+  - META: {BLOCK_SIZE: 32}
+    num_warps: 4
+    num_stages: 1
+
+matmul_tf32_tma_direct:
+  - META: {BLOCK_M: 128, BLOCK_N: 128, BLOCK_K: 32, GROUP_M: 8, PERSISTENT_GRID: 256}
+    num_warps: 8
+    num_stages: 3
+  - META: {BLOCK_M: 128, BLOCK_N: 128, BLOCK_K: 32, GROUP_M: 8, PERSISTENT_GRID: 264}
+    num_warps: 8
+    num_stages: 3
+
+matmul_tf32_short:
+  - META: {BLOCK_M: 256, BLOCK_N: 64, BLOCK_K: 32, SLOTS: 4, PERSISTENT_GRID: 132}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_M: 256, BLOCK_N: 64, BLOCK_K: 32, SLOTS: 3, PERSISTENT_GRID: 132}
+    num_warps: 4
+    num_stages: 1
+
+matmul_tf32_tensor_map:
+  - META: {BLOCK_M: 256, BLOCK_N: 128, BLOCK_K: 32, GROUP_M: 8, PERSISTENT_GRID: 132}
+    num_warps: 8
+    num_stages: 3
+  - META: {BLOCK_M: 128, BLOCK_N: 128, BLOCK_K: 32, GROUP_M: 8, PERSISTENT_GRID: 256}
+    num_warps: 8
+    num_stages: 3
+
+matmul_tf32_tma:
+  - META: {BLOCK_M: 128, BLOCK_N: 256, BLOCK_K: 32, GROUP_M: 8, PERSISTENT_GRID: 132}
+    num_warps: 8
+    num_stages: 3
+  - META: {BLOCK_M: 128, BLOCK_N: 256, BLOCK_K: 32, GROUP_M: 8, PERSISTENT_GRID: 256}
+    num_warps: 8
+    num_stages: 3
+  - META: {BLOCK_M: 64, BLOCK_N: 128, BLOCK_K: 64, GROUP_M: 8, PERSISTENT_GRID: 264}
+    num_warps: 4
+    num_stages: 2
+
+matmul_fp32_k_contiguous:
+  - META: {BLOCK_M: 64, BLOCK_N: 64, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 3
+  - META: {BLOCK_M: 128, BLOCK_N: 64, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 3
+  - META: {BLOCK_M: 64, BLOCK_N: 128, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 3
+  - META: {BLOCK_M: 128, BLOCK_N: 128, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 8
+    num_stages: 3
+
+  - META: {BLOCK_M: 64, BLOCK_N: 256, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 3
+  - META: {BLOCK_M: 128, BLOCK_N: 256, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 8
+    num_stages: 3
+
 matmul:
   - gen: true
     param_map:
@@ -1987,6 +2141,18 @@ matmul:
 
 
 
+matmul_short_persistent:
+  # Short-K overlap: no output TMA descriptor or per-tile store barrier.
+  - META: {BLOCK_M: 128, BLOCK_N: 256, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 8
+    num_stages: 4
+  - META: {BLOCK_M: 128, BLOCK_N: 128, BLOCK_K: 64, GROUP_M: 8}
+    num_warps: 8
+    num_stages: 3
+  - META: {BLOCK_M: 64, BLOCK_N: 128, BLOCK_K: 64, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 3
+
 matmul_persistent:
   - gen: true
     param_map:
@@ -2021,6 +2187,83 @@ matmul_fp8_transpose_sm90:
       BLOCK: 64
     num_warps: 8
     num_stages: 1
+
+conv_fprop_im2col_transposed:
+  - META: {BLOCK_M: 16, BLOCK_K: 16}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_M: 32, BLOCK_K: 32}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_M: 64, BLOCK_K: 32}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_M: 16, BLOCK_K: 64}
+    num_warps: 4
+    num_stages: 1
+
+# One dot tile covers the three-channel 3x3 FP32 reduction, so no software
+# pipeline or materialized patch buffer is needed.
+conv_fprop_small_reduction_fp32:
+  - META: {BLOCK_OC: 16, BLOCK_HW: 64, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_OC: 16, BLOCK_HW: 128, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_OC: 32, BLOCK_HW: 64, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_OC: 32, BLOCK_HW: 128, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_OC: 64, BLOCK_HW: 64, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 1
+  - META: {BLOCK_OC: 64, BLOCK_HW: 128, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 1
+
+# The K-contiguous FProp path keeps both operands in FP32 and uses tf32x3. Its register
+# and shared-memory requirements differ from the low-precision GEMM table.
+conv_fprop_fp32_mm:
+  - META: {BLOCK_M: 64, BLOCK_N: 32, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 3
+  - META: {BLOCK_M: 64, BLOCK_N: 32, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 4
+  - META: {BLOCK_M: 64, BLOCK_N: 64, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 3
+  - META: {BLOCK_M: 64, BLOCK_N: 64, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 4
+  - META: {BLOCK_M: 64, BLOCK_N: 64, BLOCK_K: 64, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 3
+  - META: {BLOCK_M: 64, BLOCK_N: 64, BLOCK_K: 64, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 4
+  - META: {BLOCK_M: 64, BLOCK_N: 32, BLOCK_K: 64, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 3
+  - META: {BLOCK_M: 64, BLOCK_N: 32, BLOCK_K: 64, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 4
+
+  - META: {BLOCK_M: 64, BLOCK_N: 128, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 3
+  - META: {BLOCK_M: 64, BLOCK_N: 128, BLOCK_K: 64, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 3
+  - META: {BLOCK_M: 128, BLOCK_N: 64, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 8
+    num_stages: 3
+  - META: {BLOCK_M: 64, BLOCK_N: 256, BLOCK_K: 32, GROUP_M: 8}
+    num_warps: 4
+    num_stages: 3
 
 mm:
   - META:
@@ -2446,6 +2689,13 @@ conv2d_spatial_nchw_packed:
     stages: [3]
 
 conv2d_1x1:
+  # Small output-spatial tiles avoid oversized FP32 accumulator layouts.
+  - META: {BLOCK_OC: 64, BLOCK_HW: 32, BLOCK_K: 32}
+    num_warps: 2
+    num_stages: 3
+  - META: {BLOCK_OC: 64, BLOCK_HW: 32, BLOCK_K: 64}
+    num_warps: 4
+    num_stages: 1
   # Per-batch NCHW 1x1 pad0/general path.  Add K=32 for fp32 small-C cases and
   # keep the larger OC/HW options that are good for fp16/bf16.
   - gen: true
@@ -2830,6 +3080,12 @@ conv_dgrad_2d_stride2_pad1_3x3_tile4:
 
 
 conv_fprop_3d:
+  - META: {BLOCK_OC: 16, BLOCK_M: 16, BLOCK_K: 32}
+    num_warps: 4
+    num_stages: 3
+  - META: {BLOCK_OC: 16, BLOCK_M: 16, BLOCK_K: 64}
+    num_warps: 4
+    num_stages: 3
   # Hopper NCDHW implicit-GEMM candidates for the two benchmark 3D families.
   - META:
       BLOCK_OC: 16
@@ -2954,6 +3210,14 @@ conv_wgrad_2d:
     block_m: [128, 256]
     warps: [4, 8]
     stages: [3]
+
+conv_wgrad_short_split:
+  - META: {BLOCK_CO: 64, BLOCK_CI: 32, BLOCK_M: 128}
+    num_warps: 4
+    num_stages: 2
+  - META: {BLOCK_CO: 32, BLOCK_CI: 64, BLOCK_M: 128}
+    num_warps: 4
+    num_stages: 2
 
 conv_wgrad_2d_1x1:
   - gen: true

@@ -526,9 +526,9 @@ int run_benchmark_suite(int argc,
     return 2;
   }
   try {
-    if (cases.size() != 15U) {
+    if (cases.empty()) {
       throw std::invalid_argument(
-          "common LayerNorm benchmark must contain 15 cases");
+          "common LayerNorm benchmark must contain cases");
     }
     const std::vector<BenchmarkCase> ascend_cases =
         acl::make_ascend_layernorm_benchmark_cases(cases);

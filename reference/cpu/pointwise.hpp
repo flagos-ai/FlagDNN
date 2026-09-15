@@ -19,11 +19,14 @@ namespace flagdnn::reference::cpu {
 // Broadcasting is right-aligned against output_dimensions.
 [[nodiscard]] std::vector<float> evaluate_binary_pointwise(
     flagdnnPointwiseMode_t mode, std::span<const float> left,
-    std::span<const std::int64_t> left_dimensions,
-    std::span<const float> right,
+    std::span<const std::int64_t> left_dimensions, std::span<const float> right,
     std::span<const std::int64_t> right_dimensions,
     std::span<const std::int64_t> output_dimensions);
 
-} // namespace flagdnn::reference::cpu
+[[nodiscard]] std::int32_t pointwise_integer_reference(
+    flagdnnPointwiseMode_t mode, std::int32_t left, std::int32_t right,
+    bool predicate, std::int32_t alpha);
 
-#endif // FLAGDNN_REFERENCE_CPU_POINTWISE_HPP_
+}  // namespace flagdnn::reference::cpu
+
+#endif  // FLAGDNN_REFERENCE_CPU_POINTWISE_HPP_

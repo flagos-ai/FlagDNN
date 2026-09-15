@@ -107,6 +107,8 @@ int run_matmul_functional_test(
     }
     const tv::CapabilityCatalog catalog = tv::CapabilityCatalog::load(
         FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG);
+    const auto selected_cases = catalog.select_cases("matmul", cases);
+    cases = selected_cases;
     catalog.validate_versions(FLAGDNN_THEAD_PPU_SDK_VERSION, ACDNN_VERSION,
                               static_cast<std::int64_t>(acdnnGetVersion()));
     tv::check_driver(cuInit(0), "cuInit");

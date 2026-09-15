@@ -1,12 +1,5 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
-#include "common/add.hpp"
-#include "validation/cuda_driver.hpp"
-#include "validation/tensor_io.hpp"
-
-
-#include <flagdnn/flagdnn.hpp>
-
 #include <unistd.h>
 
 #include <algorithm>
@@ -15,6 +8,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <flagdnn/flagdnn.hpp>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -25,6 +19,11 @@
 #include <string_view>
 #include <vector>
 
+#include "common/add.hpp"
+#include "common/pointwise.hpp"
+#include "validation/cuda_driver.hpp"
+#include "validation/tensor_io.hpp"
+
 namespace flagdnn::testing {
 namespace {
 
@@ -34,10 +33,9 @@ constexpr float kPaddingSentinel =
 class TemporaryCache {
  public:
   TemporaryCache() {
-    std::string pattern =
-        (std::filesystem::temp_directory_path() /
-         "flagdnn-add-functional-XXXXXX")
-            .string();
+    std::string pattern = (std::filesystem::temp_directory_path() /
+                           "flagdnn-add-functional-XXXXXX")
+                              .string();
     std::vector<char> writable(pattern.begin(), pattern.end());
     writable.push_back('\0');
     char* created = mkdtemp(writable.data());
@@ -102,8 +100,7 @@ std::vector<std::uint8_t> encode(std::span<const float> values,
 std::vector<float> decode(std::span<const std::uint8_t> bytes,
                           flagdnnDataType_t data_type) {
   const std::size_t count = bytes.size() / data_type_size(data_type);
-  return cuda::decode(
-      bytes, data_type, count, cuda::BooleanEncoding::kByte);
+  return cuda::decode(bytes, data_type, count, cuda::BooleanEncoding::kByte);
 }
 
 void require_padding_unchanged(std::string_view provider,
@@ -132,9 +129,8 @@ Accuracy compare(std::span<const float> actual,
         absolute / std::max({std::abs(left), std::abs(right), 1.0e-30});
     result.maximum_absolute = std::max(result.maximum_absolute, absolute);
     result.maximum_relative = std::max(result.maximum_relative, relative);
-    if (!std::isfinite(absolute) ||
-        (absolute > test_case.absolute_tolerance &&
-         relative > test_case.relative_tolerance)) {
+    if (!std::isfinite(absolute) || (absolute > test_case.absolute_tolerance &&
+                                     relative > test_case.relative_tolerance)) {
       std::ostringstream message;
       message << test_case.name << " differs at output element " << index
               << ": FlagDNN=" << left << ", cuDNN=" << right
@@ -152,8 +148,7 @@ std::unique_ptr<DeviceBuffer> make_input_buffer(const TestTensor& tensor,
                                                 Stream& stream) {
   const std::vector<float> logical = make_input(tensor, input_index);
   const std::vector<float> physical = scatter(logical, tensor);
-  const std::vector<std::uint8_t> encoded =
-      encode(physical, tensor.data_type);
+  const std::vector<std::uint8_t> encoded = encode(physical, tensor.data_type);
   auto result = std::make_unique<DeviceBuffer>(encoded.size());
   result->copy_from_host(encoded.data(), encoded.size(), stream.get());
   return result;
@@ -161,20 +156,18 @@ std::unique_ptr<DeviceBuffer> make_input_buffer(const TestTensor& tensor,
 
 std::unique_ptr<DeviceBuffer> make_output_buffer(const TestTensor& tensor,
                                                  Stream& stream) {
-  const std::vector<float> initial(
-      storage_element_count(tensor), kPaddingSentinel);
-  const std::vector<std::uint8_t> encoded =
-      encode(initial, tensor.data_type);
+  const std::vector<float> initial(storage_element_count(tensor),
+                                   kPaddingSentinel);
+  const std::vector<std::uint8_t> encoded = encode(initial, tensor.data_type);
   auto result = std::make_unique<DeviceBuffer>(encoded.size());
   result->copy_from_host(encoded.data(), encoded.size(), stream.get());
   return result;
 }
 
 std::vector<float> read_output(const DeviceBuffer& buffer,
-                               const TestTensor& tensor,
-                               Stream& stream) {
-  std::vector<std::uint8_t> encoded(
-      storage_element_count(tensor) * data_type_size(tensor.data_type));
+                               const TestTensor& tensor, Stream& stream) {
+  std::vector<std::uint8_t> encoded(storage_element_count(tensor) *
+                                    data_type_size(tensor.data_type));
   buffer.copy_to_host(encoded.data(), encoded.size(), stream.get());
   stream.synchronize();
   return decode(encoded, tensor.data_type);
@@ -182,16 +175,12 @@ std::vector<float> read_output(const DeviceBuffer& buffer,
 
 void execute(AddExecutable& executable,
              std::span<const flagdnnBinding_t> bindings,
-             DeviceBuffer& workspace,
-             Stream& stream) {
-  executable.execute(bindings,
-                     workspace.opaque(),
-                     executable.workspace_size(),
+             DeviceBuffer& workspace, Stream& stream) {
+  executable.execute(bindings, workspace.opaque(), executable.workspace_size(),
                      stream.opaque());
 }
 
-void run_case(const AddTestCase& test_case,
-              flagdnn::Handle& handle,
+void run_case(const AddTestCase& test_case, flagdnn::Handle& handle,
               Stream& stream) {
   validate_add_case(test_case);
   auto flagdnn = build_flagdnn_add(handle, test_case);
@@ -228,9 +217,9 @@ void run_case(const AddTestCase& test_case,
       read_output(*reference_output, test_case.output, stream);
   require_padding_unchanged("FlagDNN", flagdnn_physical, test_case.output);
   require_padding_unchanged("cuDNN", reference_physical, test_case.output);
-  const Accuracy accuracy = compare(gather(flagdnn_physical, test_case.output),
-                                    gather(reference_physical, test_case.output),
-                                    test_case);
+  const Accuracy accuracy =
+      compare(gather(flagdnn_physical, test_case.output),
+              gather(reference_physical, test_case.output), test_case);
   std::cout << test_case.name << ": FlagDNN Graph vs cuDNN Graph PASS"
             << " max_abs=" << accuracy.maximum_absolute
             << " max_rel=" << accuracy.maximum_relative << std::endl;
@@ -238,11 +227,11 @@ void run_case(const AddTestCase& test_case,
 
 }  // namespace
 
-int run_add_functional_test(int argc,
-                            char** argv,
+int run_add_functional_test(int argc, char** argv,
                             std::span<const AddTestCase> cases) {
   if (argc != 3) {
-    std::cerr << "usage: " << argv[0] << " COMPILER_EXECUTABLE COMPILER_ENTRY" << std::endl;
+    std::cerr << "usage: " << argv[0] << " COMPILER_EXECUTABLE COMPILER_ENTRY"
+              << std::endl;
     return 2;
   }
   try {
@@ -256,7 +245,9 @@ int run_add_functional_test(int argc,
     const char* filter = std::getenv("FLAGDNN_ADD_CASE");
     std::size_t executed = 0;
     for (const AddTestCase& test_case : cases) {
-      if (filter != nullptr && test_case.name.find(filter) == std::string::npos) {
+      if (test_case.left.data_type == FLAGDNN_DATA_INT32) continue;
+      if (filter != nullptr &&
+          test_case.name.find(filter) == std::string::npos) {
         continue;
       }
       run_case(test_case, handle, stream);
@@ -265,12 +256,10 @@ int run_add_functional_test(int argc,
     if (executed == 0) {
       throw std::runtime_error("FLAGDNN_ADD_CASE matched no test cases");
     }
-    std::cout << "FLAGDNN_ADD_FUNCTIONAL: PASS cases=" << executed
-              << std::endl;
+    std::cout << "FLAGDNN_ADD_FUNCTIONAL: PASS cases=" << executed << std::endl;
     return 0;
   } catch (const std::exception& error) {
-    std::cerr << "FLAGDNN_ADD_FUNCTIONAL_FAILED: " << error.what()
-              << std::endl;
+    std::cerr << "FLAGDNN_ADD_FUNCTIONAL_FAILED: " << error.what() << std::endl;
     return 1;
   }
 }

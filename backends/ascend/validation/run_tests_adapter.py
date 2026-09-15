@@ -6,6 +6,7 @@ from typing import Any
 
 
 DEFAULT_TIMEOUT = 7200
+REPORT_DEVICE = "npu"
 PREFLIGHT_BY_DEFAULT = False
 SUPPORTS_MIN_SPEEDUP = False
 FILTER_REGISTERED_TESTS = True
@@ -56,9 +57,8 @@ def _valid_identity(provider: str, identity: Any) -> bool:
     if provider == "aclnn":
         required = {"libnnopbase_sha256", "libopapi_math_sha256"}
         allowed = required | {"libopapi_nn_sha256"}
-        return (
-            required <= set(identity) <= allowed
-            and all(_sha256(value) for value in identity.values())
+        return required <= set(identity) <= allowed and all(
+            _sha256(value) for value in identity.values()
         )
     return False
 

@@ -2,15 +2,17 @@
 
 #include "common/convolution.hpp"
 
-#include <flagdnn/flagdnn.hpp>
 #include <flagdnn_frontend.h>
 
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <flagdnn/flagdnn.hpp>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -76,26 +78,18 @@ Shape channels_last_strides(const Shape& dimensions) {
   return result;
 }
 
-TestTensor tensor(std::int64_t uid,
-                  Shape dimensions,
-                  flagdnnDataType_t data_type,
-                  bool channels_last) {
+TestTensor tensor(std::int64_t uid, Shape dimensions,
+                  flagdnnDataType_t data_type, bool channels_last) {
   Shape strides = channels_last ? channels_last_strides(dimensions)
                                 : contiguous_strides(dimensions);
-  return {uid,
-          data_type,
-          std::move(dimensions),
-          std::move(strides)};
+  return {uid, data_type, std::move(dimensions), std::move(strides)};
 }
 
-std::int64_t output_dimension(std::int64_t input,
-                              std::int64_t filter,
+std::int64_t output_dimension(std::int64_t input, std::int64_t filter,
                               std::int64_t pre_padding,
-                              std::int64_t post_padding,
-                              std::int64_t stride,
+                              std::int64_t post_padding, std::int64_t stride,
                               std::int64_t dilation) {
-  return (input + pre_padding + post_padding -
-          dilation * (filter - 1) - 1) /
+  return (input + pre_padding + post_padding - dilation * (filter - 1) - 1) /
              stride +
          1;
 }
@@ -103,24 +97,25 @@ std::int64_t output_dimension(std::int64_t input,
 Shape output_shape(const CaseDefinition& definition) {
   Shape result = {definition.x[0], definition.w[0]};
   for (std::size_t axis = 0; axis < definition.stride.size(); ++axis) {
-    result.push_back(output_dimension(definition.x[axis + 2],
-                                      definition.w[axis + 2],
-                                      definition.pre_padding[axis],
-                                      definition.post_padding[axis],
-                                      definition.stride[axis],
-                                      definition.dilation[axis]));
+    result.push_back(output_dimension(
+        definition.x[axis + 2], definition.w[axis + 2],
+        definition.pre_padding[axis], definition.post_padding[axis],
+        definition.stride[axis], definition.dilation[axis]));
   }
   return result;
 }
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return "int32";
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
       return "fp16";
     case FLAGDNN_DATA_BFLOAT16:
       return "bfloat16";
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -177,8 +172,7 @@ void set_tolerance(ConvolutionTestCase& test_case) {
 
 ConvolutionTestCase make_case(const CaseDefinition& definition,
                               ConvolutionDirection direction,
-                              flagdnnDataType_t data_type,
-                              std::int64_t uid) {
+                              flagdnnDataType_t data_type, std::int64_t uid) {
   ConvolutionTestCase result;
   const std::size_t spatial_rank = definition.x.size() - 2;
   result.name = "conv" + std::to_string(spatial_rank) + "d_" +
@@ -189,13 +183,10 @@ ConvolutionTestCase make_case(const CaseDefinition& definition,
     result.name += "_convolution_mode";
   }
   result.direction = direction;
-  result.x = tensor(
-      uid, definition.x, data_type, definition.x_channels_last);
-  result.w = tensor(
-      uid + 1, definition.w, data_type, definition.w_channels_last);
-  result.y = tensor(uid + 2,
-                    output_shape(definition),
-                    data_type,
+  result.x = tensor(uid, definition.x, data_type, definition.x_channels_last);
+  result.w =
+      tensor(uid + 1, definition.w, data_type, definition.w_channels_last);
+  result.y = tensor(uid + 2, output_shape(definition), data_type,
                     definition.y_channels_last);
   result.pre_padding = definition.pre_padding;
   result.post_padding = definition.post_padding;
@@ -211,36 +202,136 @@ const std::vector<CaseDefinition>& fprop_definitions() {
   static const std::vector<CaseDefinition> definitions = {
       {{1, 2, 5, 5},
        {2, 2, 3, 3},
-       {1, 1}, {1, 1}, {1, 1}, {1, 1},
-       1, false, false, false, "nchw_smoke"},
+       {1, 1},
+       {1, 1},
+       {1, 1},
+       {1, 1},
+       1,
+       false,
+       false,
+       false,
+       "nchw_smoke"},
       {{2, 8, 16, 16},
        {16, 8, 3, 3},
-       {1, 1}, {1, 1}, {1, 1}, {1, 1},
-       1, true, true, true, "nhwc_symmetric"},
+       {1, 1},
+       {1, 1},
+       {1, 1},
+       {1, 1},
+       1,
+       true,
+       true,
+       true,
+       "nhwc_symmetric"},
       {{1, 4, 15, 17},
        {6, 4, 3, 5},
-       {2, 1}, {1, 2}, {1, 2}, {1, 1},
-       1, true, true, true, "nhwc_nonuniform_stride"},
+       {2, 1},
+       {1, 2},
+       {1, 2},
+       {1, 1},
+       1,
+       true,
+       true,
+       true,
+       "nhwc_nonuniform_stride"},
       {{1, 5, 19, 21},
        {9, 5, 3, 3},
-       {1, 1}, {2, 1}, {0, 3}, {2, 1},
-       1, true, true, true, "nhwc_asymmetric_dilation"},
+       {1, 1},
+       {2, 1},
+       {0, 3},
+       {2, 1},
+       1,
+       true,
+       true,
+       true,
+       "nhwc_asymmetric_dilation"},
       {{1, 4, 7, 7},
        {6, 2, 3, 3},
-       {1, 1}, {1, 1}, {1, 1}, {1, 1},
-       2, false, false, false, "nchw_groups2"},
+       {1, 1},
+       {1, 1},
+       {1, 1},
+       {1, 1},
+       2,
+       false,
+       false,
+       false,
+       "nchw_groups2"},
       {{2, 4, 16},
        {6, 4, 3},
-       {1}, {1}, {1}, {1},
-       1, false, false, true, "ncw_to_nwc"},
+       {1},
+       {1},
+       {1},
+       {1},
+       1,
+       false,
+       false,
+       true,
+       "ncw_to_nwc"},
       {{1, 2, 5, 6, 7},
        {4, 2, 3, 3, 3},
-       {1, 1, 1}, {1, 1, 1}, {1, 1, 1}, {1, 1, 1},
-       1, true, true, true, "ndhwc_symmetric"},
+       {1, 1, 1},
+       {1, 1, 1},
+       {1, 1, 1},
+       {1, 1, 1},
+       1,
+       true,
+       true,
+       true,
+       "ndhwc_symmetric"},
       {{1, 2, 6, 7, 8},
        {3, 2, 2, 3, 3},
-       {1, 1, 1}, {1, 0, 1}, {0, 1, 2}, {1, 1, 1},
-       1, true, true, true, "ndhwc_asymmetric"},
+       {1, 1, 1},
+       {1, 0, 1},
+       {0, 1, 2},
+       {1, 1, 1},
+       1,
+       true,
+       true,
+       true,
+       "ndhwc_asymmetric"},
+      {{1, 8, 9, 11},
+       {8, 8, 1, 1},
+       {1, 1},
+       {0, 0},
+       {0, 0},
+       {1, 1},
+       1,
+       true,
+       true,
+       true,
+       "nhwc_pointwise_odd"},
+      {{2, 4, 17, 19},
+       {8, 4, 3, 3},
+       {2, 2},
+       {1, 1},
+       {1, 1},
+       {1, 1},
+       1,
+       true,
+       true,
+       true,
+       "nhwc_stride2_boundary"},
+      {{1, 8, 31},
+       {16, 8, 5},
+       {2},
+       {2},
+       {1},
+       {1},
+       1,
+       true,
+       true,
+       true,
+       "nwc_asymmetric_stride2"},
+      {{2, 4, 4, 5, 6},
+       {8, 4, 1, 1, 1},
+       {1, 1, 1},
+       {0, 0, 0},
+       {0, 0, 0},
+       {1, 1, 1},
+       1,
+       true,
+       true,
+       true,
+       "ndhwc_pointwise"},
   };
   return definitions;
 }
@@ -249,41 +340,148 @@ std::vector<CaseDefinition> backward_definitions() {
   std::vector<CaseDefinition> result = {
       {{2, 8, 16, 16},
        {16, 8, 3, 3},
-       {1, 1}, {1, 1}, {1, 1}, {1, 1},
-       1, false, false, false, "nchw_symmetric"},
+       {1, 1},
+       {1, 1},
+       {1, 1},
+       {1, 1},
+       1,
+       false,
+       false,
+       false,
+       "nchw_symmetric"},
       {{1, 4, 15, 17},
        {6, 4, 3, 5},
-       {2, 1}, {1, 2}, {1, 2}, {1, 1},
-       1, false, false, false, "nchw_nonuniform_stride"},
+       {2, 1},
+       {1, 2},
+       {1, 2},
+       {1, 1},
+       1,
+       false,
+       false,
+       false,
+       "nchw_nonuniform_stride"},
       {{2, 3, 8, 8},
        {5, 3, 1, 1},
-       {1, 1}, {0, 0}, {0, 0}, {1, 1},
-       1, false, false, false, "nchw_1x1"},
+       {1, 1},
+       {0, 0},
+       {0, 0},
+       {1, 1},
+       1,
+       false,
+       false,
+       false,
+       "nchw_1x1"},
       {{2, 4, 12, 13},
        {7, 4, 3, 3},
-       {1, 2}, {1, 0}, {2, 3}, {1, 1},
-       1, false, false, false, "nchw_asymmetric_padding"},
+       {1, 2},
+       {1, 0},
+       {2, 3},
+       {1, 1},
+       1,
+       false,
+       false,
+       false,
+       "nchw_asymmetric_padding"},
       {{1, 4, 7, 7},
        {6, 2, 3, 3},
-       {1, 1}, {1, 1}, {1, 1}, {1, 1},
-       2, false, false, false, "nchw_groups2"},
+       {1, 1},
+       {1, 1},
+       {1, 1},
+       {1, 1},
+       2,
+       false,
+       false,
+       false,
+       "nchw_groups2"},
       {{2, 4, 16},
        {6, 4, 3},
-       {1}, {1}, {1}, {1},
-       1, false, false, false, "ncw_symmetric"},
+       {1},
+       {1},
+       {1},
+       {1},
+       1,
+       false,
+       false,
+       false,
+       "ncw_symmetric"},
       {{1, 2, 5, 6, 7},
        {4, 2, 3, 3, 3},
-       {1, 1, 1}, {1, 1, 1}, {1, 1, 1}, {1, 1, 1},
-       1, false, false, false, "ncdhw_symmetric"},
+       {1, 1, 1},
+       {1, 1, 1},
+       {1, 1, 1},
+       {1, 1, 1},
+       1,
+       false,
+       false,
+       false,
+       "ncdhw_symmetric"},
       {{1, 2, 6, 7, 8},
        {3, 2, 2, 3, 3},
-       {1, 1, 1}, {1, 0, 1}, {0, 1, 2}, {1, 1, 1},
-       1, false, false, false, "ncdhw_asymmetric"},
+       {1, 1, 1},
+       {1, 0, 1},
+       {0, 1, 2},
+       {1, 1, 1},
+       1,
+       false,
+       false,
+       false,
+       "ncdhw_asymmetric"},
+      {{1, 8, 9, 11},
+       {8, 8, 1, 1},
+       {1, 1},
+       {0, 0},
+       {0, 0},
+       {1, 1},
+       1,
+       true,
+       true,
+       true,
+       "nhwc_pointwise_odd"},
+      {{2, 4, 17, 19},
+       {8, 4, 3, 3},
+       {2, 2},
+       {1, 1},
+       {1, 1},
+       {1, 1},
+       1,
+       true,
+       true,
+       true,
+       "nhwc_stride2_boundary"},
+      {{1, 8, 31},
+       {16, 8, 5},
+       {2},
+       {2},
+       {1},
+       {1},
+       1,
+       true,
+       true,
+       true,
+       "nwc_asymmetric_stride2"},
+      {{2, 4, 4, 5, 6},
+       {8, 4, 1, 1, 1},
+       {1, 1, 1},
+       {0, 0, 0},
+       {0, 0, 0},
+       {1, 1, 1},
+       1,
+       true,
+       true,
+       true,
+       "ndhwc_pointwise"},
   };
   result.push_back({{2, 4, 8, 9},
                     {6, 4, 3, 3},
-                    {1, 1}, {1, 1}, {1, 1}, {1, 1},
-                    1, false, false, false, "explicit_filter_flip",
+                    {1, 1},
+                    {1, 1},
+                    {1, 1},
+                    {1, 1},
+                    1,
+                    false,
+                    false,
+                    false,
+                    "explicit_filter_flip",
                     ConvolutionMode::kConvolution});
   return result;
 }
@@ -297,31 +495,33 @@ void validate_tensor(const TestTensor& tensor_specification,
           tensor_specification.strides.size()) {
     throw std::invalid_argument(std::string(name) + " metadata is invalid");
   }
-  for (std::size_t axis = 0;
-       axis < tensor_specification.dimensions.size();
+  for (std::size_t axis = 0; axis < tensor_specification.dimensions.size();
        ++axis) {
     if (tensor_specification.dimensions[axis] <= 0 ||
         tensor_specification.strides[axis] <= 0) {
-      throw std::invalid_argument(
-          std::string(name) + " dimensions and strides must be positive");
+      throw std::invalid_argument(std::string(name) +
+                                  " dimensions and strides must be positive");
     }
   }
   if (tensor_specification.data_type != FLAGDNN_DATA_FLOAT32 &&
       tensor_specification.data_type != FLAGDNN_DATA_FLOAT16 &&
       tensor_specification.data_type != FLAGDNN_DATA_BFLOAT16) {
-    throw std::invalid_argument(
-        std::string(name) + " data type is not supported by convolution");
+    throw std::invalid_argument(std::string(name) +
+                                " data type is not supported by convolution");
   }
 }
 
 fe::DataType_t frontend_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return fe::DataType_t::INT32;
     case FLAGDNN_DATA_FLOAT32:
       return fe::DataType_t::FLOAT;
     case FLAGDNN_DATA_FLOAT16:
       return fe::DataType_t::HALF;
     case FLAGDNN_DATA_BFLOAT16:
       return fe::DataType_t::BFLOAT16;
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -343,15 +543,14 @@ fe::ConvolutionMode_t frontend_convolution_mode(ConvolutionMode mode) {
 
 void check_frontend(fe::error_t status, std::string_view operation) {
   if (status.is_bad()) {
-    throw std::runtime_error(
-        std::string(operation) + " failed: " + status.get_message());
+    throw std::runtime_error(std::string(operation) +
+                             " failed: " + status.get_message());
   }
 }
 
 std::shared_ptr<fe::graph::Tensor_attributes> make_tensor(
     const std::shared_ptr<fe::graph::Graph>& graph,
-    const TestTensor& tensor_specification,
-    std::string_view name) {
+    const TestTensor& tensor_specification, std::string_view name) {
   return graph->tensor(
       fe::graph::Tensor_attributes()
           .set_name(std::string(name))
@@ -364,8 +563,9 @@ std::shared_ptr<fe::graph::Tensor_attributes> make_tensor(
 template <typename Attributes>
 Attributes apply_attributes(Attributes attributes,
                             const ConvolutionTestCase& test_case) {
-  return attributes
-      .set_name(direction_name(test_case.direction))
+  return attributes.set_name(direction_name(test_case.direction))
+      .set_input_precision(
+          static_cast<fe::InputPrecision_t>(test_case.input_precision))
       .set_compute_data_type(fe::DataType_t::FLOAT)
       .set_pre_padding(test_case.pre_padding)
       .set_post_padding(test_case.post_padding)
@@ -400,20 +600,17 @@ class FlagdnnConvolutionExecutable final : public ConvolutionExecutable {
     switch (test_case.direction) {
       case ConvolutionDirection::kFprop:
         output = graph_->conv_fprop(
-            x,
-            w,
+            x, w,
             apply_attributes(fe::graph::Conv_fprop_attributes(), test_case));
         break;
       case ConvolutionDirection::kDgrad:
         output = graph_->conv_dgrad(
-            y,
-            w,
+            y, w,
             apply_attributes(fe::graph::Conv_dgrad_attributes(), test_case));
         break;
       case ConvolutionDirection::kWgrad:
         output = graph_->conv_wgrad(
-            y,
-            x,
+            y, x,
             apply_attributes(fe::graph::Conv_wgrad_attributes(), test_case));
         break;
     }
@@ -442,14 +639,11 @@ class FlagdnnConvolutionExecutable final : public ConvolutionExecutable {
     return workspace_size_;
   }
 
-  void execute(std::span<const flagdnnBinding_t> bindings,
-               void* workspace,
-               std::size_t workspace_size,
-               flagdnnStream_t stream) override {
+  void execute(std::span<const flagdnnBinding_t> bindings, void* workspace,
+               std::size_t workspace_size, flagdnnStream_t stream) override {
     if (workspace_size < workspace_size_ ||
         (workspace_size_ != 0 && workspace == nullptr)) {
-      throw std::invalid_argument(
-          "FlagDNN convolution workspace is too small");
+      throw std::invalid_argument("FlagDNN convolution workspace is too small");
     }
     check_frontend(
         graph_->execute(handle_, bindings, workspace, workspace_size, stream),
@@ -467,9 +661,8 @@ class FlagdnnConvolutionExecutable final : public ConvolutionExecutable {
 std::vector<ConvolutionTestCase> make_convolution_cases(
     ConvolutionDirection direction) {
   const std::vector<CaseDefinition> definitions =
-      direction == ConvolutionDirection::kFprop
-          ? fprop_definitions()
-          : backward_definitions();
+      direction == ConvolutionDirection::kFprop ? fprop_definitions()
+                                                : backward_definitions();
   std::vector<ConvolutionTestCase> result;
   result.reserve(definitions.size() * kDataTypes.size());
   std::int64_t uid =
@@ -480,6 +673,91 @@ std::vector<ConvolutionTestCase> make_convolution_cases(
     for (const flagdnnDataType_t data_type : kDataTypes) {
       result.push_back(make_case(definition, direction, data_type, uid));
       uid += 3;
+    }
+  }
+  const auto existing = result;
+  std::vector<ConvolutionTestCase> precision_cases;
+  for (const auto& original : existing) {
+    if (original.x.data_type == FLAGDNN_DATA_FLOAT32) {
+      precision_cases.push_back(original);
+      precision_cases.back().input_precision = 1;
+    }
+  }
+  if (direction == ConvolutionDirection::kFprop) {
+    // Cover a partial warp, a full warp, and the following output tile.
+    for (const std::int64_t width : {33, 34, 35}) {
+      const CaseDefinition definition{{1, 2, 1, width},
+                                      {1, 2, 1, 3},
+                                      {1, 1},
+                                      {0, 0},
+                                      {0, 0},
+                                      {1, 1},
+                                      1,
+                                      false,
+                                      false,
+                                      false,
+                                      "ieee_direct_tail"};
+      precision_cases.push_back(
+          make_case(definition, direction, FLAGDNN_DATA_FLOAT32, uid));
+      precision_cases.back().input_precision = 1;
+      uid += 3;
+    }
+    const CaseDefinition grouped{{1, 4, 10, 18},
+                                 {4, 2, 3, 3},
+                                 {1, 1},
+                                 {0, 0},
+                                 {0, 0},
+                                 {1, 1},
+                                 2,
+                                 false,
+                                 false,
+                                 false,
+                                 "ieee_direct_group_boundary"};
+    precision_cases.push_back(
+        make_case(grouped, direction, FLAGDNN_DATA_FLOAT32, uid));
+    precision_cases.back().input_precision = 1;
+    uid += 3;
+  }
+  for (std::int64_t index = 0; index < 14; ++index) {
+    const auto channels = 8 * (1 + index % 3);
+    const auto window = index % 2 ? 3 : 1;
+    const auto step = index % 3 ? 1 : 2;
+    CaseDefinition definition{
+        {1 + index % 2, channels, 7 + index, 9 + 2 * index},
+        {8 * (1 + index % 4), channels, window, window},
+        {step, step},
+        {window / 2, window / 2},
+        {window / 2, window / 2},
+        {1, 1},
+        1,
+        true,
+        true,
+        true,
+        "nhwc_precision"};
+    precision_cases.push_back(
+        make_case(definition, direction, FLAGDNN_DATA_FLOAT32, uid));
+    precision_cases.back().input_precision = 2;
+    uid += 3;
+  }
+  for (const auto& original : precision_cases) {
+    {
+      auto test_case = original;
+      const int precision = test_case.input_precision;
+      test_case.input_precision = precision;
+      test_case.name += precision == 1 ? "_ieee" : "_tf32";
+      test_case.absolute_tolerance = 5.0e-5;
+      test_case.relative_tolerance = 5.0e-5;
+      if (direction == ConvolutionDirection::kWgrad) {
+        // GPU reduction orders differ across batch and output positions.
+        // For inputs in [-2, 2], bound FP32 rounding by one product-scale
+        // ulp per term, including results near cancellation.
+        const auto terms = std::accumulate(
+            test_case.y.dimensions.begin() + 2, test_case.y.dimensions.end(),
+            test_case.y.dimensions[0], std::multiplies<>());
+        test_case.absolute_tolerance +=
+            4.0 * std::numeric_limits<float>::epsilon() * terms;
+      }
+      result.push_back(std::move(test_case));
     }
   }
   if (!result.empty()) {
@@ -496,7 +774,10 @@ std::vector<ConvolutionTestCase> make_convolution_cases(
 }
 
 void validate_convolution_case(const ConvolutionTestCase& test_case) {
-  if (test_case.name.empty() || test_case.groups <= 0 ||
+  if (test_case.input_precision < 0 || test_case.input_precision > 2 ||
+      (test_case.input_precision &&
+       test_case.x.data_type != FLAGDNN_DATA_FLOAT32) ||
+      test_case.name.empty() || test_case.groups <= 0 ||
       test_case.x.uid == test_case.w.uid ||
       test_case.x.uid == test_case.y.uid ||
       test_case.w.uid == test_case.y.uid ||
@@ -531,24 +812,21 @@ void validate_convolution_case(const ConvolutionTestCase& test_case) {
   }
   const std::int64_t channels = test_case.x.dimensions[1];
   const std::int64_t filters = test_case.w.dimensions[0];
-  if (channels % test_case.groups != 0 ||
-      filters % test_case.groups != 0 ||
+  if (channels % test_case.groups != 0 || filters % test_case.groups != 0 ||
       test_case.w.dimensions[1] != channels / test_case.groups ||
       test_case.y.dimensions[0] != test_case.x.dimensions[0] ||
       test_case.y.dimensions[1] != filters) {
     throw std::invalid_argument("convolution channel metadata is invalid");
   }
   for (std::size_t axis = 0; axis < spatial_rank; ++axis) {
-    if (test_case.pre_padding[axis] < 0 ||
-        test_case.post_padding[axis] < 0 ||
+    if (test_case.pre_padding[axis] < 0 || test_case.post_padding[axis] < 0 ||
         test_case.stride[axis] <= 0 || test_case.dilation[axis] <= 0 ||
         test_case.y.dimensions[axis + 2] !=
-            output_dimension(test_case.x.dimensions[axis + 2],
-                             test_case.w.dimensions[axis + 2],
-                             test_case.pre_padding[axis],
-                             test_case.post_padding[axis],
-                             test_case.stride[axis],
-                             test_case.dilation[axis])) {
+            output_dimension(
+                test_case.x.dimensions[axis + 2],
+                test_case.w.dimensions[axis + 2], test_case.pre_padding[axis],
+                test_case.post_padding[axis], test_case.stride[axis],
+                test_case.dilation[axis])) {
       throw std::invalid_argument(
           "convolution spatial metadata or output shape is invalid");
     }
@@ -569,8 +847,7 @@ const TestTensor& convolution_output_tensor(
 }
 
 std::unique_ptr<ConvolutionExecutable> build_flagdnn_convolution(
-    flagdnn::Handle& handle,
-    const ConvolutionTestCase& test_case) {
+    flagdnn::Handle& handle, const ConvolutionTestCase& test_case) {
   return std::make_unique<FlagdnnConvolutionExecutable>(handle, test_case);
 }
 

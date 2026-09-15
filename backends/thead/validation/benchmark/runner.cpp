@@ -184,6 +184,10 @@ bool is_contiguous(const TensorSpec &tensor) {
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return "int32";
+    case FLAGDNN_DATA_FP8_E8M0:
+      return "fp8_e8m0";
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
@@ -990,6 +994,8 @@ int run_benchmark_suite(int argc, char **argv,
     const std::string operation = operation_from_suite(suite_name);
     tvb::AcdnnProvider acdnn_provider(FLAGDNN_THEAD_BENCHMARK_CATALOG,
                                      operation, qualify_probes);
+    const auto selected_cases = acdnn_provider.select_cases(cases);
+    cases = selected_cases;
     acdnn_provider.require_exact_cases(cases);
     const char *filter = std::getenv("FLAGDNN_BENCHMARK_CASE");
     const bool backward_convolution =

@@ -455,7 +455,39 @@ int run_rmsnorm_functional_test(
     int argc,
     char** argv,
     std::span<const RmsnormTestCase> cases) {
-  return run_suite(argc, argv, cases, "FLAGDNN_RMSNORM_FUNCTIONAL");
+  std::vector<RmsnormTestCase> selected(cases.begin(), cases.end());
+  const auto prototype = std::find_if(
+      cases.begin(), cases.end(),
+      [](const auto& c) { return c.x.data_type == FLAGDNN_DATA_FLOAT16; });
+  if (prototype != cases.end()) {
+    // Exercise the NVIDIA short-row dispatch limits and both masked dimensions.
+    for (const auto& [rows, extent] :
+         {std::pair<std::int64_t, std::int64_t>{63, 512},
+          {64, 512},
+          {65, 127},
+          {65, 33},
+          {65, 31},
+          {65, 513}}) {
+      RmsnormTestCase test_case = *prototype;
+      test_case.name = "rmsnorm_fp16_warp_boundary_" + std::to_string(rows) +
+                       "x" + std::to_string(extent);
+      for (TestTensor* tensor : {&test_case.x, &test_case.y}) {
+        tensor->dimensions = {1, rows, extent};
+        tensor->strides = {rows * extent, extent, 1};
+      }
+      for (TestTensor* tensor : {&test_case.scale, &test_case.bias}) {
+        tensor->dimensions = {1, 1, extent};
+        tensor->strides = {extent, extent, 1};
+      }
+      test_case.inv_variance.dimensions = {1, rows, 1};
+      test_case.inv_variance.strides = {rows, 1, 1};
+      test_case.autotune = true;
+      validate_normalization_case(test_case);
+      selected.push_back(std::move(test_case));
+    }
+  }
+  return run_suite(argc, argv, std::span<const RmsnormTestCase>(selected),
+                   "FLAGDNN_RMSNORM_FUNCTIONAL");
 }
 
 int run_batchnorm_functional_test(

@@ -138,6 +138,12 @@ make_sdpa_backward_cases();
 [[nodiscard]] std::vector<SdpaFp8BackwardTestCase>
 make_sdpa_fp8_backward_cases();
 
+// Shared case builders used by the native Attention performance adapter.
+[[nodiscard]] std::vector<SdpaTestCase> make_sdpa_benchmark_cases();
+[[nodiscard]] std::vector<SdpaBackwardTestCase> make_sdpa_backward_benchmark_cases();
+[[nodiscard]] std::vector<SdpaFp8TestCase> make_sdpa_fp8_benchmark_cases();
+[[nodiscard]] std::vector<SdpaFp8BackwardTestCase> make_sdpa_fp8_backward_benchmark_cases();
+
 void validate_sdpa_case(const SdpaTestCase& test_case);
 void validate_sdpa_backward_case(const SdpaBackwardTestCase& test_case);
 void validate_sdpa_fp8_case(const SdpaFp8TestCase& test_case);

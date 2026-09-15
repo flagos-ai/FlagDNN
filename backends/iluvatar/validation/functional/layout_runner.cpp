@@ -1,13 +1,14 @@
 // Copyright 2026 FlagOS Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-#include "common/layout.hpp"
-#include "functional/runner_support.hpp"
-
 #include <algorithm>
 #include <cctype>
 #include <stdexcept>
 #include <string>
+#include <vector>
+
+#include "common/layout.hpp"
+#include "functional/runner_support.hpp"
 
 namespace flagdnn::testing {
 namespace {
@@ -32,6 +33,17 @@ std::string layout_operation(std::string_view marker) {
 int run_layout_functional_test(int argc, char **argv,
                                std::span<const LayoutTestCase> cases,
                                std::string_view suite_name) {
+  // This adapter currently validates matching floating input/output storage.
+  // Other shared dtype/output combinations are enabled with their backend
+  // support.
+  std::vector<LayoutTestCase> supported_cases(cases.begin(), cases.end());
+  std::erase_if(supported_cases, [](const LayoutTestCase &test_case) {
+    const auto type = test_case.input.data_type;
+    return type != FLAGDNN_DATA_FLOAT32 && type != FLAGDNN_DATA_FLOAT16 &&
+           type != FLAGDNN_DATA_BFLOAT16;
+  });
+  cases = supported_cases;
+
   namespace functional = iluvatar::validation::functional;
   const std::string operation = layout_operation(suite_name);
   functional::FunctionalSuite suite(argc, argv, operation,

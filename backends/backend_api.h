@@ -163,6 +163,28 @@ typedef struct flagdnnBackendApiV3 {
 
 typedef const flagdnnBackendApiV3* (*flagdnnBackendGetApiV3Function)(void);
 
+/*
+ * Optional build-environment extension; independent of executable ABI v2/v3.
+ * Without it, core retains the legacy exclusive environment lock for builds.
+ * With it, prepare_environment runs under that lock, then create_executable
+ * runs under a shared lock and MUST NOT mutate the process environment.
+ * is_environment_prepared is thread-safe, non-mutating and cannot throw.
+ * Readiness is monotonic for the selected execution engine until unload.
+ * The actual build input/context allow preparation of a real requested kernel;
+ * plugins must not require a synthetic bootstrap kernel or a different device.
+ */
+#define FLAGDNN_BACKEND_GET_BUILD_API_V1_SYMBOL "flagdnnBackendGetBuildApiV1"
+typedef struct flagdnnBackendBuildApiV1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  int (*is_environment_prepared)(const char* execution_engine);
+  flagdnnBackendResult_t (*prepare_environment)(
+      void* context, const char* execution_engine,
+      const flagdnnBackendBuildInputV2* input);
+} flagdnnBackendBuildApiV1;
+typedef const flagdnnBackendBuildApiV1*
+    (*flagdnnBackendGetBuildApiV1Function)(void);
+
 #ifdef __cplusplus
 }  /* extern "C" */
 #endif

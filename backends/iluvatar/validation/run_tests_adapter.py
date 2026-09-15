@@ -15,6 +15,7 @@ CONVOLUTION_CASE_PATTERN = re.compile(
 )
 
 DEFAULT_TIMEOUT = 1800
+REPORT_DEVICE = "cuda"
 PREFLIGHT_BY_DEFAULT = True
 SUPPORTS_MIN_SPEEDUP = True
 FILTER_REGISTERED_TESTS = False
@@ -543,9 +544,8 @@ def _cache_summary_and_cleanup(state: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("Iluvatar adapter state has no run cache path")
     cache_path = Path(cache_value).resolve()
     temporary_root = Path(tempfile.gettempdir()).resolve()
-    if (
-        cache_path.parent != temporary_root
-        or not cache_path.name.startswith("flagdnn-iluvatar-run-")
+    if cache_path.parent != temporary_root or not cache_path.name.startswith(
+        "flagdnn-iluvatar-run-"
     ):
         raise RuntimeError(
             f"Iluvatar adapter refuses unsafe cache path: {cache_path}"
@@ -590,38 +590,26 @@ def finalize(
                     for providers in records.values()
                 )
             record_errors += len(result.get("record_errors", []))
-            skip_record_errors += len(
-                result.get("skip_record_errors", [])
-            )
-            accounting_errors += len(
-                result.get("case_accounting_errors", [])
-            )
+            skip_record_errors += len(result.get("skip_record_errors", []))
+            accounting_errors += len(result.get("case_accounting_errors", []))
             if result.get("status") in {"passed", "skipped"}:
                 for record in result.get("skip_records", []):
                     reason = record.get("reason")
                     if reason:
-                        skip_reasons[reason] = (
-                            skip_reasons.get(reason, 0) + 1
-                        )
+                        skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
             accounting = result.get("case_accounting")
             if not isinstance(accounting, dict):
                 continue
             if suite_name == "functional":
                 functional_cases += int(accounting["cases"])
-                production_executed += int(
-                    accounting["production_executed"]
-                )
-                reference_executed += int(
-                    accounting["reference_executed"]
-                )
+                production_executed += int(accounting["production_executed"])
+                reference_executed += int(accounting["reference_executed"])
                 functional_reference_skipped += int(
                     accounting["reference_skipped"]
                 )
             elif suite_name == "benchmark":
                 benchmark_cases += int(accounting["cases"])
-                comparable_executed += int(
-                    accounting["comparable_executed"]
-                )
+                comparable_executed += int(accounting["comparable_executed"])
                 benchmark_reference_skipped += int(
                     accounting["reference_skipped"]
                 )
@@ -641,8 +629,7 @@ def finalize(
             "observed_pair_case_count": complete_pairs,
             "missing_case_count": missing_pairs,
             "verified": (
-                performance["coverage_gate_passed"]
-                and missing_pairs == 0
+                performance["coverage_gate_passed"] and missing_pairs == 0
             ),
         }
         if not comparable_coverage["verified"]:
@@ -709,8 +696,7 @@ def finalize(
         },
         "coverage": {
             "corex_cudnn_reference_skips": (
-                functional_reference_skipped
-                + benchmark_reference_skipped
+                functional_reference_skipped + benchmark_reference_skipped
             ),
             "corex_cudnn_skip_record_errors": skip_record_errors,
             "iluvatar_case_accounting_errors": accounting_errors,

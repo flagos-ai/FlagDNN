@@ -129,12 +129,6 @@ def binary_select_strided_kernel(
     )
 
 
-# -----------------------------------------------------------------------------
-# Kernel algorithm variants. Native dispatch selects only registry-declared
-# entry points; auxiliary kernels remain available to explicit compiler policy.
-# -----------------------------------------------------------------------------
-
-
 @triton.jit
 def binary_select_tensor_kernel(
     input0_ptr,
@@ -151,91 +145,6 @@ def binary_select_tensor_kernel(
     input0 = tl.load(input0_ptr + offsets, mask=active)
     input1 = tl.load(input1_ptr + offsets, mask=active)
     mask_value = tl.load(mask_ptr + offsets, mask=active, other=0)
-    result = tl.where(mask_value != 0, input0, input1)
-    tl.store(
-        out_ptr + offsets, result.to(out_ptr.dtype.element_ty), mask=active
-    )
-
-
-@triton.jit
-def binary_select_broadcast_kernel(
-    input0_ptr,
-    input1_ptr,
-    mask_ptr,
-    out_ptr,
-    n_elements,
-    s1,
-    s2,
-    s3,
-    s4,
-    s5,
-    sx0,
-    sx1,
-    sx2,
-    sx3,
-    sx4,
-    sx5,
-    sy0,
-    sy1,
-    sy2,
-    sy3,
-    sy4,
-    sy5,
-    sm0,
-    sm1,
-    sm2,
-    sm3,
-    sm4,
-    sm5,
-    BLOCK_SIZE: tl.constexpr,
-):
-    pid = tl.program_id(0)
-    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    active = offsets < n_elements
-
-    idx5 = offsets % s5
-    rem4 = offsets // s5
-
-    idx4 = rem4 % s4
-    rem3 = rem4 // s4
-
-    idx3 = rem3 % s3
-    rem2 = rem3 // s3
-
-    idx2 = rem2 % s2
-    rem1 = rem2 // s2
-
-    idx1 = rem1 % s1
-    idx0 = rem1 // s1
-
-    input0_off = (
-        idx0 * sx0
-        + idx1 * sx1
-        + idx2 * sx2
-        + idx3 * sx3
-        + idx4 * sx4
-        + idx5 * sx5
-    )
-    input1_off = (
-        idx0 * sy0
-        + idx1 * sy1
-        + idx2 * sy2
-        + idx3 * sy3
-        + idx4 * sy4
-        + idx5 * sy5
-    )
-    mask_off = (
-        idx0 * sm0
-        + idx1 * sm1
-        + idx2 * sm2
-        + idx3 * sm3
-        + idx4 * sm4
-        + idx5 * sm5
-    )
-
-    input0 = tl.load(input0_ptr + input0_off, mask=active)
-    input1 = tl.load(input1_ptr + input1_off, mask=active)
-    mask_value = tl.load(mask_ptr + mask_off, mask=active, other=0)
     result = tl.where(mask_value != 0, input0, input1)
     tl.store(
         out_ptr + offsets, result.to(out_ptr.dtype.element_ty), mask=active

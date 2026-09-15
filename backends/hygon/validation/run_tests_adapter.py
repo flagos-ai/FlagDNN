@@ -29,6 +29,7 @@ FUNCTIONAL_ACCOUNTING_MARKER_OVERRIDES = {
 }
 
 DEFAULT_TIMEOUT = 1800
+REPORT_DEVICE = "cuda"
 PREFLIGHT_BY_DEFAULT = True
 SUPPORTS_MIN_SPEEDUP = True
 FILTER_REGISTERED_TESTS = False
@@ -254,17 +255,17 @@ def hygon_comparable_coverage(
             else "not_run"
         )
         records = (
-            benchmark.get("records", {})
-            if isinstance(benchmark, dict)
-            else {}
+            benchmark.get("records", {}) if isinstance(benchmark, dict) else {}
         )
         if not isinstance(records, dict):
             records = {}
         for case in declared[operator]:
             providers = records.get(case)
-            if status == "passed" and isinstance(providers, dict) and set(
-                providers
-            ) == {"flagdnn", "hipdnn"}:
+            if (
+                status == "passed"
+                and isinstance(providers, dict)
+                and set(providers) == {"flagdnn", "hipdnn"}
+            ):
                 observed_required += 1
                 continue
             missing.append(
@@ -493,8 +494,7 @@ def validate_hygon_case_accounting(
 def hipdnn_skip_records(output: str) -> list[dict[str, str]]:
     records: list[dict[str, str]] = []
     pattern = re.compile(
-        r"^\[SKIP\]\[hipdnn\]\s+op=([^\s]+)\s+"
-        r"case=([^\s]+)\s+reason=(.+)$"
+        r"^\[SKIP\]\[hipdnn\]\s+op=([^\s]+)\s+" r"case=([^\s]+)\s+reason=(.+)$"
     )
     for raw_line in output.splitlines():
         line = re.sub(r"^\s*\d+:\s?", "", raw_line).strip()
@@ -665,9 +665,7 @@ def finalize(
             failed = True
 
     performance = (
-        benchmark_speedup_summary(
-            results, min_speedup, comparable_coverage
-        )
+        benchmark_speedup_summary(results, min_speedup, comparable_coverage)
         if "benchmark" in suites
         else None
     )

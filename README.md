@@ -5,6 +5,96 @@ FlagDNN 是一个面向多种加速器平台的 C/C++ DNN Graph Runtime。不同
 
 ## 平台安装
 
+### NVIDIA（英伟达）
+
+#### 环境要求
+
+- Linux、NVIDIA GPU，以及相互匹配的驱动和 CUDA Toolkit。当前验证设备为
+  H100（SM90），CUDA 版本为 12.9。
+- 功能测试和性能测试依赖 cuDNN 头文件、动态库（含 `libcudnn_ext.so.9`）和
+  cuDNN Frontend 头文件。当前验证版本为 cuDNN `9.24.0.43`、Frontend `1.26.0`。
+- CMake 3.25+（FlagDNN 本身最低要求为 3.23，编译 `libtriton_jit` 需 3.25）、
+  Ninja、支持 C++20 的编译器、Python 3.10+ 及 Python 开发头文件和动态库；
+  检查动态库依赖还需要 `readelf` 和 `nm`。当前验证使用 Python 3.12。
+- 同一 Python 环境中的 CUDA 版 PyTorch、支持 NVIDIA 后端的 FlagTree、
+  PyYAML、NumPy、packaging 和 pybind11。
+- CUDA 版 `libtriton_jit`，以及配套的头文件、编译脚本和 CMake 配置文件；
+  需与 FlagDNN 使用相同的 Python、PyTorch 和 FlagTree 环境。
+
+依赖的编译和安装方法请参考：
+
+- [FlagTree](https://github.com/flagos-ai/flagtree)：选择 NVIDIA 后端，提供
+  `triton` Python 模块，无需单独安装 Triton。
+- [`libtriton_jit`](https://github.com/flagos-ai/libtriton_jit)：编译时设置
+  `-DBACKEND=CUDA`。
+
+建议将 FlagDNN 与 `libtriton_jit` 放在同一级目录，默认从
+`../libtriton_jit/build` 查找 JIT 依赖。cuDNN 和 Frontend 可从所选 Python 环境中的
+`nvidia-cudnn-cu12`、`nvidia-cudnn-frontend` 安装目录自动发现。
+
+#### 编译
+
+在已激活上述 Python 环境的 FlagDNN 根目录执行：
+
+```bash
+tools/build.sh \
+  --backends nvidia \
+  --build-dir build/nvidia
+```
+
+该命令以 `Release` 模式编译 FlagDNN，并同时构建功能测试和性能测试。
+NVIDIA 后端仅支持默认的 `libtriton_jit` 执行引擎。若依赖安装在其他位置，
+可显式指定 Python、CUDA、`libtriton_jit` 和 cuDNN 路径：
+
+```bash
+tools/build.sh \
+  --backends nvidia \
+  --build-dir build/nvidia \
+  --python /path/to/python3 \
+  -- \
+  -DCUDAToolkit_ROOT=/path/to/cuda \
+  -DTritonJIT_DIR=/path/to/libtriton_jit/build \
+  -DCUDNN_ROOT=/path/to/cudnn \
+  -DCUDNN_FRONTEND_INCLUDE_DIR=/path/to/cudnn-frontend/include
+```
+
+`TritonJIT_DIR` 应指向包含 `TritonJITConfig.cmake` 的目录，已安装的包通常位于
+`<prefix>/lib/cmake/TritonJIT`。`CUDNN_ROOT` 应包含配套的头文件和动态库；
+`CUDNN_FRONTEND_INCLUDE_DIR` 应包含 `cudnn_frontend.h`。
+
+#### 安装
+
+```bash
+# 默认安装到 build/nvidia/install
+tools/install.sh --build-dir build/nvidia
+
+# 指定安装目录
+tools/install.sh \
+  --build-dir build/nvidia \
+  --prefix /path/to/flagdnn-sdk
+```
+
+安装后的 SDK 仍依赖兼容的 CUDA、`libtriton_jit` 和构建时选定的 Python 环境；
+功能测试和性能测试保留在构建目录中，不随 SDK 安装。
+
+#### 批量测试
+
+在与编译时一致的 Python 环境中执行：
+
+```bash
+set -o pipefail
+python3 tools/run_tests.py \
+    --platform nvidia \
+    --device 0 \
+    --suites functional,benchmark \
+    --no-preflight \
+    --verbose \
+    --output build/nvidia/run-tests.json \
+    2>&1 | tee build/nvidia/run-tests.log
+```
+
+测试细节见[功能与性能验证](docs/testing.md)
+
 ### Hygon（海光）
 
 #### 环境要求

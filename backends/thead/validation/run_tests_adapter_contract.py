@@ -56,7 +56,9 @@ def timing(case: str, provider: str, median: float = 2.0) -> str:
     )
 
 
-def pair(case: str, flagdnn: float = 2.0, acdnn: float = 4.0) -> dict[str, Any]:
+def pair(
+    case: str, flagdnn: float = 2.0, acdnn: float = 4.0
+) -> dict[str, Any]:
     return {
         "flagdnn": json.loads(timing(case, "flagdnn", flagdnn)),
         "acdnn": json.loads(timing(case, "acdnn", acdnn)),
@@ -124,11 +126,51 @@ def main() -> int:
         and adapter.PREFLIGHT_BY_DEFAULT is True
         and adapter.SUPPORTS_MIN_SPEEDUP is True
         and adapter.FILTER_REGISTERED_TESTS is False
-        and adapter.SPEEDUP_METRIC
-        == "acdnn_median_us/flagdnn_median_us",
+        and adapter.SPEEDUP_METRIC == "acdnn_median_us/flagdnn_median_us",
         "THead adapter public policy constants are incorrect",
     )
 
+    selected = adapter.select_operator_manifests(runner.operator_manifests())
+    require(
+        len(selected["functional"]) == 61
+        and len(selected["benchmark"]) == 57
+        and "relu_backward" not in selected["benchmark"]
+        and "rng" not in selected["functional"],
+        "THead selected operators without a declared reference catalog",
+    )
+    original_process = runner.run_process_group
+    runner.run_process_group = lambda *_args: (
+        "1: add_case: acDNN PASS\n"
+        + "1: "
+        + skip_line("add_skipped")
+        + "\n"
+        + "1: FLAGDNN_ADD_FUNCTIONAL: PASS cases=2 executed=1 skipped=1\n"
+        + "100% tests passed, 0 tests failed out of 1\n",
+        "",
+        0,
+        False,
+    )
+    try:
+        actual = runner.run_one(
+            Path("."),
+            "add",
+            "functional",
+            "thead",
+            {},
+            30,
+            False,
+            ["add"],
+            adapter=adapter,
+        )
+    finally:
+        runner.run_process_group = original_process
+    require(
+        actual["status"] == "passed"
+        and actual["case_counts"]["passed"] == 1
+        and actual["case_counts"]["skipped"] == 1
+        and actual["case_counts"]["total"] == 2,
+        "THead execution accounting was lost in the legacy summary",
+    )
     manifests = runner.operator_manifests()
     manifest_operators = list(
         dict.fromkeys(
@@ -271,8 +313,10 @@ def main() -> int:
     case = "add_perf_fp32_1x1x1024_by_1x1x1024"
     output = timing(case, "flagdnn") + "\n" + timing(case, "acdnn", 4.0)
     records, errors = runner.benchmark_records(output, adapter)
-    require(not errors and set(records[case]) == {"flagdnn", "acdnn"},
-            "generic runner rejected a complete FlagDNN/acDNN pair")
+    require(
+        not errors and set(records[case]) == {"flagdnn", "acdnn"},
+        "generic runner rejected a complete FlagDNN/acDNN pair",
+    )
     require(
         not adapter.validate_thead_benchmark_pairs(
             records, "add", manifest_operators
@@ -334,8 +378,10 @@ def main() -> int:
         status="skipped",
         output="FLAGDNN_ADD_FUNCTIONAL: SKIP cases=1 executed=0 skipped=1",
     )
-    require(missing_skip["status"] == "failed",
-            "missing acDNN skip record was accepted")
+    require(
+        missing_skip["status"] == "failed",
+        "missing acDNN skip record was accepted",
+    )
     duplicate_skip = postprocess(
         adapter,
         status="skipped",
@@ -346,8 +392,10 @@ def main() -> int:
             + "\nFLAGDNN_ADD_FUNCTIONAL: SKIP cases=2 executed=0 skipped=2"
         ),
     )
-    require(duplicate_skip["status"] == "failed",
-            "duplicate acDNN skip record was accepted")
+    require(
+        duplicate_skip["status"] == "failed",
+        "duplicate acDNN skip record was accepted",
+    )
     wrong_owner = postprocess(
         adapter,
         status="skipped",
@@ -356,8 +404,10 @@ def main() -> int:
             + "\nFLAGDNN_ADD_FUNCTIONAL: SKIP cases=1 executed=0 skipped=1"
         ),
     )
-    require(wrong_owner["status"] == "failed",
-            "wrong-owner acDNN skip record was accepted")
+    require(
+        wrong_owner["status"] == "failed",
+        "wrong-owner acDNN skip record was accepted",
+    )
 
     mixed = postprocess(
         adapter,
@@ -375,8 +425,10 @@ def main() -> int:
     missing_marker = postprocess(
         adapter, status="passed", output="ordinary successful output"
     )
-    require(missing_marker["status"] == "failed",
-            "missing accounting marker was accepted")
+    require(
+        missing_marker["status"] == "failed",
+        "missing accounting marker was accepted",
+    )
     duplicate_marker = postprocess(
         adapter,
         status="passed",
@@ -385,14 +437,18 @@ def main() -> int:
             "FLAGDNN_ADD_FUNCTIONAL: PASS cases=1 executed=1 skipped=0"
         ),
     )
-    require(duplicate_marker["status"] == "failed",
-            "duplicate accounting marker was accepted")
+    require(
+        duplicate_marker["status"] == "failed",
+        "duplicate accounting marker was accepted",
+    )
 
     catalog = adapter.load_thead_comparable_case_catalog(
         manifests["benchmark"]
     )
     required_cases = catalog["operators"]["add"]
-    require(required_cases, "THead comparable catalog has no required Add case")
+    require(
+        required_cases, "THead comparable catalog has no required Add case"
+    )
     required_mul_cases = catalog["operators"]["mul"]
     required_sub_cases = catalog["operators"]["sub"]
     required_min_cases = catalog["operators"]["min"]
@@ -433,7 +489,12 @@ def main() -> int:
     comparison_required = {
         operation: catalog["operators"][operation]
         for operation in (
-            "cmp_eq", "cmp_neq", "cmp_gt", "cmp_ge", "cmp_lt", "cmp_le"
+            "cmp_eq",
+            "cmp_neq",
+            "cmp_gt",
+            "cmp_ge",
+            "cmp_lt",
+            "cmp_le",
         )
     }
     layout_required = {
@@ -442,9 +503,7 @@ def main() -> int:
     }
     reduction_required = catalog["operators"]["reduction"]
     batchnorm_required = catalog["operators"]["batchnorm"]
-    batchnorm_inference_required = catalog["operators"][
-        "batchnorm_inference"
-    ]
+    batchnorm_inference_required = catalog["operators"]["batchnorm_inference"]
     layernorm_required = catalog["operators"]["layernorm"]
     rmsnorm_required = catalog["operators"]["rmsnorm"]
     matmul_required = catalog["operators"]["matmul"]
@@ -578,8 +637,7 @@ def main() -> int:
             "abs_perf_fp32_3x257x513",
             "abs_perf_fp32_8x16x32",
         }
-        and set(required_ceil_cases)
-        >= {"ceil_perf_fp32_3x257x513"}
+        and set(required_ceil_cases) >= {"ceil_perf_fp32_3x257x513"}
         and all(
             case.startswith("floor_perf_") for case in required_floor_cases
         )
@@ -593,8 +651,7 @@ def main() -> int:
         and all(
             set(extended_required[operation])
             >= {
-                f"{operation}_perf_fp32_{shape}"
-                for shape in four_dense_shapes
+                f"{operation}_perf_fp32_{shape}" for shape in four_dense_shapes
             }
             for operation in (
                 "log",
@@ -617,12 +674,12 @@ def main() -> int:
             }
             for operation in ("div", "pow", "sigmoid_backward")
         )
-        and set(binary_descriptor_required["mod"]) >= {
+        and set(binary_descriptor_required["mod"])
+        >= {
             "mod_perf_fp32_1x1x1024_by_1x1x1024",
             "mod_perf_fp32_1x1x1000_by_1x1x1000",
         }
-        and set(required_reciprocal_cases)
-        >= {"reciprocal_perf_fp32_1x1x1024"}
+        and set(required_reciprocal_cases) >= {"reciprocal_perf_fp32_1x1x1024"}
         and set(required_add_square_cases)
         >= {
             "add_square_perf_fp32_1x1x1000",
@@ -652,8 +709,7 @@ def main() -> int:
             "transpose_perf_fp32_16x64x128",
             "transpose_perf_fp32_32x128x256",
         }
-        and set(layout_required["slice"])
-        >= {"slice_perf_fp32_case0_8x16x32"}
+        and set(layout_required["slice"]) >= {"slice_perf_fp32_case0_8x16x32"}
         and set(reduction_required)
         >= {
             "reduction_sum_perf_fp32_axis1_keepdim_8x8x32x32",
@@ -667,10 +723,8 @@ def main() -> int:
             f"batchnorm_inference_perf_fp32_{shape}"
             for shape in batchnorm_shapes
         }
-        and set(layernorm_required)
-        >= {"layernorm_perf_fp32_1x128x768"}
-        and set(rmsnorm_required)
-        >= {"rmsnorm_perf_fp32_1x128x768"}
+        and set(layernorm_required) >= {"layernorm_perf_fp32_1x128x768"}
+        and set(rmsnorm_required) >= {"rmsnorm_perf_fp32_1x128x768"}
         and set(matmul_required)
         >= {
             "matmul_perf_fp32_4x16x32_by_4x32x24",
@@ -691,10 +745,7 @@ def main() -> int:
             for operation in ("conv_fprop", "conv_dgrad", "conv_wgrad")
         )
         and set(conv_bias_relu_required)
-        >= {
-            "conv_bias_relu_perf_fp32_x2x8x16x16_"
-            "w16x8x3x3_s1x1_p1x1_d1x1"
-        }
+        >= {"conv_bias_relu_perf_fp32_x2x8x16x16_" "w16x8x3x3_s1x1_p1x1_d1x1"}
         and catalog["schema_version"] == 2
         and catalog["declared_operator_count"] == 57,
         "THead comparable catalog lacks required pointwise/activation coverage",
@@ -729,7 +780,7 @@ def main() -> int:
                                 ),
                                 "detail": "Synthetic Mul pair qualification",
                             }
-                        }
+                        },
                     },
                 }
             ),

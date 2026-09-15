@@ -201,10 +201,12 @@ std::vector<ArgumentSpec> parse_argument_abi(
   }
 
   std::vector<ArgumentSpec> result;
+  std::size_t expanded_count = abi.size() - 2;
+  std::size_t tensor_map_count = 0;
   result.reserve(abi.size() - 2);
   for (std::size_t index = 0; index + 2 < abi.size(); ++index) {
     const std::string& kind = abi[index].at("kind").as_string();
-    if (kind == "tensor") {
+    if (kind == "tensor" || kind == "tensor_map") {
       const auto& argument_object = abi[index].as_object();
       const std::int64_t uid = abi[index].at("uid").as_int();
       const std::size_t size = checked_size(
@@ -222,6 +224,36 @@ std::vector<ArgumentSpec> parse_argument_abi(
       }
       result.push_back(
           {ArgumentKind::kTensor, uid, 0, 0.0F, 0, size, alignment});
+      if (kind == "tensor_map") {
+        expanded_count += 4;
+        ++tensor_map_count;
+        const auto& shape = abi[index].at("shape").as_array();
+        const auto& block = abi[index].at("block_shape").as_array();
+        const auto& strides = abi[index].at("strides").as_array();
+        require(shape.size() == 2 && block.size() == 2 && strides.size() == 2 &&
+                    abi[index].at("data_type").as_string() == "tf32_rne" &&
+                    alignment >= 16 && tensor_map_count <= kMaximumTensorMaps &&
+                    expanded_count <= FLAGDNN_BACKEND_MAX_KERNEL_ARGUMENTS,
+                "artifact TensorMap ABI is unsupported",
+                FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+        auto& argument = result.back();
+        argument.kind = ArgumentKind::kTensorMap;
+        for (std::size_t axis = 0; axis < 2; ++axis) {
+          const auto extent = checked_i32(shape[axis].as_int(), "tensor_map.shape");
+          const auto tile = checked_positive_unsigned(block[axis].as_int(), "tensor_map.block_shape");
+          require(extent > 0 && tile >= 32 && tile <= 256 &&
+                      (tile & (tile - 1)) == 0 && static_cast<unsigned int>(extent) % tile == 0,
+                  "artifact TensorMap tile is unsupported",
+                  FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+          argument.tensor_map.shape[axis] = extent;
+          argument.tensor_map.block_shape[axis] = tile;
+        }
+        const auto& dimensions = argument.tensor_map.shape;
+        require(strides[0].as_int() == dimensions[1] && strides[1].as_int() == 1 &&
+                    size == static_cast<std::uint64_t>(dimensions[0]) * dimensions[1] * 4,
+                "artifact TensorMap storage is inconsistent",
+                FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+      }
       if (std::find(binding_uids.begin(), binding_uids.end(), uid) ==
           binding_uids.end()) {
         binding_uids.push_back(uid);
@@ -266,10 +298,10 @@ std::vector<ArgumentSpec> parse_argument_abi(
 }
 
 CudaKernelArtifact parse_kernel(
-    EngineKind engine,
     const flagdnn::native::json::Value& entry,
+    std::size_t workspace_size,
     const std::filesystem::path& artifact_directory,
-    std::size_t workspace_size) {
+    const std::string& function_name) {
   const std::string kernel_source_hash =
       entry.at("source_sha256").as_string();
   if (!is_sha256(kernel_source_hash)) {
@@ -295,17 +327,7 @@ CudaKernelArtifact parse_kernel(
                     "artifact variant ID is invalid");
   }
 
-  if (engine == EngineKind::kExternalArtifact) {
-    result.binary = validate_file(artifact_directory,
-                                  entry.at("binary"),
-                                  1U << 30,
-                                  "binary");
-    result.entry_symbol = entry.at("entry_symbol").as_string();
-    if (result.entry_symbol.empty() || result.entry_symbol.size() > 1024) {
-      throw CudaError(FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
-                      "artifact entry symbol is invalid");
-    }
-  } else {
+  {
     result.full_signature = entry.at("full_signature").as_string();
     if (result.full_signature.empty() ||
         result.full_signature.size() > (64U << 10) ||
@@ -331,6 +353,69 @@ CudaKernelArtifact parse_kernel(
 
   result.arguments = parse_argument_abi(
       entry.at("argument_abi"), workspace_size, result.binding_uids);
+  const auto cache_entry = entry_object.find("compiled_cache");
+  std::size_t cached_scratch_per_cta = 0;
+  const bool has_tensor_maps = std::any_of(
+      result.arguments.begin(), result.arguments.end(), [](const ArgumentSpec& argument) {
+        return argument.kind == ArgumentKind::kTensorMap;
+      });
+  require(!has_tensor_maps || cache_entry != entry_object.end(),
+          "TensorMap arguments require an artifact-owned libtriton_jit cache",
+          FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+  if (cache_entry != entry_object.end()) {
+    const auto& cache = cache_entry->second;
+    const auto& directory = cache.at("directory").as_string();
+    require(is_safe_basename(directory) && cache.at("name").as_string() == function_name &&
+                cache.at("metadata").at("file").as_string() == function_name + ".json" &&
+                cache.at("binary").at("file").as_string() == function_name + ".cubin",
+            "compiled JIT cache path or kernel name is invalid",
+            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+    result.compiled_cache = artifact_directory / directory;
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(result.compiled_cache, error);
+    require(!error && std::filesystem::is_directory(status),
+            "compiled JIT cache must be a non-symlink directory",
+            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+    const auto metadata_file = validate_file(result.compiled_cache, cache.at("metadata"),
+                                              1U << 20, "JIT cache metadata");
+    (void)validate_file(result.compiled_cache, cache.at("binary"), 64U << 20, "JIT cache binary");
+    const auto metadata = flagdnn::native::json::parse(read_text_file(metadata_file, 1U << 20));
+    require(metadata.at("name").as_string() == function_name &&
+                metadata.at("num_warps").as_int() == result.num_warps &&
+                metadata.at("num_stages").as_int() == result.num_stages &&
+                metadata.at("num_ctas").as_int() == 1,
+            "compiled JIT cache options disagree with the variant",
+            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+    const auto& maps = metadata.at("tensordesc_meta").as_array();
+    std::size_t map_index = 0;
+    for (const auto& argument : result.arguments) {
+      if (argument.kind != ArgumentKind::kTensorMap) {
+        continue;
+      }
+      require(map_index < maps.size(), "compiled TensorMap metadata is missing",
+              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+      const auto& map = maps[map_index++];
+      const auto& box = map.at("block_size").as_array();
+      // The TL type stays FP32 (7); only the host descriptor's load datatype
+      // becomes TF32-RNE (11). Both have the same four-byte storage/layout.
+      require(box.size() == 2 && box[0].as_int() == argument.tensor_map.block_shape[0] &&
+                  box[1].as_int() == 32 && map.at("swizzle").as_int() == 3 &&
+                  map.at("elem_size").as_int() == 4 && map.at("elem_type").as_int() == 7 &&
+                  !map.at("fp4_padded").as_bool(),
+              "compiled TensorMap layout disagrees with the argument ABI",
+              FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+    }
+    require(map_index == maps.size(), "compiled TensorMap count disagrees with the argument ABI",
+            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+    cached_scratch_per_cta = checked_size(
+        metadata.at("global_scratch_size").as_int(), "compiled global scratch");
+    const auto alignment = checked_size(
+        metadata.at("global_scratch_align").as_int(), "compiled scratch alignment");
+    require(alignment > 0 && alignment <= 256 && (alignment & (alignment - 1)) == 0 &&
+                metadata.at("profile_scratch_size").as_int() == 0,
+            "compiled JIT scratch layout is unsupported",
+            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+  }
   const auto& launch = entry.at("launch");
   result.grid = parse_triplet(launch.at("grid"), "launch.grid");
   result.block = parse_triplet(launch.at("block"), "launch.block");
@@ -355,29 +440,25 @@ CudaKernelArtifact parse_kernel(
   result.profile_scratch_size = checked_size(
       launch.at("profile_scratch_size").as_int(),
       "launch.profile_scratch_size");
-  if (engine == EngineKind::kExternalArtifact &&
-      (result.global_scratch_size != 0 ||
-       result.profile_scratch_size != 0)) {
-    throw CudaError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
-                    "external NVIDIA artifacts do not support scratch buffers yet");
-  }
-  if (engine == EngineKind::kLibTritonJit &&
-      (result.global_scratch_size == 0 ||
-       result.global_scratch_size > workspace_size ||
+  if (result.global_scratch_size == 0 ||
+      result.global_scratch_size > workspace_size ||
        result.global_scratch_size % 256 != 0 ||
-       result.profile_scratch_size != 0)) {
+       result.profile_scratch_size != 0) {
     throw CudaError(
         FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
-        "libtriton_jit scratch metadata is incompatible with workspace");
+        "CUDA scratch metadata is incompatible with workspace");
   }
   const bool valid_jit_block =
       result.block[1] == 1U && result.block[2] == 1U &&
       result.block[0] == result.num_warps * 32U;
-  if (engine == EngineKind::kLibTritonJit &&
-      (!valid_jit_block || result.shared_memory != 0)) {
+  if (!valid_jit_block || result.shared_memory != 0) {
     throw CudaError(FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
                     "libtriton_jit launch plan is inconsistent");
   }
+  require(cached_scratch_per_cta <= result.global_scratch_size /
+              result.grid[0] / result.grid[1] / result.grid[2],
+          "compiled JIT scratch exceeds the planned launch allocation",
+          FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
   return result;
 }
 
@@ -395,22 +476,12 @@ bool same_argument_abi(const CudaKernelArtifact& left,
         a.scalar_f32 != b.scalar_f32 ||
         a.workspace_offset != b.workspace_offset ||
         a.storage_size != b.storage_size ||
-        a.alignment != b.alignment) {
+        a.alignment != b.alignment ||
+        a.tensor_map.shape != b.tensor_map.shape) {
       return false;
     }
   }
   return true;
-}
-
-EngineKind parse_engine(std::string_view value) {
-  if (value == "external_artifact") {
-    return EngineKind::kExternalArtifact;
-  }
-  if (value == "libtriton_jit") {
-    return EngineKind::kLibTritonJit;
-  }
-  throw CudaError(FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
-                  "artifact execution engine is invalid");
 }
 
 }  // namespace
@@ -494,7 +565,6 @@ CudaArtifact parse_cuda_artifact(const EngineBuildContext& context,
     }
 
     result.stages.reserve(stage_count);
-    bool engine_initialized = false;
     for (std::size_t index = 0; index < stages.size(); ++index) {
       const auto& stage = stages[index];
       if (checked_size(stage.at("stage_id").as_int(), "stage_id") != index ||
@@ -535,14 +605,9 @@ CudaArtifact parse_cuda_artifact(const EngineBuildContext& context,
         seen_dependencies.push_back(dependency_id);
       }
 
-      const EngineKind stage_engine =
-          parse_engine(stage.at("engine").as_string());
-      if (!engine_initialized) {
-        result.engine = stage_engine;
-        engine_initialized = true;
-      } else if (result.engine != stage_engine) {
+      if (stage.at("engine").as_string() != "libtriton_jit") {
         throw CudaError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
-                        "mixed execution engines are not supported yet");
+                        "NVIDIA only supports the libtriton_jit execution engine");
       }
 
       CudaStageArtifact parsed_stage;
@@ -550,7 +615,7 @@ CudaArtifact parse_cuda_artifact(const EngineBuildContext& context,
           artifact_directory /
           (".flagdnn-autotune-v1-stage-" + std::to_string(index) + "-" +
            context.device_identity + ".json");
-      if (stage_engine == EngineKind::kLibTritonJit) {
+      {
         const auto& kernel = stage.at("kernel");
         parsed_stage.source = validate_file(
             artifact_directory,
@@ -568,7 +633,7 @@ CudaArtifact parse_cuda_artifact(const EngineBuildContext& context,
       const auto variants_entry = stage_object.find("variants");
       if (variants_entry == stage_object.end()) {
         parsed_stage.variants.push_back(parse_kernel(
-            stage_engine, stage, artifact_directory, result.workspace_size));
+            stage, result.workspace_size, artifact_directory, parsed_stage.function_name));
       } else {
         parsed_stage.autotune = true;
         const auto& variants = variants_entry->second.as_array();
@@ -603,10 +668,8 @@ CudaArtifact parse_cuda_artifact(const EngineBuildContext& context,
         parsed_stage.variants.reserve(variants.size());
         for (const auto& variant : variants) {
           CudaKernelArtifact candidate = parse_kernel(
-              stage_engine,
               variant,
-              artifact_directory,
-              result.workspace_size);
+              result.workspace_size, artifact_directory, parsed_stage.function_name);
           if (std::any_of(
                   parsed_stage.variants.begin(),
                   parsed_stage.variants.end(),
@@ -621,6 +684,13 @@ CudaArtifact parse_cuda_artifact(const EngineBuildContext& context,
             throw CudaError(
                 FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
                 "autotune variants have incompatible argument ABIs");
+          }
+          if (!parsed_stage.variants.empty() &&
+              candidate.compiled_cache.empty() !=
+                  parsed_stage.variants.front().compiled_cache.empty()) {
+            throw CudaError(
+                FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
+                "autotune variants have incompatible JIT cache modes");
           }
           parsed_stage.variants.push_back(std::move(candidate));
         }
@@ -639,6 +709,25 @@ CudaArtifact parse_cuda_artifact(const EngineBuildContext& context,
     if (result.binding_uids.empty()) {
       throw CudaError(FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
                       "artifact has no external tensor bindings");
+    }
+    std::size_t scratch_size = 0;
+    for (const auto& stage : result.stages) {
+      for (const auto& variant : stage.variants) {
+        scratch_size = std::max(scratch_size, variant.global_scratch_size);
+      }
+    }
+    const std::size_t tensor_workspace_size = result.workspace_size - scratch_size;
+    for (const auto& stage : result.stages) {
+      for (const auto& variant : stage.variants) {
+        for (const auto& argument : variant.arguments) {
+          if (argument.kind == ArgumentKind::kWorkspaceTensor &&
+              (argument.workspace_offset > tensor_workspace_size ||
+               argument.storage_size > tensor_workspace_size - argument.workspace_offset)) {
+            throw CudaError(FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
+                            "tensor workspace overlaps CUDA scratch");
+          }
+        }
+      }
     }
     return result;
   } catch (const CudaError&) {

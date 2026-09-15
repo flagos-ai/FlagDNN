@@ -1,10 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flagdnn.example/schemas/native-benchmark-result-v2.json",
+  "$id": "https://flagdnn.example/schemas/native-benchmark-result-v3.json",
   "title": "FlagDNN native benchmark result",
   "oneOf": [
     {"$ref": "#/$defs/v1"},
-    {"$ref": "#/$defs/v2"}
+    {"$ref": "#/$defs/v2"},
+    {"$ref": "#/$defs/v3"}
   ],
   "$defs": {
     "positiveSamples": {
@@ -176,6 +177,40 @@
           }
         }
       ]
+    },
+    "v3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "kind", "provider", "case", "unit",
+        "median", "p90", "samples", "host_submit_us", "build_us",
+        "warm_build_us", "workspace_bytes", "build_cache"
+      ],
+      "properties": {
+        "schema_version": {"const": 3},
+        "kind": {"const": "steady_state"},
+        "provider": {"enum": ["flagdnn", "cudnn"]},
+        "case": {"type": "string", "minLength": 1},
+        "unit": {"const": "us"},
+        "median": {"type": "number", "exclusiveMinimum": 0},
+        "p90": {"type": "number", "exclusiveMinimum": 0},
+        "samples": {"$ref": "#/$defs/positiveSamples"},
+        "host_submit_us": {"$ref": "#/$defs/metric"},
+        "build_us": {"type": "number", "exclusiveMinimum": 0},
+        "warm_build_us": {"type": "number", "exclusiveMinimum": 0},
+        "workspace_bytes": {"type": "integer", "minimum": 0},
+        "comparison": {"const": "none"},
+        "build_cache": {
+          "enum": ["fresh_artifact_cache", "reuse_allowed", "provider_managed"]
+        }
+      },
+      "allOf": [{
+        "if": {"required": ["comparison"]},
+        "then": {"properties": {
+          "provider": {"const": "flagdnn"},
+          "case": {"type": "string", "pattern": "^native/.+"}
+        }}
+      }]
     }
   }
 }

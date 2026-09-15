@@ -3,13 +3,13 @@
 #ifndef FLAGDNN_TESTS_COMMON_POINTWISE_HPP_
 #define FLAGDNN_TESTS_COMMON_POINTWISE_HPP_
 
-#include "common/common.hpp"
-
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "common/common.hpp"
 
 namespace flagdnn::testing {
 
@@ -38,7 +38,6 @@ struct PointwiseTestCase {
   double absolute_tolerance = 0.0;
   double relative_tolerance = 0.0;
   bool autotune = false;
-  bool use_host_reference = false;
 };
 
 struct PointwiseCaseDefinition {
@@ -60,37 +59,35 @@ using PointwiseExecutable = TestExecutable;
     const PointwiseCaseDefinition& definition);
 
 int run_unary_pointwise_functional_test(
-    int argc,
-    char** argv,
-    const PointwiseCaseDefinition& definition,
+    int argc, char** argv, const PointwiseCaseDefinition& definition,
     std::string_view suite_name);
 int run_binary_pointwise_functional_test(
-    int argc,
-    char** argv,
-    const PointwiseCaseDefinition& definition,
+    int argc, char** argv, const PointwiseCaseDefinition& definition,
     std::string_view suite_name);
-int run_binary_select_functional_test(
-    int argc,
-    char** argv,
-    const PointwiseCaseDefinition& definition,
-    std::string_view suite_name);
+int run_binary_select_functional_test(int argc, char** argv,
+                                      const PointwiseCaseDefinition& definition,
+                                      std::string_view suite_name);
+
+// Exact signed integer oracle; values never pass through floating point.
+[[nodiscard]] std::int32_t pointwise_integer_input(std::size_t index,
+                                                   std::size_t input,
+                                                   flagdnnPointwiseMode_t mode);
 
 void validate_pointwise_case(const PointwiseTestCase& test_case);
 
 [[nodiscard]] std::unique_ptr<PointwiseExecutable> build_flagdnn_pointwise(
-    flagdnn::Handle& handle,
-    const PointwiseTestCase& test_case);
+    flagdnn::Handle& handle, const PointwiseTestCase& test_case);
 
-/* Implemented by the selected backends/<platform>/validation/functional adapter. */
+/* Implemented by the selected backends/<platform>/validation/functional
+ * adapter. */
 [[nodiscard]] std::unique_ptr<PointwiseExecutable> build_pointwise_reference(
     const PointwiseTestCase& test_case);
 
-/* Implemented by backends/<platform>/validation/functional/pointwise_runner.cpp. */
-int run_pointwise_functional_test(
-    int argc,
-    char** argv,
-    std::span<const PointwiseTestCase> cases,
-    std::string_view suite_name);
+/* Implemented by
+ * backends/<platform>/validation/functional/pointwise_runner.cpp. */
+int run_pointwise_functional_test(int argc, char** argv,
+                                  std::span<const PointwiseTestCase> cases,
+                                  std::string_view suite_name);
 
 }  // namespace flagdnn::testing
 

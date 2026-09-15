@@ -817,9 +817,7 @@ def _specialize_pointwise_compute_source(
                     else ("input0", "input1")
                 )
             for name in names:
-                lines.append(
-                    f"{indentation}{name} = {name}.to(tl.float32)\n"
-                )
+                lines.append(f"{indentation}{name} = {name}.to(tl.float32)\n")
             specialization_count += 1
         if specialization_count < 1:
             raise ValueError(
@@ -894,10 +892,31 @@ def _schema_binary_configuration(
         "ALPHA": alpha,
         "BLOCK_SIZE": block_size,
     }
-    function_name = "binary_contiguous_kernel"
-    if not _can_use_dense_pointwise_kernel(tensors):
-        function_name = "binary_strided_kernel"
+    dense = _can_use_dense_pointwise_kernel(tensors)
+    function_name = (
+        "binary_contiguous_kernel" if dense else "binary_strided_kernel"
+    )
+    if not dense:
         constants.update(strided_constants)
+    if operation == "sigmoid_backward":
+        function_name = (
+            "activation_backward_contiguous_kernel"
+            if dense
+            else "activation_backward_strided_kernel"
+        )
+        constants.update(
+            {
+                "NEGATIVE_SLOPE": 0.0,
+                "LOWER_CLIP": 0.0,
+                "UPPER_CLIP": 0.0,
+                "HAS_UPPER_CLIP": False,
+                "SWISH_BETA": 1.0,
+                "ELU_ALPHA": 1.0,
+                "SOFTPLUS_BETA": 1.0,
+            }
+        )
+        if dense:
+            constants["MASK_TAIL"] = True
     signature = {
         "x_ptr": POINTER_TYPES[left["data_type"]],
         "y_ptr": POINTER_TYPES[right["data_type"]],
@@ -988,9 +1007,7 @@ def _schema_unary_configuration(
         signature,
         constants,
         (
-            (
-                elements + block_size * packed_factor - 1
-            )
+            (elements + block_size * packed_factor - 1)
             // (block_size * packed_factor),
             1,
             1,
@@ -1130,9 +1147,7 @@ def _nn_workspace_layout(
         if offset > 2**63 - 1 - (node_alignment - 1):
             raise ValueError("Hygon NN workspace alignment overflows int64")
         offset = (
-            (offset + node_alignment - 1)
-            // node_alignment
-            * node_alignment
+            (offset + node_alignment - 1) // node_alignment * node_alignment
         )
         node_base = offset
         named: dict[str, dict[str, int]] = {}
@@ -1628,7 +1643,9 @@ def _wgrad_dot_tuning_fits_shared_memory(
     token = configuration.runtime_signature.get("dy_ptr")
     element_bytes = _WGRAD_DOT_ELEMENT_BYTES.get(token)
     if element_bytes is None:
-        raise ValueError("Hygon WGrad dot stage has an invalid dy_ptr ABI token")
+        raise ValueError(
+            "Hygon WGrad dot stage has an invalid dy_ptr ABI token"
+        )
 
     required_meta = ("BLOCK_M", "BLOCK_OC", right_meta)
     missing_meta = [name for name in required_meta if name not in meta]
@@ -1718,7 +1735,9 @@ def _load_nn_tuning(
                 or isinstance(block_m, bool)
                 or not isinstance(block_m, int)
             ):
-                raise ValueError("Hygon multirow WGrad tile contract is invalid")
+                raise ValueError(
+                    "Hygon multirow WGrad tile contract is invalid"
+                )
             if block_m < row_pitch or block_m % row_pitch != 0:
                 continue
         if (
@@ -1785,10 +1804,14 @@ def _compile_pointwise_stage(
         "common": ("common_triton", "kernels"),
         "platform": ("hygon_triton", "platform"),
     }.get(candidate.ownership)
-    if expected_candidate_contract is None or (
-        candidate.provider,
-        candidate.source_layout,
-    ) != expected_candidate_contract:
+    if (
+        expected_candidate_contract is None
+        or (
+            candidate.provider,
+            candidate.source_layout,
+        )
+        != expected_candidate_contract
+    ):
         raise ValueError(
             "Hygon pointwise kernel ownership/provider contract is invalid"
         )
@@ -1893,9 +1916,7 @@ def _compile_pointwise_stage(
                 variant_constants.get("TILES_PER_PROGRAM", 1)
             )
             pack_factor = int(variant_constants.get("PACK_FACTOR", 1))
-            elements_per_program = (
-                block_size * tiles_per_program * pack_factor
-            )
+            elements_per_program = block_size * tiles_per_program * pack_factor
             grid = (
                 (elements + elements_per_program - 1) // elements_per_program,
                 1,
@@ -2002,10 +2023,14 @@ def _compile_tensor_stage(
         "common": ("common_triton", "kernels"),
         "platform": ("hygon_triton", "platform"),
     }.get(candidate.ownership)
-    if expected_candidate_contract is None or (
-        candidate.provider,
-        candidate.source_layout,
-    ) != expected_candidate_contract:
+    if (
+        expected_candidate_contract is None
+        or (
+            candidate.provider,
+            candidate.source_layout,
+        )
+        != expected_candidate_contract
+    ):
         raise ValueError(
             "Hygon tensor kernel ownership/provider contract is invalid"
         )
@@ -2205,10 +2230,14 @@ def _compile_nn_stage(
         "common": ("common_triton", "kernels"),
         "platform": ("hygon_triton", "platform"),
     }.get(candidate.ownership)
-    if expected_candidate_contract is None or (
-        candidate.provider,
-        candidate.source_layout,
-    ) != expected_candidate_contract:
+    if (
+        expected_candidate_contract is None
+        or (
+            candidate.provider,
+            candidate.source_layout,
+        )
+        != expected_candidate_contract
+    ):
         raise ValueError(
             "Hygon NN kernel ownership/provider contract is invalid"
         )
@@ -2467,9 +2496,7 @@ def compile_request(
         workspace_alignment = max(workspace_alignment, alignment)
     for named_workspace in nn_workspaces.values():
         for tensor in named_workspace.values():
-            workspace_alignment = max(
-                workspace_alignment, tensor["alignment"]
-            )
+            workspace_alignment = max(workspace_alignment, tensor["alignment"])
     if packed_workspace_size > 2**63 - 1 - LIBTRITON_JIT_GLOBAL_SCRATCH_SIZE:
         raise ValueError("Hygon execution workspace size overflows int64")
     workspace_size = packed_workspace_size + LIBTRITON_JIT_GLOBAL_SCRATCH_SIZE

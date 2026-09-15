@@ -10,34 +10,36 @@
 
 namespace flagdnn::cuda {
 
-class ExecutionEngine {
+// NVIDIA has one execution path. Hide JIT/Python dependencies behind the
+// implementation without a second engine factory or a virtual dispatch layer.
+class ExecutionEngine final {
  public:
-  virtual ~ExecutionEngine() = default;
+  ExecutionEngine(const EngineBuildContext& context,
+                  const flagdnnBackendBuildInputV2& input);
+  ~ExecutionEngine();
+  ExecutionEngine(const ExecutionEngine&) = delete;
+  ExecutionEngine& operator=(const ExecutionEngine&) = delete;
 
-  [[nodiscard]] virtual std::size_t workspace_size() const noexcept = 0;
-  virtual void execute(
+  [[nodiscard]] std::size_t workspace_size() const noexcept;
+  void execute(
       CUstream stream,
       const flagdnnBackendBindingV2 bindings[],
       std::size_t binding_count,
       void* workspace,
-      std::size_t workspace_size) const = 0;
+      std::size_t workspace_size) const;
+
+ private:
+  class Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 [[nodiscard]] std::unique_ptr<ExecutionEngine> create_execution_engine(
     const EngineBuildContext& context,
     const flagdnnBackendBuildInputV2& input);
 
-[[nodiscard]] std::unique_ptr<ExecutionEngine>
-create_external_artifact_engine(
-    const EngineBuildContext& context,
-    CudaArtifact artifact);
-
-[[nodiscard]] std::unique_ptr<ExecutionEngine>
-create_libtriton_jit_engine(
-    const EngineBuildContext& context,
-    CudaArtifact artifact);
-
-[[nodiscard]] bool libtriton_jit_engine_available() noexcept;
+[[nodiscard]] bool libtriton_jit_environment_prepared() noexcept;
+void prepare_libtriton_jit_environment(
+    const EngineBuildContext& context, const CudaArtifact& artifact);
 
 }  // namespace flagdnn::cuda
 

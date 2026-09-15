@@ -47,12 +47,15 @@ void check_frontend(fe::error_t status, std::string_view operation) {
 
 fe::DataType_t cudnn_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return fe::DataType_t::INT32;
     case FLAGDNN_DATA_FLOAT32:
       return fe::DataType_t::FLOAT;
     case FLAGDNN_DATA_FLOAT16:
       return fe::DataType_t::HALF;
     case FLAGDNN_DATA_BFLOAT16:
       return fe::DataType_t::BFLOAT16;
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -152,6 +155,9 @@ class DeviceScalar {
  public:
   DeviceScalar(flagdnnDataType_t data_type, double value) {
     switch (data_type) {
+      case FLAGDNN_DATA_INT32:
+        allocate_and_copy(static_cast<std::int32_t>(value));
+        return;
       case FLAGDNN_DATA_FLOAT32:
         allocate_and_copy(static_cast<float>(value));
         return;
@@ -161,6 +167,7 @@ class DeviceScalar {
       case FLAGDNN_DATA_BFLOAT16:
         allocate_and_copy(__float2bfloat16_rn(static_cast<float>(value)));
         return;
+      case FLAGDNN_DATA_FP8_E8M0:
       case FLAGDNN_DATA_FP8_E4M3:
       case FLAGDNN_DATA_FP8_E5M2:
         break;

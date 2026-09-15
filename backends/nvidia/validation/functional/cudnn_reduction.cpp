@@ -1,9 +1,5 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
-#include "common/reduction.hpp"
-#include "validation/functional/cudnn_graph.hpp"
-#include "validation/tensor_io.hpp"
-
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -15,6 +11,11 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "common/reduction.hpp"
+#include "validation/functional/cudnn_graph.hpp"
+#include "validation/functional/cudnn_tensor.hpp"
+#include "validation/tensor_io.hpp"
 
 namespace flagdnn::testing {
 namespace {
@@ -79,8 +80,7 @@ AxisOrder nhwc_axis_order(const TestTensor& input) {
   return result;
 }
 
-TestTensor permute_to_nhwc(const TestTensor& tensor,
-                           const AxisOrder& order) {
+TestTensor permute_to_nhwc(const TestTensor& tensor, const AxisOrder& order) {
   const std::int64_t storage_span =
       static_cast<std::int64_t>(cuda::storage_element_count(tensor));
   TestTensor result{tensor.uid,
@@ -114,6 +114,11 @@ class CudnnReductionExecutable final : public cuda::CudnnGraphExecutable {
   explicit CudnnReductionExecutable(const ReductionTestCase& test_case)
       : graph_(std::make_shared<cfe::graph::Graph>()) {
     validate_reduction_case(test_case);
+    // The cuDNN Graph reduction engine writes packed outputs on this stack.
+    // Use cudnnReduceTensor when the public output descriptor has holes.
+    if (cuda::storage_element_count(test_case.output) !=
+        cuda::element_count(test_case.output))
+      throw std::runtime_error("cuDNN Graph reduction requires a dense output");
     const TestTensor reference_input =
         reduction_reference_input_tensor(test_case);
     const AxisOrder order = nhwc_axis_order(reference_input);
@@ -130,11 +135,10 @@ class CudnnReductionExecutable final : public cuda::CudnnGraphExecutable {
     const auto input =
         cuda::make_cudnn_tensor(graph_, input_specification, "input");
     auto output = graph_->reduction(
-        input,
-        cfe::graph::Reduction_attributes()
-            .set_name("reduction")
-            .set_mode(cudnn_reduction_mode(test_case.mode))
-            .set_compute_data_type(cfe::DataType_t::FLOAT));
+        input, cfe::graph::Reduction_attributes()
+                   .set_name("reduction")
+                   .set_mode(cudnn_reduction_mode(test_case.mode))
+                   .set_compute_data_type(cfe::DataType_t::FLOAT));
     output->set_name("output")
         .set_uid(output_specification.uid)
         .set_data_type(
@@ -143,22 +147,18 @@ class CudnnReductionExecutable final : public cuda::CudnnGraphExecutable {
         .set_stride(output_specification.strides)
         .set_output(true);
 
-    cuda::check_cudnn_frontend(
-        graph_->build(handle(), {cfe::HeurMode_t::A}),
-        "cuDNN Reduction graph build");
+    cuda::check_cudnn_frontend(graph_->build(handle(), {cfe::HeurMode_t::A}),
+                               "cuDNN Reduction graph build");
     std::int64_t workspace_size = 0;
     cuda::check_cudnn_frontend(graph_->get_workspace_size(workspace_size),
                                "cuDNN Reduction workspace query");
     set_workspace_size(workspace_size);
   }
 
-  void execute(std::span<const flagdnnBinding_t> bindings,
-               void* workspace,
-               std::size_t workspace_size,
-               flagdnnStream_t stream) override {
+  void execute(std::span<const flagdnnBinding_t> bindings, void* workspace,
+               std::size_t workspace_size, flagdnnStream_t stream) override {
     begin_execute(workspace, workspace_size, stream);
-    cuda::CudnnBindingMap pointers =
-        cuda::make_cudnn_binding_map(bindings);
+    cuda::CudnnBindingMap pointers = cuda::make_cudnn_binding_map(bindings);
     cuda::check_cudnn_frontend(graph_->execute(handle(), pointers, workspace),
                                "cuDNN Reduction graph execute");
   }
@@ -167,166 +167,60 @@ class CudnnReductionExecutable final : public cuda::CudnnGraphExecutable {
   std::shared_ptr<cfe::graph::Graph> graph_;
 };
 
-class CudnnReductionPointwiseTreeExecutable final
-    : public cuda::CudnnGraphExecutable {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+class CudnnLegacyReduction final : public cuda::CudnnGraphExecutable {
  public:
-  explicit CudnnReductionPointwiseTreeExecutable(
-      const ReductionTestCase& test_case)
-      : graph_(std::make_shared<cfe::graph::Graph>()),
+  explicit CudnnLegacyReduction(const ReductionTestCase& test_case)
+      : input_(reduction_reference_input_tensor(test_case)),
+        output_(full_rank_output(test_case)),
         input_uid_(test_case.input.uid),
         output_uid_(test_case.output.uid) {
-    validate_reduction_case(test_case);
-    const std::int32_t axis = normalized_axis(test_case);
-    const std::int64_t extent =
-        test_case.input.dimensions[static_cast<std::size_t>(axis)];
-    if (test_case.input.dimensions.size() <= 1 || extent <= 0) {
-      throw std::invalid_argument(
-          "cuDNN pointwise-tree Reduction requires rank at least two");
+    cuda::check_cudnn(cudnnCreateReduceTensorDescriptor(&reduction_),
+                      "cudnnCreateReduceTensorDescriptor");
+    try {
+      const auto mode =
+          test_case.mode == FLAGDNN_REDUCTION_MUL   ? CUDNN_REDUCE_TENSOR_MUL
+          : test_case.mode == FLAGDNN_REDUCTION_AVG ? CUDNN_REDUCE_TENSOR_AVG
+                                                    : CUDNN_REDUCE_TENSOR_ADD;
+      cuda::check_cudnn(
+          cudnnSetReduceTensorDescriptor(
+              reduction_, mode, CUDNN_DATA_FLOAT, CUDNN_PROPAGATE_NAN,
+              CUDNN_REDUCE_TENSOR_NO_INDICES, CUDNN_32BIT_INDICES),
+          "cudnnSetReduceTensorDescriptor");
+      std::size_t size = 0;
+      cuda::check_cudnn(
+          cudnnGetReductionWorkspaceSize(handle(), reduction_, input_.get(),
+                                         output_.get(), &size),
+          "cudnnGetReductionWorkspaceSize");
+      set_workspace_size(static_cast<std::int64_t>(size));
+    } catch (...) {
+      (void)cudnnDestroyReduceTensorDescriptor(reduction_);
+      throw;
     }
-
-    const TestTensor reference_input =
-        reduction_reference_input_tensor(test_case);
-    TestTensor slice = reference_input;
-    slice.dimensions.erase(slice.dimensions.begin() + axis);
-    slice.strides.erase(slice.strides.begin() + axis);
-    TestTensor output_specification = test_case.output;
-    if (test_case.keep_dimensions) {
-      output_specification.dimensions.erase(
-          output_specification.dimensions.begin() + axis);
-      output_specification.strides.erase(
-          output_specification.strides.begin() + axis);
-    }
-    if (slice.dimensions != output_specification.dimensions) {
-      throw std::invalid_argument(
-          "cuDNN pointwise-tree Reduction output shape is invalid");
-    }
-
-    graph_->set_name(test_case.name + "::cudnn_pointwise_tree")
-        .set_io_data_type(
-            cuda::cudnn_frontend_data_type(test_case.input.data_type))
-        .set_intermediate_data_type(cfe::DataType_t::FLOAT)
-        .set_compute_data_type(cfe::DataType_t::FLOAT);
-
-    std::int64_t next_uid = std::numeric_limits<std::int64_t>::max();
-    const auto take_uid = [&] {
-      while (next_uid == input_uid_ || next_uid == output_uid_) {
-        --next_uid;
-      }
-      return next_uid--;
-    };
-    const std::size_t element_size =
-        cuda::data_type_size(test_case.input.data_type);
-    const std::size_t slice_stride = static_cast<std::size_t>(
-        reference_input.strides[static_cast<std::size_t>(axis)]);
-    std::vector<std::shared_ptr<cfe::graph::Tensor_attributes>> values;
-    values.reserve(static_cast<std::size_t>(extent));
-    leaf_bindings_.reserve(static_cast<std::size_t>(extent));
-    for (std::int64_t index = 0; index < extent; ++index) {
-      slice.uid = take_uid();
-      const TestTensor leaf = slice;
-      values.push_back(cuda::make_cudnn_tensor(
-          graph_, leaf, "slice_" + std::to_string(index)));
-      leaf_bindings_.emplace_back(
-          leaf.uid,
-          static_cast<std::size_t>(index) * slice_stride * element_size);
-    }
-
-    int level = 0;
-    while (values.size() > 1) {
-      std::vector<std::shared_ptr<cfe::graph::Tensor_attributes>> next;
-      next.reserve((values.size() + 1) / 2);
-      for (std::size_t index = 0; index < values.size(); index += 2) {
-        if (index + 1 == values.size()) {
-          next.push_back(values[index]);
-          continue;
-        }
-        const cfe::PointwiseMode_t pointwise_mode =
-            test_case.mode == FLAGDNN_REDUCTION_MUL
-                ? cfe::PointwiseMode_t::MUL
-                : cfe::PointwiseMode_t::ADD;
-        next.push_back(graph_->pointwise(
-            values[index],
-            values[index + 1],
-            cfe::graph::Pointwise_attributes()
-                .set_name("combine_" + std::to_string(level) + "_" +
-                          std::to_string(index / 2))
-                .set_mode(pointwise_mode)
-                .set_compute_data_type(cfe::DataType_t::FLOAT)));
-      }
-      values = std::move(next);
-      ++level;
-    }
-    if (extent == 1) {
-      values[0] = graph_->pointwise(
-          values[0],
-          cfe::graph::Pointwise_attributes()
-              .set_name("identity")
-              .set_mode(cfe::PointwiseMode_t::IDENTITY)
-              .set_compute_data_type(cfe::DataType_t::FLOAT));
-    }
-    if (test_case.mode == FLAGDNN_REDUCTION_AVG) {
-      cfe::graph::Tensor_attributes scale_attributes(
-          1.0F / static_cast<float>(extent));
-      scale_attributes.set_name("average_scale")
-          .set_dim(std::vector<std::int64_t>(
-              output_specification.dimensions.size(), 1))
-          .set_stride(std::vector<std::int64_t>(
-              output_specification.dimensions.size(), 1));
-      const auto scale = graph_->tensor(scale_attributes);
-      values[0] = graph_->pointwise(
-          values[0],
-          scale,
-          cfe::graph::Pointwise_attributes()
-              .set_name("average")
-              .set_mode(cfe::PointwiseMode_t::MUL)
-              .set_compute_data_type(cfe::DataType_t::FLOAT));
-    }
-    values[0]->set_name("output")
-        .set_uid(output_uid_)
-        .set_data_type(
-            cuda::cudnn_frontend_data_type(test_case.output.data_type))
-        .set_dim(output_specification.dimensions)
-        .set_stride(output_specification.strides)
-        .set_output(true);
-
-    cuda::check_cudnn_frontend(
-        graph_->build(handle(), {cfe::HeurMode_t::A}),
-        "cuDNN pointwise-tree Reduction graph build");
-    std::int64_t workspace_size = 0;
-    cuda::check_cudnn_frontend(graph_->get_workspace_size(workspace_size),
-                               "cuDNN pointwise-tree workspace query");
-    set_workspace_size(workspace_size);
   }
-
-  void execute(std::span<const flagdnnBinding_t> bindings,
-               void* workspace,
-               std::size_t workspace_size,
-               flagdnnStream_t stream) override {
-    begin_execute(workspace, workspace_size, stream);
-    cuda::CudnnBindingMap caller = cuda::make_cudnn_binding_map(bindings);
-    const auto input = caller.find(input_uid_);
-    const auto output = caller.find(output_uid_);
-    if (input == caller.end() || output == caller.end()) {
-      throw std::invalid_argument(
-          "cuDNN pointwise-tree Reduction bindings are incomplete");
-    }
-    auto* input_bytes = static_cast<std::byte*>(input->second);
-    cuda::CudnnBindingMap pointers;
-    pointers.reserve(leaf_bindings_.size() + 1);
-    for (const auto& [uid, offset] : leaf_bindings_) {
-      pointers.emplace(uid, input_bytes + offset);
-    }
-    pointers.emplace(output_uid_, output->second);
-    cuda::check_cudnn_frontend(graph_->execute(handle(), pointers, workspace),
-                               "cuDNN pointwise-tree Reduction execute");
+  ~CudnnLegacyReduction() override {
+    (void)cudnnDestroyReduceTensorDescriptor(reduction_);
+  }
+  void execute(std::span<const flagdnnBinding_t> bindings, void* workspace,
+               std::size_t size, flagdnnStream_t stream) override {
+    begin_execute(workspace, size, stream);
+    const auto pointers = cuda::make_cudnn_binding_map(bindings);
+    const float alpha = 1.0F, beta = 0.0F;
+    cuda::check_cudnn(
+        cudnnReduceTensor(handle(), reduction_, nullptr, 0, workspace,
+                          workspace_size(), &alpha, input_.get(),
+                          pointers.at(input_uid_), &beta, output_.get(),
+                          pointers.at(output_uid_)),
+        "cudnnReduceTensor");
   }
 
  private:
-  std::shared_ptr<cfe::graph::Graph> graph_;
-  std::vector<std::pair<std::int64_t, std::size_t>> leaf_bindings_;
-  std::int64_t input_uid_ = 0;
-  std::int64_t output_uid_ = 0;
+  cuda::TensorDescriptor input_, output_;
+  std::int64_t input_uid_, output_uid_;
+  cudnnReduceTensorDescriptor_t reduction_ = nullptr;
 };
+#pragma GCC diagnostic pop
 
 }  // namespace
 
@@ -335,26 +229,17 @@ TestTensor reduction_reference_input_tensor(
   validate_reduction_case(test_case);
   TestTensor result = test_case.input;
   result.binding_byte_offset = 0;
-  std::int64_t stride = 1;
-  for (std::size_t axis = result.dimensions.size(); axis != 0; --axis) {
-    result.strides[axis - 1] = stride;
-    stride *= result.dimensions[axis - 1];
-  }
   return result;
 }
 
 std::unique_ptr<ReductionExecutable> build_reduction_reference(
     const ReductionTestCase& test_case) {
   validate_reduction_case(test_case);
-  const std::int32_t axis = normalized_axis(test_case);
-  const TestTensor reference_input =
-      reduction_reference_input_tensor(test_case);
-  if (test_case.input.dimensions.size() == 1 ||
-      (test_case.input.data_type == FLAGDNN_DATA_FLOAT32 &&
-       reference_input.strides[static_cast<std::size_t>(axis)] == 1)) {
+  try {
     return std::make_unique<CudnnReductionExecutable>(test_case);
+  } catch (const std::runtime_error&) {
+    return std::make_unique<CudnnLegacyReduction>(test_case);
   }
-  return std::make_unique<CudnnReductionPointwiseTreeExecutable>(test_case);
 }
 
 }  // namespace flagdnn::testing

@@ -108,7 +108,7 @@ struct PointwiseSpecification {
   PointwiseArity arity;
 };
 
-CaseMap neutral_cases() {
+CaseMap neutral_cases(const CapabilityCatalog &catalog) {
   using namespace flagdnn::testing;
   CaseMap output;
   const std::vector<PointwiseSpecification> pointwise = {
@@ -206,6 +206,11 @@ CaseMap neutral_cases() {
   add_cases(output, "slice", make_layout_cases(LayoutOperation::kSlice));
   add_cases(output, "transpose",
             make_layout_cases(LayoutOperation::kTranspose));
+  for (auto &[operation, names] : output) {
+    const auto &declared = catalog.records().at(operation);
+    std::erase_if(names,
+                  [&](const auto &name) { return !declared.contains(name); });
+  }
   return output;
 }
 
@@ -570,9 +575,9 @@ void run_api_contract() {
 void run_catalog_contract(const std::string &catalog_path,
                           const std::string &operator_path,
                           std::string_view sdk_version) {
-  const CaseMap cases = neutral_cases();
-  require_operator_manifest(cases, operator_path);
   const CapabilityCatalog catalog = CapabilityCatalog::load(catalog_path);
+  const CaseMap cases = neutral_cases(catalog);
+  require_operator_manifest(cases, operator_path);
   catalog.require_exact_cases(cases);
   catalog.validate_versions(sdk_version, ACDNN_VERSION,
                             static_cast<int>(acdnnGetVersion()));

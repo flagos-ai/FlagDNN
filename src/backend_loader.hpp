@@ -19,6 +19,7 @@ namespace flagdnn::native {
 class BackendExecutable;
 
 struct BackendApiDispatch {
+  flagdnnBackendBuildApiV1 build_environment{};
   const char* (*get_last_error)(void) = nullptr;
   flagdnnBackendResult_t (*create_context)(std::int32_t, void**) = nullptr;
   void (*destroy_context)(void*) = nullptr;
@@ -52,6 +53,9 @@ class BackendLibrary {
   [[nodiscard]] const BackendApiDispatch& api() const noexcept {
     return api_;
   }
+  void prepare_build_environment(
+      void* context, const char* execution_engine,
+      const flagdnnBackendBuildInputV2& input);
 
  private:
   BackendLibrary(void* dynamic_library,
@@ -80,7 +84,8 @@ class BackendContext
   [[nodiscard]] std::unique_ptr<BackendExecutable> create_executable(
       std::string_view graph_ir,
       const std::filesystem::path& artifact_directory,
-      std::string_view request_sha256) const;
+      std::string_view request_sha256,
+      std::string_view execution_engine) const;
 
  private:
   std::shared_ptr<BackendLibrary> library_;

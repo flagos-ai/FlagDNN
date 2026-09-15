@@ -316,6 +316,15 @@ class OperationDescriptor {
         value_, left.get(), right.get(), mode, output.get(), alpha));
   }
 
+  void set_pointwise(TensorDescriptor const& left,
+                     TensorDescriptor const& right, flagdnnPointwiseMode_t mode,
+                     TensorDescriptor const& output, double alpha,
+                     const flagdnnPointwiseAttributes_t& attributes) {
+    check(flagdnnSetPointwiseBinaryOperationDescriptorWithAttributes(
+        value_, left.get(), right.get(), mode, output.get(), alpha,
+        &attributes));
+  }
+
   void set_pointwise(TensorDescriptor const& a,
                      TensorDescriptor const& b,
                      TensorDescriptor const& t,

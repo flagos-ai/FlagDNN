@@ -29,12 +29,15 @@ constexpr std::array<flagdnnDataType_t, 3> kDataTypes = {
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return "int32";
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
       return "fp16";
     case FLAGDNN_DATA_BFLOAT16:
       return "bfloat16";
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -166,6 +169,8 @@ const std::vector<ConvBiasReluShape>& shapes() {
       {{2, 8, 9, 11}, {4, 8, 1, 1}, {1, 1}, {0, 0}, {1, 1}},
       {{1, 4, 18, 18}, {4, 4, 3, 3}, {1, 1}, {0, 0}, {1, 1}},
       {{2, 12, 13, 15}, {10, 12, 3, 3}, {1, 1}, {1, 1}, {1, 1}},
+      {{1, 16, 32, 24}, {32, 16, 1, 1}, {1, 1}, {0, 0}, {1, 1}},
+      {{2, 16, 17, 19}, {24, 16, 3, 3}, {2, 2}, {1, 1}, {1, 1}},
   };
   return result;
 }

@@ -557,16 +557,12 @@ int run_benchmark_suite(int argc,
     return 2;
   }
   try {
-    if (cases.size() != 15U) {
+    if (cases.empty()) {
       throw std::invalid_argument(
-          "common RMSNorm benchmark must contain 15 cases");
+          "common RMSNorm benchmark must contain cases");
     }
     const std::vector<BenchmarkCase> ascend_cases =
         acl::make_ascend_rmsnorm_benchmark_cases(cases);
-    if (ascend_cases.size() != 15U) {
-      throw std::logic_error(
-          "Ascend RMSNorm benchmark must contain 15 cases");
-    }
 
     acl::DevelopmentEnvironment development("rmsnorm-benchmark");
     acl::AclRuntime runtime;

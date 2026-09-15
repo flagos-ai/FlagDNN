@@ -1,13 +1,14 @@
 // Copyright 2026 FlagOS Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-#include "common/pointwise.hpp"
-#include "functional/runner_support.hpp"
-
 #include <algorithm>
 #include <cctype>
 #include <stdexcept>
 #include <string>
+#include <vector>
+
+#include "common/pointwise.hpp"
+#include "functional/runner_support.hpp"
 
 namespace flagdnn::testing {
 namespace {
@@ -33,6 +34,26 @@ std::string operation_from_marker(std::string_view marker) {
 int run_pointwise_functional_test(int argc, char **argv,
                                   std::span<const PointwiseTestCase> cases,
                                   std::string_view suite_name) {
+  // This adapter currently validates floating storage (and logical BOOL).
+  // Other shared dtype/output combinations are enabled with their backend
+  // support.
+  std::vector<PointwiseTestCase> supported_cases(cases.begin(), cases.end());
+  std::erase_if(supported_cases, [](const PointwiseTestCase& test_case) {
+    const bool logical = test_case.mode == FLAGDNN_POINTWISE_LOGICAL_NOT ||
+                         test_case.mode == FLAGDNN_POINTWISE_LOGICAL_AND ||
+                         test_case.mode == FLAGDNN_POINTWISE_LOGICAL_OR ||
+                         test_case.mode == FLAGDNN_POINTWISE_BINARY_SELECT;
+    return std::any_of(test_case.inputs.begin(), test_case.inputs.end(),
+                       [logical](const TestTensor& tensor) {
+                         const auto type = tensor.data_type;
+                         return type != FLAGDNN_DATA_FLOAT32 &&
+                                type != FLAGDNN_DATA_FLOAT16 &&
+                                type != FLAGDNN_DATA_BFLOAT16 &&
+                                !(logical && type == FLAGDNN_DATA_BOOLEAN);
+                       });
+  });
+  cases = supported_cases;
+
   namespace functional = iluvatar::validation::functional;
   const std::string operation = operation_from_marker(suite_name);
   functional::FunctionalSuite suite(argc, argv, operation,

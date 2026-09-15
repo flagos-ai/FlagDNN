@@ -36,10 +36,12 @@ void require_configured(const TensorSpec& tensor, const char* name) {
 std::size_t TensorSpec::element_size() const {
   switch (data_type) {
     case FLAGDNN_DATA_FLOAT32:
+    case FLAGDNN_DATA_INT32:
       return 4;
     case FLAGDNN_DATA_FLOAT16:
     case FLAGDNN_DATA_BFLOAT16:
       return 2;
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_BOOLEAN:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:

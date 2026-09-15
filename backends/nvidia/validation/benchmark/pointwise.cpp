@@ -32,6 +32,9 @@ class DeviceScalar {
  public:
   DeviceScalar(flagdnnDataType_t data_type, double value) {
     switch (data_type) {
+      case FLAGDNN_DATA_INT32:
+        allocate_and_copy(static_cast<std::int32_t>(value));
+        return;
       case FLAGDNN_DATA_FLOAT32:
         allocate_and_copy(static_cast<float>(value));
         return;
@@ -41,6 +44,7 @@ class DeviceScalar {
       case FLAGDNN_DATA_BFLOAT16:
         allocate_and_copy(__float2bfloat16(static_cast<float>(value)));
         return;
+      case FLAGDNN_DATA_FP8_E8M0:
       case FLAGDNN_DATA_FP8_E4M3:
       case FLAGDNN_DATA_FP8_E5M2:
         break;
@@ -240,6 +244,20 @@ fe::PointwiseMode_t pointwise_mode(flagdnnPointwiseMode_t mode) {
       return fe::PointwiseMode_t::LOGICAL_AND;
     case FLAGDNN_POINTWISE_LOGICAL_OR:
       return fe::PointwiseMode_t::LOGICAL_OR;
+    case FLAGDNN_POINTWISE_RELU_BWD:
+      return fe::PointwiseMode_t::RELU_BWD;
+    case FLAGDNN_POINTWISE_TANH_BWD:
+      return fe::PointwiseMode_t::TANH_BWD;
+    case FLAGDNN_POINTWISE_ELU_BWD:
+      return fe::PointwiseMode_t::ELU_BWD;
+    case FLAGDNN_POINTWISE_GELU_BWD:
+      return fe::PointwiseMode_t::GELU_BWD;
+    case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
+      return fe::PointwiseMode_t::SOFTPLUS_BWD;
+    case FLAGDNN_POINTWISE_SWISH_BWD:
+      return fe::PointwiseMode_t::SWISH_BWD;
+    case FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD:
+      return fe::PointwiseMode_t::GELU_APPROX_TANH_BWD;
     case FLAGDNN_POINTWISE_SIGMOID_BWD:
       return fe::PointwiseMode_t::SIGMOID_BWD;
     case FLAGDNN_POINTWISE_BINARY_SELECT:

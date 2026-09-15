@@ -9,9 +9,13 @@ add_library(flagdnn SHARED
   graph/lowering/dispatch.cpp
   graph/lowering/layout.cpp
   graph/lowering/matmul.cpp
+  graph/lowering/moe_matmul.cpp
   graph/lowering/normalization.cpp
+  graph/lowering/position_embedding.cpp
   graph/lowering/pointwise.cpp
   graph/lowering/reduction.cpp
+  graph/lowering/resample.cpp
+  graph/lowering/random.cpp
   graph/tensor.cpp
   graph/validation.cpp
   runtime/artifact.cpp

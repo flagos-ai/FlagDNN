@@ -31,12 +31,15 @@ void check_frontend(fe::error_t status, std::string_view operation) {
 
 fe::DataType_t frontend_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return fe::DataType_t::INT32;
     case FLAGDNN_DATA_FLOAT32:
       return fe::DataType_t::FLOAT;
     case FLAGDNN_DATA_FLOAT16:
       return fe::DataType_t::HALF;
     case FLAGDNN_DATA_BFLOAT16:
       return fe::DataType_t::BFLOAT16;
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -129,12 +132,15 @@ Shape broadcast_shape(const Shape& left, const Shape& right) {
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return "int32";
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
       return "fp16";
     case FLAGDNN_DATA_BFLOAT16:
       return "bf16";
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -278,6 +284,24 @@ std::vector<AddTestCase> make_add_cases() {
                              FLAGDNN_DATA_BFLOAT16,
                              160,
                              -2.0));
+  const std::vector<Shape> shapes = {
+      {1, 1, 8}, {1, 1, 31}, {1, 1, 32}, {1, 1, 33},
+      {2, 3, 16}, {2, 4, 17}, {3, 5, 32}, {4, 8, 16},
+      {1, 8, 3, 5}, {2, 16, 7, 9}, {3, 32, 5, 7}, {2, 8, 16, 16},
+  };
+  std::int64_t uid = 1000;
+  for (const Shape& shape : shapes) {
+    for (const flagdnnDataType_t data_type :
+         {FLAGDNN_DATA_FLOAT32, FLAGDNN_DATA_FLOAT16, FLAGDNN_DATA_BFLOAT16,
+          FLAGDNN_DATA_INT32}) {
+      std::string label = "shape";
+      for (const auto dimension : shape) label += "_" + std::to_string(dimension);
+      result.push_back(make_case(label, shape, shape, data_type, uid));
+      uid += 3;
+    }
+  }
+  result.push_back(make_case("broadcast_integer", {2, 3, 17}, {1, 3, 17},
+                             FLAGDNN_DATA_INT32, uid, -2.0));
   for (const AddTestCase& test_case : result) {
     validate_add_case(test_case);
   }

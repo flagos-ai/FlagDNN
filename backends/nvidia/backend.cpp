@@ -13,6 +13,7 @@
 #include <memory>
 #include <new>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -160,10 +161,47 @@ const flagdnnBackendApiV2 api = {
     &destroy_executable,
     &execute};
 
+int is_environment_prepared(const char* execution_engine) noexcept {
+  if (execution_engine == nullptr) {
+    return 0;
+  }
+  const std::string_view engine(execution_engine);
+  return engine == "libtriton_jit" && libtriton_jit_environment_prepared()
+             ? 1
+             : 0;
+}
+
+flagdnnBackendResult_t prepare_environment(
+    void* context, const char* execution_engine,
+    const flagdnnBackendBuildInputV2* input) noexcept {
+  return plugin_call([&] {
+    require(context != nullptr && input != nullptr,
+            "environment preparation requires context and build input");
+    require(execution_engine != nullptr &&
+                std::string_view(execution_engine) == "libtriton_jit",
+            "environment preparation requires the libtriton_jit engine");
+    require(input->struct_size >= sizeof(flagdnnBackendBuildInputV2),
+            "build input structure is too small");
+    const auto build_context =
+        static_cast<CudaContext*>(context)->engine_build_context();
+    const auto artifact = parse_cuda_artifact(build_context, *input);
+    prepare_libtriton_jit_environment(build_context, artifact);
+  });
+}
+
+const flagdnnBackendBuildApiV1 build_api = {
+    sizeof(flagdnnBackendBuildApiV1), 1,
+    &is_environment_prepared, &prepare_environment};
+
 }  // namespace
 }  // namespace flagdnn::cuda
 
 extern "C" FLAGDNN_BACKEND_EXPORT const flagdnnBackendApiV2*
 flagdnnBackendGetApiV2(void) {
   return &flagdnn::cuda::api;
+}
+
+extern "C" FLAGDNN_BACKEND_EXPORT const flagdnnBackendBuildApiV1*
+flagdnnBackendGetBuildApiV1(void) {
+  return &flagdnn::cuda::build_api;
 }

@@ -365,16 +365,12 @@ int run_rmsnorm_functional_test(int argc,
     return 2;
   }
   try {
-    if (cases.size() != 9U) {
+    if (cases.empty()) {
       throw std::invalid_argument(
-          "common RMSNorm functional catalog must contain 9 cases");
+          "common RMSNorm functional catalog must contain cases");
     }
     const std::vector<RmsnormTestCase> ascend_cases =
         acl::make_ascend_rmsnorm_cases(cases);
-    if (ascend_cases.size() != 9U) {
-      throw std::logic_error(
-          "Ascend RMSNorm functional catalog must contain 9 cases");
-    }
 
     acl::DevelopmentEnvironment development("rmsnorm-functional");
     acl::AclRuntime runtime;

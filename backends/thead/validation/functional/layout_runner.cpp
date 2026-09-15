@@ -121,6 +121,8 @@ int run_layout_functional_test(int argc, char **argv,
     const std::string operation_text = operation_name(operation);
     const tv::CapabilityCatalog catalog = tv::CapabilityCatalog::load(
         FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG);
+    const auto selected_cases = catalog.select_cases(operation_text, cases);
+    cases = selected_cases;
     catalog.validate_versions(FLAGDNN_THEAD_PPU_SDK_VERSION, ACDNN_VERSION,
                               static_cast<std::int64_t>(acdnnGetVersion()));
 

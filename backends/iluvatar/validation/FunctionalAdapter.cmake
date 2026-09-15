@@ -19,6 +19,8 @@ set(_flagdnn_iluvatar_pointwise_operators
   logical_and logical_not logical_or max min mod mul neg pow reciprocal relu
   rsqrt scale sigmoid sigmoid_backward sin softplus sqrt sub swish tan tanh)
 set(_flagdnn_iluvatar_partition
+  ${FLAGDNN_EXTENDED_OPERATORS}
+  ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS}
   ${_flagdnn_iluvatar_add_operators}
   ${_flagdnn_iluvatar_composite_operators}
   ${_flagdnn_iluvatar_convolution_operators}
@@ -84,6 +86,7 @@ get_filename_component(_flagdnn_iluvatar_cudnn_library_directory
   "${FLAGDNN_ILUVATAR_RESOLVED_CUDNN_LIBRARY}" DIRECTORY)
 flagdnn_register_functional_suite(
   PLATFORM iluvatar
+    UNSUPPORTED_OPERATORS ${FLAGDNN_EXTENDED_OPERATORS} ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS}
   ADAPTER_TARGET flagdnn_test_iluvatar_adapter
   BACKEND_TARGET flagdnn_backend_iluvatar
   COMMAND_ARGS

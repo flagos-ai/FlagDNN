@@ -77,6 +77,8 @@ void build_frontend_layout_graph_or_unsupported(
 
 fe::DataType_t data_type(flagdnnDataType_t type) {
   switch (type) {
+    case FLAGDNN_DATA_INT32:
+      return fe::DataType_t::INT32;
     case FLAGDNN_DATA_FLOAT32:
       return fe::DataType_t::FLOAT;
     case FLAGDNN_DATA_FLOAT16:
@@ -87,6 +89,8 @@ fe::DataType_t data_type(flagdnnDataType_t type) {
       return fe::DataType_t::BOOLEAN;
     case FLAGDNN_DATA_FP8_E4M3:
       return fe::DataType_t::FP8_E4M3;
+    case FLAGDNN_DATA_FP8_E8M0:
+      return fe::DataType_t::FP8_E8M0;
     case FLAGDNN_DATA_FP8_E5M2:
       return fe::DataType_t::FP8_E5M2;
   }
@@ -95,6 +99,8 @@ fe::DataType_t data_type(flagdnnDataType_t type) {
 
 cudnnDataType_t cudnn_data_type(flagdnnDataType_t type) {
   switch (type) {
+    case FLAGDNN_DATA_INT32:
+      return CUDNN_DATA_INT32;
     case FLAGDNN_DATA_FLOAT32:
       return CUDNN_DATA_FLOAT;
     case FLAGDNN_DATA_FLOAT16:
@@ -105,6 +111,8 @@ cudnnDataType_t cudnn_data_type(flagdnnDataType_t type) {
       return CUDNN_DATA_BOOLEAN;
     case FLAGDNN_DATA_FP8_E4M3:
       return CUDNN_DATA_FP8_E4M3;
+    case FLAGDNN_DATA_FP8_E8M0:
+      return CUDNN_DATA_FP8_E8M0;
     case FLAGDNN_DATA_FP8_E5M2:
       return CUDNN_DATA_FP8_E5M2;
   }

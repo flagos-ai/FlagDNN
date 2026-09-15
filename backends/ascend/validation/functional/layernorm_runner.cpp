@@ -344,9 +344,9 @@ int run_layernorm_functional_test(
     return 2;
   }
   try {
-    if (cases.size() != 9U) {
+    if (cases.empty()) {
       throw std::invalid_argument(
-          "common LayerNorm functional catalog must contain 9 cases");
+          "common LayerNorm functional catalog must contain cases");
     }
     const std::vector<LayernormTestCase> ascend_cases =
         acl::make_ascend_layernorm_cases(cases);

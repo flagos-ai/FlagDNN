@@ -21,8 +21,13 @@ LoweredOperation lower_reduction(const OperationSpec& operation) {
       require_port(operation.outputs, "output", "output");
   require_non_overlapping_tensor(input, "input");
   require_non_overlapping_tensor(output, "output");
-  require_same_data_type(
-      input, output, "Reduction input/output data types must match");
+  require_numeric_data_type(input, "reduction input must be floating or INT32");
+  if (output.data_type != FLAGDNN_DATA_FLOAT32 &&
+      (input.data_type == FLAGDNN_DATA_INT32 ||
+       input.data_type != output.data_type)) {
+    throw ApiError(FLAGDNN_STATUS_INVALID_VALUE,
+                   "reduction output must be FP32 or match floating input");
+  }
 
   const std::int64_t rank =
       static_cast<std::int64_t>(input.dimensions.size());

@@ -2,16 +2,18 @@
 
 #include "common/matmul.hpp"
 
-#include <flagdnn/flagdnn.hpp>
 #include <flagdnn_frontend.h>
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <flagdnn/flagdnn.hpp>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -74,27 +76,25 @@ Shape output_shape(const Shape& a, const Shape& b) {
   return result;
 }
 
-TestTensor tensor(std::int64_t uid,
-                  Shape dimensions,
-                  flagdnnDataType_t data_type,
-                  Shape strides = {}) {
+TestTensor tensor(std::int64_t uid, Shape dimensions,
+                  flagdnnDataType_t data_type, Shape strides = {}) {
   if (strides.empty()) {
     strides = contiguous_strides(dimensions);
   }
-  return {uid,
-          data_type,
-          std::move(dimensions),
-          std::move(strides)};
+  return {uid, data_type, std::move(dimensions), std::move(strides)};
 }
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return "int32";
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
       return "fp16";
     case FLAGDNN_DATA_BFLOAT16:
       return "bfloat16";
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -139,31 +139,33 @@ void validate_tensor(const TestTensor& tensor_specification,
           tensor_specification.strides.size()) {
     throw std::invalid_argument(std::string(name) + " metadata is invalid");
   }
-  for (std::size_t axis = 0;
-       axis < tensor_specification.dimensions.size();
+  for (std::size_t axis = 0; axis < tensor_specification.dimensions.size();
        ++axis) {
     if (tensor_specification.dimensions[axis] <= 0 ||
         tensor_specification.strides[axis] <= 0) {
-      throw std::invalid_argument(
-          std::string(name) + " dimensions and strides must be positive");
+      throw std::invalid_argument(std::string(name) +
+                                  " dimensions and strides must be positive");
     }
   }
   if (tensor_specification.data_type != FLAGDNN_DATA_FLOAT32 &&
       tensor_specification.data_type != FLAGDNN_DATA_FLOAT16 &&
       tensor_specification.data_type != FLAGDNN_DATA_BFLOAT16) {
-    throw std::invalid_argument(
-        std::string(name) + " data type is not supported by MatMul");
+    throw std::invalid_argument(std::string(name) +
+                                " data type is not supported by MatMul");
   }
 }
 
 fe::DataType_t frontend_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return fe::DataType_t::INT32;
     case FLAGDNN_DATA_FLOAT32:
       return fe::DataType_t::FLOAT;
     case FLAGDNN_DATA_FLOAT16:
       return fe::DataType_t::HALF;
     case FLAGDNN_DATA_BFLOAT16:
       return fe::DataType_t::BFLOAT16;
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -175,8 +177,8 @@ fe::DataType_t frontend_data_type(flagdnnDataType_t data_type) {
 
 void check_frontend(fe::error_t status, std::string_view operation) {
   if (status.is_bad()) {
-    throw std::runtime_error(
-        std::string(operation) + " failed: " + status.get_message());
+    throw std::runtime_error(std::string(operation) +
+                             " failed: " + status.get_message());
   }
 }
 
@@ -192,25 +194,24 @@ class FlagdnnMatmulExecutable final : public MatmulExecutable {
         .set_intermediate_data_type(fe::DataType_t::FLOAT)
         .set_compute_data_type(fe::DataType_t::FLOAT)
         .set_autotune(test_case.autotune);
-    const auto a = graph_->tensor(
-        fe::graph::Tensor_attributes()
-            .set_name("a")
-            .set_uid(test_case.a.uid)
-            .set_data_type(io_type)
-            .set_dim(test_case.a.dimensions)
-            .set_stride(test_case.a.strides));
-    const auto b = graph_->tensor(
-        fe::graph::Tensor_attributes()
-            .set_name("b")
-            .set_uid(test_case.b.uid)
-            .set_data_type(io_type)
-            .set_dim(test_case.b.dimensions)
-            .set_stride(test_case.b.strides));
+    const auto a = graph_->tensor(fe::graph::Tensor_attributes()
+                                      .set_name("a")
+                                      .set_uid(test_case.a.uid)
+                                      .set_data_type(io_type)
+                                      .set_dim(test_case.a.dimensions)
+                                      .set_stride(test_case.a.strides));
+    const auto b = graph_->tensor(fe::graph::Tensor_attributes()
+                                      .set_name("b")
+                                      .set_uid(test_case.b.uid)
+                                      .set_data_type(io_type)
+                                      .set_dim(test_case.b.dimensions)
+                                      .set_stride(test_case.b.strides));
     auto output = graph_->matmul(
-        a,
-        b,
+        a, b,
         fe::graph::Matmul_attributes()
             .set_name("matmul")
+            .set_input_precision(
+                static_cast<fe::InputPrecision_t>(test_case.input_precision))
             .set_compute_data_type(fe::DataType_t::FLOAT));
     output->set_name("output")
         .set_uid(test_case.output.uid)
@@ -234,10 +235,8 @@ class FlagdnnMatmulExecutable final : public MatmulExecutable {
     return workspace_size_;
   }
 
-  void execute(std::span<const flagdnnBinding_t> bindings,
-               void* workspace,
-               std::size_t workspace_size,
-               flagdnnStream_t stream) override {
+  void execute(std::span<const flagdnnBinding_t> bindings, void* workspace,
+               std::size_t workspace_size, flagdnnStream_t stream) override {
     if (workspace_size < workspace_size_ ||
         (workspace_size_ != 0 && workspace == nullptr)) {
       throw std::invalid_argument("FlagDNN MatMul workspace is too small");
@@ -253,17 +252,15 @@ class FlagdnnMatmulExecutable final : public MatmulExecutable {
   std::size_t workspace_size_ = 0;
 };
 
-MatmulTestCase make_case(const ShapePair& shapes,
-                         flagdnnDataType_t data_type,
+MatmulTestCase make_case(const ShapePair& shapes, flagdnnDataType_t data_type,
                          std::int64_t uid) {
   MatmulTestCase result;
   result.name = "matmul_" + data_type_name(data_type) + "_" +
-                shape_name(shapes.first) + "_by_" +
-                shape_name(shapes.second);
+                shape_name(shapes.first) + "_by_" + shape_name(shapes.second);
   result.a = tensor(uid, shapes.first, data_type);
   result.b = tensor(uid + 1, shapes.second, data_type);
-  result.output = tensor(
-      uid + 2, output_shape(shapes.first, shapes.second), data_type);
+  result.output =
+      tensor(uid + 2, output_shape(shapes.first, shapes.second), data_type);
   set_tolerance(result);
   return result;
 }
@@ -271,7 +268,7 @@ MatmulTestCase make_case(const ShapePair& shapes,
 }  // namespace
 
 std::vector<MatmulTestCase> make_matmul_cases() {
-  const std::array<ShapePair, 8> shapes = {
+  const std::array<ShapePair, 12> shapes = {
       ShapePair{{4, 16, 32}, {4, 32, 24}},
       ShapePair{{8, 32, 64}, {8, 64, 32}},
       ShapePair{{16, 32, 128}, {16, 128, 64}},
@@ -280,6 +277,10 @@ std::vector<MatmulTestCase> make_matmul_cases() {
       ShapePair{{1, 64, 64}, {1, 64, 64}},
       ShapePair{{32, 64}, {64, 24}},
       ShapePair{{2, 1, 17, 30}, {3, 30, 23}},
+      ShapePair{{1, 1, 8}, {1, 8, 16}},
+      ShapePair{{2, 31, 64}, {2, 64, 33}},
+      ShapePair{{3, 64, 127}, {3, 127, 65}},
+      ShapePair{{1, 128, 256}, {1, 256, 64}},
   };
   std::vector<MatmulTestCase> result;
   result.reserve(27);
@@ -291,15 +292,41 @@ std::vector<MatmulTestCase> make_matmul_cases() {
     }
   }
   for (const flagdnnDataType_t data_type : kDataTypes) {
-    MatmulTestCase strided = make_case(
-        {{2, 17, 30}, {2, 30, 23}}, data_type, uid);
-    strided.name = "matmul_" + data_type_name(data_type) +
-                   "_strided_2x17x30_by_2x30x23";
+    MatmulTestCase strided =
+        make_case({{2, 17, 30}, {2, 30, 23}}, data_type, uid);
+    strided.name =
+        "matmul_" + data_type_name(data_type) + "_strided_2x17x30_by_2x30x23";
     strided.a.strides = {600, 31, 1};
     strided.b.strides = {800, 1, 32};
     strided.output.strides = {500, 25, 1};
     result.push_back(std::move(strided));
     uid += 3;
+  }
+  const std::array<std::array<std::int64_t, 4>, 14> precision_shapes{
+      {{1, 16, 24, 32},
+       {2, 17, 32, 40},
+       {3, 31, 40, 48},
+       {1, 33, 48, 56},
+       {2, 64, 56, 64},
+       {1, 65, 64, 96},
+       {4, 96, 72, 128},
+       {1, 127, 80, 256},
+       {2, 128, 96, 32},
+       {3, 129, 104, 64},
+       {1, 255, 128, 128},
+       {2, 256, 160, 256},
+       {1, 257, 192, 128},
+       {2, 512, 256, 512}}};  // B,M,N,K
+  for (const auto& [batch, m, n, k] : precision_shapes) {
+    for (const int precision : {1, 2}) {
+      auto test_case =
+          make_case({{batch, m, k}, {batch, k, n}}, FLAGDNN_DATA_FLOAT32, uid);
+      uid += 3;
+      test_case.input_precision = precision;
+      test_case.name += precision == 1 ? "_ieee" : "_tf32";
+      test_case.absolute_tolerance = test_case.relative_tolerance = 5.0e-5;
+      result.push_back(std::move(test_case));
+    }
   }
   result.front().autotune = true;
   for (const MatmulTestCase& test_case : result) {
@@ -309,7 +336,10 @@ std::vector<MatmulTestCase> make_matmul_cases() {
 }
 
 void validate_matmul_case(const MatmulTestCase& test_case) {
-  if (test_case.name.empty() || test_case.a.uid == test_case.b.uid ||
+  if (test_case.input_precision < 0 || test_case.input_precision > 2 ||
+      (test_case.input_precision &&
+       test_case.a.data_type != FLAGDNN_DATA_FLOAT32) ||
+      test_case.name.empty() || test_case.a.uid == test_case.b.uid ||
       test_case.a.uid == test_case.output.uid ||
       test_case.b.uid == test_case.output.uid ||
       !std::isfinite(test_case.absolute_tolerance) ||
@@ -325,14 +355,13 @@ void validate_matmul_case(const MatmulTestCase& test_case) {
       test_case.a.data_type != test_case.output.data_type ||
       test_case.output.dimensions !=
           output_shape(test_case.a.dimensions, test_case.b.dimensions)) {
-    throw std::invalid_argument("MatMul data types or output shape are invalid");
+    throw std::invalid_argument(
+        "MatMul data types or output shape are invalid");
   }
 }
 
-
 std::unique_ptr<MatmulExecutable> build_flagdnn_matmul(
-    flagdnn::Handle& handle,
-    const MatmulTestCase& test_case) {
+    flagdnn::Handle& handle, const MatmulTestCase& test_case) {
   return std::make_unique<FlagdnnMatmulExecutable>(handle, test_case);
 }
 

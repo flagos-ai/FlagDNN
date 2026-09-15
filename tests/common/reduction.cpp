@@ -2,7 +2,6 @@
 
 #include "common/reduction.hpp"
 
-#include <flagdnn/flagdnn.hpp>
 #include <flagdnn_frontend.h>
 
 #include <algorithm>
@@ -10,8 +9,10 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <flagdnn/flagdnn.hpp>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -51,15 +52,11 @@ std::vector<std::int64_t> contiguous_strides(const Shape& dimensions) {
   return result;
 }
 
-TestTensor tensor(std::int64_t uid,
-                  Shape dimensions,
+TestTensor tensor(std::int64_t uid, Shape dimensions,
                   flagdnnDataType_t data_type,
                   std::size_t binding_byte_offset = 0) {
   auto strides = contiguous_strides(dimensions);
-  return {uid,
-          data_type,
-          std::move(dimensions),
-          std::move(strides),
+  return {uid, data_type, std::move(dimensions), std::move(strides),
           binding_byte_offset};
 }
 
@@ -77,12 +74,15 @@ std::int64_t binding_alignment(const TestTensor& tensor_specification) {
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return "int32";
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
       return "fp16";
     case FLAGDNN_DATA_BFLOAT16:
       return "bfloat16";
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -106,6 +106,7 @@ std::string mode_name(flagdnnReductionMode_t mode) {
 
 void set_tolerance(ReductionTestCase& test_case) {
   switch (test_case.output.data_type) {
+    case FLAGDNN_DATA_INT32:
     case FLAGDNN_DATA_FLOAT32:
       test_case.absolute_tolerance = 2.0e-5;
       test_case.relative_tolerance = 1.0e-5;
@@ -118,6 +119,7 @@ void set_tolerance(ReductionTestCase& test_case) {
       test_case.absolute_tolerance = 8.0e-2;
       test_case.relative_tolerance = 1.0e-2;
       return;
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -128,8 +130,7 @@ void set_tolerance(ReductionTestCase& test_case) {
 }
 
 void validate_tensor(const TestTensor& tensor_specification,
-                     std::string_view name,
-                     bool allow_scalar) {
+                     std::string_view name, bool allow_scalar) {
   if (tensor_specification.uid <= 0 ||
       tensor_specification.dimensions.size() !=
           tensor_specification.strides.size() ||
@@ -137,31 +138,34 @@ void validate_tensor(const TestTensor& tensor_specification,
       (!allow_scalar && tensor_specification.dimensions.empty())) {
     throw std::invalid_argument(std::string(name) + " metadata is invalid");
   }
-  for (std::size_t axis = 0;
-       axis < tensor_specification.dimensions.size();
+  for (std::size_t axis = 0; axis < tensor_specification.dimensions.size();
        ++axis) {
     if (tensor_specification.dimensions[axis] <= 0 ||
         tensor_specification.strides[axis] <= 0) {
-      throw std::invalid_argument(
-          std::string(name) + " dimensions and strides must be positive");
+      throw std::invalid_argument(std::string(name) +
+                                  " dimensions and strides must be positive");
     }
   }
   if (tensor_specification.data_type != FLAGDNN_DATA_FLOAT32 &&
       tensor_specification.data_type != FLAGDNN_DATA_FLOAT16 &&
-      tensor_specification.data_type != FLAGDNN_DATA_BFLOAT16) {
-    throw std::invalid_argument(
-        std::string(name) + " data type is not supported by Reduction");
+      tensor_specification.data_type != FLAGDNN_DATA_BFLOAT16 &&
+      tensor_specification.data_type != FLAGDNN_DATA_INT32) {
+    throw std::invalid_argument(std::string(name) +
+                                " data type is not supported by Reduction");
   }
 }
 
 fe::DataType_t frontend_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return fe::DataType_t::INT32;
     case FLAGDNN_DATA_FLOAT32:
       return fe::DataType_t::FLOAT;
     case FLAGDNN_DATA_FLOAT16:
       return fe::DataType_t::HALF;
     case FLAGDNN_DATA_BFLOAT16:
       return fe::DataType_t::BFLOAT16;
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;
@@ -185,8 +189,8 @@ fe::ReductionMode_t frontend_reduction_mode(flagdnnReductionMode_t mode) {
 
 void check_frontend(fe::error_t status, std::string_view operation) {
   if (status.is_bad()) {
-    throw std::runtime_error(
-        std::string(operation) + " failed: " + status.get_message());
+    throw std::runtime_error(std::string(operation) +
+                             " failed: " + status.get_message());
   }
 }
 
@@ -196,29 +200,29 @@ class FlagdnnReductionExecutable final : public ReductionExecutable {
                              const ReductionTestCase& test_case)
       : handle_(handle), graph_(std::make_shared<fe::graph::Graph>()) {
     validate_reduction_case(test_case);
-    const fe::DataType_t io_type = frontend_data_type(test_case.input.data_type);
+    const fe::DataType_t io_type =
+        frontend_data_type(test_case.input.data_type);
     graph_->set_name(test_case.name)
         .set_io_data_type(io_type)
         .set_intermediate_data_type(fe::DataType_t::FLOAT)
         .set_compute_data_type(fe::DataType_t::FLOAT)
         .set_autotune(test_case.autotune);
 
-    const auto input = graph_->tensor(
-        fe::graph::Tensor_attributes()
-            .set_name("input")
-            .set_uid(test_case.input.uid)
-            .set_data_type(io_type)
-            .set_dim(test_case.input.dimensions)
-            .set_stride(test_case.input.strides)
-            .set_alignment(binding_alignment(test_case.input)));
+    const auto input =
+        graph_->tensor(fe::graph::Tensor_attributes()
+                           .set_name("input")
+                           .set_uid(test_case.input.uid)
+                           .set_data_type(io_type)
+                           .set_dim(test_case.input.dimensions)
+                           .set_stride(test_case.input.strides)
+                           .set_alignment(binding_alignment(test_case.input)));
     auto output = graph_->reduction(
-        input,
-        fe::graph::Reduction_attributes()
-            .set_name("reduction")
-            .set_mode(frontend_reduction_mode(test_case.mode))
-            .set_compute_data_type(fe::DataType_t::FLOAT)
-            .set_axis(test_case.axis)
-            .set_keep_dimensions(test_case.keep_dimensions));
+        input, fe::graph::Reduction_attributes()
+                   .set_name("reduction")
+                   .set_mode(frontend_reduction_mode(test_case.mode))
+                   .set_compute_data_type(fe::DataType_t::FLOAT)
+                   .set_axis(test_case.axis)
+                   .set_keep_dimensions(test_case.keep_dimensions));
     output->set_name("output")
         .set_uid(test_case.output.uid)
         .set_data_type(frontend_data_type(test_case.output.data_type))
@@ -241,10 +245,8 @@ class FlagdnnReductionExecutable final : public ReductionExecutable {
     return workspace_size_;
   }
 
-  void execute(std::span<const flagdnnBinding_t> bindings,
-               void* workspace,
-               std::size_t workspace_size,
-               flagdnnStream_t stream) override {
+  void execute(std::span<const flagdnnBinding_t> bindings, void* workspace,
+               std::size_t workspace_size, flagdnnStream_t stream) override {
     if (workspace_size < workspace_size_ ||
         (workspace_size_ != 0 && workspace == nullptr)) {
       throw std::invalid_argument("FlagDNN Reduction workspace is too small");
@@ -261,8 +263,7 @@ class FlagdnnReductionExecutable final : public ReductionExecutable {
 };
 
 ReductionTestCase regular_case(flagdnnReductionMode_t mode,
-                               flagdnnDataType_t data_type,
-                               std::int64_t uid) {
+                               flagdnnDataType_t data_type, std::int64_t uid) {
   ReductionTestCase result;
   result.name = "reduction_" + mode_name(mode) + "_" +
                 data_type_name(data_type) + "_axis1_keepdim_2x4x8x8";
@@ -330,8 +331,8 @@ std::vector<ReductionTestCase> make_reduction_cases() {
   for (const flagdnnReductionMode_t mode : kModes) {
     for (const flagdnnDataType_t data_type : kDataTypes) {
       ReductionTestCase regular = regular_case(mode, data_type, uid);
-      regular.autotune = data_type == kDataTypes.front() &&
-                         mode != FLAGDNN_REDUCTION_ADD;
+      regular.autotune =
+          data_type == kDataTypes.front() && mode != FLAGDNN_REDUCTION_ADD;
       result.push_back(std::move(regular));
       uid += 2;
       result.push_back(channels_last_case(mode, data_type, uid));
@@ -353,6 +354,88 @@ std::vector<ReductionTestCase> make_reduction_cases() {
   set_tolerance(scalar);
   result.push_back(std::move(scalar));
 
+  const std::vector<std::vector<std::int64_t>> shapes = {
+      {8, 4, 16, 16},  {8, 8, 32, 32}, {1, 4, 8, 8},   {2, 8, 8, 16},
+      {3, 4, 16, 24},  {4, 8, 16, 32}, {2, 16, 8, 8},  {4, 16, 16, 16},
+      {1, 32, 32, 16}, {2, 8, 64, 32}, {8, 4, 32, 64}, {4, 8, 64, 64},
+  };
+  uid += 2;
+  for (const auto& shape : shapes) {
+    for (const flagdnnReductionMode_t mode : kModes) {
+      for (const flagdnnDataType_t data_type : kDataTypes) {
+        ReductionTestCase test_case;
+        std::string label;
+        for (const auto dimension : shape) {
+          if (!label.empty()) label += 'x';
+          label += std::to_string(dimension);
+        }
+        test_case.name = "reduction_" + mode_name(mode) + "_" +
+                         data_type_name(data_type) + "_axis1_" + label;
+        test_case.input = tensor(uid, shape, data_type);
+        test_case.output =
+            tensor(uid + 1, {shape[0], 1, shape[2], shape[3]}, data_type);
+        test_case.mode = mode;
+        test_case.axis = 1;
+        test_case.keep_dimensions = true;
+        set_tolerance(test_case);
+        result.push_back(std::move(test_case));
+        uid += 2;
+      }
+    }
+  }
+  const std::vector<Shape> fp32_shapes = {
+      {3, 7},   {2, 17},   {4, 31},    {2, 33},    {3, 65},      {2, 127},
+      {2, 257}, {3, 5, 7}, {2, 3, 17}, {4, 2, 33}, {2, 7, 5, 3}, {1, 3, 5, 9}};
+  for (std::size_t index = 0; index < fp32_shapes.size(); ++index) {
+    for (const auto type : {FLAGDNN_DATA_FLOAT32, FLAGDNN_DATA_FLOAT16,
+                            FLAGDNN_DATA_BFLOAT16, FLAGDNN_DATA_INT32}) {
+      for (const auto mode : kModes) {
+        ReductionTestCase test_case;
+        test_case.name = "reduction_" + mode_name(mode) + "_" +
+                         data_type_name(type) + "_to_fp32";
+        for (auto dimension : fp32_shapes[index])
+          test_case.name += "_" + std::to_string(dimension);
+        test_case.axis =
+            static_cast<std::int32_t>(index % fp32_shapes[index].size());
+        test_case.keep_dimensions = index % 2 != 0;
+        auto output_shape = fp32_shapes[index];
+        if (test_case.keep_dimensions)
+          output_shape[test_case.axis] = 1;
+        else
+          output_shape.erase(output_shape.begin() + test_case.axis);
+        test_case.input = tensor(uid, fp32_shapes[index], type);
+        test_case.output = tensor(uid + 1, output_shape, FLAGDNN_DATA_FLOAT32);
+        test_case.input.binding_byte_offset = 16;
+        test_case.output.binding_byte_offset = 32;
+        test_case.mode = mode;
+        set_tolerance(test_case);
+        result.push_back(std::move(test_case));
+        uid += 2;
+      }
+    }
+  }
+  const std::array<std::array<std::int64_t, 2>, 7> bf16_sum_shapes{
+      {{8, 8}, {9, 16}, {16, 32}, {17, 64}, {32, 128}, {33, 256}, {64, 512}}};
+  for (std::size_t index = 0; index < bf16_sum_shapes.size(); ++index) {
+    const auto& shape = bf16_sum_shapes[index];
+    ReductionTestCase test_case;
+    test_case.name = "reduction_sum_bfloat16_to_fp32_" +
+                     std::to_string(shape[0]) + "_" + std::to_string(shape[1]);
+    test_case.axis = static_cast<std::int32_t>(index % 2);
+    test_case.keep_dimensions = index % 2 != 0;
+    Shape input_shape(shape.begin(), shape.end()), output_shape = input_shape;
+    if (test_case.keep_dimensions)
+      output_shape[test_case.axis] = 1;
+    else
+      output_shape.erase(output_shape.begin() + test_case.axis);
+    test_case.input = tensor(uid, input_shape, FLAGDNN_DATA_BFLOAT16);
+    test_case.output = tensor(uid + 1, output_shape, FLAGDNN_DATA_FLOAT32);
+    test_case.input.binding_byte_offset = 16;
+    test_case.output.binding_byte_offset = 32;
+    set_tolerance(test_case);
+    result.push_back(std::move(test_case));
+    uid += 2;
+  }
   for (const ReductionTestCase& test_case : result) {
     validate_reduction_case(test_case);
   }
@@ -369,8 +452,11 @@ void validate_reduction_case(const ReductionTestCase& test_case) {
   }
   validate_tensor(test_case.input, "Reduction input", false);
   validate_tensor(test_case.output, "Reduction output", true);
-  if (test_case.input.data_type != test_case.output.data_type) {
-    throw std::invalid_argument("Reduction input/output data types must match");
+  if (test_case.output.data_type != FLAGDNN_DATA_FLOAT32 &&
+      (test_case.input.data_type == FLAGDNN_DATA_INT32 ||
+       test_case.input.data_type != test_case.output.data_type)) {
+    throw std::invalid_argument(
+        "Reduction output must be FP32 or match floating input");
   }
   (void)mode_name(test_case.mode);
 
@@ -395,9 +481,27 @@ void validate_reduction_case(const ReductionTestCase& test_case) {
 }
 
 std::unique_ptr<ReductionExecutable> build_flagdnn_reduction(
-    flagdnn::Handle& handle,
-    const ReductionTestCase& test_case) {
+    flagdnn::Handle& handle, const ReductionTestCase& test_case) {
   return std::make_unique<FlagdnnReductionExecutable>(handle, test_case);
 }
 
+std::vector<float> reduction_host_input(const ReductionTestCase& test_case) {
+  const auto count = std::accumulate(test_case.input.dimensions.begin(),
+                                     test_case.input.dimensions.end(),
+                                     std::size_t{1}, std::multiplies<>());
+  std::vector<float> values(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    const auto centered = static_cast<std::int32_t>((i * 17) % 41) - 20;
+    if (test_case.input.data_type == FLAGDNN_DATA_INT32)
+      values[i] = test_case.mode == FLAGDNN_REDUCTION_MUL ? (i % 17 == 0  ? 2
+                                                             : i % 3 == 0 ? -1
+                                                                          : 1)
+                                                          : centered;
+    else
+      values[i] = test_case.mode == FLAGDNN_REDUCTION_MUL
+                      ? 1.0F + static_cast<float>(centered) / 104.0F
+                      : static_cast<float>(centered) / 13.0F;
+  }
+  return values;
+}
 }  // namespace flagdnn::testing

@@ -289,9 +289,9 @@ LayernormPlan plan_layernorm(const BenchmarkCase& test_case) {
 
 std::vector<LayernormTestCase> make_ascend_layernorm_cases(
     std::span<const LayernormTestCase> common_cases) {
-  if (common_cases.size() != 9U) {
+  if (common_cases.empty()) {
     throw std::invalid_argument(
-        "common LayerNorm functional catalog must contain 9 cases");
+        "common LayerNorm functional catalog must contain cases");
   }
   std::vector<LayernormTestCase> result(common_cases.begin(),
                                         common_cases.end());
@@ -303,9 +303,9 @@ std::vector<LayernormTestCase> make_ascend_layernorm_cases(
 
 std::vector<BenchmarkCase> make_ascend_layernorm_benchmark_cases(
     std::span<const BenchmarkCase> common_cases) {
-  if (common_cases.size() != 15U) {
+  if (common_cases.empty()) {
     throw std::invalid_argument(
-        "common LayerNorm benchmark catalog must contain 15 cases");
+        "common LayerNorm benchmark catalog must contain cases");
   }
   std::vector<BenchmarkCase> result(common_cases.begin(), common_cases.end());
   for (const BenchmarkCase& test_case : result) {

@@ -8,6 +8,8 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -60,6 +62,25 @@ struct CapabilityRecord {
   std::string detail;
 };
 
+// Select this backend's declared cases from the shared, expanding catalog.
+// Qualification and explicit unsupported records remain backend owned.
+template <typename Case, typename Records>
+std::vector<Case> select_catalog_cases(std::span<const Case> cases,
+                                       const Records &records) {
+  std::vector<Case> selected;
+  std::set<std::string> names;
+  for (const auto &test_case : cases) {
+    if (!names.insert(test_case.name).second) {
+      throw std::invalid_argument("duplicate shared test case");
+    }
+    if (records.contains(test_case.name)) selected.push_back(test_case);
+  }
+  if (selected.empty()) {
+    throw std::invalid_argument("no shared cases match the THead catalog");
+  }
+  return selected;
+}
+
 class CapabilityCatalog final {
  public:
   using Records =
@@ -69,6 +90,16 @@ class CapabilityCatalog final {
 
   [[nodiscard]] static CapabilityCatalog parse(std::string_view document);
   [[nodiscard]] static CapabilityCatalog load(const std::string &path);
+
+  template <typename Case>
+  [[nodiscard]] std::vector<Case> select_cases(
+      std::string_view operation, std::span<const Case> cases) const {
+    const auto found = records_.find(operation);
+    if (found == records_.end()) {
+      throw std::invalid_argument("unknown THead capability operator");
+    }
+    return select_catalog_cases(cases, found->second);
+  }
 
   void require_exact_cases(
       const std::map<std::string, std::set<std::string>> &expected) const;

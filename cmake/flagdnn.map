@@ -69,6 +69,7 @@ FLAGDNN_0.1 {
 FLAGDNN_0.2 {
   global:
     flagdnnGetExecutionContractVersion;
+    flagdnnSetPointwiseBinaryOperationDescriptorWithAttributes;
   local:
     *;
 } FLAGDNN_0.1;

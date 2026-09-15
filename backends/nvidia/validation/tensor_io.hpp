@@ -5,6 +5,7 @@
 
 #include <flagdnn/flagdnn.h>
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -32,7 +33,8 @@ template <typename Tensor>
   std::size_t result = 1;
   for (const std::int64_t dimension : tensor.dimensions) {
     if (dimension <= 0) {
-      throw std::invalid_argument("validation tensor dimension must be positive");
+      throw std::invalid_argument(
+          "validation tensor dimension must be positive");
     }
     result *= static_cast<std::size_t>(dimension);
   }
@@ -53,9 +55,8 @@ template <typename Tensor>
       throw std::invalid_argument(
           "validation tensor dimensions and strides must be positive");
     }
-    maximum_offset +=
-        static_cast<std::size_t>(tensor.dimensions[axis] - 1) *
-        static_cast<std::size_t>(tensor.strides[axis]);
+    maximum_offset += static_cast<std::size_t>(tensor.dimensions[axis] - 1) *
+                      static_cast<std::size_t>(tensor.strides[axis]);
   }
   return maximum_offset + 1;
 }
@@ -81,8 +82,7 @@ template <typename Tensor>
   if (logical.size() != element_count(tensor)) {
     throw std::invalid_argument("logical input size does not match tensor");
   }
-  std::vector<float> physical(
-      storage_element_count(tensor), kPaddingSentinel);
+  std::vector<float> physical(storage_element_count(tensor), kPaddingSentinel);
   for (std::size_t index = 0; index < logical.size(); ++index) {
     physical[logical_offset(index, tensor)] = logical[index];
   }
@@ -93,7 +93,8 @@ template <typename Tensor>
 [[nodiscard]] std::vector<float> gather(std::span<const float> physical,
                                         const Tensor& tensor) {
   if (physical.size() < storage_element_count(tensor)) {
-    throw std::invalid_argument("physical input is smaller than tensor storage");
+    throw std::invalid_argument(
+        "physical input is smaller than tensor storage");
   }
   std::vector<float> logical(element_count(tensor));
   for (std::size_t index = 0; index < logical.size(); ++index) {
@@ -103,9 +104,8 @@ template <typename Tensor>
 }
 
 template <typename Tensor>
-[[nodiscard]] std::size_t encoded_byte_count(
-    const Tensor& tensor,
-    BooleanEncoding boolean_encoding) {
+[[nodiscard]] std::size_t encoded_byte_count(const Tensor& tensor,
+                                             BooleanEncoding boolean_encoding) {
   const std::size_t storage_count = storage_element_count(tensor);
   if (tensor.data_type == FLAGDNN_DATA_BOOLEAN &&
       boolean_encoding == BooleanEncoding::kBitPacked) {
@@ -115,22 +115,21 @@ template <typename Tensor>
 }
 
 [[nodiscard]] std::vector<std::uint8_t> encode(
-    std::span<const float> physical,
-    flagdnnDataType_t data_type,
+    std::span<const float> physical, flagdnnDataType_t data_type,
     BooleanEncoding boolean_encoding);
 
-[[nodiscard]] std::vector<float> decode(
-    std::span<const std::uint8_t> bytes,
-    flagdnnDataType_t data_type,
-    std::size_t physical_element_count,
-    BooleanEncoding boolean_encoding);
+[[nodiscard]] std::vector<float> decode(std::span<const std::uint8_t> bytes,
+                                        flagdnnDataType_t data_type,
+                                        std::size_t physical_element_count,
+                                        BooleanEncoding boolean_encoding);
 
 template <typename Tensor>
 void require_padding_unchanged(std::string_view provider,
                                std::span<const float> physical,
                                const Tensor& tensor) {
   if (physical.size() < storage_element_count(tensor)) {
-    throw std::invalid_argument("physical output is smaller than tensor storage");
+    throw std::invalid_argument(
+        "physical output is smaller than tensor storage");
   }
   std::vector<bool> occupied(physical.size(), false);
   for (std::size_t index = 0; index < element_count(tensor); ++index) {
@@ -138,16 +137,14 @@ void require_padding_unchanged(std::string_view provider,
   }
   for (std::size_t index = 0; index < physical.size(); ++index) {
     if (!occupied[index] && physical[index] != kPaddingSentinel) {
-      throw std::runtime_error(
-          std::string(provider) +
-          " modified output padding at storage element " +
-          std::to_string(index));
+      throw std::runtime_error(std::string(provider) +
+                               " modified output padding at storage element " +
+                               std::to_string(index));
     }
   }
 }
 
 }  // namespace flagdnn::validation::nvidia::tensor_io
-
 
 // Preserve the compact functional-test spelling while allowing the existing
 // cuDNN helpers to add their own members to this namespace.

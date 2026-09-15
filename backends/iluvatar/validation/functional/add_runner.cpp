@@ -4,10 +4,22 @@
 #include "common/add.hpp"
 #include "functional/runner_support.hpp"
 
+#include <algorithm>
+#include <vector>
+
 namespace flagdnn::testing {
 
 int run_add_functional_test(int argc, char **argv,
                             std::span<const AddTestCase> cases) {
+  // This backend's reference adapter currently accepts floating storage.
+  std::vector<AddTestCase> supported_cases(cases.begin(), cases.end());
+  std::erase_if(supported_cases, [](const AddTestCase &test_case) {
+    const auto type = test_case.left.data_type;
+    return type != FLAGDNN_DATA_FLOAT32 && type != FLAGDNN_DATA_FLOAT16 &&
+           type != FLAGDNN_DATA_BFLOAT16;
+  });
+  cases = supported_cases;
+
   namespace functional = iluvatar::validation::functional;
   functional::FunctionalSuite suite(argc, argv, "add",
                                     "FLAGDNN_ADD_FUNCTIONAL");

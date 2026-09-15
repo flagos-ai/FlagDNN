@@ -252,6 +252,18 @@ int run_reduction_functional_test(
     int argc,
     char** argv,
     std::span<const ReductionTestCase> cases) {
+  // This adapter currently validates matching floating input/output storage.
+  // Other shared dtype/output combinations are enabled with their backend
+  // support.
+  std::vector<ReductionTestCase> supported_cases(cases.begin(), cases.end());
+  std::erase_if(supported_cases, [](const ReductionTestCase& test_case) {
+    const auto type = test_case.input.data_type;
+    return (type != FLAGDNN_DATA_FLOAT32 && type != FLAGDNN_DATA_FLOAT16 &&
+            type != FLAGDNN_DATA_BFLOAT16) ||
+           test_case.output.data_type != type;
+  });
+  cases = supported_cases;
+
   if (argc != 3) {
     std::cerr << "usage: " << argv[0]
               << " COMPILER_EXECUTABLE COMPILER_ENTRY\n";

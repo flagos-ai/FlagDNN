@@ -54,7 +54,6 @@ build_graph_executable(RuntimeContext &context, const GraphSpec &graph,
   ArtifactPackage artifact = prepare_artifact_package(context, graph_ir);
   std::unique_ptr<BackendExecutable> backend_executable;
   try {
-    const std::unique_lock environment_lock(process_environment_mutex());
     backend_executable = context.create_executable(artifact);
   } catch (const ApiError &error) {
     if (!artifact.cache_hit ||
@@ -63,7 +62,6 @@ build_graph_executable(RuntimeContext &context, const GraphSpec &graph,
     }
     invalidate_cached_artifact(artifact);
     artifact = prepare_artifact_package(context, graph_ir);
-    const std::unique_lock environment_lock(process_environment_mutex());
     backend_executable = context.create_executable(artifact);
   }
   return std::make_unique<Executable>(std::move(backend_executable),

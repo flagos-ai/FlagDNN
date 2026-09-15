@@ -76,6 +76,18 @@ inline const std::vector<std::int64_t>& integer_array_attribute(
   return *value;
 }
 
+inline std::int64_t requested_input_precision(const OperationSpec& operation,
+                                              const TensorSpec& input) {
+  const auto found = operation.attributes.find("input_precision");
+  if (found == operation.attributes.end()) return 0;
+  const auto* value = std::get_if<std::int64_t>(&found->second);
+  if (value == nullptr || *value < 0 || *value > 2 ||
+      (*value != 0 && input.data_type != FLAGDNN_DATA_FLOAT32))
+    throw ApiError(FLAGDNN_STATUS_INVALID_VALUE,
+                   "explicit IEEE/TF32 precision requires FP32 input storage");
+  return *value;
+}
+
 inline const TensorSpec& require_port(
     const std::vector<OperationPort>& ports,
     std::string_view name,
@@ -196,6 +208,14 @@ inline bool is_floating_data_type(flagdnnDataType_t data_type) {
   return data_type == FLAGDNN_DATA_FLOAT32 ||
          data_type == FLAGDNN_DATA_FLOAT16 ||
          data_type == FLAGDNN_DATA_BFLOAT16;
+}
+
+inline void require_numeric_data_type(const TensorSpec& tensor,
+                                      const char* message) {
+  if (!is_floating_data_type(tensor.data_type) &&
+      tensor.data_type != FLAGDNN_DATA_INT32) {
+    throw ApiError(FLAGDNN_STATUS_INVALID_VALUE, message);
+  }
 }
 
 inline void require_floating_data_type(const TensorSpec& tensor,

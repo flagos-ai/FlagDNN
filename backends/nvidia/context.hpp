@@ -19,7 +19,7 @@ struct EngineBuildContext {
 
 class ContextGuard {
  public:
-  explicit ContextGuard(CUcontext context);
+  explicit ContextGuard(CUcontext context, bool required = true);
   ~ContextGuard();
 
   ContextGuard(const ContextGuard&) = delete;

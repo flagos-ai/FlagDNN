@@ -148,36 +148,36 @@ def _sdpa_fwd_kernel(
     o_ptr,
     stats_ptr,
     qk_scale,
-    HQ,
-    SQ,
-    SKV,
-    q_per_k,
-    q_per_v,
-    min_diag,
-    max_diag,
-    stride_qb,
-    stride_qh,
-    stride_qm,
-    stride_qd,
-    stride_kb,
-    stride_kh,
-    stride_kn,
-    stride_kd,
-    stride_vb,
-    stride_vh,
-    stride_vn,
-    stride_vd,
-    stride_bias_b,
-    stride_bias_h,
-    stride_bias_m,
-    stride_bias_n,
-    stride_ob,
-    stride_oh,
-    stride_om,
-    stride_od,
-    stride_sb,
-    stride_sh,
-    stride_sm,
+    HQ: tl.constexpr,
+    SQ: tl.constexpr,
+    SKV: tl.constexpr,
+    q_per_k: tl.constexpr,
+    q_per_v: tl.constexpr,
+    min_diag: tl.constexpr,
+    max_diag: tl.constexpr,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_bias_b: tl.constexpr,
+    stride_bias_h: tl.constexpr,
+    stride_bias_m: tl.constexpr,
+    stride_bias_n: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
     HEAD_DIM: tl.constexpr,
     V_DIM: tl.constexpr,
     # ELEM_SIZE only feeds the autotune key so fp16/bf16 and fp32 inputs
@@ -1617,6 +1617,8 @@ def _sdpa_bwd_owner_causal_d128_kernel(
         )
 
 
+# FP32 backward uses three TF32 products per dot to preserve precision.
+# The input_precision option leaves native FP16/BF16 dot products unchanged.
 @triton.jit
 def _sdpa_bwd_dq_dbias_kernel(
     q_ptr,
@@ -1631,12 +1633,12 @@ def _sdpa_bwd_dq_dbias_kernel(
     dbias_ptr,
     attn_scale,
     HQ: tl.constexpr,
-    SQ,
-    SKV,
+    SQ: tl.constexpr,
+    SKV: tl.constexpr,
     q_per_k: tl.constexpr,
     q_per_v: tl.constexpr,
-    min_diag,
-    max_diag,
+    min_diag: tl.constexpr,
+    max_diag: tl.constexpr,
     stride_qb: tl.constexpr,
     stride_qh: tl.constexpr,
     stride_qm: tl.constexpr,
@@ -1758,7 +1760,12 @@ def _sdpa_bwd_dq_dbias_kernel(
             mask=(cols[:, None] < SKV) & (offs_d_full[None, :] < HEAD_DIM),
             other=0.0,
         )
-        score = tl.dot(q_full, tl.trans(k_full)).to(tl.float32) * attn_scale
+        score = (
+            tl.dot(q_full, tl.trans(k_full), input_precision="tf32x3").to(
+                tl.float32
+            )
+            * attn_scale
+        )
         if HAS_BIAS:
             bias_tile = tl.load(
                 bias_ptr
@@ -1785,7 +1792,9 @@ def _sdpa_bwd_dq_dbias_kernel(
             mask=(cols[:, None] < SKV) & (offs_dv[None, :] < V_DIM),
             other=0.0,
         )
-        dp = tl.dot(do_tile, tl.trans(v_tile)).to(tl.float32)
+        dp = tl.dot(do_tile, tl.trans(v_tile), input_precision="tf32x3").to(
+            tl.float32
+        )
         ds = p * (dp - delta[:, None])
 
         k_out = tl.load(
@@ -1793,7 +1802,7 @@ def _sdpa_bwd_dq_dbias_kernel(
             mask=(cols[:, None] < SKV) & (offs_d[None, :] < HEAD_DIM),
             other=0.0,
         )
-        dq += tl.dot(ds.to(k_out.dtype), k_out)
+        dq += tl.dot(ds.to(k_out.dtype), k_out, input_precision="tf32x3")
 
         if HAS_DBIAS and pid_d == 0:
             dbias_b = 0 if DBIAS_BATCHES == 1 else off_b
@@ -1843,10 +1852,10 @@ def _sdpa_bwd_dk_kernel(
     dk_ptr,
     attn_scale,
     HKV: tl.constexpr,
-    SQ,
-    SKV,
-    min_diag,
-    max_diag,
+    SQ: tl.constexpr,
+    SKV: tl.constexpr,
+    min_diag: tl.constexpr,
+    max_diag: tl.constexpr,
     stride_qb: tl.constexpr,
     stride_qh: tl.constexpr,
     stride_qm: tl.constexpr,
@@ -1959,7 +1968,10 @@ def _sdpa_bwd_dk_kernel(
             ).to(tl.float32)
 
             score = (
-                tl.dot(q_full, tl.trans(k_full)).to(tl.float32) * attn_scale
+                tl.dot(q_full, tl.trans(k_full), input_precision="tf32x3").to(
+                    tl.float32
+                )
+                * attn_scale
             )
             if HAS_BIAS:
                 bias_tile = tl.load(
@@ -1981,7 +1993,9 @@ def _sdpa_bwd_dk_kernel(
                     diag = offs_n[None, :] - rows[:, None]
                     valid = valid & (diag >= min_diag) & (diag <= max_diag)
                 p = tl.where(valid, tl.exp(score - stats[:, None]), 0.0)
-            dp = tl.dot(do_tile, tl.trans(v_full)).to(tl.float32)
+            dp = tl.dot(
+                do_tile, tl.trans(v_full), input_precision="tf32x3"
+            ).to(tl.float32)
             ds = p * (dp - delta[:, None])
 
             q_out = tl.load(
@@ -1991,7 +2005,9 @@ def _sdpa_bwd_dk_kernel(
                 mask=(rows[:, None] < SQ) & (offs_d[None, :] < HEAD_DIM),
                 other=0.0,
             )
-            dk += tl.dot(tl.trans(ds).to(q_out.dtype), q_out)
+            dk += tl.dot(
+                tl.trans(ds).to(q_out.dtype), q_out, input_precision="tf32x3"
+            )
 
     tl.store(
         dk_ptr
@@ -2017,10 +2033,10 @@ def _sdpa_bwd_dkdv_kernel(
     dv_ptr,
     attn_scale,
     HKV: tl.constexpr,
-    SQ,
-    SKV,
-    min_diag,
-    max_diag,
+    SQ: tl.constexpr,
+    SKV: tl.constexpr,
+    min_diag: tl.constexpr,
+    max_diag: tl.constexpr,
     stride_qb: tl.constexpr,
     stride_qh: tl.constexpr,
     stride_qm: tl.constexpr,
@@ -2065,12 +2081,26 @@ def _sdpa_bwd_dkdv_kernel(
     HAS_BIAS: tl.constexpr,
     BANDED: tl.constexpr,
     CAUSAL_TOP_LEFT: tl.constexpr,
+    PARTIAL: tl.constexpr = False,
+    QUERY_CHUNK: tl.constexpr = 0,
 ):
     pid_n = tl.program_id(0)
     pid_d = tl.program_id(1)
     pid_bh = tl.program_id(2)
-    off_b = pid_bh // HKV
-    off_kh = pid_bh % HKV
+    if PARTIAL:
+        tl.static_assert(QUERY_CHUNK % BLOCK_M == 0)
+        CHUNKS: tl.constexpr = triton.cdiv(SQ, QUERY_CHUNK)
+        output_head = pid_bh % (HKV * Q_PER * CHUNKS)
+        off_b = pid_bh // (HKV * Q_PER * CHUNKS)
+        off_kh = output_head // (Q_PER * CHUNKS)
+        first_query = output_head % CHUNKS * QUERY_CHUNK
+        last_query = tl.minimum(first_query + QUERY_CHUNK, SQ)
+    else:
+        off_b = pid_bh // HKV
+        off_kh = pid_bh % HKV
+        output_head = off_kh
+        first_query = 0
+        last_query = SQ
 
     start_n = pid_n * BLOCK_N
     start_d = pid_d * BLOCK_D_OUT
@@ -2098,8 +2128,10 @@ def _sdpa_bwd_dkdv_kernel(
     dk = tl.zeros((BLOCK_N, BLOCK_D_OUT), dtype=tl.float32)
     dv = tl.zeros((BLOCK_N, BLOCK_D_OUT), dtype=tl.float32)
 
-    for group_idx in tl.static_range(0, Q_PER):
-        off_h = off_kh * Q_PER + group_idx
+    for group_idx in tl.static_range(0, 1 if PARTIAL else Q_PER):
+        off_h = (
+            output_head // CHUNKS if PARTIAL else off_kh * Q_PER + group_idx
+        )
         q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
         do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
         stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
@@ -2109,7 +2141,8 @@ def _sdpa_bwd_dkdv_kernel(
         loop_start_m = 0
         if CAUSAL_TOP_LEFT:
             loop_start_m = (start_n // BLOCK_M) * BLOCK_M
-        for start_m in tl.range(loop_start_m, SQ, BLOCK_M):
+        loop_start_m = tl.maximum(loop_start_m, first_query)
+        for start_m in tl.range(loop_start_m, last_query, BLOCK_M):
             rows = start_m + offs_m
             q_full = tl.load(
                 q_base
@@ -2137,7 +2170,10 @@ def _sdpa_bwd_dkdv_kernel(
             ).to(tl.float32)
 
             score = (
-                tl.dot(q_full, tl.trans(k_full)).to(tl.float32) * attn_scale
+                tl.dot(q_full, tl.trans(k_full), input_precision="tf32x3").to(
+                    tl.float32
+                )
+                * attn_scale
             )
             if HAS_BIAS:
                 bias_tile = tl.load(
@@ -2159,7 +2195,9 @@ def _sdpa_bwd_dkdv_kernel(
                     diag = offs_n[None, :] - rows[:, None]
                     valid = valid & (diag >= min_diag) & (diag <= max_diag)
                 p_attn = tl.where(valid, tl.exp(score - stats[:, None]), 0.0)
-            dp = tl.dot(do_full, tl.trans(v_full)).to(tl.float32)
+            dp = tl.dot(
+                do_full, tl.trans(v_full), input_precision="tf32x3"
+            ).to(tl.float32)
             ds = p_attn * (dp - delta[:, None])
 
             q_out = tl.load(
@@ -2176,23 +2214,29 @@ def _sdpa_bwd_dkdv_kernel(
                 mask=(rows[:, None] < SQ) & (offs_d[None, :] < HEAD_DIM),
                 other=0.0,
             )
-            dk += tl.dot(tl.trans(ds).to(q_out.dtype), q_out)
-            dv += tl.dot(tl.trans(p_attn).to(do_out.dtype), do_out)
+            dk += tl.dot(
+                tl.trans(ds).to(q_out.dtype), q_out, input_precision="tf32x3"
+            )
+            dv += tl.dot(
+                tl.trans(p_attn).to(do_out.dtype),
+                do_out,
+                input_precision="tf32x3",
+            )
 
     mask = (offs_n[:, None] < SKV) & (offs_d[None, :] < HEAD_DIM)
     tl.store(
         dk_ptr
         + off_b * stride_dkb
-        + off_kh * stride_dkh
+        + output_head * stride_dkh
         + offs_n[:, None] * stride_dkn
         + offs_d[None, :] * stride_dkd,
-        (dk * attn_scale).to(dk_ptr.dtype.element_ty),
+        (dk if PARTIAL else dk * attn_scale).to(dk_ptr.dtype.element_ty),
         mask=mask,
     )
     tl.store(
         dv_ptr
         + off_b * stride_dvb
-        + off_kh * stride_dvh
+        + output_head * stride_dvh
         + offs_n[:, None] * stride_dvn
         + offs_d[None, :] * stride_dvd,
         dv.to(dv_ptr.dtype.element_ty),
@@ -2210,10 +2254,10 @@ def _sdpa_bwd_dv_kernel(
     dv_ptr,
     attn_scale,
     HKV: tl.constexpr,
-    SQ,
-    SKV,
-    min_diag,
-    max_diag,
+    SQ: tl.constexpr,
+    SKV: tl.constexpr,
+    min_diag: tl.constexpr,
+    max_diag: tl.constexpr,
     stride_qb: tl.constexpr,
     stride_qh: tl.constexpr,
     stride_qm: tl.constexpr,
@@ -2290,7 +2334,10 @@ def _sdpa_bwd_dv_kernel(
                 other=0.0,
             )
             score = (
-                tl.dot(q_full, tl.trans(k_full)).to(tl.float32) * attn_scale
+                tl.dot(q_full, tl.trans(k_full), input_precision="tf32x3").to(
+                    tl.float32
+                )
+                * attn_scale
             )
             if HAS_BIAS:
                 bias_tile = tl.load(
@@ -2324,7 +2371,11 @@ def _sdpa_bwd_dv_kernel(
                 mask=(rows[:, None] < SQ) & (offs_dv[None, :] < V_DIM),
                 other=0.0,
             )
-            dv += tl.dot(tl.trans(p).to(do_tile.dtype), do_tile)
+            dv += tl.dot(
+                tl.trans(p).to(do_tile.dtype),
+                do_tile,
+                input_precision="tf32x3",
+            )
 
     tl.store(
         dv_ptr
@@ -2338,7 +2389,9 @@ def _sdpa_bwd_dv_kernel(
 
 
 @triton.jit
-def _zero_contiguous_kernel(ptr, n_elements, BLOCK: tl.constexpr):
+def _zero_contiguous_kernel(
+    ptr, n_elements: tl.constexpr, BLOCK: tl.constexpr
+):
     offsets = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
     tl.store(
         ptr + offsets,
@@ -4727,36 +4780,36 @@ def _sdpa_fp8_fwd_kernel(
     scale_s_ptr,
     scale_o_ptr,
     attn_scale,
-    HQ,
-    SQ,
-    SKV,
-    q_per_k,
-    q_per_v,
-    min_diag,
-    max_diag,
-    stride_qb,
-    stride_qh,
-    stride_qm,
-    stride_qd,
-    stride_kb,
-    stride_kh,
-    stride_kn,
-    stride_kd,
-    stride_vb,
-    stride_vh,
-    stride_vn,
-    stride_vd,
-    stride_bias_b,
-    stride_bias_h,
-    stride_bias_m,
-    stride_bias_n,
-    stride_ob,
-    stride_oh,
-    stride_om,
-    stride_od,
-    stride_sb,
-    stride_sh,
-    stride_sm,
+    HQ: tl.constexpr,
+    SQ: tl.constexpr,
+    SKV: tl.constexpr,
+    q_per_k: tl.constexpr,
+    q_per_v: tl.constexpr,
+    min_diag: tl.constexpr,
+    max_diag: tl.constexpr,
+    stride_qb: tl.constexpr,
+    stride_qh: tl.constexpr,
+    stride_qm: tl.constexpr,
+    stride_qd: tl.constexpr,
+    stride_kb: tl.constexpr,
+    stride_kh: tl.constexpr,
+    stride_kn: tl.constexpr,
+    stride_kd: tl.constexpr,
+    stride_vb: tl.constexpr,
+    stride_vh: tl.constexpr,
+    stride_vn: tl.constexpr,
+    stride_vd: tl.constexpr,
+    stride_bias_b: tl.constexpr,
+    stride_bias_h: tl.constexpr,
+    stride_bias_m: tl.constexpr,
+    stride_bias_n: tl.constexpr,
+    stride_ob: tl.constexpr,
+    stride_oh: tl.constexpr,
+    stride_om: tl.constexpr,
+    stride_od: tl.constexpr,
+    stride_sb: tl.constexpr,
+    stride_sh: tl.constexpr,
+    stride_sm: tl.constexpr,
     HEAD_DIM: tl.constexpr,
     V_DIM: tl.constexpr,
     BLOCK_M: tl.constexpr,
@@ -6961,13 +7014,13 @@ def _sdpa_fp8_bwd_dq_kernel(
     scale_dq_ptr,
     scale_dp_ptr,
     attn_scale,
-    HQ,
-    SQ,
-    SKV,
+    HQ: tl.constexpr,
+    SQ: tl.constexpr,
+    SKV: tl.constexpr,
     q_per_k: tl.constexpr,
     q_per_v: tl.constexpr,
-    min_diag,
-    max_diag,
+    min_diag: tl.constexpr,
+    max_diag: tl.constexpr,
     stride_qb: tl.constexpr,
     stride_qh: tl.constexpr,
     stride_qm: tl.constexpr,
@@ -7149,10 +7202,10 @@ def _sdpa_fp8_bwd_dkdv_kernel(
     scale_dp_ptr,
     attn_scale,
     HKV: tl.constexpr,
-    SQ,
-    SKV,
-    min_diag,
-    max_diag,
+    SQ: tl.constexpr,
+    SKV: tl.constexpr,
+    min_diag: tl.constexpr,
+    max_diag: tl.constexpr,
     stride_qb: tl.constexpr,
     stride_qh: tl.constexpr,
     stride_qm: tl.constexpr,
@@ -7192,6 +7245,8 @@ def _sdpa_fp8_bwd_dkdv_kernel(
     BANDED: tl.constexpr,
     FULL_BLOCKS: tl.constexpr,
     CAUSAL_TOP_LEFT: tl.constexpr,
+    PARTIAL: tl.constexpr = False,
+    QUERY_CHUNK: tl.constexpr = 0,
 ):
     descale_q = tl.load(descale_q_ptr)
     descale_k = tl.load(descale_k_ptr)
@@ -7212,8 +7267,20 @@ def _sdpa_fp8_bwd_dkdv_kernel(
 
     pid_n = tl.program_id(0)
     pid_bh = tl.program_id(1)
-    off_b = pid_bh // HKV
-    off_kh = pid_bh % HKV
+    if PARTIAL:
+        tl.static_assert(QUERY_CHUNK % BLOCK_M == 0)
+        CHUNKS: tl.constexpr = triton.cdiv(SQ, QUERY_CHUNK)
+        output_head = pid_bh % (HKV * Q_PER * CHUNKS)
+        off_b = pid_bh // (HKV * Q_PER * CHUNKS)
+        off_kh = output_head // (Q_PER * CHUNKS)
+        first_query = output_head % CHUNKS * QUERY_CHUNK
+        last_query = tl.minimum(first_query + QUERY_CHUNK, SQ)
+    else:
+        off_b = pid_bh // HKV
+        off_kh = pid_bh % HKV
+        output_head = off_kh
+        first_query = 0
+        last_query = SQ
 
     start_n = pid_n * BLOCK_N
     offs_n = start_n + tl.arange(0, BLOCK_N)
@@ -7235,8 +7302,10 @@ def _sdpa_fp8_bwd_dkdv_kernel(
     dv = tl.zeros((BLOCK_N, BLOCK_D), dtype=tl.float32)
     local_amax_dp = tl.full((), 0.0, dtype=tl.float32)
 
-    for group_idx in tl.static_range(0, Q_PER):
-        off_h = off_kh * Q_PER + group_idx
+    for group_idx in tl.static_range(0, 1 if PARTIAL else Q_PER):
+        off_h = (
+            output_head // CHUNKS if PARTIAL else off_kh * Q_PER + group_idx
+        )
         q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
         o_base = o_ptr + off_b * stride_ob + off_h * stride_oh
         do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
@@ -7244,9 +7313,10 @@ def _sdpa_fp8_bwd_dkdv_kernel(
 
         loop_start_m = 0
         if CAUSAL_TOP_LEFT:
-            loop_start_m = start_n
+            loop_start_m = start_n // BLOCK_M * BLOCK_M
 
-        for start_m in tl.range(loop_start_m, SQ, BLOCK_M):
+        loop_start_m = tl.maximum(loop_start_m, first_query)
+        for start_m in tl.range(loop_start_m, last_query, BLOCK_M):
             rows = start_m + offs_m
             q_offsets = rows[:, None] * stride_qm + offs_d[None, :] * stride_qd
             o_offsets = rows[:, None] * stride_om + offs_d[None, :] * stride_od
@@ -7314,44 +7384,60 @@ def _sdpa_fp8_bwd_dkdv_kernel(
             dk += tl.dot(tl.trans(ds_quant), q)
             dv += tl.dot(tl.trans(p_quant), do)
 
-    dk_val = dk * dk_descale
-    dv_val = dv * dv_descale
+    dk_val = dk if PARTIAL else dk * dk_descale
+    dv_val = dv if PARTIAL else dv * dv_descale
     dk_out_ptrs = (
         dk_ptr
         + off_b * stride_dkb
-        + off_kh * stride_dkh
+        + output_head * stride_dkh
         + offs_n[:, None] * stride_dkn
         + offs_d[None, :] * stride_dkd
     )
     dv_out_ptrs = (
         dv_ptr
         + off_b * stride_dvb
-        + off_kh * stride_dvh
+        + output_head * stride_dvh
         + offs_n[:, None] * stride_dvn
         + offs_d[None, :] * stride_dvd
     )
     if FULL_BLOCKS:
         local_amax_dk = tl.max(tl.abs(dk_val))
         local_amax_dv = tl.max(tl.abs(dv_val))
-        tl.atomic_max(amax_dk_ptr, local_amax_dk, sem="relaxed")
-        tl.atomic_max(amax_dv_ptr, local_amax_dv, sem="relaxed")
-        tl.atomic_max(amax_dp_ptr, local_amax_dp, sem="relaxed")
-        tl.store(dk_out_ptrs, (dk_val * scale_dk).to(dk_ptr.dtype.element_ty))
-        tl.store(dv_out_ptrs, (dv_val * scale_dv).to(dv_ptr.dtype.element_ty))
-    else:
-        local_amax_dk = tl.max(tl.where(valid_nd, tl.abs(dk_val), 0.0))
-        local_amax_dv = tl.max(tl.where(valid_nd, tl.abs(dv_val), 0.0))
-        tl.atomic_max(amax_dk_ptr, local_amax_dk, sem="relaxed")
-        tl.atomic_max(amax_dv_ptr, local_amax_dv, sem="relaxed")
+        if not PARTIAL:
+            tl.atomic_max(amax_dk_ptr, local_amax_dk, sem="relaxed")
+            tl.atomic_max(amax_dv_ptr, local_amax_dv, sem="relaxed")
         tl.atomic_max(amax_dp_ptr, local_amax_dp, sem="relaxed")
         tl.store(
             dk_out_ptrs,
-            (dk_val * scale_dk).to(dk_ptr.dtype.element_ty),
+            (dk_val if PARTIAL else dk_val * scale_dk).to(
+                dk_ptr.dtype.element_ty
+            ),
+        )
+        tl.store(
+            dv_out_ptrs,
+            (dv_val if PARTIAL else dv_val * scale_dv).to(
+                dv_ptr.dtype.element_ty
+            ),
+        )
+    else:
+        local_amax_dk = tl.max(tl.where(valid_nd, tl.abs(dk_val), 0.0))
+        local_amax_dv = tl.max(tl.where(valid_nd, tl.abs(dv_val), 0.0))
+        if not PARTIAL:
+            tl.atomic_max(amax_dk_ptr, local_amax_dk, sem="relaxed")
+            tl.atomic_max(amax_dv_ptr, local_amax_dv, sem="relaxed")
+        tl.atomic_max(amax_dp_ptr, local_amax_dp, sem="relaxed")
+        tl.store(
+            dk_out_ptrs,
+            (dk_val if PARTIAL else dk_val * scale_dk).to(
+                dk_ptr.dtype.element_ty
+            ),
             mask=valid_nd,
         )
         tl.store(
             dv_out_ptrs,
-            (dv_val * scale_dv).to(dv_ptr.dtype.element_ty),
+            (dv_val if PARTIAL else dv_val * scale_dv).to(
+                dv_ptr.dtype.element_ty
+            ),
             mask=valid_nd,
         )
 
@@ -7842,3 +7928,69 @@ def _sdpa_fp8_bwd_replay_dkdv_kernel(
         tl.store(dk_out, (dk_val * scale_dk).to(dk_ptr.dtype.element_ty))
     if REPLAY_DV:
         tl.store(dv_out, (dv_val * scale_dv).to(dv_ptr.dtype.element_ty))
+
+
+@triton.jit
+def attention_partial_gradient_reduce_kernel(
+    pk_ptr,
+    pv_ptr,
+    dk_ptr,
+    dv_ptr,
+    descale_q_ptr,
+    descale_do_ptr,
+    descale_s_ptr,
+    descale_dp_ptr,
+    scale_dk_ptr,
+    scale_dv_ptr,
+    amax_dk_ptr,
+    amax_dv_ptr,
+    ELEMENTS: tl.constexpr,
+    HEADS: tl.constexpr,
+    SEQUENCE: tl.constexpr,
+    DIMENSION: tl.constexpr,
+    PARTS: tl.constexpr,
+    FP8: tl.constexpr,
+    ATTN_SCALE: tl.constexpr,
+    BLOCK: tl.constexpr,
+    KB: tl.constexpr,
+    KH: tl.constexpr,
+    KS: tl.constexpr,
+    KD: tl.constexpr,
+    VB: tl.constexpr,
+    VH: tl.constexpr,
+    VS: tl.constexpr,
+    VD: tl.constexpr,
+):
+    index = tl.program_id(0).to(tl.int64) * BLOCK + tl.arange(0, BLOCK)
+    valid = index < ELEMENTS
+    d = index % DIMENSION
+    s = index // DIMENSION % SEQUENCE
+    h = index // (DIMENSION * SEQUENCE) % HEADS
+    b = index // (DIMENSION * SEQUENCE * HEADS)
+    dk = tl.zeros((BLOCK,), tl.float32)
+    dv = tl.zeros((BLOCK,), tl.float32)
+    for part in tl.static_range(PARTS):
+        source = (
+            ((b * HEADS + h) * PARTS + part) * SEQUENCE + s
+        ) * DIMENSION + d
+        dk += tl.load(pk_ptr + source, valid, other=0)
+        dv += tl.load(pv_ptr + source, valid, other=0)
+    if FP8:
+        dk *= tl.load(descale_dp_ptr) * tl.load(descale_q_ptr)
+        dv *= tl.load(descale_s_ptr) * tl.load(descale_do_ptr)
+        tl.atomic_max(
+            amax_dk_ptr,
+            tl.max(tl.where(valid, tl.abs(dk), 0.0)),
+            sem="relaxed",
+        )
+        tl.atomic_max(
+            amax_dv_ptr,
+            tl.max(tl.where(valid, tl.abs(dv), 0.0)),
+            sem="relaxed",
+        )
+        dk *= tl.load(scale_dk_ptr)
+        dv *= tl.load(scale_dv_ptr)
+    else:
+        dk *= ATTN_SCALE
+    tl.store(dk_ptr + b * KB + h * KH + s * KS + d * KD, dk, valid)
+    tl.store(dv_ptr + b * VB + h * VH + s * VS + d * VD, dv, valid)

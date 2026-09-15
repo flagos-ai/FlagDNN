@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 
 namespace flagdnn::validation::hygon::tensor_io {
 namespace {
@@ -94,15 +95,19 @@ float bfloat16_to_float(std::uint16_t value) {
 
 std::size_t data_type_size(flagdnnDataType_t data_type) {
   switch (data_type) {
-  case FLAGDNN_DATA_FLOAT32:
-    return 4;
-  case FLAGDNN_DATA_FLOAT16:
-  case FLAGDNN_DATA_BFLOAT16:
-    return 2;
-  case FLAGDNN_DATA_BOOLEAN:
-  case FLAGDNN_DATA_FP8_E4M3:
-  case FLAGDNN_DATA_FP8_E5M2:
-    return 1;
+    case FLAGDNN_DATA_INT32:
+      return 4;
+
+    case FLAGDNN_DATA_FLOAT32:
+      return 4;
+    case FLAGDNN_DATA_FLOAT16:
+    case FLAGDNN_DATA_BFLOAT16:
+      return 2;
+    case FLAGDNN_DATA_BOOLEAN:
+    case FLAGDNN_DATA_FP8_E8M0:
+    case FLAGDNN_DATA_FP8_E4M3:
+    case FLAGDNN_DATA_FP8_E5M2:
+      return 1;
   }
   throw std::invalid_argument("unsupported validation tensor data type");
 }

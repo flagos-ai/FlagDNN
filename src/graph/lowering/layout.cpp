@@ -148,4 +148,65 @@ LoweredOperation lower_slice(const OperationSpec& operation) {
            {"output_strides", output.strides}}};
 }
 
+LoweredOperation lower_concatenate(const OperationSpec& operation) {
+  if (operation.inputs.empty() || operation.outputs.size() != 1)
+    throw ApiError(FLAGDNN_STATUS_INVALID_VALUE,
+                   "concatenate requires inputs and one output");
+  const auto& output = require_port(operation.outputs, "output", "output");
+  require_non_overlapping_tensor(output, "concatenate output");
+  const auto rank = output.dimensions.size();
+  auto axis = integer_attribute(operation, "axis");
+  if (axis < 0) axis += static_cast<std::int64_t>(rank);
+  if (rank == 0 || axis < 0 || axis >= static_cast<std::int64_t>(rank))
+    throw ApiError(FLAGDNN_STATUS_INVALID_VALUE,
+                   "concatenate axis is outside tensor rank");
+  std::int64_t extent = 0;
+  for (std::size_t index = 0; index < operation.inputs.size(); ++index) {
+    const auto& input = require_port(operation.inputs,
+                                     "input_" + std::to_string(index), "input");
+    require_non_overlapping_tensor(input, "concatenate input");
+    require_same_data_type(input, output, "concatenate data types must match");
+    if (input.dimensions.size() != rank)
+      throw ApiError(FLAGDNN_STATUS_INVALID_VALUE,
+                     "concatenate ranks must match");
+    for (std::size_t dim = 0; dim < rank; ++dim)
+      if (dim != static_cast<std::size_t>(axis) &&
+          input.dimensions[dim] != output.dimensions[dim])
+        throw ApiError(FLAGDNN_STATUS_INVALID_VALUE,
+                       "concatenate non-axis dimensions must match");
+    extent =
+        checked_add(extent, input.dimensions[static_cast<std::size_t>(axis)],
+                    "concatenate extent overflow");
+  }
+  if (extent != output.dimensions[static_cast<std::size_t>(axis)])
+    throw ApiError(FLAGDNN_STATUS_INVALID_VALUE,
+                   "concatenate output axis extent must equal the input sum");
+  return {{{"axis", axis},
+           {"n_elements", output.element_count()},
+           {"input_count", static_cast<std::int64_t>(operation.inputs.size())}},
+          {},
+          {}};
+}
+
+LoweredOperation lower_gen_index(const OperationSpec& operation) {
+  require_port_count(operation, 0, 1);
+  const auto& output = require_port(operation.outputs, "output", "output");
+  require_non_overlapping_tensor(output, "gen_index output");
+  auto axis = integer_attribute(operation, "axis");
+  const auto rank = output.dimensions.size();
+  if (axis < 0) axis += static_cast<std::int64_t>(rank);
+  if (rank == 0 || axis < 0 || axis >= static_cast<std::int64_t>(rank))
+    throw ApiError(FLAGDNN_STATUS_INVALID_VALUE,
+                   "gen_index axis is outside tensor rank");
+  if (output.data_type != FLAGDNN_DATA_INT32 &&
+      output.data_type != FLAGDNN_DATA_FLOAT32)
+    throw ApiError(FLAGDNN_STATUS_INVALID_VALUE,
+                   "gen_index output must be INT32 or FLOAT32");
+  if (output.data_type == FLAGDNN_DATA_INT32 &&
+      output.dimensions[static_cast<std::size_t>(axis)] > 2147483648LL)
+    throw ApiError(FLAGDNN_STATUS_INVALID_VALUE,
+                   "gen_index axis does not fit INT32");
+  return {{{"axis", axis}, {"n_elements", output.element_count()}}, {}, {}};
+}
+
 }  // namespace flagdnn::native

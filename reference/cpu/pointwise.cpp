@@ -2,6 +2,7 @@
 
 #include "reference/cpu/pointwise.hpp"
 
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -26,8 +27,7 @@ std::size_t checked_element_count(std::span<const std::int64_t> dimensions,
     }
     const std::size_t value = static_cast<std::size_t>(dimension);
     if (count > std::numeric_limits<std::size_t>::max() / value) {
-      throw std::overflow_error(std::string(role) +
-                                " element count overflows");
+      throw std::overflow_error(std::string(role) + " element count overflows");
     }
     count *= value;
   }
@@ -82,24 +82,23 @@ std::size_t broadcast_index(std::size_t output_index,
   return input_index;
 }
 
-} // namespace
+}  // namespace
 
 bool supports_binary_pointwise(flagdnnPointwiseMode_t mode) noexcept {
   switch (mode) {
-  case FLAGDNN_POINTWISE_DIV:
-  case FLAGDNN_POINTWISE_POW:
-  case FLAGDNN_POINTWISE_MOD:
-  case FLAGDNN_POINTWISE_CMP_EQ:
-    return true;
-  default:
-    return false;
+    case FLAGDNN_POINTWISE_DIV:
+    case FLAGDNN_POINTWISE_POW:
+    case FLAGDNN_POINTWISE_MOD:
+    case FLAGDNN_POINTWISE_CMP_EQ:
+      return true;
+    default:
+      return false;
   }
 }
 
 std::vector<float> evaluate_binary_pointwise(
     flagdnnPointwiseMode_t mode, std::span<const float> left,
-    std::span<const std::int64_t> left_dimensions,
-    std::span<const float> right,
+    std::span<const std::int64_t> left_dimensions, std::span<const float> right,
     std::span<const std::int64_t> right_dimensions,
     std::span<const std::int64_t> output_dimensions) {
   if (!supports_binary_pointwise(mode)) {
@@ -118,24 +117,80 @@ std::vector<float> evaluate_binary_pointwise(
     const float right_value =
         right[broadcast_index(index, right_dimensions, output_dimensions)];
     switch (mode) {
-    case FLAGDNN_POINTWISE_DIV:
-      output[index] = left_value / right_value;
-      break;
-    case FLAGDNN_POINTWISE_POW:
-      output[index] =
-          static_cast<float>(std::pow(left_value, right_value));
-      break;
-    case FLAGDNN_POINTWISE_MOD:
-      output[index] = std::fmod(left_value, right_value);
-      break;
-    case FLAGDNN_POINTWISE_CMP_EQ:
-      output[index] = left_value == right_value ? 1.0F : 0.0F;
-      break;
-    default:
-      throw std::logic_error("validated CPU pointwise mode became invalid");
+      case FLAGDNN_POINTWISE_DIV:
+        output[index] = left_value / right_value;
+        break;
+      case FLAGDNN_POINTWISE_POW:
+        output[index] = static_cast<float>(std::pow(left_value, right_value));
+        break;
+      case FLAGDNN_POINTWISE_MOD:
+        output[index] = std::fmod(left_value, right_value);
+        break;
+      case FLAGDNN_POINTWISE_CMP_EQ:
+        output[index] = left_value == right_value ? 1.0F : 0.0F;
+        break;
+      default:
+        throw std::logic_error("validated CPU pointwise mode became invalid");
     }
   }
   return output;
 }
 
-} // namespace flagdnn::reference::cpu
+std::int32_t pointwise_integer_reference(flagdnnPointwiseMode_t mode,
+                                         std::int32_t left, std::int32_t right,
+                                         bool predicate, std::int32_t alpha) {
+  const auto a = static_cast<std::uint32_t>(left);
+  const auto b = static_cast<std::uint32_t>(right);
+  const auto wrap = [](std::uint32_t value) {
+    return std::bit_cast<std::int32_t>(value);
+  };
+  switch (mode) {
+    case FLAGDNN_POINTWISE_IDENTITY:
+      return left;
+    case FLAGDNN_POINTWISE_ADD:
+      return wrap(a + static_cast<std::uint32_t>(alpha) * b);
+    case FLAGDNN_POINTWISE_SUB:
+      return wrap(a - static_cast<std::uint32_t>(alpha) * b);
+    case FLAGDNN_POINTWISE_MUL:
+      return wrap(a * b);
+    case FLAGDNN_POINTWISE_DIV:
+      return right == 0 ? 0
+                        : wrap(static_cast<std::uint32_t>(
+                              static_cast<std::int64_t>(left) / right));
+    case FLAGDNN_POINTWISE_MOD:
+      return right == 0 ? 0
+                        : static_cast<std::int32_t>(
+                              static_cast<std::int64_t>(left) % right);
+    case FLAGDNN_POINTWISE_POW: {
+      if (right < 0)
+        return left == 1 ? 1 : left == -1 ? ((right % 2) ? -1 : 1) : 0;
+      // Small exponents allow a straightforward repeated-multiplication oracle.
+      std::uint32_t result = 1;
+      for (std::int32_t exponent = 0; exponent < right; ++exponent) result *= a;
+      return wrap(result);
+    }
+    case FLAGDNN_POINTWISE_MIN:
+      return std::min(left, right);
+    case FLAGDNN_POINTWISE_MAX:
+      return std::max(left, right);
+    case FLAGDNN_POINTWISE_CMP_EQ:
+      return left == right;
+    case FLAGDNN_POINTWISE_CMP_NEQ:
+      return left != right;
+    case FLAGDNN_POINTWISE_CMP_GT:
+      return left > right;
+    case FLAGDNN_POINTWISE_CMP_GE:
+      return left >= right;
+    case FLAGDNN_POINTWISE_CMP_LT:
+      return left < right;
+    case FLAGDNN_POINTWISE_CMP_LE:
+      return left <= right;
+    case FLAGDNN_POINTWISE_BINARY_SELECT:
+      return predicate ? left : right;
+    default:
+      throw std::invalid_argument(
+          "integer oracle does not implement this mode");
+  }
+}
+
+}  // namespace flagdnn::reference::cpu

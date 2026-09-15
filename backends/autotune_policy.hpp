@@ -51,6 +51,7 @@ void discard_cached_candidate(const SelectionRequest& request) noexcept;
 // best-candidate selection, and atomic cache publication. MeasureCallback
 // returns the average milliseconds per launch for the requested batch.
 // Callbacks own all platform-specific work.
+// A singleton runnable space is cached without invoking callbacks or timing.
 [[nodiscard]] SelectionResult select_best_candidate(
     const SelectionRequest& request,
     const WarmupCallback& warmup,

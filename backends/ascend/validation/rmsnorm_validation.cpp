@@ -281,9 +281,9 @@ RmsnormPlan plan_rmsnorm(const BenchmarkCase& test_case) {
 
 std::vector<RmsnormTestCase> make_ascend_rmsnorm_cases(
     std::span<const RmsnormTestCase> common_cases) {
-  if (common_cases.size() != 9U) {
+  if (common_cases.empty()) {
     throw std::invalid_argument(
-        "common RMSNorm functional catalog must contain 9 cases");
+        "common RMSNorm functional catalog must contain cases");
   }
   std::vector<RmsnormTestCase> result(common_cases.begin(), common_cases.end());
   for (const RmsnormTestCase& test_case : result) {
@@ -294,9 +294,9 @@ std::vector<RmsnormTestCase> make_ascend_rmsnorm_cases(
 
 std::vector<BenchmarkCase> make_ascend_rmsnorm_benchmark_cases(
     std::span<const BenchmarkCase> common_cases) {
-  if (common_cases.size() != 15U) {
+  if (common_cases.empty()) {
     throw std::invalid_argument(
-        "common RMSNorm benchmark catalog must contain 15 cases");
+        "common RMSNorm benchmark catalog must contain cases");
   }
   std::vector<BenchmarkCase> result(common_cases.begin(), common_cases.end());
   for (const BenchmarkCase& test_case : result) {

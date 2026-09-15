@@ -263,6 +263,8 @@ template<class Case> int run(int argc,char **argv,std::span<const Case> cases,
   try {
     if(argc!=3 || cases.empty())throw std::invalid_argument("THEAD attention requires compiler arguments and cases");
     const auto catalog=tv::CapabilityCatalog::load(FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG);
+    const auto selected_cases = catalog.select_cases(operation, cases);
+    cases = selected_cases;
     catalog.validate_versions(FLAGDNN_THEAD_PPU_SDK_VERSION,ACDNN_VERSION,static_cast<std::int64_t>(acdnnGetVersion()));
     tv::check_driver(cuInit(0),"cuInit");CUdevice device;
     tv::check_driver(cuDeviceGet(&device,0),"cuDeviceGet");tv::PrimaryContext primary(device);tv::ScopedCurrentContext current(primary.get());tv::DeviceStream stream;

@@ -403,16 +403,12 @@ int run_batchnorm_functional_test(int argc,
     return 2;
   }
   try {
-    if (cases.size() != 6) {
+    if (cases.empty()) {
       throw std::invalid_argument(
-          "common BatchNorm functional catalog must contain 6 cases");
+          "common BatchNorm functional catalog must contain cases");
     }
     const std::vector<BatchnormTestCase> ascend_cases =
         acl::make_ascend_batchnorm_cases(cases);
-    if (ascend_cases.size() != 6) {
-      throw std::logic_error(
-          "Ascend BatchNorm functional catalog must contain 6 cases");
-    }
     acl::DevelopmentEnvironment development("batchnorm-functional");
     acl::AclRuntime runtime;
     development.prepare_target(acl::soc_name());

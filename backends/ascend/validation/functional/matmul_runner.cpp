@@ -293,9 +293,9 @@ int run_matmul_functional_test(int argc,
   }
   try {
     std::cout << std::setprecision(9);
-    if (cases.size() != 27) {
+    if (cases.empty()) {
       throw std::logic_error(
-          "Ascend MatMul functional catalog must contain 27 cases");
+          "Ascend MatMul functional catalog must contain cases");
     }
     acl::DevelopmentEnvironment development("matmul-functional");
     acl::AclRuntime runtime;

@@ -7,6 +7,7 @@ from typing import Any
 
 
 DEFAULT_TIMEOUT = 7200
+REPORT_DEVICE = "musa"
 PREFLIGHT_BY_DEFAULT = True
 SUPPORTS_MIN_SPEEDUP = True
 
@@ -121,9 +122,7 @@ def _validate_accounting(
     cases = int(accounting["cases"])
     executed = int(accounting["executed"])
     skipped = int(accounting["skipped"])
-    expected_status = (
-        "SKIP" if ctest_reported_status == "skipped" else "PASS"
-    )
+    expected_status = "SKIP" if ctest_reported_status == "skipped" else "PASS"
     if accounting["status"] != expected_status:
         errors.append(
             f"mthreads accounting status={accounting['status']}; "
@@ -302,9 +301,7 @@ def finalize(
     preflight_passed: bool,
 ) -> dict[str, Any]:
     del state
-    selected_pairs = sum(
-        len(suite_operators[suite]) for suite in suites
-    )
+    selected_pairs = sum(len(suite_operators[suite]) for suite in suites)
     passed_pairs = sum(
         results.get(operator, {}).get(suite, {}).get("status") == "passed"
         for suite in suites

@@ -334,6 +334,10 @@ bool is_contiguous(const flagdnn::testing::TestTensor &tensor) {
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      return "int32";
+    case FLAGDNN_DATA_FP8_E8M0:
+      return "fp8_e8m0";
     case FLAGDNN_DATA_FLOAT32:
       return "fp32";
     case FLAGDNN_DATA_FLOAT16:
@@ -558,6 +562,8 @@ int run_add_functional_test(int argc, char **argv,
     }
     const tv::CapabilityCatalog catalog = tv::CapabilityCatalog::load(
         FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG);
+    const auto selected_cases = catalog.select_cases("add", cases);
+    cases = selected_cases;
     catalog.validate_versions(FLAGDNN_THEAD_PPU_SDK_VERSION, ACDNN_VERSION,
                               static_cast<std::int64_t>(acdnnGetVersion()));
 

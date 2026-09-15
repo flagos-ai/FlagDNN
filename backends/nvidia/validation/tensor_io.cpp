@@ -7,6 +7,9 @@
 #include <cuda_fp8.h>
 
 #include <cstring>
+#include <cmath>
+#include <algorithm>
+#include <limits>
 
 namespace flagdnn::validation::nvidia::tensor_io {
 namespace {
@@ -19,11 +22,13 @@ float padding_sentinel() noexcept { return kPaddingSentinel; }
 
 std::size_t data_type_size(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
     case FLAGDNN_DATA_FLOAT32:
       return 4;
     case FLAGDNN_DATA_FLOAT16:
     case FLAGDNN_DATA_BFLOAT16:
       return 2;
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_BOOLEAN:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
@@ -58,6 +63,16 @@ std::vector<std::uint8_t> encode(
   for (std::size_t index = 0; index < physical.size(); ++index) {
     std::uint8_t* destination = result.data() + index * element_size;
     switch (data_type) {
+      case FLAGDNN_DATA_INT32: {
+        if (!std::isfinite(physical[index]) ||
+            static_cast<double>(physical[index]) < -2147483648.0 ||
+            static_cast<double>(physical[index]) > 2147483647.0) {
+          throw std::invalid_argument("INT32 input is out of range");
+        }
+        const auto value = static_cast<std::int32_t>(physical[index]);
+        std::memcpy(destination, &value, sizeof(value));
+        break;
+      }
       case FLAGDNN_DATA_FLOAT32:
         break;
       case FLAGDNN_DATA_FLOAT16: {
@@ -78,6 +93,23 @@ std::vector<std::uint8_t> encode(
       case FLAGDNN_DATA_FP8_E4M3: {
         const __nv_fp8_e4m3 value(physical[index]);
         std::memcpy(destination, &value, sizeof(value));
+        break;
+      }
+      case FLAGDNN_DATA_FP8_E8M0: {
+        // Round positive scales upward to the next representable power of two.
+        // Padding bytes use exponent zero and are only compared bytewise.
+        const float value = physical[index];
+        if (value == kPaddingSentinel)
+          *destination = 0;
+        else if (!(value > 0.0F) || !std::isfinite(value))
+          *destination = 255;
+        else {
+          int exponent = 0;
+          const float mantissa = std::frexp(value, &exponent);
+          const int power = exponent - (mantissa == 0.5F ? 1 : 0);
+          *destination =
+              static_cast<std::uint8_t>(std::clamp(power + 127, 0, 255));
+        }
         break;
       }
       case FLAGDNN_DATA_FP8_E5M2: {
@@ -120,6 +152,12 @@ std::vector<float> decode(
   for (std::size_t index = 0; index < physical_element_count; ++index) {
     const std::uint8_t* source = bytes.data() + index * element_size;
     switch (data_type) {
+      case FLAGDNN_DATA_INT32: {
+        std::int32_t value;
+        std::memcpy(&value, source, sizeof(value));
+        result[index] = static_cast<float>(value);
+        break;
+      }
       case FLAGDNN_DATA_FLOAT32:
         break;
       case FLAGDNN_DATA_FLOAT16: {
@@ -145,6 +183,11 @@ std::vector<float> decode(
         result[index] = static_cast<float>(value);
         break;
       }
+      case FLAGDNN_DATA_FP8_E8M0:
+        result[index] = *source == 255
+                            ? std::numeric_limits<float>::quiet_NaN()
+                            : std::ldexp(1.0F, static_cast<int>(*source) - 127);
+        break;
       case FLAGDNN_DATA_FP8_E5M2: {
         __nv_fp8_e5m2 value;
         std::memcpy(&value, source, sizeof(value));

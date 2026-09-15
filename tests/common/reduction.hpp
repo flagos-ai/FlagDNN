@@ -3,12 +3,12 @@
 #ifndef FLAGDNN_TESTS_COMMON_REDUCTION_HPP_
 #define FLAGDNN_TESTS_COMMON_REDUCTION_HPP_
 
-#include "common/common.hpp"
-
 #include <memory>
 #include <span>
 #include <string>
 #include <vector>
+
+#include "common/common.hpp"
 
 namespace flagdnn::testing {
 
@@ -27,23 +27,24 @@ struct ReductionTestCase {
 using ReductionExecutable = TestExecutable;
 
 [[nodiscard]] std::vector<ReductionTestCase> make_reduction_cases();
+std::vector<float> reduction_host_input(const ReductionTestCase& test_case);
+
 void validate_reduction_case(const ReductionTestCase& test_case);
 
 [[nodiscard]] std::unique_ptr<ReductionExecutable> build_flagdnn_reduction(
-    flagdnn::Handle& handle,
-    const ReductionTestCase& test_case);
+    flagdnn::Handle& handle, const ReductionTestCase& test_case);
 
-/* Implemented by the selected backends/<platform>/validation/functional adapter. */
+/* Implemented by the selected backends/<platform>/validation/functional
+ * adapter. */
 [[nodiscard]] TestTensor reduction_reference_input_tensor(
     const ReductionTestCase& test_case);
 [[nodiscard]] std::unique_ptr<ReductionExecutable> build_reduction_reference(
     const ReductionTestCase& test_case);
 
-/* Implemented by backends/<platform>/validation/functional/reduction_runner.cpp. */
-int run_reduction_functional_test(
-    int argc,
-    char** argv,
-    std::span<const ReductionTestCase> cases);
+/* Implemented by
+ * backends/<platform>/validation/functional/reduction_runner.cpp. */
+int run_reduction_functional_test(int argc, char** argv,
+                                  std::span<const ReductionTestCase> cases);
 
 }  // namespace flagdnn::testing
 

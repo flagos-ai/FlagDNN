@@ -8,6 +8,8 @@ foreach(_required IN ITEMS SOURCE_ROOT BUILD_ROOT CTEST_COMMAND)
 endforeach()
 
 include("${SOURCE_ROOT}/cmake/Operators.cmake")
+set(_benchmark_expected ${FLAGDNN_BENCHMARK_OPERATORS})
+list(REMOVE_ITEM _benchmark_expected ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS})
 
 execute_process(
   COMMAND "${CTEST_COMMAND}" --test-dir "${BUILD_ROOT}"
@@ -65,7 +67,7 @@ endfunction()
 _flagdnn_thead_require_exact_catalog(
   "functional" FLAGDNN_FUNCTIONAL_OPERATORS _functional_actual)
 _flagdnn_thead_require_exact_catalog(
-  "benchmark" FLAGDNN_BENCHMARK_OPERATORS _benchmark_actual)
+  "benchmark" _benchmark_expected _benchmark_actual)
 
 list(LENGTH _functional_actual _functional_count)
 list(LENGTH _benchmark_actual _benchmark_count)

@@ -143,6 +143,10 @@ std::uint32_t read_u32(std::span<const std::byte> bytes,
 
 std::size_t element_size(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+    case FLAGDNN_DATA_FP8_E8M0:
+      throw std::invalid_argument(
+          "THead validation does not support INT32 or E8M0 here");
     case FLAGDNN_DATA_FLOAT32:
       return sizeof(float);
     case FLAGDNN_DATA_FLOAT16:
@@ -167,6 +171,10 @@ encode_floating(flagdnnDataType_t data_type, std::span<const float> values) {
   result.reserve(values.size() * element_size(data_type));
   for (const float value : values) {
     switch (data_type) {
+      case FLAGDNN_DATA_INT32:
+      case FLAGDNN_DATA_FP8_E8M0:
+        throw std::invalid_argument(
+            "THead validation does not support INT32 or E8M0 here");
       case FLAGDNN_DATA_FLOAT32:
         append_u32(result, std::bit_cast<std::uint32_t>(value));
         break;
@@ -198,6 +206,10 @@ decode_floating(flagdnnDataType_t data_type,
   result.reserve(bytes.size() / width);
   for (std::size_t offset = 0; offset < bytes.size(); offset += width) {
     switch (data_type) {
+      case FLAGDNN_DATA_INT32:
+      case FLAGDNN_DATA_FP8_E8M0:
+        throw std::invalid_argument(
+            "THead validation does not support INT32 or E8M0 here");
       case FLAGDNN_DATA_FLOAT32:
         result.push_back(std::bit_cast<float>(read_u32(bytes, offset)));
         break;

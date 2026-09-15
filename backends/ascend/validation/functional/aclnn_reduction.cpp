@@ -70,6 +70,10 @@ void log_destroy_status(aclnnStatus status, std::string_view operation) {
 
 aclDataType acl_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
+    case FLAGDNN_DATA_INT32:
+      throw std::invalid_argument(
+          "INT32 is not supported by this validation adapter");
+
     case FLAGDNN_DATA_FLOAT32:
       return ACL_FLOAT;
     case FLAGDNN_DATA_FLOAT16:
@@ -77,6 +81,7 @@ aclDataType acl_data_type(flagdnnDataType_t data_type) {
     case FLAGDNN_DATA_BFLOAT16:
       return ACL_BF16;
     case FLAGDNN_DATA_BOOLEAN:
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
       break;

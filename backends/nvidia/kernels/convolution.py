@@ -13,6 +13,25 @@ import triton.language as tl
 
 
 @triton.jit
+def _round_explicit_tf32_rne(value, NATIVE: tl.constexpr = False):
+    if NATIVE:
+        return tl.inline_asm_elementwise(
+            "{ .reg .b32 t; cvt.rn.tf32.f32 t, $1; mov.b32 $0,t; }",
+            "=f,f",
+            [value],
+            dtype=tl.float32,
+            is_pure=True,
+            pack=1,
+        )
+    # tl.dot(tf32) truncates FP32 operands. Explicit TF32 uses the same
+    # round-to-nearest-even contract as explicit matmul and causal_conv1d.
+    bits = value.to(tl.uint32, bitcast=True)
+    rounded = (bits + 0xFFF + ((bits >> 13) & 1)) & 0xFFFFE000
+    rounded = tl.where((bits & 0x7F800000) == 0x7F800000, bits, rounded)
+    return rounded.to(tl.float32, bitcast=True)
+
+
+@triton.jit
 def _round_fp32_to_tf32_rne(x):
     """Use NVIDIA's native round-to-nearest FP32-to-TF32 conversion."""
     return tl.inline_asm_elementwise(
@@ -89,11 +108,78 @@ def conv2d_im2col_nchw_3x3_stride2_pad1_kernel(
 
 
 @triton.jit
+def conv2d_im2col_nchw_transposed_kernel(
+    x_ptr,
+    col_ptr,
+    XH: tl.constexpr,
+    XW: tl.constexpr,
+    OH: tl.constexpr,
+    OW: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_TOP: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    X_STRIDE_N: tl.constexpr,
+    X_STRIDE_C: tl.constexpr,
+    X_STRIDE_H: tl.constexpr,
+    X_STRIDE_W: tl.constexpr,
+    COL_STRIDE_N: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+):
+    """
+    Materialize FP32 patches directly in [batch, output_hw, reduction]
+    order.
+    """
+    batch = tl.program_id(2)
+    output_hw = tl.program_id(0) * BLOCK_M + tl.arange(0, BLOCK_M)
+    reduction = tl.program_id(1) * BLOCK_K + tl.arange(0, BLOCK_K)
+    channel = reduction // (KH * KW)
+    input_h = (
+        (output_hw // OW)[:, None] * STRIDE_H
+        - PAD_TOP
+        + ((reduction // KW) % KH)[None, :] * DIL_H
+    )
+    input_w = (
+        (output_hw % OW)[:, None] * STRIDE_W
+        - PAD_LEFT
+        + (reduction % KW)[None, :] * DIL_W
+    )
+    values = tl.load(
+        x_ptr
+        + batch * X_STRIDE_N
+        + channel[None, :] * X_STRIDE_C
+        + input_h * X_STRIDE_H
+        + input_w * X_STRIDE_W,
+        mask=(output_hw[:, None] < OH * OW)
+        & (channel[None, :] < CIN_PER_GROUP)
+        & (input_h >= 0)
+        & (input_h < XH)
+        & (input_w >= 0)
+        & (input_w < XW),
+        other=0.0,
+    )
+    reduction_extent: tl.constexpr = CIN_PER_GROUP * KH * KW
+    tl.store(
+        col_ptr
+        + batch * COL_STRIDE_N
+        + output_hw[:, None] * reduction_extent
+        + reduction[None, :],
+        values,
+        mask=(output_hw[:, None] < OH * OW)
+        & (reduction[None, :] < reduction_extent),
+    )
+
+
+@triton.jit
 def conv2d_im2col_nchw_kernel(
     x_ptr,
     col_ptr,
-    weight_ptr,
-    converted_weight_ptr,
     XH: tl.constexpr,
     XW: tl.constexpr,
     OH: tl.constexpr,
@@ -113,17 +199,9 @@ def conv2d_im2col_nchw_kernel(
     X_STRIDE_W: tl.constexpr,
     COL_STRIDE_N: tl.constexpr,
     COL_STRIDE_K: tl.constexpr,
-    WEIGHT_TOTAL: tl.constexpr,
-    WEIGHT_BLOCK: tl.constexpr,
-    CONVERT_WEIGHT: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    """Materialize general NCHW patches and optionally convert FP32 weights.
-
-    Weight conversion shares the im2col launch so the mixed-FP16 path does
-    not pay for a third kernel.  The following GEMM launch is the global
-    synchronization point before consuming either workspace tensor.
-    """
+    """Materialize general NCHW patches without narrowing operand precision."""
     output_area: tl.constexpr = OH * OW
     plane = tl.program_id(1)
     planes_per_batch: tl.constexpr = CIN_PER_GROUP * KH
@@ -159,25 +237,6 @@ def conv2d_im2col_nchw_kernel(
             values,
             mask=valid_hw,
         )
-
-    if CONVERT_WEIGHT:
-        linear_program = tl.program_id(1) * tl.num_programs(0) + tl.program_id(
-            0
-        )
-        weight_start = linear_program * WEIGHT_BLOCK
-        if weight_start < WEIGHT_TOTAL:
-            weight_offsets = weight_start + tl.arange(0, WEIGHT_BLOCK)
-            weight_mask = weight_offsets < WEIGHT_TOTAL
-            weight_values = tl.load(
-                weight_ptr + weight_offsets,
-                mask=weight_mask,
-                other=0.0,
-            )
-            tl.store(
-                converted_weight_ptr + weight_offsets,
-                weight_values,
-                mask=weight_mask,
-            )
 
 
 @triton.jit
@@ -260,9 +319,14 @@ def conv1d_gemm_kernel(
             & (reduction[None, :] < reduction_extent),
             other=0.0,
         )
-        if DTYPE_ID == 2 and INPUT_PRECISION == 1:
+        if INPUT_PRECISION == 2:
+            input_values = _round_explicit_tf32_rne(input_values)
+            weights = _round_explicit_tf32_rne(weights)
+        if DTYPE_ID == 2 and (INPUT_PRECISION == 1 or INPUT_PRECISION == 2):
             accumulator += tl.dot(
-                input_values, tl.trans(weights), input_precision="tf32x3"
+                input_values,
+                tl.trans(weights),
+                input_precision="tf32" if INPUT_PRECISION == 2 else "tf32x3",
             )
         else:
             accumulator += tl.dot(
@@ -336,6 +400,7 @@ def conv2d_spatial_nchw_kernel(
     Y_STRIDE_C: tl.constexpr,
     Y_STRIDE_H: tl.constexpr,
     Y_STRIDE_W: tl.constexpr,
+    NATIVE_TF32_RNE: tl.constexpr = False,
 ):
     tile = tl.program_id(0)
     batch_group = tl.program_id(1).to(tl.int64)
@@ -367,8 +432,12 @@ def conv2d_spatial_nchw_kernel(
     for start in range(0, reduction_extent, BLOCK_K):
         reduction = start + reduction_base
         reduction_mask = reduction < reduction_extent
-        input_channel = reduction // kernel_area
-        kernel_hw = reduction - input_channel * kernel_area
+        if X_STRIDE_C == 1 and W_STRIDE_C == 1:
+            input_channel = reduction % CIN_PER_GROUP
+            kernel_hw = reduction // CIN_PER_GROUP
+        else:
+            input_channel = reduction // kernel_area
+            kernel_hw = reduction - input_channel * kernel_area
         kernel_h = kernel_hw // KW
         kernel_w = kernel_hw - kernel_h * KW
         input_h = (
@@ -400,9 +469,16 @@ def conv2d_spatial_nchw_kernel(
             mask=channel_mask[:, None] & reduction_mask[None, :],
             other=0.0,
         )
-        if DTYPE_ID == 2 and INPUT_PRECISION == 1:
+        if INPUT_PRECISION == 2:
+            weights = _round_explicit_tf32_rne(weights, NATIVE_TF32_RNE)
+            input_values = _round_explicit_tf32_rne(
+                input_values, NATIVE_TF32_RNE
+            )
+        if DTYPE_ID == 2 and (INPUT_PRECISION == 1 or INPUT_PRECISION == 2):
             accumulator += tl.dot(
-                weights, input_values, input_precision="tf32x3"
+                weights,
+                input_values,
+                input_precision="tf32" if INPUT_PRECISION == 2 else "tf32x3",
             )
         else:
             accumulator += tl.dot(
@@ -495,9 +571,14 @@ def conv2d_1x1_nchw_pad0_kernel(
             mask=channel_mask[:, None] & reduction_mask[None, :],
             other=0.0,
         )
-        if DTYPE_ID == 2 and INPUT_PRECISION == 1:
+        if INPUT_PRECISION == 2:
+            weights = _round_explicit_tf32_rne(weights)
+            input_values = _round_explicit_tf32_rne(input_values)
+        if DTYPE_ID == 2 and (INPUT_PRECISION == 1 or INPUT_PRECISION == 2):
             accumulator += tl.dot(
-                weights, input_values, input_precision="tf32x3"
+                weights,
+                input_values,
+                input_precision="tf32" if INPUT_PRECISION == 2 else "tf32x3",
             )
         else:
             accumulator += tl.dot(
@@ -644,9 +725,14 @@ def conv3d_spatial_ncdhw_m_kernel(
             & (reduction[None, :] < reduction_extent),
             other=0.0,
         )
-        if DTYPE_ID == 2 and INPUT_PRECISION == 1:
+        if INPUT_PRECISION == 2:
+            input_values = _round_explicit_tf32_rne(input_values)
+            weights = _round_explicit_tf32_rne(weights)
+        if DTYPE_ID == 2 and (INPUT_PRECISION == 1 or INPUT_PRECISION == 2):
             accumulator += tl.dot(
-                input_values, tl.trans(weights), input_precision="tf32x3"
+                input_values,
+                tl.trans(weights),
+                input_precision="tf32" if INPUT_PRECISION == 2 else "tf32x3",
             )
         else:
             accumulator += tl.dot(
@@ -723,7 +809,10 @@ def conv_dgrad2d_1x1_nchw_kernel(
             mask=mask_co[:, None] & mask_ci[None, :],
             other=0.0,
         )
-        if INPUT_PRECISION == 1:
+        if INPUT_PRECISION == 2:
+            weights = _round_explicit_tf32_rne(weights)
+            losses = _round_explicit_tf32_rne(losses)
+        if INPUT_PRECISION == 1 or INPUT_PRECISION == 2:
             accumulator = tl.dot(
                 tl.trans(weights),
                 losses,
@@ -796,6 +885,7 @@ def conv_dgrad_nd_kernel(
     BLOCK_CI: tl.constexpr,
     BLOCK_K: tl.constexpr,
     GROUP_M: tl.constexpr,
+    NATIVE_TF32_RNE: tl.constexpr = False,
 ):
     tile = tl.program_id(0)
     group = tl.program_id(1).to(tl.int64)
@@ -867,7 +957,10 @@ def conv_dgrad_nd_kernel(
             & (input_channels[None, :] < CIN_PER_GROUP),
             other=0.0,
         )
-        if INPUT_PRECISION == 1:
+        if INPUT_PRECISION == 2:
+            losses = _round_explicit_tf32_rne(losses, NATIVE_TF32_RNE)
+            weights = _round_explicit_tf32_rne(weights, NATIVE_TF32_RNE)
+        if INPUT_PRECISION == 1 or INPUT_PRECISION == 2:
             accumulator += tl.dot(losses, weights, input_precision="tf32")
         else:
             accumulator += tl.dot(losses, weights, input_precision="ieee")
@@ -919,6 +1012,7 @@ def conv_dgrad2d_stride1_kernel(
     BLOCK_M: tl.constexpr,
     BLOCK_CI: tl.constexpr,
     BLOCK_CO: tl.constexpr,
+    NATIVE_TF32_RNE: tl.constexpr = False,
 ):
     """2D stride-one dgrad with static filter loops."""
     tile = tl.program_id(0)
@@ -976,7 +1070,12 @@ def conv_dgrad2d_stride1_kernel(
                     mask=output_channel_mask[:, None] & channel_mask[None, :],
                     other=0.0,
                 )
-                if INPUT_PRECISION == 1:
+                if INPUT_PRECISION == 2:
+                    losses = _round_explicit_tf32_rne(losses, NATIVE_TF32_RNE)
+                    weights = _round_explicit_tf32_rne(
+                        weights, NATIVE_TF32_RNE
+                    )
+                if INPUT_PRECISION == 1 or INPUT_PRECISION == 2:
                     accumulator += tl.dot(
                         losses, weights, input_precision="tf32"
                     )
@@ -993,24 +1092,6 @@ def conv_dgrad2d_stride1_kernel(
         + input_w[:, None] * X_STRIDE_W,
         accumulator.to(dx_ptr.dtype.element_ty),
         mask=row_mask[:, None] & channel_mask[None, :],
-    )
-
-
-@triton.jit
-def cast_contiguous_kernel(
-    input_ptr,
-    output_ptr,
-    TOTAL: tl.constexpr,
-    BLOCK_SIZE: tl.constexpr,
-):
-    """Convert one contiguous internal pipeline tensor."""
-    offsets = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    active = offsets < TOTAL
-    values = tl.load(input_ptr + offsets, mask=active, other=0.0)
-    tl.store(
-        output_ptr + offsets,
-        values.to(output_ptr.dtype.element_ty),
-        mask=active,
     )
 
 
@@ -1299,6 +1380,9 @@ def conv_dgrad2d_stride2_pad1_3x3_packed_parity_kernel(
     KW_COUNT: tl.constexpr,
     INPUT_PRECISION: tl.constexpr,
     FILTER_REVERSE: tl.constexpr,
+    WEIGHT_STRIDE_HW: tl.constexpr,
+    WEIGHT_STRIDE_CO: tl.constexpr,
+    WEIGHT_STRIDE_CI: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_CI: tl.constexpr,
     BLOCK_CO: tl.constexpr,
@@ -1344,7 +1428,7 @@ def conv_dgrad2d_stride2_pad1_3x3_packed_parity_kernel(
             valid_hw = valid_h & valid_w
             weight_w = 2 - kw if FILTER_REVERSE else kw
 
-            for co_start in tl.static_range(0, COUT_PER_GROUP, BLOCK_CO):
+            for co_start in tl.range(0, COUT_PER_GROUP, BLOCK_CO):
                 offs_co_rel = co_start + tl.arange(0, BLOCK_CO)
                 mask_co = offs_co_rel < COUT_PER_GROUP
                 loss = tl.load(
@@ -1360,18 +1444,13 @@ def conv_dgrad2d_stride2_pad1_3x3_packed_parity_kernel(
                 )
                 weight = tl.load(
                     weight_ptr
-                    + (
-                        (
-                            (weight_h * 3 + weight_w) * COUT_PER_GROUP
-                            + offs_co_rel[:, None]
-                        )
-                        * CIN_PER_GROUP
-                    )
-                    + offs_ci_rel[None, :],
+                    + (weight_h * 3 + weight_w) * WEIGHT_STRIDE_HW
+                    + offs_co_rel[:, None] * WEIGHT_STRIDE_CO
+                    + offs_ci_rel[None, :] * WEIGHT_STRIDE_CI,
                     mask=mask_co[:, None] & mask_ci[None, :],
                     other=0.0,
                 )
-                if INPUT_PRECISION == 1:
+                if INPUT_PRECISION == 1 or INPUT_PRECISION == 2:
                     accumulator = tl.dot(
                         loss,
                         weight,
@@ -1517,7 +1596,7 @@ def conv_dgrad2d_stride2_pad1_3x3_packed_tile2w_kernel(
                 mask=mask_co[:, None] & mask_ci[None, :],
                 other=0.0,
             )
-            if INPUT_PRECISION == 1:
+            if INPUT_PRECISION == 1 or INPUT_PRECISION == 2:
                 acc0 = tl.dot(loss00, weight11, acc0, input_precision="tf32")
                 acc1 = tl.dot(loss00, weight12, acc1, input_precision="tf32")
                 acc1 = tl.dot(loss01, weight10, acc1, input_precision="tf32")
@@ -1604,7 +1683,7 @@ def conv_dgrad2d_stride2_pad1_3x3_packed_tile2w_kernel(
                 mask=mask_co[:, None] & mask_ci[None, :],
                 other=0.0,
             )
-            if INPUT_PRECISION == 1:
+            if INPUT_PRECISION == 1 or INPUT_PRECISION == 2:
                 acc0 = tl.dot(loss00, weight21, acc0, input_precision="tf32")
                 acc0 = tl.dot(loss10, weight01, acc0, input_precision="tf32")
                 acc1 = tl.dot(loss00, weight22, acc1, input_precision="tf32")
@@ -1840,7 +1919,7 @@ def conv_dgrad2d_stride2_pad1_3x3_packed_tile4_kernel(
             other=0.0,
         )
 
-        if INPUT_PRECISION == 1:
+        if INPUT_PRECISION == 1 or INPUT_PRECISION == 2:
             if ROUND_TF32:
                 loss00 = _round_fp32_to_tf32_rne(loss00)
                 loss01 = _round_fp32_to_tf32_rne(loss01)
@@ -2111,7 +2190,7 @@ def conv_dgrad3d_packed_kernel(
                         mask=mask_co[:, None] & mask_ci[None, :],
                         other=0.0,
                     )
-                    if INPUT_PRECISION == 1:
+                    if INPUT_PRECISION == 1 or INPUT_PRECISION == 2:
                         acc += tl.dot(
                             loss,
                             weight,
@@ -2184,6 +2263,7 @@ def conv_wgrad_nd_kernel(
     BLOCK_OC: tl.constexpr,
     BLOCK_CI: tl.constexpr,
     BLOCK_M: tl.constexpr,
+    NATIVE_TF32_RNE: tl.constexpr = False,
 ):
     tile = tl.program_id(0)
     filter_spatial = tl.program_id(1).to(tl.int64)
@@ -2245,7 +2325,10 @@ def conv_wgrad_nd_kernel(
             & (input_channels[None, :] < CIN_PER_GROUP),
             other=0.0,
         )
-        if INPUT_PRECISION == 1:
+        if INPUT_PRECISION == 2:
+            losses = _round_explicit_tf32_rne(losses, NATIVE_TF32_RNE)
+            inputs = _round_explicit_tf32_rne(inputs, NATIVE_TF32_RNE)
+        if INPUT_PRECISION == 1 or INPUT_PRECISION == 2:
             accumulator += tl.dot(losses, inputs, input_precision="tf32")
         else:
             accumulator += tl.dot(losses, inputs, input_precision="ieee")
@@ -3027,6 +3110,66 @@ def _conv_wgrad2d_1x1_reduce_kernel(
         + offs_ci_rel[None, :] * out_stride_i,
         acc.to(out_ptr.dtype.element_ty),
         mask=mask_co[:, None] & mask_ci[None, :],
+    )
+
+
+@triton.jit
+def _conv_wgrad2d_batched_split_kernel(
+    loss_ptr,
+    columns_ptr,
+    partial_ptr,
+    BATCH_N: tl.constexpr,
+    M: tl.constexpr,
+    PADDED_M: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIK: tl.constexpr,
+    SPLITS_PER_N: tl.constexpr,
+    INPUT_IS_FLOAT32: tl.constexpr,
+    BLOCK_CO: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    """Short low-precision WGrad reductions without device TMA setup."""
+    tl.static_assert(not INPUT_IS_FLOAT32)
+    tile = tl.program_id(0)
+    split_in_n = tl.program_id(1)
+    batch = tl.program_id(2)
+    num_ci_blocks: tl.constexpr = triton.cdiv(CIK, BLOCK_CI)
+    co = tile // num_ci_blocks * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    ci = tile % num_ci_blocks * BLOCK_CI + tl.arange(0, BLOCK_CI)
+    num_m_blocks: tl.constexpr = triton.cdiv(M, BLOCK_M)
+    first = split_in_n * num_m_blocks // SPLITS_PER_N
+    end = (split_in_n + 1) * num_m_blocks // SPLITS_PER_N
+    steps: tl.constexpr = triton.cdiv(num_m_blocks, SPLITS_PER_N)
+    accumulator = tl.zeros((BLOCK_CO, BLOCK_CI), dtype=tl.float32)
+    # A compile-time trip count lets the compiler pipeline the short reduction.
+    # Blocks, not individual elements, partition K; the final tile is masked.
+    for step in tl.range(steps):
+        m = (first + step) * BLOCK_M + tl.arange(0, BLOCK_M)
+        active = (m < M) & (first + step < end)
+        loss = tl.load(
+            loss_ptr + batch * C_OUT * M + co[:, None] * M + m[None, :],
+            (co[:, None] < C_OUT) & active[None, :],
+            other=0.0,
+        )
+        columns = tl.load(
+            columns_ptr
+            + batch * CIK * PADDED_M
+            + ci[None, :] * PADDED_M
+            + m[:, None],
+            (ci[None, :] < CIK) & active[:, None],
+            other=0.0,
+        )
+        accumulator = tl.dot(
+            loss, columns, accumulator, input_precision="ieee"
+        )
+    tl.store(
+        partial_ptr
+        + (batch * SPLITS_PER_N + split_in_n) * C_OUT * CIK
+        + co[:, None] * CIK
+        + ci[None, :],
+        accumulator,
+        (co[:, None] < C_OUT) & (ci[None, :] < CIK),
     )
 
 
@@ -4394,3 +4537,321 @@ def _conv_wgrad3d_kw3_atomic_kernel(
     tl.atomic_add(base + 0 * out_stride_w, acc0, sem="relaxed", mask=mask)
     tl.atomic_add(base + 1 * out_stride_w, acc1, sem="relaxed", mask=mask)
     tl.atomic_add(base + 2 * out_stride_w, acc2, sem="relaxed", mask=mask)
+
+
+@triton.jit
+def conv_dgrad_direct_kernel(
+    dy_ptr,
+    w_ptr,
+    dx_ptr,
+    XD: tl.constexpr,
+    XH: tl.constexpr,
+    XW: tl.constexpr,
+    OD: tl.constexpr,
+    OH: tl.constexpr,
+    OW: tl.constexpr,
+    KD: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    STRIDE_D: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_FRONT: tl.constexpr,
+    PAD_TOP: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    DIL_D: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    FLIP_FILTER: tl.constexpr,
+    DY_STRIDE_N: tl.constexpr,
+    DY_STRIDE_C: tl.constexpr,
+    DY_STRIDE_D: tl.constexpr,
+    DY_STRIDE_H: tl.constexpr,
+    DY_STRIDE_W: tl.constexpr,
+    X_STRIDE_N: tl.constexpr,
+    X_STRIDE_C: tl.constexpr,
+    X_STRIDE_D: tl.constexpr,
+    X_STRIDE_H: tl.constexpr,
+    X_STRIDE_W: tl.constexpr,
+    W_STRIDE_K: tl.constexpr,
+    W_STRIDE_C: tl.constexpr,
+    W_STRIDE_D: tl.constexpr,
+    W_STRIDE_H: tl.constexpr,
+    W_STRIDE_W: tl.constexpr,
+    INPUT_PRECISION: tl.constexpr,
+    M: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+    GROUP_M: tl.constexpr,
+):
+    rows = tl.program_id(0).to(tl.int64) * BLOCK_M + tl.arange(0, BLOCK_M)
+    channel = tl.program_id(1).to(tl.int64)
+    group = channel // CIN_PER_GROUP
+    ci = channel % CIN_PER_GROUP
+    batch = rows // (XD * XH * XW)
+    xd = rows // (XH * XW) % XD
+    xh = rows // XW % XH
+    xw = rows % XW
+    acc = tl.zeros((BLOCK_M,), tl.float32)
+    for term in tl.static_range(COUT_PER_GROUP * KD * KH * KW):
+        co = term // (KD * KH * KW)
+        kd = term // (KH * KW) % KD
+        kh = term // KW % KH
+        kw = term % KW
+        nd = xd + PAD_FRONT - kd * DIL_D
+        nh = xh + PAD_TOP - kh * DIL_H
+        nw = xw + PAD_LEFT - kw * DIL_W
+        od, oh, ow = nd // STRIDE_D, nh // STRIDE_H, nw // STRIDE_W
+        valid = (
+            (rows < M)
+            & (nd % STRIDE_D == 0)
+            & (nh % STRIDE_H == 0)
+            & (nw % STRIDE_W == 0)
+            & (od >= 0)
+            & (od < OD)
+            & (oh >= 0)
+            & (oh < OH)
+            & (ow >= 0)
+            & (ow < OW)
+        )
+        dy = tl.load(
+            dy_ptr
+            + batch * DY_STRIDE_N
+            + (group * COUT_PER_GROUP + co) * DY_STRIDE_C
+            + od * DY_STRIDE_D
+            + oh * DY_STRIDE_H
+            + ow * DY_STRIDE_W,
+            valid,
+            other=0,
+        )
+        wd = KD - 1 - kd if FLIP_FILTER else kd
+        wh = KH - 1 - kh if FLIP_FILTER else kh
+        ww = KW - 1 - kw if FLIP_FILTER else kw
+        weight = tl.load(
+            w_ptr
+            + (group * COUT_PER_GROUP + co) * W_STRIDE_K
+            + ci * W_STRIDE_C
+            + wd * W_STRIDE_D
+            + wh * W_STRIDE_H
+            + ww * W_STRIDE_W
+        )
+        acc += dy * weight
+    tl.store(
+        dx_ptr
+        + batch * X_STRIDE_N
+        + channel * X_STRIDE_C
+        + xd * X_STRIDE_D
+        + xh * X_STRIDE_H
+        + xw * X_STRIDE_W,
+        acc,
+        rows < M,
+    )
+
+
+@triton.jit
+def conv_wgrad_direct_kernel(
+    dy_ptr,
+    x_ptr,
+    dw_ptr,
+    XD: tl.constexpr,
+    XH: tl.constexpr,
+    XW: tl.constexpr,
+    OD: tl.constexpr,
+    OH: tl.constexpr,
+    OW: tl.constexpr,
+    KD: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    STRIDE_D: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_FRONT: tl.constexpr,
+    PAD_TOP: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    DIL_D: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    FLIP_FILTER: tl.constexpr,
+    DY_STRIDE_N: tl.constexpr,
+    DY_STRIDE_C: tl.constexpr,
+    DY_STRIDE_D: tl.constexpr,
+    DY_STRIDE_H: tl.constexpr,
+    DY_STRIDE_W: tl.constexpr,
+    X_STRIDE_N: tl.constexpr,
+    X_STRIDE_C: tl.constexpr,
+    X_STRIDE_D: tl.constexpr,
+    X_STRIDE_H: tl.constexpr,
+    X_STRIDE_W: tl.constexpr,
+    W_STRIDE_K: tl.constexpr,
+    W_STRIDE_C: tl.constexpr,
+    W_STRIDE_D: tl.constexpr,
+    W_STRIDE_H: tl.constexpr,
+    W_STRIDE_W: tl.constexpr,
+    INPUT_PRECISION: tl.constexpr,
+    M: tl.constexpr,
+    BLOCK_OC: tl.constexpr,
+    BLOCK_CI: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+):
+    weight = tl.program_id(0).to(tl.int64)
+    group = tl.program_id(1).to(tl.int64)
+    kw = weight % KW
+    kh = weight // KW % KH
+    kd = weight // (KH * KW) % KD
+    ci = weight // (KD * KH * KW) % CIN_PER_GROUP
+    co = weight // (KD * KH * KW * CIN_PER_GROUP)
+    ed = KD - 1 - kd if FLIP_FILTER else kd
+    eh = KH - 1 - kh if FLIP_FILTER else kh
+    ew = KW - 1 - kw if FLIP_FILTER else kw
+    rows = tl.arange(0, BLOCK_M).to(tl.int64)
+    batch = rows // (OD * OH * OW)
+    od = rows // (OH * OW) % OD
+    oh = rows // OW % OH
+    ow = rows % OW
+    xd = od * STRIDE_D - PAD_FRONT + ed * DIL_D
+    xh = oh * STRIDE_H - PAD_TOP + eh * DIL_H
+    xw = ow * STRIDE_W - PAD_LEFT + ew * DIL_W
+    valid = (
+        (rows < M)
+        & (xd >= 0)
+        & (xd < XD)
+        & (xh >= 0)
+        & (xh < XH)
+        & (xw >= 0)
+        & (xw < XW)
+    )
+    x = tl.load(
+        x_ptr
+        + batch * X_STRIDE_N
+        + (group * CIN_PER_GROUP + ci) * X_STRIDE_C
+        + xd * X_STRIDE_D
+        + xh * X_STRIDE_H
+        + xw * X_STRIDE_W,
+        valid,
+        other=0,
+    )
+    dy = tl.load(
+        dy_ptr
+        + batch * DY_STRIDE_N
+        + (group * COUT_PER_GROUP + co) * DY_STRIDE_C
+        + od * DY_STRIDE_D
+        + oh * DY_STRIDE_H
+        + ow * DY_STRIDE_W,
+        valid,
+        other=0,
+    )
+    value = tl.sum(x * dy, 0)
+    tl.store(
+        dw_ptr
+        + (group * COUT_PER_GROUP + co) * W_STRIDE_K
+        + ci * W_STRIDE_C
+        + kd * W_STRIDE_D
+        + kh * W_STRIDE_H
+        + kw * W_STRIDE_W,
+        value,
+    )
+
+
+@triton.jit
+def conv_fprop_direct_kernel(
+    x_ptr,
+    w_ptr,
+    bias_ptr,
+    y_ptr,
+    XH: tl.constexpr,
+    XW: tl.constexpr,
+    OH: tl.constexpr,
+    OW: tl.constexpr,
+    C_IN: tl.constexpr,
+    C_OUT: tl.constexpr,
+    CIN_PER_GROUP: tl.constexpr,
+    COUT_PER_GROUP: tl.constexpr,
+    GROUPS: tl.constexpr,
+    STRIDE_H: tl.constexpr,
+    STRIDE_W: tl.constexpr,
+    PAD_TOP: tl.constexpr,
+    PAD_LEFT: tl.constexpr,
+    DIL_H: tl.constexpr,
+    DIL_W: tl.constexpr,
+    KH: tl.constexpr,
+    KW: tl.constexpr,
+    HAS_BIAS: tl.constexpr,
+    APPLY_RELU: tl.constexpr,
+    BIAS_STRIDE: tl.constexpr,
+    BLOCK_OC: tl.constexpr,
+    BLOCK_HW: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+    GROUP_M: tl.constexpr,
+    DTYPE_ID: tl.constexpr,
+    INPUT_PRECISION: tl.constexpr,
+    X_STRIDE_N: tl.constexpr,
+    X_STRIDE_C: tl.constexpr,
+    X_STRIDE_H: tl.constexpr,
+    X_STRIDE_W: tl.constexpr,
+    W_STRIDE_K: tl.constexpr,
+    W_STRIDE_C: tl.constexpr,
+    W_STRIDE_R: tl.constexpr,
+    W_STRIDE_S: tl.constexpr,
+    Y_STRIDE_N: tl.constexpr,
+    Y_STRIDE_C: tl.constexpr,
+    Y_STRIDE_H: tl.constexpr,
+    Y_STRIDE_W: tl.constexpr,
+):
+    """Scalar IEEE convolution for short contractions and small outputs."""
+    row = tl.program_id(0) * BLOCK_HW + tl.arange(0, BLOCK_HW)
+    batch_group = tl.program_id(1).to(tl.int64)
+    batch = batch_group // GROUPS
+    group = batch_group % GROUPS
+    channel = (row // (OH * OW)).to(tl.int64)
+    spatial = row % (OH * OW)
+    output_h = (spatial // OW).to(tl.int64)
+    output_w = (spatial % OW).to(tl.int64)
+    valid = row < COUT_PER_GROUP * OH * OW
+    accumulator = tl.full((BLOCK_HW,), 0, tl.float32)
+    for reduction in tl.static_range(CIN_PER_GROUP * KH * KW):
+        ci = reduction // (KH * KW)
+        kh = reduction // KW % KH
+        kw = reduction % KW
+        ih = output_h * STRIDE_H - PAD_TOP + kh * DIL_H
+        iw = output_w * STRIDE_W - PAD_LEFT + kw * DIL_W
+        x = tl.load(
+            x_ptr
+            + batch * X_STRIDE_N
+            + (group * CIN_PER_GROUP + ci) * X_STRIDE_C
+            + ih * X_STRIDE_H
+            + iw * X_STRIDE_W,
+            valid & (ih >= 0) & (ih < XH) & (iw >= 0) & (iw < XW),
+            other=0,
+        )
+        weight = tl.load(
+            w_ptr
+            + (group * COUT_PER_GROUP + channel) * W_STRIDE_K
+            + ci * W_STRIDE_C
+            + kh * W_STRIDE_R
+            + kw * W_STRIDE_S,
+            valid,
+            other=0,
+        )
+        accumulator += x * weight
+    if HAS_BIAS:
+        accumulator += tl.load(
+            bias_ptr + (group * COUT_PER_GROUP + channel) * BIAS_STRIDE,
+            valid,
+            other=0,
+        )
+    if APPLY_RELU:
+        accumulator = tl.maximum(accumulator, 0)
+    tl.store(
+        y_ptr
+        + batch * Y_STRIDE_N
+        + (group * COUT_PER_GROUP + channel) * Y_STRIDE_C
+        + output_h * Y_STRIDE_H
+        + output_w * Y_STRIDE_W,
+        accumulator,
+        valid,
+    )
