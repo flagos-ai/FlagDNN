@@ -1,0 +1,40 @@
+Source: flag-dnn
+Section: libs
+Priority: optional
+Maintainer: FlagOS Contributors <contact@flagos.io>
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.23),
+               libtriton-jit-nvidia-dev (>= 0.1.0-3),
+               ninja-build,
+               patchelf,
+               python3.12-dev,
+               python3-yaml
+Standards-Version: 4.6.2
+Homepage: https://github.com/flagos-ai/FlagDNN
+Vcs-Browser: https://github.com/flagos-ai/FlagDNN
+Vcs-Git: https://github.com/flagos-ai/FlagDNN.git
+Rules-Requires-Root: no
+X-Build-Environment: The NVIDIA package is built in a CUDA container.
+ PyTorch and Triton must match the installed libtriton-jit-nvidia package.
+
+Package: libflagdnn-nvidia
+Architecture: amd64
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
+         libpython3.12 (>= 3.12),
+         libtriton-jit-nvidia (>= 0.1.0-3),
+         python3,
+         python3-yaml
+Description: FlagDNN native graph runtime (NVIDIA backend)
+ FlagDNN provides a native C/C++ graph runtime and a dynamically loaded NVIDIA
+ backend using CUDA and the system Triton JIT runtime. This package contains
+ the shared libraries, compiler providers, kernels, registries, and tuning data.
+
+Package: libflagdnn-nvidia-dev
+Section: libdevel
+Architecture: amd64
+Depends: ${misc:Depends},
+         libflagdnn-nvidia (= ${binary:Version}),
+         libtriton-jit-nvidia-dev (>= 0.1.0-3)
+Description: FlagDNN development files (NVIDIA backend)
+ C/C++ headers and CMake package files for applications using FlagDNN.
