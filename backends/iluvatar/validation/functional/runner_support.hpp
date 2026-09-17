@@ -88,6 +88,10 @@ gather(std::span<const float> physical,
                                         flagdnnDataType_t data_type,
                                         std::size_t element_count);
 
+void emit_reference_skip(std::string_view operation, std::string_view case_name,
+                         const flagdnn::testing::TestTensor &tensor,
+                         std::string_view reason);
+
 enum class InputDomain {
   kReal,
   kPositive,
@@ -127,6 +131,9 @@ struct CasePlan {
 using BuildExecutable =
     std::function<std::unique_ptr<flagdnn::testing::TestExecutable>()>;
 
+using HostReference = std::function<std::vector<std::vector<float>>(
+    const std::vector<std::vector<float>> &)>;
+
 class FunctionalSuite final {
 public:
   FunctionalSuite(int argc, char **argv, std::string operation,
@@ -137,12 +144,20 @@ public:
 
   [[nodiscard]] flagdnn::Handle &handle() noexcept { return handle_; }
   void run(const CasePlan &plan, const BuildExecutable &build_production,
-           const BuildExecutable &build_reference);
+           const BuildExecutable &build_reference,
+           const HostReference &host_reference = {},
+           bool probe_reference = false);
+  void skip_benchmark_case(const CasePlan &plan, std::string_view reason);
+  void run_raw(const CasePlan &plan, const BuildExecutable &build_production,
+               const std::vector<std::vector<std::uint8_t>> &inputs,
+               const std::vector<std::vector<std::uint8_t>> &expected,
+               const BuildExecutable &build_reference = {});
   [[nodiscard]] int finish();
 
 private:
   DriverContext driver_;
   Stream stream_;
+  bool owns_cache_ = true;
   std::filesystem::path cache_path_;
   flagdnn::Handle handle_;
   CorexCudnnCapabilityCatalog catalog_;
@@ -152,6 +167,7 @@ private:
   std::size_t production_executed_ = 0;
   std::size_t reference_executed_ = 0;
   std::size_t reference_skipped_ = 0;
+  bool benchmark_ = false;
   bool finished_ = false;
   bool qualify_candidates_ = false;
 };

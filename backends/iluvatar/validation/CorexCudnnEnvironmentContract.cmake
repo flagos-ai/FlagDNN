@@ -299,30 +299,94 @@ if(NOT _dependency_result EQUAL 0)
     "${_dependency_output}${_dependency_error}")
 endif()
 
-file(MAKE_DIRECTORY "${TEST_ROOT}/forbidden-source")
-file(WRITE "${TEST_ROOT}/forbidden-source/accidental_frontend.cpp"
-  "#include <cudnn_frontend.h>\n")
+# Check the literal exception separately from direct calls and real imports.
+function(_check_reference_boundary name executable source_name source_text
+    expect_success expected_error)
+  set(_source_dir "${TEST_ROOT}/reference-boundary-${name}")
+  file(MAKE_DIRECTORY "${_source_dir}")
+  file(WRITE "${_source_dir}/${source_name}" "${source_text}")
+  execute_process(
+    COMMAND "${CMAKE_COMMAND}"
+      "-DREFERENCE_EXECUTABLE=${executable}"
+      "-DCOREX_ROOT=${COREX_ROOT}"
+      "-DCOREX_CUDNN=${COREX_CUDNN}"
+      "-DCOREX_CUDART=${COREX_CUDART}"
+      "-DCOREX_DRIVER=${COREX_DRIVER}"
+      "-DSOURCE_DIR=${_source_dir}"
+      -P "${_dependency_script}"
+    RESULT_VARIABLE _result
+    OUTPUT_VARIABLE _stdout
+    ERROR_VARIABLE _stderr)
+  set(_log "${_stdout}${_stderr}")
+  if(expect_success)
+    if(NOT _result EQUAL 0)
+      message(FATAL_ERROR "reference boundary ${name} failed:\n${_log}")
+    endif()
+  elseif(_result EQUAL 0 OR NOT _log MATCHES "${expected_error}")
+    message(FATAL_ERROR
+      "reference boundary ${name} was not rejected as expected:\n${_log}")
+  endif()
+  message(STATUS "PASS reference boundary fixture ${name}")
+endfunction()
+
+set(_capability_query [=[
+#include <dlfcn.h>
+void *query() { return dlsym(RTLD_DEFAULT, "cudnnBackendCreateDescriptor"); }
+]=])
+foreach(_probe IN ITEMS dnn_api_probe dnn_capability_gate extended_reference)
+  _check_reference_boundary("${_probe}-query" "${PROBE_EXECUTABLE}"
+    "${_probe}.cpp" "${_capability_query}" TRUE "")
+  _check_reference_boundary("${_probe}-direct-call" "${PROBE_EXECUTABLE}"
+    "${_probe}.cpp"
+    "${_capability_query}\nvoid call() { cudnnBackendCreateDescriptor(); }\n"
+    FALSE "forbidden reference dependency token")
+endforeach()
+_check_reference_boundary(frontend-header "${PROBE_EXECUTABLE}"
+  dnn_api_probe.cpp "#include <cudnn_frontend.h>\n"
+  FALSE "forbidden reference dependency token")
+_check_reference_boundary(unlisted-source "${PROBE_EXECUTABLE}"
+  unrelated.cpp "${_capability_query}"
+  FALSE "forbidden reference dependency token")
+_check_reference_boundary(other-graph-symbol "${PROBE_EXECUTABLE}"
+  dnn_api_probe.cpp [=[void *query() { return dlsym(0, "cudnnBackendExecute"); }]=]
+  FALSE "forbidden reference dependency token")
+
+# A clean source scan must not hide a forbidden symbol imported by a binary.
+# The fixture is inspected only; it is never executed as a DNN implementation.
+set(_graph_fixture "${TEST_ROOT}/reference-graph-import")
+file(MAKE_DIRECTORY "${_graph_fixture}")
+file(WRITE "${_graph_fixture}/library.c"
+  "int cudnnBackendCreateDescriptor(void) { return 0; }\n")
 execute_process(
-  COMMAND "${CMAKE_COMMAND}"
-    "-DREFERENCE_EXECUTABLE=${PROBE_EXECUTABLE}"
-    "-DCOREX_ROOT=${COREX_ROOT}"
-    "-DCOREX_CUDNN=${COREX_CUDNN}"
-    "-DCOREX_CUDART=${COREX_CUDART}"
-    "-DCOREX_DRIVER=${COREX_DRIVER}"
-    "-DSOURCE_DIR=${TEST_ROOT}/forbidden-source"
-    -P "${_dependency_script}"
-  RESULT_VARIABLE _forbidden_source_result
-  OUTPUT_VARIABLE _forbidden_source_output
-  ERROR_VARIABLE _forbidden_source_error)
-set(_forbidden_source_log
-  "${_forbidden_source_output}${_forbidden_source_error}")
-if(_forbidden_source_result EQUAL 0 OR
-   NOT _forbidden_source_log MATCHES
-     "forbidden reference dependency token")
+  COMMAND "${C_COMPILER}" -shared -fPIC
+    -Wl,-soname,libreference_graph_fixture.so
+    "${_graph_fixture}/library.c"
+    -o "${_graph_fixture}/libreference_graph_fixture.so"
+  RESULT_VARIABLE _library_result
+  OUTPUT_VARIABLE _library_output ERROR_VARIABLE _library_error)
+if(NOT _library_result EQUAL 0)
   message(FATAL_ERROR
-    "accidental cudnn_frontend dependency was not rejected:\n"
-    "${_forbidden_source_log}")
+    "cannot build reference graph fixture: ${_library_output}${_library_error}")
 endif()
+file(WRITE "${_graph_fixture}/main.c"
+  "extern int cudnnBackendCreateDescriptor(void);\n"
+  "int main(void) { return cudnnBackendCreateDescriptor(); }\n")
+execute_process(
+  COMMAND "${C_COMPILER}" "${_graph_fixture}/main.c"
+    -Wl,--no-as-needed
+    "${COREX_CUDNN}" "${COREX_CUDART}" "${COREX_DRIVER}"
+    "${_graph_fixture}/libreference_graph_fixture.so"
+    "-Wl,-rpath,${_graph_fixture}"
+    -o "${_graph_fixture}/importer"
+  RESULT_VARIABLE _importer_result
+  OUTPUT_VARIABLE _importer_output ERROR_VARIABLE _importer_error)
+if(NOT _importer_result EQUAL 0)
+  message(FATAL_ERROR
+    "cannot build reference graph importer: ${_importer_output}${_importer_error}")
+endif()
+_check_reference_boundary(imported-graph-symbol "${_graph_fixture}/importer"
+  dnn_api_probe.cpp "${_capability_query}"
+  FALSE "reference executable imports a forbidden compute symbol")
 
 string(STRIP "${_probe_output}" _probe_output)
 string(REPLACE "\\" "\\\\" _probe_json "${_probe_output}")

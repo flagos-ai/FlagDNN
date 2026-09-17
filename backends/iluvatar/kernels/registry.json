@@ -5,35 +5,77 @@
   "kernels": [
     {
       "operations": [
-        "add", "sub", "mul", "div", "min", "max", "mod", "pow",
-        "cmp_eq", "cmp_neq", "cmp_gt", "cmp_ge", "cmp_lt", "cmp_le",
-        "logical_and", "logical_or", "sigmoid_backward"
+        "add",
+        "sub",
+        "mul",
+        "div",
+        "min",
+        "max",
+        "mod",
+        "pow",
+        "cmp_eq",
+        "cmp_neq",
+        "cmp_gt",
+        "cmp_ge",
+        "cmp_lt",
+        "cmp_le",
+        "logical_and",
+        "logical_or"
       ],
       "provider": "iluvatar_triton",
       "source": "binary.py",
-      "functions": ["binary_contiguous_kernel", "binary_strided_kernel"],
+      "functions": [
+        "binary_contiguous_kernel",
+        "binary_strided_kernel"
+      ],
       "tuning": {
-        "source": "common.yaml", "table": "binary",
-        "key": "n_elements", "strategy": "align64",
-        "warmup": 5, "repetitions": 10
+        "source": "common.yaml",
+        "table": "binary",
+        "key": "n_elements",
+        "strategy": "align64",
+        "warmup": 5,
+        "repetitions": 10
       }
     },
     {
       "operations": [
-        "relu", "abs", "ceil", "cos", "erf", "exp", "floor",
-        "identity", "log", "neg", "reciprocal", "rsqrt", "sin", "sqrt",
-        "tan", "logical_not", "sigmoid", "tanh", "elu", "gelu",
-        "softplus", "swish", "gelu_approx_tanh"
+        "relu",
+        "abs",
+        "ceil",
+        "cos",
+        "erf",
+        "exp",
+        "floor",
+        "identity",
+        "log",
+        "neg",
+        "reciprocal",
+        "rsqrt",
+        "sin",
+        "sqrt",
+        "tan",
+        "logical_not",
+        "sigmoid",
+        "tanh",
+        "elu",
+        "gelu",
+        "softplus",
+        "swish",
+        "gelu_approx_tanh"
       ],
       "provider": "iluvatar_triton",
       "source": "unary.py",
       "functions": [
-        "unary_pointwise_contiguous_kernel", "unary_pointwise_strided_kernel"
+        "unary_pointwise_contiguous_kernel",
+        "unary_pointwise_strided_kernel"
       ],
       "tuning": {
-        "source": "common.yaml", "table": "relu",
-        "key": "n_elements", "strategy": "align64",
-        "warmup": 5, "repetitions": 10
+        "source": "common.yaml",
+        "table": "relu",
+        "key": "n_elements",
+        "strategy": "align64",
+        "warmup": 5,
+        "repetitions": 10
       }
     },
     {
@@ -41,66 +83,101 @@
       "provider": "iluvatar_triton",
       "source": "ternary.py",
       "functions": [
-        "binary_select_tensor_kernel", "binary_select_strided_kernel"
+        "binary_select_tensor_kernel",
+        "binary_select_strided_kernel"
       ],
       "tuning": {
-        "source": "common.yaml", "table": "binary",
-        "key": "n_elements", "strategy": "align64",
-        "warmup": 5, "repetitions": 10
+        "source": "common.yaml",
+        "table": "binary",
+        "key": "n_elements",
+        "strategy": "align64",
+        "warmup": 5,
+        "repetitions": 10
       }
     },
     {
-      "operations": ["reduction_sum", "reduction_avg", "reduction_mul"],
+      "operations": [
+        "reduction_sum",
+        "reduction_avg",
+        "reduction_mul"
+      ],
       "provider": "iluvatar_triton",
       "source": "reduction.py",
       "functions": [
-        "reduction_2d_kernel", "reduction_3d_kernel",
+        "reduction_2d_kernel",
+        "reduction_3d_kernel",
         "reduction_strided_kernel"
       ],
       "tuning": {
-        "source": "common.yaml", "table": "reduction",
-        "key": "output_elements", "strategy": "reduction",
-        "warmup": 5, "repetitions": 10
+        "source": "common.yaml",
+        "table": "reduction",
+        "key": "output_elements",
+        "strategy": "reduction",
+        "warmup": 5,
+        "repetitions": 10
       }
     },
     {
-      "operations": ["reshape", "transpose", "slice"],
+      "operations": [
+        "reshape",
+        "transpose",
+        "slice"
+      ],
       "provider": "iluvatar_triton",
       "source": "layout.py",
-      "functions": ["dense_copy_kernel", "layout_copy_kernel"],
+      "functions": [
+        "dense_copy_kernel",
+        "layout_copy_kernel"
+      ],
       "tuning": {
-        "source": "common.yaml", "table": "binary",
-        "key": "n_elements", "strategy": "align64",
-        "warmup": 5, "repetitions": 10
+        "source": "common.yaml",
+        "table": "binary",
+        "key": "n_elements",
+        "strategy": "align64",
+        "warmup": 5,
+        "repetitions": 10
       }
     },
     {
       "operation": "matmul",
       "provider": "iluvatar_triton",
       "source": "matmul.py",
-      "functions": ["matmul_strided_kernel"],
+      "functions": [
+        "matmul_strided_kernel"
+      ],
       "tuning": {
-        "source": "common.yaml", "table": "matmul",
-        "key": "m", "strategy": "matmul",
-        "warmup": 5, "repetitions": 10
+        "source": "common.yaml",
+        "table": "matmul",
+        "key": "m",
+        "strategy": "matmul",
+        "warmup": 5,
+        "repetitions": 10
       }
     },
     {
-      "operations": ["conv2d_fprop", "convolution_fprop"],
+      "operations": [
+        "conv2d_fprop",
+        "convolution_fprop"
+      ],
       "provider": "iluvatar_triton",
       "source": "convolution.py",
       "functions": [
-        "conv1d_gemm_kernel", "conv2d_1x1_nchw_kernel",
-        "conv_fprop_2d_im2col_kernel", "conv_fprop_2d_packed_matmul_kernel",
+        "conv1d_gemm_kernel",
+        "conv2d_1x1_nchw_kernel",
+        "conv_fprop_2d_im2col_kernel",
+        "conv_fprop_2d_packed_matmul_kernel",
         "conv2d_3x3_nchw_pad1_kernel",
         "conv2d_fp32_ml_stem_kernel",
         "conv2d_spatial_nchw_kernel",
         "conv3d_spatial_ncdhw_m_kernel"
       ],
       "tuning": {
-        "source": "convolution.yaml", "table": "conv_fprop",
-        "key": "n_outputs", "strategy": "convolution",
-        "warmup": 5, "repetitions": 10
+        "source": "convolution.yaml",
+        "table": "conv_fprop",
+        "key": "n_outputs",
+        "strategy": "convolution",
+        "warmup": 5,
+        "repetitions": 10
       }
     },
     {
@@ -108,17 +185,23 @@
       "provider": "iluvatar_triton",
       "source": "convolution.py",
       "functions": [
-        "conv_dgrad_2d_1x1_kernel", "conv_dgrad_2d_p5_splitk_kernel",
+        "conv_dgrad_2d_1x1_kernel",
+        "conv_dgrad_2d_p5_splitk_kernel",
         "conv_dgrad_cast_contiguous_kernel",
         "conv_dgrad_pack_weight_3x3_kernel",
-        "conv_dgrad_2d_packed_parity_kernel", "conv_dgrad_zero_kernel",
-        "conv_dgrad_2d_scatter_kernel", "conv_dgrad_2d_stride2_kernel",
+        "conv_dgrad_2d_packed_parity_kernel",
+        "conv_dgrad_zero_kernel",
+        "conv_dgrad_2d_scatter_kernel",
+        "conv_dgrad_2d_stride2_kernel",
         "conv_dgrad_nd_kernel"
       ],
       "tuning": {
-        "source": "convolution.yaml", "table": "conv_dgrad",
-        "key": "n_outputs", "strategy": "convolution",
-        "warmup": 5, "repetitions": 10
+        "source": "convolution.yaml",
+        "table": "conv_dgrad",
+        "key": "n_outputs",
+        "strategy": "convolution",
+        "warmup": 5,
+        "repetitions": 10
       }
     },
     {
@@ -142,42 +225,61 @@
         "conv_wgrad_nd_kernel"
       ],
       "tuning": {
-        "source": "convolution.yaml", "table": "conv_wgrad",
-        "key": "n_outputs", "strategy": "convolution",
-        "warmup": 5, "repetitions": 10
+        "source": "convolution.yaml",
+        "table": "conv_wgrad",
+        "key": "n_outputs",
+        "strategy": "convolution",
+        "warmup": 5,
+        "repetitions": 10
       }
     },
     {
       "operation": "layernorm",
       "provider": "iluvatar_triton",
       "source": "normalization.py",
-      "functions": ["layer_norm_kernel"],
+      "functions": [
+        "layer_norm_kernel"
+      ],
       "tuning": {
-        "source": "common.yaml", "table": "layer_norm",
-        "key": "normalized_elements", "strategy": "fixed_grid",
-        "warmup": 5, "repetitions": 10
+        "source": "common.yaml",
+        "table": "layer_norm",
+        "key": "normalized_elements",
+        "strategy": "fixed_grid",
+        "warmup": 5,
+        "repetitions": 10
       }
     },
     {
       "operation": "rmsnorm",
       "provider": "iluvatar_triton",
       "source": "normalization.py",
-      "functions": ["rms_norm_kernel"],
+      "functions": [
+        "rms_norm_kernel"
+      ],
       "tuning": {
-        "source": "common.yaml", "table": "rms_norm",
-        "key": "normalized_elements", "strategy": "fixed_grid",
-        "warmup": 5, "repetitions": 10
+        "source": "common.yaml",
+        "table": "rms_norm",
+        "key": "normalized_elements",
+        "strategy": "fixed_grid",
+        "warmup": 5,
+        "repetitions": 10
       }
     },
     {
       "operation": "batchnorm",
       "provider": "iluvatar_triton",
       "source": "normalization.py",
-      "functions": ["batch_norm_nchw_kernel", "batch_norm_kernel"],
+      "functions": [
+        "batch_norm_nchw_kernel",
+        "batch_norm_kernel"
+      ],
       "tuning": {
-        "source": "normalization.yaml", "table": "batch_norm",
-        "key": "channels", "strategy": "fixed_grid",
-        "warmup": 5, "repetitions": 10
+        "source": "normalization.yaml",
+        "table": "batch_norm",
+        "key": "channels",
+        "strategy": "fixed_grid",
+        "warmup": 5,
+        "repetitions": 10
       }
     },
     {
@@ -185,23 +287,32 @@
       "provider": "iluvatar_triton",
       "source": "normalization.py",
       "functions": [
-        "batch_norm_inference_nchw_kernel", "batch_norm_inference_kernel"
+        "batch_norm_inference_nchw_kernel",
+        "batch_norm_inference_kernel"
       ],
       "tuning": {
-        "source": "common.yaml", "table": "batch_norm",
-        "key": "n_elements", "strategy": "align64",
-        "warmup": 5, "repetitions": 10
+        "source": "common.yaml",
+        "table": "batch_norm",
+        "key": "n_elements",
+        "strategy": "align64",
+        "warmup": 5,
+        "repetitions": 10
       }
     },
     {
       "operation": "sdpa",
       "provider": "iluvatar_triton",
       "source": "attention.py",
-      "functions": ["_sdpa_fwd_kernel"],
+      "functions": [
+        "_sdpa_fwd_kernel"
+      ],
       "tuning": {
-        "source": "common.yaml", "table": "sdpa",
-        "key": "sequence_q", "strategy": "attention",
-        "warmup": 5, "repetitions": 10
+        "source": "common.yaml",
+        "table": "sdpa",
+        "key": "sequence_q",
+        "strategy": "attention",
+        "warmup": 5,
+        "repetitions": 10
       }
     },
     {
@@ -209,14 +320,19 @@
       "provider": "iluvatar_triton",
       "source": "attention.py",
       "functions": [
-        "_zero_contiguous_kernel", "_sdpa_bwd_dq_dbias_kernel",
-        "_sdpa_bwd_dkdv_kernel", "_sdpa_bwd_dk_kernel",
+        "_zero_contiguous_kernel",
+        "_sdpa_bwd_dq_dbias_kernel",
+        "_sdpa_bwd_dkdv_kernel",
+        "_sdpa_bwd_dk_kernel",
         "_sdpa_bwd_dv_kernel"
       ],
       "tuning": {
-        "source": "common.yaml", "table": "sdpa_backward_dq",
-        "key": "sequence_q", "strategy": "attention",
-        "warmup": 5, "repetitions": 10
+        "source": "common.yaml",
+        "table": "sdpa_backward_dq",
+        "key": "sequence_q",
+        "strategy": "attention",
+        "warmup": 5,
+        "repetitions": 10
       }
     },
     {
@@ -225,12 +341,16 @@
       "source": "attention.py",
       "functions": [
         "_convert_fp8_to_fp16_4d_kernel",
-        "_zero_sdpa_fp8_fwd_amax_kernel", "_sdpa_fp8_fwd_kernel"
+        "_zero_sdpa_fp8_fwd_amax_kernel",
+        "_sdpa_fp8_fwd_kernel"
       ],
       "tuning": {
-        "source": "common.yaml", "table": "sdpa_fp8",
-        "key": "sequence_q", "strategy": "attention",
-        "warmup": 5, "repetitions": 10
+        "source": "common.yaml",
+        "table": "sdpa_fp8",
+        "key": "sequence_q",
+        "strategy": "attention",
+        "warmup": 5,
+        "repetitions": 10
       }
     },
     {
@@ -239,14 +359,70 @@
       "source": "attention.py",
       "functions": [
         "_convert_fp8_to_fp16_4d_kernel",
-        "_zero_sdpa_fp8_bwd_amax_kernel", "_sdpa_fp8_bwd_dq_kernel",
+        "_zero_sdpa_fp8_bwd_amax_kernel",
+        "_sdpa_fp8_bwd_dq_kernel",
         "_sdpa_fp8_bwd_dkdv_kernel"
       ],
       "tuning": {
-        "source": "common.yaml", "table": "sdpa_fp8_backward_dq",
-        "key": "sequence_q", "strategy": "attention",
-        "warmup": 5, "repetitions": 10
+        "source": "common.yaml",
+        "table": "sdpa_fp8_backward_dq",
+        "key": "sequence_q",
+        "strategy": "attention",
+        "warmup": 5,
+        "repetitions": 10
       }
+    },
+    {
+      "operations": [
+        "sigmoid_backward",
+        "relu_backward",
+        "tanh_backward",
+        "elu_backward",
+        "gelu_backward",
+        "softplus_backward",
+        "swish_backward",
+        "gelu_approx_tanh_backward"
+      ],
+      "provider": "iluvatar_triton",
+      "source": "activation_backward.py",
+      "functions": [
+        "activation_backward_contiguous_kernel",
+        "activation_backward_strided_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "binary",
+        "key": "n_elements",
+        "strategy": "align64",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "causal_conv1d",
+      "provider": "iluvatar_triton",
+      "source": "causal_convolution.py",
+      "functions": [
+        "causal_conv1d_kernel"
+      ]
+    },
+    {
+      "operation": "bn_finalize",
+      "provider": "iluvatar_triton",
+      "source": "statistics.py",
+      "functions": [
+        "bn_finalize_kernel"
+      ]
+    },
+    {
+      "operations": [
+        "rng"
+      ],
+      "provider": "iluvatar_triton",
+      "source": "random.py",
+      "functions": [
+        "rng_kernel"
+      ]
     }
   ]
 }

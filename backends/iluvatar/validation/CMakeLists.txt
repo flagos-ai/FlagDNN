@@ -3,6 +3,7 @@
 
 if(FLAGDNN_BUILD_TESTS OR FLAGDNN_BUILD_BENCHMARKS)
   add_library(flagdnn_validation_iluvatar_reference STATIC
+    benchmark/cuda_graph.cpp
     corex_cudnn_capability.cpp
     corex_cudnn_reference.cpp
     corex_cudnn_status.cpp
@@ -33,6 +34,16 @@ if(FLAGDNN_BUILD_TESTS OR FLAGDNN_BUILD_BENCHMARKS)
 endif()
 
 if(FLAGDNN_BUILD_TESTS)
+  add_executable(flagdnn_test_iluvatar_dnn_api_probe dnn_api_probe.cpp)
+  target_compile_features(flagdnn_test_iluvatar_dnn_api_probe PRIVATE cxx_std_20)
+  target_link_libraries(flagdnn_test_iluvatar_dnn_api_probe PRIVATE flagdnn_validation_iluvatar_reference)
+  flagdnn_enable_warnings(flagdnn_test_iluvatar_dnn_api_probe)
+  add_test(NAME integration.iluvatar.dnn_support_contract
+    COMMAND "${FLAGDNN_CODEGEN_PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/dnn_support_contract.py"
+      "$<TARGET_FILE:flagdnn_test_iluvatar_dnn_api_probe>"
+      "${PROJECT_BINARY_DIR}/iluvatar-dnn-support-evidence.json")
+  set_tests_properties(integration.iluvatar.dnn_support_contract PROPERTIES
+    TIMEOUT 120 RUN_SERIAL TRUE LABELS "integration;iluvatar;cudnn;capability")
   add_executable(flagdnn_test_iluvatar_validation_contract
     validation_contract.cpp
     $<TARGET_OBJECTS:flagdnn_test_common_objects>)
@@ -296,6 +307,14 @@ if(FLAGDNN_BUILD_TESTS)
     RUN_SERIAL TRUE
     TIMEOUT 1200)
 
+  add_test(NAME integration.iluvatar.convolution_tuning_contract
+    COMMAND "${FLAGDNN_CODEGEN_PYTHON}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/convolution_tuning_contract.py")
+  set_tests_properties(integration.iluvatar.convolution_tuning_contract PROPERTIES
+    LABELS "integration;iluvatar;autotune;corex;correctness"
+    RUN_SERIAL TRUE
+    TIMEOUT 300)
+
   add_executable(flagdnn_test_iluvatar_graph
     functional/test_graph.cpp)
   target_compile_features(flagdnn_test_iluvatar_graph PRIVATE cxx_std_20)
@@ -387,14 +406,15 @@ if(FLAGDNN_BUILD_TESTS)
     RUN_SERIAL TRUE
     TIMEOUT 120)
 
-  include("${CMAKE_CURRENT_SOURCE_DIR}/FunctionalAdapter.cmake")
-
 endif()
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/FunctionalAdapter.cmake")
 
 if(FLAGDNN_BUILD_BENCHMARKS)
   include("${PROJECT_SOURCE_DIR}/cmake/Operators.cmake")
 
   set(_flagdnn_iluvatar_benchmark_pointwise
+    ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS}
     abs add binary_select ceil cmp_eq cmp_ge cmp_gt cmp_le cmp_lt cmp_neq cos
     div elu erf exp floor gelu gelu_approx_tanh identity leaky_relu log
     logical_and logical_not logical_or max min mod mul neg pow reciprocal relu
@@ -428,8 +448,6 @@ if(FLAGDNN_BUILD_BENCHMARKS)
   endif()
   set(_flagdnn_iluvatar_benchmark_expected
     ${FLAGDNN_BENCHMARK_OPERATORS})
-  list(REMOVE_ITEM _flagdnn_iluvatar_benchmark_expected
-    ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS})
   list(SORT _flagdnn_iluvatar_benchmark_unique)
   list(SORT _flagdnn_iluvatar_benchmark_expected)
   if(NOT "${_flagdnn_iluvatar_benchmark_unique}" STREQUAL
@@ -439,10 +457,11 @@ if(FLAGDNN_BUILD_BENCHMARKS)
   endif()
 
   add_library(flagdnn_benchmark_iluvatar_adapter STATIC
+    $<TARGET_OBJECTS:${_iluvatar_case_objects}>
+    benchmark/shared_cases.cpp
     benchmark/convolution.cpp
     benchmark/corex_cudnn_capability_policy.cpp
     benchmark/corex_cudnn_provider.cpp
-    benchmark/cuda_graph.cpp
     benchmark/graph.cpp
     benchmark/layout.cpp
     benchmark/matmul.cpp
@@ -524,4 +543,33 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     set_tests_properties("benchmark.iluvatar.${_operator}" PROPERTIES
       SKIP_RETURN_CODE 77)
   endforeach()
+
+    add_library(flagdnn_benchmark_iluvatar_extended STATIC benchmark/extended.cpp)
+    target_compile_features(flagdnn_benchmark_iluvatar_extended PUBLIC cxx_std_20)
+    target_include_directories(flagdnn_benchmark_iluvatar_extended PUBLIC
+      "${PROJECT_SOURCE_DIR}/benchmark" "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(flagdnn_benchmark_iluvatar_extended PUBLIC flagdnn_test_iluvatar_adapter)
+    flagdnn_enable_warnings(flagdnn_benchmark_iluvatar_extended)
+    set(_iluvatar_extended_benchmarks ${FLAGDNN_EXTENDED_OPERATORS} sdpa sdpa_backward sdpa_fp8 sdpa_fp8_backward)
+    list(REMOVE_ITEM _iluvatar_extended_benchmarks moe_grouped_matmul moe_grouped_matmul_bwd matmul_fp8)
+    flagdnn_register_benchmark_suite(
+      PLATFORM iluvatar OPERATORS ${_iluvatar_extended_benchmarks}
+      ADAPTER_TARGET flagdnn_benchmark_iluvatar_extended
+      BACKEND_TARGET flagdnn_backend_iluvatar
+      COMMAND_ARGS "${FLAGDNN_CODEGEN_PYTHON}" "${FLAGDNN_CODEGEN_COMPILER}"
+      ENVIRONMENT
+        "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_iluvatar>;FLAGDNN_ILUVATAR_COREX_ROOT=${FLAGDNN_ILUVATAR_RESOLVED_COREX_ROOT};FLAGDNN_ILUVATAR_TRITON_JIT_DIR=${FLAGDNN_ILUVATAR_RESOLVED_TRITON_JIT_CONFIG_DIR};FLAGDNN_ILUVATAR_TRITON_JIT_LIBRARY=${FLAGDNN_ILUVATAR_RESOLVED_TRITON_JIT_LIBRARY};FLAGDNN_ILUVATAR_TRITON_JIT_INCLUDE_DIR=${FLAGDNN_ILUVATAR_RESOLVED_TRITON_JIT_INCLUDE_DIR};FLAGDNN_ILUVATAR_TRITON_JIT_SCRIPT_DIR=${FLAGDNN_ILUVATAR_RESOLVED_TRITON_JIT_SCRIPT_DIR}"
+      TIMEOUT 1800)
+    foreach(_operator IN LISTS _iluvatar_extended_benchmarks)
+      set_tests_properties("benchmark.iluvatar.${_operator}" PROPERTIES SKIP_RETURN_CODE 77)
+    endforeach()
+    foreach(_operator IN ITEMS moe_grouped_matmul moe_grouped_matmul_bwd matmul_fp8)
+      set(_target "flagdnn_benchmark_iluvatar_${_operator}")
+      add_executable("${_target}" "${CMAKE_CURRENT_SOURCE_DIR}/dnn_capability_gate.cpp")
+      target_link_libraries("${_target}" PRIVATE flagdnn_validation_iluvatar_reference)
+      target_compile_definitions("${_target}" PRIVATE
+        FLAGDNN_CAPABILITY_PLATFORM="iluvatar" FLAGDNN_CAPABILITY_OPERATOR="${_operator}")
+      add_test(NAME "benchmark.iluvatar.${_operator}" COMMAND "${_target}")
+      set_tests_properties("benchmark.iluvatar.${_operator}" PROPERTIES SKIP_RETURN_CODE 77 LABELS "benchmark;iluvatar;capability")
+    endforeach()
 endif()

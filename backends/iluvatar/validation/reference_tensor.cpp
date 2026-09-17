@@ -23,8 +23,7 @@ int checked_int(std::int64_t value, const char *name) {
 cudnnDataType_t corex_cudnn_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
     case FLAGDNN_DATA_INT32:
-      throw std::invalid_argument(
-          "INT32 is not supported by this validation adapter");
+      return CUDNN_DATA_INT32;
 
     case FLAGDNN_DATA_FLOAT32:
       return CUDNN_DATA_FLOAT;

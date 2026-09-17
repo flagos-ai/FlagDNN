@@ -69,6 +69,17 @@ CaseMap neutral_cases() {
   using namespace flagdnn::testing;
   CaseMap output;
   const std::vector<PointwiseSpecification> pointwise = {
+      {"relu_backward", FLAGDNN_POINTWISE_RELU_BWD, PointwiseArity::kBinary},
+      {"leaky_relu_backward", FLAGDNN_POINTWISE_RELU_BWD,
+       PointwiseArity::kBinary},
+      {"tanh_backward", FLAGDNN_POINTWISE_TANH_BWD, PointwiseArity::kBinary},
+      {"elu_backward", FLAGDNN_POINTWISE_ELU_BWD, PointwiseArity::kBinary},
+      {"gelu_backward", FLAGDNN_POINTWISE_GELU_BWD, PointwiseArity::kBinary},
+      {"gelu_approx_tanh_backward", FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD,
+       PointwiseArity::kBinary},
+      {"softplus_backward", FLAGDNN_POINTWISE_SOFTPLUS_BWD,
+       PointwiseArity::kBinary},
+      {"swish_backward", FLAGDNN_POINTWISE_SWISH_BWD, PointwiseArity::kBinary},
       {"abs", FLAGDNN_POINTWISE_ABS, PointwiseArity::kUnary},
       {"binary_select", FLAGDNN_POINTWISE_BINARY_SELECT,
        PointwiseArity::kTernary},
@@ -204,6 +215,9 @@ void require_operator_manifest(const CaseMap &cases, const std::string &path) {
   const auto functional =
       parse_operator_block(source, "FLAGDNN_FUNCTIONAL_OPERATORS");
   expected.insert(functional.begin(), functional.end());
+  const auto activation =
+      parse_operator_block(source, "FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS");
+  expected.insert(activation.begin(), activation.end());
   std::set<std::string> actual;
   for (const auto &[operation, operation_cases] : cases) {
     (void)operation_cases;
@@ -226,8 +240,18 @@ std::vector<std::string> primitive_sequence(std::string_view operation) {
     return {"cudnnOpTensor(MAX)"};
   if (operation == "sqrt")
     return {"cudnnOpTensor(SQRT)"};
+  if (operation == "abs")
+    return {"cudnnOpTensor(MAX,x,-x)"};
+  if (operation == "logical_and")
+    return {"cudnnOpTensor(MUL,bool)"};
+  if (operation == "logical_or")
+    return {"cudnnOpTensor(MAX,bool)"};
   if (operation == "logical_not")
-    return {"cudnnOpTensor(NOT)"};
+    return {"cudnnOpTensor(ADD,1-x,bool)"};
+  if (operation == "leaky_relu")
+    return {"cudnnOpTensor(MAX,x,slope*x)"};
+  if (operation == "leaky_relu_backward")
+    return {"cudnnActivationBackward(RELU)", "cudnnOpTensor(ADD)"};
   if (operation == "sub")
     return {"cudnnOpTensor(ADD,alpha2=-alpha)"};
   if (operation == "neg")
@@ -244,14 +268,28 @@ std::vector<std::string> primitive_sequence(std::string_view operation) {
     return {"cudnnActivationForward(TANH)"};
   if (operation == "elu")
     return {"cudnnActivationForward(ELU)"};
-  if (operation == "swish")
-    return {"cudnnActivationForward(SWISH)"};
+  if (operation == "swish" || operation == "softplus_backward")
+    return {"cudnnOpTensor(ADD,beta*x)", "cudnnActivationForward(SIGMOID)",
+            "cudnnOpTensor(MUL)"};
+  if (operation == "swish_backward")
+    return {"cudnnOpTensor(ADD,beta*x)", "cudnnActivationForward(SIGMOID)",
+            "cudnnOpTensor(MUL)", "cudnnActivationBackward(SIGMOID)",
+            "cudnnOpTensor(ADD)"};
   if (operation == "gelu")
     return {"cudnnActivationForward(GELU)"};
   if (operation == "gelu_approx_tanh")
     return {"cudnnActivationForward(GELU_TAHN)"};
   if (operation == "sigmoid_backward")
-    return {"cudnnActivationBackward(SIGMOID)"};
+    return {"cudnnActivationForward(SIGMOID)",
+            "cudnnActivationBackward(SIGMOID)"};
+  if (operation == "relu_backward")
+    return {"cudnnActivationForward(RELU)", "cudnnActivationBackward(RELU)"};
+  if (operation == "tanh_backward")
+    return {"cudnnActivationForward(TANH)", "cudnnActivationBackward(TANH)"};
+  if (operation == "elu_backward")
+    return {"cudnnActivationForward(ELU)", "cudnnActivationBackward(ELU)"};
+  if (operation == "rmsnorm")
+    return {"cudnnRmsNormalizationForward", "cudnnOpTensor(ADD,bias)"};
   if (operation == "reduction")
     return {"cudnnReduceTensor"};
   if (operation == "conv_fprop")

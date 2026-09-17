@@ -450,6 +450,61 @@ private:
   std::size_t workspace_size_ = 0;
 };
 
+class RmsnormExecutable final : public NormalizationExecutable {
+  RmsnormTestCase c_;
+  CorexCudnnHandle handle_;
+  CorexCudnnTensorDescriptor x_, y_, gamma_, bias_, inverse_;
+  CorexCudnnOpTensorDescriptor add_;
+  static TestTensor flat(const TestTensor &source, std::size_t rows,
+                         std::size_t width) {
+    if (!is_contiguous(source))
+      throw std::invalid_argument(
+          "RMS reference requires contiguous shared tensors");
+    auto result = source;
+    result.dimensions = {1, 1, static_cast<std::int64_t>(rows),
+                         static_cast<std::int64_t>(width)};
+    result.strides = {static_cast<std::int64_t>(rows * width),
+                      static_cast<std::int64_t>(rows * width),
+                      static_cast<std::int64_t>(width), 1};
+    return result;
+  }
+
+public:
+  explicit RmsnormExecutable(const RmsnormTestCase &c)
+      : c_(c), x_(make_reference_tensor(
+                   flat(c.x, element_count(c.x) / element_count(c.scale),
+                        element_count(c.scale)))),
+        y_(make_reference_tensor(
+            flat(c.y, element_count(c.x) / element_count(c.scale),
+                 element_count(c.scale)))),
+        gamma_(make_reference_tensor(flat(c.scale, 1, element_count(c.scale)))),
+        bias_(make_reference_tensor(flat(c.bias, 1, element_count(c.bias)))),
+        inverse_(make_reference_tensor(
+            flat(c.inv_variance, element_count(c.inv_variance), 1))) {
+    check_cudnn(cudnnSetOpTensorDescriptor(add_.get(), CUDNN_OP_TENSOR_ADD,
+                                           CUDNN_DATA_FLOAT,
+                                           CUDNN_PROPAGATE_NAN),
+                "cudnnSetOpTensorDescriptor(RMS bias)");
+  }
+  std::size_t workspace_size() const noexcept override { return 0; }
+  void execute(std::span<const flagdnnBinding_t> b, void *, std::size_t,
+               flagdnnStream_t stream) override {
+    handle_.bind_stream(stream);
+    check_cudnn(cudnnRmsNormalizationForward(
+                    handle_.get(), x_.get(), binding(b, c_.x.uid), gamma_.get(),
+                    binding(b, c_.scale.uid), static_cast<float>(c_.epsilon),
+                    y_.get(), binding(b, c_.y.uid), inverse_.get(),
+                    binding(b, c_.inv_variance.uid)),
+                "cudnnRmsNormalizationForward");
+    const float one = 1, zero = 0;
+    check_cudnn(cudnnOpTensor(handle_.get(), add_.get(), &one, y_.get(),
+                              binding(b, c_.y.uid), &one, bias_.get(),
+                              binding(b, c_.bias.uid), &zero, y_.get(),
+                              binding(b, c_.y.uid)),
+                "cudnnOpTensor(RMS bias)");
+  }
+};
+
 } // namespace
 
 TestTensor batchnorm_reference_data_tensor(const TestTensor &tensor) {
@@ -463,9 +518,8 @@ build_layernorm_reference(const LayernormTestCase &) {
 }
 
 std::unique_ptr<NormalizationExecutable>
-build_rmsnorm_reference(const RmsnormTestCase &) {
-  throw std::logic_error(
-      "RMSNorm has no exact CoreX cuDNN 7.6.5 classic primitive");
+build_rmsnorm_reference(const RmsnormTestCase &c) {
+  return std::make_unique<RmsnormExecutable>(c);
 }
 
 std::unique_ptr<NormalizationExecutable>

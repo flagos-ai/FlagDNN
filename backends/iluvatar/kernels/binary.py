@@ -56,15 +56,50 @@ def _apply_binary_operation(
         sigmoid = tl.sigmoid(right.to(tl.float32))
         result = left.to(tl.float32) * sigmoid * (1.0 - sigmoid)
     elif OP_KIND == POINTWISE_DIV:
-        result = left / right
+        if left.dtype == tl.int32:
+            # Signed quotient truncates toward zero. Zero divisors yield zero;
+            # INT_MIN / -1 wraps to INT_MIN, consistently across devices.
+            wide_left = left.to(tl.int64)
+            wide_right = right.to(tl.int64)
+            quotient = tl.abs(wide_left) // tl.where(
+                wide_right != 0, tl.abs(wide_right), 1
+            )
+            quotient = tl.where(
+                (wide_left < 0) != (wide_right < 0), -quotient, quotient
+            )
+            result = tl.where(right != 0, quotient, 0).to(tl.int32)
+        else:
+            result = left / right
     elif OP_KIND == POINTWISE_MIN:
         result = tl.minimum(left, right)
     elif OP_KIND == POINTWISE_MAX:
         result = tl.maximum(left, right)
     elif OP_KIND == POINTWISE_MOD:
-        result = libdevice.fmod(left.to(tl.float32), right.to(tl.float32))
+        if left.dtype == tl.int32:
+            a = left.to(tl.int64)
+            b = tl.where(right != 0, right.to(tl.int64), 1)
+            quotient = tl.abs(a) // tl.abs(b)
+            quotient = tl.where((a < 0) != (b < 0), -quotient, quotient)
+            result = tl.where(right != 0, a - quotient * b, 0).to(tl.int32)
+        else:
+            result = libdevice.fmod(left.to(tl.float32), right.to(tl.float32))
     elif OP_KIND == POINTWISE_POW:
-        result = libdevice.pow(left.to(tl.float32), right.to(tl.float32))
+        if left.dtype == tl.int32:
+            exponent = tl.maximum(right, 0).to(tl.uint32)
+            base = left.to(tl.uint32)
+            value = tl.full(left.shape, 1, tl.uint32)
+            for bit in range(31):
+                value = tl.where((exponent & 1) != 0, value * base, value)
+                base *= base
+                exponent >>= 1
+            negative_power = tl.where(
+                left == 1,
+                1,
+                tl.where(left == -1, tl.where((right & 1) != 0, -1, 1), 0),
+            )
+            result = tl.where(right < 0, negative_power, value.to(tl.int32))
+        else:
+            result = libdevice.pow(left.to(tl.float32), right.to(tl.float32))
     elif OP_KIND == POINTWISE_CMP_EQ:
         result = left == right
     elif OP_KIND == POINTWISE_CMP_NEQ:

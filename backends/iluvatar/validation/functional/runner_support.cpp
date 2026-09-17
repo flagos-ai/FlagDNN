@@ -3,7 +3,9 @@
 
 #include "functional/runner_support.hpp"
 
+#include "benchmark/cuda_graph.hpp"
 #include "corex_cudnn_status.hpp"
+#include <array>
 
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
@@ -104,6 +106,11 @@ float decode_e5m2(std::uint8_t value) {
 }
 
 std::filesystem::path temporary_cache() {
+  const char *configured = std::getenv("FLAGDNN_CACHE_PATH");
+  if (configured != nullptr && configured[0] != '\0') {
+    std::filesystem::create_directories(configured);
+    return configured;
+  }
   std::string pattern = (std::filesystem::temp_directory_path() /
                          "flagdnn-iluvatar-functional-XXXXXX")
                             .string();
@@ -219,23 +226,23 @@ void require_padding_unchanged(std::string_view provider,
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
-    case FLAGDNN_DATA_INT32:
-      return "int32";
+  case FLAGDNN_DATA_INT32:
+    return "int32";
 
-    case FLAGDNN_DATA_FP8_E8M0:
-      return "fp8_e8m0";
-    case FLAGDNN_DATA_FLOAT32:
-      return "fp32";
-    case FLAGDNN_DATA_FLOAT16:
-      return "fp16";
-    case FLAGDNN_DATA_BFLOAT16:
-      return "bf16";
-    case FLAGDNN_DATA_BOOLEAN:
-      return "bool";
-    case FLAGDNN_DATA_FP8_E4M3:
-      return "fp8_e4m3";
-    case FLAGDNN_DATA_FP8_E5M2:
-      return "fp8_e5m2";
+  case FLAGDNN_DATA_FP8_E8M0:
+    return "fp8_e8m0";
+  case FLAGDNN_DATA_FLOAT32:
+    return "fp32";
+  case FLAGDNN_DATA_FLOAT16:
+    return "fp16";
+  case FLAGDNN_DATA_BFLOAT16:
+    return "bf16";
+  case FLAGDNN_DATA_BOOLEAN:
+    return "bool";
+  case FLAGDNN_DATA_FP8_E4M3:
+    return "fp8_e4m3";
+  case FLAGDNN_DATA_FP8_E5M2:
+    return "fp8_e5m2";
   }
   return "unknown";
 }
@@ -353,7 +360,7 @@ void compare(std::span<const float> actual, std::span<const float> reference,
                                      relative > output.relative_tolerance)) {
       std::ostringstream message;
       message << case_name << " differs in " << output.label << " at element "
-              << index << ": FlagDNN=" << left << " CoreX-cuDNN=" << right
+              << index << ": FlagDNN=" << left << " reference=" << right
               << " abs=" << absolute << " rel=" << relative
               << " atol=" << output.absolute_tolerance
               << " rtol=" << output.relative_tolerance;
@@ -446,19 +453,19 @@ void DeviceBuffer::copy_to_host(void *destination, std::size_t bytes,
 
 std::size_t data_type_size(flagdnnDataType_t data_type) {
   switch (data_type) {
-    case FLAGDNN_DATA_INT32:
-      return 4;
+  case FLAGDNN_DATA_INT32:
+    return 4;
 
-    case FLAGDNN_DATA_FLOAT32:
-      return 4;
-    case FLAGDNN_DATA_FLOAT16:
-    case FLAGDNN_DATA_BFLOAT16:
-      return 2;
-    case FLAGDNN_DATA_BOOLEAN:
-    case FLAGDNN_DATA_FP8_E8M0:
-    case FLAGDNN_DATA_FP8_E4M3:
-    case FLAGDNN_DATA_FP8_E5M2:
-      return 1;
+  case FLAGDNN_DATA_FLOAT32:
+    return 4;
+  case FLAGDNN_DATA_FLOAT16:
+  case FLAGDNN_DATA_BFLOAT16:
+    return 2;
+  case FLAGDNN_DATA_BOOLEAN:
+  case FLAGDNN_DATA_FP8_E8M0:
+  case FLAGDNN_DATA_FP8_E4M3:
+  case FLAGDNN_DATA_FP8_E5M2:
+    return 1;
   }
   throw std::invalid_argument("unsupported functional data type");
 }
@@ -528,20 +535,22 @@ std::vector<std::uint8_t> encode(std::span<const float> values,
   for (std::size_t index = 0; index < values.size(); ++index) {
     std::uint8_t *destination = result.data() + index * element_size;
     switch (data_type) {
-      case FLAGDNN_DATA_INT32:
-        throw std::invalid_argument(
-            "INT32 is not supported by this validation adapter");
+    case FLAGDNN_DATA_INT32: {
+      const auto value = static_cast<std::int32_t>(values[index]);
+      std::memcpy(destination, &value, sizeof(value));
+      break;
+    }
 
-      case FLAGDNN_DATA_FP8_E8M0:
-        throw std::invalid_argument(
-            "E8M0 scale storage is not supported by this validation adapter");
-      case FLAGDNN_DATA_FLOAT32:
-        break;
-      case FLAGDNN_DATA_FLOAT16: {
-        const __half value = __float2half_rn(values[index]);
-        std::memcpy(destination, &value, sizeof(value));
-        break;
-      }
+    case FLAGDNN_DATA_FP8_E8M0:
+      throw std::invalid_argument(
+          "E8M0 scale storage is not supported by this validation adapter");
+    case FLAGDNN_DATA_FLOAT32:
+      break;
+    case FLAGDNN_DATA_FLOAT16: {
+      const __half value = __float2half_rn(values[index]);
+      std::memcpy(destination, &value, sizeof(value));
+      break;
+    }
     case FLAGDNN_DATA_BFLOAT16: {
       const __nv_bfloat16 value = __float2bfloat16_rn(values[index]);
       std::memcpy(destination, &value, sizeof(value));
@@ -579,21 +588,24 @@ std::vector<float> decode(std::span<const std::uint8_t> bytes,
   for (std::size_t index = 0; index < count; ++index) {
     const std::uint8_t *source = bytes.data() + index * element_size;
     switch (data_type) {
-      case FLAGDNN_DATA_INT32:
-        throw std::invalid_argument(
-            "INT32 is not supported by this validation adapter");
+    case FLAGDNN_DATA_INT32: {
+      std::int32_t value;
+      std::memcpy(&value, source, sizeof(value));
+      result[index] = static_cast<float>(value);
+      break;
+    }
 
-      case FLAGDNN_DATA_FP8_E8M0:
-        throw std::invalid_argument(
-            "E8M0 scale storage is not supported by this validation adapter");
-      case FLAGDNN_DATA_FLOAT32:
-        break;
-      case FLAGDNN_DATA_FLOAT16: {
-        __half value;
-        std::memcpy(&value, source, sizeof(value));
-        result[index] = __half2float(value);
-        break;
-      }
+    case FLAGDNN_DATA_FP8_E8M0:
+      throw std::invalid_argument(
+          "E8M0 scale storage is not supported by this validation adapter");
+    case FLAGDNN_DATA_FLOAT32:
+      break;
+    case FLAGDNN_DATA_FLOAT16: {
+      __half value;
+      std::memcpy(&value, source, sizeof(value));
+      result[index] = __half2float(value);
+      break;
+    }
     case FLAGDNN_DATA_BFLOAT16: {
       __nv_bfloat16 value;
       std::memcpy(&value, source, sizeof(value));
@@ -618,12 +630,26 @@ std::vector<float> decode(std::span<const std::uint8_t> bytes,
   return result;
 }
 
+void emit_reference_skip(std::string_view operation, std::string_view case_name,
+                         const flagdnn::testing::TestTensor &tensor,
+                         std::string_view reason) {
+  std::cout << "[SKIP][corex-cudnn] op=" << operation << " case=" << case_name
+            << " reason=" << reason << " cudnn_header=7605 cudnn_runtime=7605"
+            << " corex=4.4.0 target=corex_71 dtype="
+            << data_type_name(tensor.data_type)
+            << " layout=" << (is_contiguous(tensor) ? "contiguous" : "strided")
+            << " shape=" << shape_name(tensor) << std::endl;
+}
+
 FunctionalSuite::FunctionalSuite(int argc, char **argv, std::string operation,
                                  std::string marker)
-    : cache_path_(temporary_cache()), handle_("iluvatar", 0),
+    : owns_cache_(std::getenv("FLAGDNN_CACHE_PATH") == nullptr ||
+                  std::getenv("FLAGDNN_CACHE_PATH")[0] == '\0'),
+      cache_path_(temporary_cache()), handle_("iluvatar", 0),
       catalog_(CorexCudnnCapabilityCatalog::load(
           FLAGDNN_ILUVATAR_CUDNN_CAPABILITY_CATALOG)),
       operation_(std::move(operation)), marker_(std::move(marker)),
+      benchmark_(marker_.ends_with("_BENCHMARK")),
       qualify_candidates_(std::getenv("FLAGDNN_ILUVATAR_QUALIFY_CANDIDATES") !=
                           nullptr) {
   if (argc != 3) {
@@ -636,28 +662,38 @@ FunctionalSuite::FunctionalSuite(int argc, char **argv, std::string operation,
 
 FunctionalSuite::~FunctionalSuite() noexcept {
   std::error_code ignored;
-  std::filesystem::remove_all(cache_path_, ignored);
+  if (owns_cache_)
+    std::filesystem::remove_all(cache_path_, ignored);
 }
 
 void FunctionalSuite::run(const CasePlan &plan,
                           const BuildExecutable &build_production,
-                          const BuildExecutable &build_reference) {
+                          const BuildExecutable &build_reference,
+                          const HostReference &host_reference,
+                          bool probe_reference) {
   if (finished_ || plan.operation != operation_ || plan.case_name.empty() ||
-      plan.inputs.empty() || plan.outputs.empty()) {
+      plan.outputs.empty()) {
     throw std::invalid_argument("functional case plan is invalid");
   }
-  const CorexCudnnCatalogRecord &record =
-      catalog_.lookup(plan.operation, plan.case_name);
-  const bool qualified = record.classification ==
-                         CorexCudnnCatalogClassification::kQualifiedSupported;
-  const bool candidate =
-      record.classification == CorexCudnnCatalogClassification::kCandidate;
-  if (candidate && !qualify_candidates_) {
-    throw std::runtime_error("unqualified capability reached functional run: " +
-                             plan.operation + "/" + plan.case_name);
+  bool qualified = false, candidate = false, run_reference = false;
+  std::string skip_reason;
+  if (probe_reference) {
+    candidate = true;
+    run_reference = true;
+  } else if (!host_reference) {
+    const auto &record = catalog_.lookup(plan.operation, plan.case_name);
+    qualified = record.classification ==
+                CorexCudnnCatalogClassification::kQualifiedSupported;
+    candidate =
+        record.classification == CorexCudnnCatalogClassification::kCandidate;
+    if (candidate && !qualify_candidates_) {
+      throw std::runtime_error(
+          "unqualified capability reached functional run: " + plan.operation +
+          "/" + plan.case_name);
+    }
+    run_reference = qualified || candidate;
+    skip_reason = record.reason_code;
   }
-  bool run_reference = qualified || candidate;
-  std::string skip_reason = record.reason_code;
 
   std::vector<BoundTensor> inputs;
   inputs.reserve(plan.inputs.size());
@@ -677,15 +713,15 @@ void FunctionalSuite::run(const CasePlan &plan,
   const std::vector<flagdnnBinding_t> production_bindings =
       bindings(inputs, production_outputs);
 
+  std::unique_ptr<flagdnn::testing::TestExecutable> reference;
   if (run_reference) {
     const std::vector<flagdnnBinding_t> reference_bindings =
         bindings(inputs, reference_outputs);
     try {
-      std::unique_ptr<flagdnn::testing::TestExecutable> reference =
-          build_reference();
+      reference = build_reference();
       execute(*reference, reference_bindings, stream_);
       stream_.synchronize();
-      ++reference_executed_;
+
     } catch (const CorexCudnnStatusError &error) {
       if (!cudnn_status_is_runtime_capability(error.status()) || qualified) {
         throw;
@@ -706,6 +742,18 @@ void FunctionalSuite::run(const CasePlan &plan,
     }
   }
 
+  std::vector<std::vector<float>> host_expected;
+  if (host_reference) {
+    std::vector<std::vector<float>> host_inputs;
+    for (const auto &input : inputs) {
+      host_inputs.push_back(
+          gather(read_physical(input, stream_), input.specification));
+    }
+    host_expected = host_reference(host_inputs);
+    if (host_expected.size() != plan.outputs.size()) {
+      throw std::runtime_error("CPU reference output count mismatch");
+    }
+  }
   std::unique_ptr<flagdnn::testing::TestExecutable> production =
       build_production();
   execute(*production, production_bindings, stream_);
@@ -718,6 +766,15 @@ void FunctionalSuite::run(const CasePlan &plan,
         read_physical(production_outputs[index], stream_);
     require_padding_unchanged("FlagDNN", production_physical,
                               plan.outputs[index].tensor);
+    if (host_reference) {
+      const auto &specification = plan.outputs[index];
+      const auto bytes =
+          encode(host_expected[index], specification.tensor.data_type);
+      compare(gather(production_physical, specification.tensor),
+              decode(bytes, specification.tensor.data_type,
+                     host_expected[index].size()),
+              specification, plan.case_name);
+    }
     if (run_reference) {
       const std::vector<float> reference_physical =
           read_physical(reference_outputs[index], stream_);
@@ -730,7 +787,87 @@ void FunctionalSuite::run(const CasePlan &plan,
     }
   }
 
+  if (benchmark_ && run_reference) {
+    namespace timing = flagdnn::iluvatar::validation::benchmark;
+    const auto reference_bindings = bindings(inputs, reference_outputs);
+    DeviceBuffer production_workspace(production->workspace_size());
+    DeviceBuffer reference_workspace(reference->workspace_size());
+    const auto submit_production = [&] {
+      production->execute(production_bindings, production_workspace.at(),
+                          production->workspace_size(), stream_.opaque());
+    };
+    const auto submit_reference = [&] {
+      reference->execute(reference_bindings, reference_workspace.at(),
+                         reference->workspace_size(), stream_.opaque());
+    };
+    // Match the shared benchmark's warmup, sample and replay counts. All
+    // allocations, CPU oracles and compilation precede CUDA Graph capture.
+    for (int i = 0; i < 10; ++i) {
+      submit_production();
+      submit_reference();
+    }
+    stream_.synchronize();
+    auto cuda_stream = reinterpret_cast<cudaStream_t>(stream_.get());
+    timing::CapturedExecutionBatch production_batch(cuda_stream, 50,
+                                                    submit_production);
+    timing::CapturedExecutionBatch reference_batch(cuda_stream, 50,
+                                                   submit_reference);
+    timing::CudaEventTimer timer;
+    std::array<std::vector<double>, 2> samples;
+    for (int i = 0; i < 20; ++i) {
+      for (int j = 0; j < 2; ++j) {
+        const auto provider = (i + j) % 2;
+        samples[provider].push_back(timer.measure_microseconds_per_execution(
+            cuda_stream, provider == 0 ? production_batch : reference_batch));
+      }
+    }
+    stream_.synchronize();
+    for (std::size_t i = 0; i < plan.outputs.size(); ++i) {
+      const auto actual = read_physical(production_outputs[i], stream_);
+      const auto expected = read_physical(reference_outputs[i], stream_);
+      require_padding_unchanged("FlagDNN postcheck", actual,
+                                plan.outputs[i].tensor);
+      compare(gather(actual, plan.outputs[i].tensor),
+              gather(expected, plan.outputs[i].tensor), plan.outputs[i],
+              plan.case_name);
+      if (host_reference) {
+        const auto bytes =
+            encode(host_expected[i], plan.outputs[i].tensor.data_type);
+        compare(gather(actual, plan.outputs[i].tensor),
+                decode(bytes, plan.outputs[i].tensor.data_type,
+                       host_expected[i].size()),
+                plan.outputs[i], plan.case_name);
+      }
+    }
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+      timing::require_positive_finite_samples(samples[i], 20,
+                                              i ? "corex_cudnn" : "flagdnn");
+      std::cout
+          << "{\"schema_version\":1,\"kind\":\"steady_state\",\"provider\":\""
+          << (i ? "corex_cudnn" : "flagdnn") << "\",\"case\":\""
+          << plan.case_name << "\",\"unit\":\"us\",\"median\":"
+          << timing::percentile(samples[i], 0.5)
+          << ",\"p90\":" << timing::percentile(samples[i], 0.9)
+          << ",\"samples\":[";
+      for (std::size_t j = 0; j < samples[i].size(); ++j) {
+        if (j)
+          std::cout << ',';
+        std::cout << samples[i][j];
+      }
+      std::cout << "]}" << std::endl;
+    }
+  }
+  if (host_reference && !benchmark_) {
+    if (run_reference)
+      std::cout << plan.case_name << ": FlagDNN Graph vs CoreX cuDNN PASS"
+                << std::endl;
+    ++reference_executed_;
+    std::cout << plan.case_name << ": FlagDNN Graph vs CPU reference PASS"
+              << std::endl;
+    return;
+  }
   if (run_reference) {
+    ++reference_executed_;
     std::cout << plan.case_name << ": FlagDNN Graph vs CoreX cuDNN PASS"
               << std::endl;
     return;
@@ -739,7 +876,8 @@ void FunctionalSuite::run(const CasePlan &plan,
     throw std::runtime_error("reference SKIP has no stable reason");
   }
   ++reference_skipped_;
-  const auto &representative = plan.inputs.front().tensor;
+  const auto &representative = plan.inputs.empty() ? plan.outputs.front().tensor
+                                                   : plan.inputs.front().tensor;
   std::cout << "[SKIP][corex-cudnn]"
             << " op=" << plan.operation << " case=" << plan.case_name
             << " reason=" << skip_reason << " cudnn_header=7605"
@@ -752,13 +890,110 @@ void FunctionalSuite::run(const CasePlan &plan,
             << " shape=" << shape_name(representative) << std::endl;
 }
 
+void FunctionalSuite::run_raw(
+    const CasePlan &plan, const BuildExecutable &build_production,
+    const std::vector<std::vector<std::uint8_t>> &input_values,
+    const std::vector<std::vector<std::uint8_t>> &expected_values,
+    const BuildExecutable &build_reference) {
+  if (finished_ || plan.operation != operation_ || plan.case_name.empty() ||
+      input_values.size() != plan.inputs.size() ||
+      expected_values.size() != plan.outputs.size() || plan.outputs.empty())
+    throw std::invalid_argument("raw functional plan is invalid");
+  auto scatter_bytes = [](const auto &values, const auto &tensor) {
+    const auto width = data_type_size(tensor.data_type);
+    if (values.size() != element_count(tensor) * width)
+      throw std::invalid_argument("raw tensor size mismatch");
+    std::vector<std::uint8_t> bytes(storage_element_count(tensor) * width,
+                                    0xA5);
+    for (std::size_t i = 0; i < element_count(tensor); ++i)
+      std::copy_n(values.data() + i * width, width,
+                  bytes.data() + logical_offset(i, tensor) * width);
+    return bytes;
+  };
+  std::vector<BoundTensor> inputs, outputs;
+  std::vector<std::vector<std::uint8_t>> expected;
+  auto bind = [&](const auto &tensor, const auto &bytes, auto &bound) {
+    auto buffer = std::make_unique<DeviceBuffer>(tensor.binding_byte_offset +
+                                                 bytes.size());
+    buffer->copy_from_host(bytes.data(), bytes.size(),
+                           tensor.binding_byte_offset, stream_.get());
+    stream_.synchronize();
+    bound.push_back({tensor, std::move(buffer)});
+  };
+  for (std::size_t i = 0; i < plan.inputs.size(); ++i)
+    bind(plan.inputs[i].tensor,
+         scatter_bytes(input_values[i], plan.inputs[i].tensor), inputs);
+  for (std::size_t i = 0; i < plan.outputs.size(); ++i) {
+    const auto &tensor = plan.outputs[i].tensor;
+    expected.push_back(scatter_bytes(expected_values[i], tensor));
+    bind(tensor, std::vector<std::uint8_t>(expected.back().size(), 0xA5),
+         outputs);
+  }
+  auto production = build_production();
+  execute(*production, bindings(inputs, outputs), stream_);
+  stream_.synchronize();
+  const auto verify = [&](const auto &actual_outputs, std::string_view provider) {
+    for (std::size_t i = 0; i < actual_outputs.size(); ++i) {
+      std::vector<std::uint8_t> actual(expected[i].size());
+      actual_outputs[i].buffer->copy_to_host(
+          actual.data(), actual.size(),
+          actual_outputs[i].specification.binding_byte_offset, stream_.get());
+      stream_.synchronize();
+      if (actual != expected[i])
+        throw std::runtime_error(
+            plan.case_name + " " + std::string(provider) +
+            " differs from exact CPU reference or changed output padding");
+    }
+  };
+  verify(outputs, "FlagDNN");
+  if (build_reference) {
+    // Keep the full byte patterns and padding oracle when qualifying storage
+    // copies; converting BOOL bytes to float would hide copy corruption.
+    std::vector<BoundTensor> reference_outputs;
+    for (std::size_t i = 0; i < plan.outputs.size(); ++i)
+      bind(plan.outputs[i].tensor,
+           std::vector<std::uint8_t>(expected[i].size(), 0xA5), reference_outputs);
+    auto reference = build_reference();
+    execute(*reference, bindings(inputs, reference_outputs), stream_);
+    stream_.synchronize();
+    verify(reference_outputs, "CoreX cuDNN");
+  }
+  ++cases_;
+  ++production_executed_;
+  ++reference_executed_;
+  std::cout << plan.case_name
+            << (build_reference ? ": FlagDNN Graph and CoreX cuDNN"
+                                : ": FlagDNN Graph")
+            << " vs CPU bit-exact reference PASS" << std::endl;
+}
+
+void FunctionalSuite::skip_benchmark_case(const CasePlan &plan,
+                                          std::string_view reason) {
+  if (!benchmark_ || finished_ || plan.operation != operation_)
+    throw std::logic_error("invalid explicit benchmark skip");
+  ++cases_;
+  ++reference_skipped_;
+  emit_reference_skip(plan.operation, plan.case_name,
+                      plan.inputs.empty() ? plan.outputs.front().tensor
+                                          : plan.inputs.front().tensor,
+                      reason);
+}
+
 int FunctionalSuite::finish() {
-  if (finished_ || cases_ == 0 || cases_ != production_executed_ ||
+  if (finished_ || cases_ == 0 ||
+      (!benchmark_ && cases_ != production_executed_) ||
       cases_ != reference_executed_ + reference_skipped_) {
     throw std::runtime_error("functional suite accounting invariant failed");
   }
   finished_ = true;
   const bool all_skipped = reference_executed_ == 0;
+  if (benchmark_) {
+    std::cout << marker_ << ": " << (all_skipped ? "SKIP" : "PASS")
+              << " cases=" << cases_
+              << " comparable_executed=" << reference_executed_
+              << " reference_skipped=" << reference_skipped_ << std::endl;
+    return all_skipped ? 77 : 0;
+  }
   std::cout << marker_ << ": " << (all_skipped ? "SKIP" : "PASS")
             << " cases=" << cases_
             << " production_executed=" << production_executed_

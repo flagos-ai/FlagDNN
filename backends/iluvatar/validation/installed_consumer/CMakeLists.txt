@@ -4,7 +4,9 @@ project(FlagDNNIluvatarInstalledConsumer LANGUAGES CXX)
 
 include(CTest)
 
-find_package(FlagDNN 0.1 CONFIG REQUIRED)
+# Use the SDK under test. A hard-coded 0.1 requirement can reject this
+# repository's 0.2 SDK and silently load a system-wide older installation.
+find_package(FlagDNN CONFIG REQUIRED PATHS "${FlagDNN_DIR}" NO_DEFAULT_PATH)
 
 foreach(_required IN ITEMS
     FLAGDNN_INSTALLED_SDK

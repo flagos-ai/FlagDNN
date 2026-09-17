@@ -30,52 +30,62 @@ set(FLAGDNN_ILUVATAR_TRITON_JIT_SCRIPT_DIR ""
 set(FLAGDNN_ILUVATAR_PYTHONPATH ""
   CACHE STRING "Python module search path for IX libtriton_jit")
 
-foreach(_flagdnn_iluvatar_required_resource IN ITEMS
-    compiler.py
-    compiler_full.py
-    compiler_identity.py
-    compiler_tensor.py
-    compiler_nn.py
-    python_environment_identity.py
-    kernels/registry.json
-    kernels/attention.py
-    kernels/binary.py
-    kernels/convolution.py
-    kernels/layout.py
-    kernels/matmul.py
-    kernels/normalization.py
-    kernels/reduction.py
-    kernels/ternary.py
-    kernels/unary.py
-    tuning/common.yaml
-    tuning/convolution.yaml
-    tuning/normalization.yaml)
-  if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_flagdnn_iluvatar_required_resource}")
-    message(FATAL_ERROR
-      "Required Iluvatar compiler resource is missing: "
-      "${_flagdnn_iluvatar_required_resource}")
+set(_flagdnn_iluvatar_resources
+  compiler.py
+  codegen/__init__.py
+  codegen/arguments.py
+  codegen/emit.py
+  codegen/environment.py
+  codegen/identity.py
+  codegen/io.py
+  codegen/jit.py
+  dispatch/__init__.py
+  dispatch/attention.py
+  dispatch/causal_convolution.py
+  dispatch/common.py
+  dispatch/convolution.py
+  dispatch/extended.py
+  dispatch/extended_common.py
+  dispatch/graph.py
+  dispatch/graph_tensor.py
+  dispatch/index.py
+  dispatch/nn.py
+  dispatch/nn_common.py
+  dispatch/normalization.py
+  dispatch/normalization_extended.py
+  dispatch/pointwise.py
+  dispatch/position_embedding.py
+  dispatch/random.py
+  dispatch/resample.py
+  dispatch/selection.py
+  dispatch/statistics.py
+  dispatch/tensor.py
+  dispatch/tuning.py
+  kernels/random.py
+  kernels/statistics.py
+  kernels/causal_convolution.py
+  kernels/activation_backward.py
+  kernels/attention.py
+  kernels/binary.py
+  kernels/convolution.py
+  kernels/layout.py
+  kernels/matmul.py
+  kernels/normalization.py
+  kernels/reduction.py
+  kernels/registry.json
+  kernels/ternary.py
+  kernels/unary.py
+  tuning/common.yaml
+  tuning/convolution.yaml
+  tuning/normalization.yaml
+)
+foreach(_resource IN LISTS _flagdnn_iluvatar_resources)
+  if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_resource}")
+    message(FATAL_ERROR "Required Iluvatar resource is missing: ${_resource}")
   endif()
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/${_resource}")
 endforeach()
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-  "${CMAKE_CURRENT_SOURCE_DIR}/compiler.py"
-  "${CMAKE_CURRENT_SOURCE_DIR}/compiler_full.py"
-  "${CMAKE_CURRENT_SOURCE_DIR}/compiler_identity.py"
-  "${CMAKE_CURRENT_SOURCE_DIR}/compiler_tensor.py"
-  "${CMAKE_CURRENT_SOURCE_DIR}/compiler_nn.py"
-  "${CMAKE_CURRENT_SOURCE_DIR}/python_environment_identity.py"
-  "${CMAKE_CURRENT_SOURCE_DIR}/kernels/registry.json"
-  "${CMAKE_CURRENT_SOURCE_DIR}/kernels/attention.py"
-  "${CMAKE_CURRENT_SOURCE_DIR}/kernels/binary.py"
-  "${CMAKE_CURRENT_SOURCE_DIR}/kernels/convolution.py"
-  "${CMAKE_CURRENT_SOURCE_DIR}/kernels/layout.py"
-  "${CMAKE_CURRENT_SOURCE_DIR}/kernels/matmul.py"
-  "${CMAKE_CURRENT_SOURCE_DIR}/kernels/normalization.py"
-  "${CMAKE_CURRENT_SOURCE_DIR}/kernels/reduction.py"
-  "${CMAKE_CURRENT_SOURCE_DIR}/kernels/ternary.py"
-  "${CMAKE_CURRENT_SOURCE_DIR}/kernels/unary.py"
-  "${CMAKE_CURRENT_SOURCE_DIR}/tuning/common.yaml"
-  "${CMAKE_CURRENT_SOURCE_DIR}/tuning/convolution.yaml"
-  "${CMAKE_CURRENT_SOURCE_DIR}/tuning/normalization.yaml")
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ResolveCoreX.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ResolveTritonJIT.cmake")
@@ -211,12 +221,10 @@ set_target_properties(flagdnn_backend_iluvatar PROPERTIES
 
 install(FILES
     compiler.py
-    compiler_full.py
-    compiler_identity.py
-    compiler_tensor.py
-    compiler_nn.py
-    python_environment_identity.py
   DESTINATION "${FLAGDNN_RESOURCE_INSTALL_DIR}/backends/iluvatar")
+install(DIRECTORY codegen dispatch
+  DESTINATION "${FLAGDNN_RESOURCE_INSTALL_DIR}/backends/iluvatar"
+  FILES_MATCHING PATTERN "*.py" PATTERN "__pycache__" EXCLUDE)
 install(FILES kernels/registry.json
   DESTINATION
     "${FLAGDNN_RESOURCE_INSTALL_DIR}/backends/iluvatar/kernels")

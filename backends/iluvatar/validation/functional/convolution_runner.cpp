@@ -3,6 +3,7 @@
 
 #include "common/convolution.hpp"
 #include "functional/runner_support.hpp"
+#include "reference/cpu/matrix.hpp"
 
 #include <stdexcept>
 #include <string_view>
@@ -67,12 +68,43 @@ int run_convolution_functional_test(int argc, char **argv,
       plan.inputs = {{test_case.y, functional::InputDomain::kReal, {}},
                      {test_case.x, functional::InputDomain::kReal, {}}};
     }
+    functional::HostReference host_reference;
+    if (test_case.input_precision != 0 ||
+        (test_case.x.dimensions.size() == 3 &&
+         test_case.pre_padding != test_case.post_padding) ||
+        (test_case.mode == ConvolutionMode::kConvolution &&
+         test_case.x.data_type == FLAGDNN_DATA_FLOAT32)) {
+      host_reference = [&test_case](const auto &inputs) {
+        std::vector<std::vector<float>> canonical_inputs(3);
+        if (test_case.direction == ConvolutionDirection::kFprop) {
+          canonical_inputs[0] = inputs[0];
+          canonical_inputs[1] = inputs[1];
+        } else if (test_case.direction == ConvolutionDirection::kDgrad) {
+          canonical_inputs[1] = inputs[1];
+          canonical_inputs[2] = inputs[0];
+        } else {
+          canonical_inputs[0] = inputs[1];
+          canonical_inputs[2] = inputs[0];
+        }
+        return std::vector<std::vector<float>>{
+            reference::cpu::evaluate_convolution(
+                {test_case.x.dimensions, test_case.w.dimensions,
+                 test_case.y.dimensions, test_case.stride,
+                 test_case.pre_padding, test_case.dilation,
+                 static_cast<reference::cpu::ConvolutionDirection>(
+                     test_case.direction),
+                 test_case.groups, test_case.input_precision,
+                 test_case.mode == ConvolutionMode::kConvolution},
+                canonical_inputs)};
+      };
+    }
     suite.run(
         plan,
         [&suite, &test_case] {
           return build_flagdnn_convolution(suite.handle(), test_case);
         },
-        [&test_case] { return build_convolution_reference(test_case); });
+        [&test_case] { return build_convolution_reference(test_case); },
+        host_reference);
   }
   return suite.finish();
 }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "common/runner.hpp"
+#include "benchmark/shared_cases.hpp"
 
 #include "benchmark/corex_cudnn_provider.hpp"
 #include "benchmark/cuda_graph.hpp"
@@ -9,6 +10,7 @@
 #include "common/flagdnn_provider.hpp"
 #include "corex_cudnn_status.hpp"
 #include "functional/runner_support.hpp"
+#include "functional/capability_skips.hpp"
 
 #include <cuda_runtime_api.h>
 
@@ -352,23 +354,23 @@ void warmup(BenchmarkExecutable &executable,
 
 std::string data_type_name(flagdnnDataType_t data_type) {
   switch (data_type) {
-    case FLAGDNN_DATA_INT32:
-      return "int32";
+  case FLAGDNN_DATA_INT32:
+    return "int32";
 
-    case FLAGDNN_DATA_FP8_E8M0:
-      return "fp8_e8m0";
-    case FLAGDNN_DATA_FLOAT32:
-      return "fp32";
-    case FLAGDNN_DATA_FLOAT16:
-      return "fp16";
-    case FLAGDNN_DATA_BFLOAT16:
-      return "bf16";
-    case FLAGDNN_DATA_BOOLEAN:
-      return "bool";
-    case FLAGDNN_DATA_FP8_E4M3:
-      return "fp8_e4m3";
-    case FLAGDNN_DATA_FP8_E5M2:
-      return "fp8_e5m2";
+  case FLAGDNN_DATA_FP8_E8M0:
+    return "fp8_e8m0";
+  case FLAGDNN_DATA_FLOAT32:
+    return "fp32";
+  case FLAGDNN_DATA_FLOAT16:
+    return "fp16";
+  case FLAGDNN_DATA_BFLOAT16:
+    return "bf16";
+  case FLAGDNN_DATA_BOOLEAN:
+    return "bool";
+  case FLAGDNN_DATA_FP8_E4M3:
+    return "fp8_e4m3";
+  case FLAGDNN_DATA_FP8_E5M2:
+    return "fp8_e5m2";
   }
   return "unknown";
 }
@@ -472,6 +474,17 @@ CaseResult run_case(const BenchmarkCase &specification,
     throw std::invalid_argument("benchmark sample configuration is invalid");
   }
 
+  // The functional suite validates production execution independently.
+  // A known missing reference cannot produce a paired benchmark result;
+  // account for that case before allocating buffers or invoking the JIT.
+  // Shared cases use exact catalog evidence, including qualified BOOL cases.
+  const ProviderCapability capability =
+      corex_cudnn_provider.capability(specification);
+  if (!capability.supported) {
+    emit_skip(corex_cudnn_provider, specification, capability.reason);
+    return CaseResult::kReferenceSkipped;
+  }
+
   std::unique_ptr<BenchmarkExecutable> flagdnn =
       flagdnn_provider.build(specification);
   PreparedBuffers flagdnn_buffers =
@@ -487,13 +500,6 @@ CaseResult run_case(const BenchmarkCase &specification,
        ++output_index) {
     production_outputs.push_back(read_output(flagdnn_buffers, output_index,
                                              flagdnn_stream, "FlagDNN", true));
-  }
-
-  const ProviderCapability capability =
-      corex_cudnn_provider.capability(specification);
-  if (!capability.supported) {
-    emit_skip(corex_cudnn_provider, specification, capability.reason);
-    return CaseResult::kReferenceSkipped;
   }
 
   std::unique_ptr<BenchmarkExecutable> reference;
@@ -691,7 +697,10 @@ int run_benchmark_suite(int argc, char **argv,
     std::size_t matched = 0;
     std::size_t comparable_executed = 0;
     std::size_t reference_skipped = 0;
-    for (const BenchmarkCase &specification : cases) {
+    std::vector<BenchmarkCase> workloads(cases.begin(), cases.end());
+    auto supplemental = ivb::shared_benchmark_cases(suite_name);
+    workloads.insert(workloads.end(), supplemental.begin(), supplemental.end());
+    for (const BenchmarkCase &specification : workloads) {
       if (case_filter != nullptr && case_filter[0] != '\0' &&
           specification.name != case_filter) {
         continue;
@@ -713,6 +722,9 @@ int run_benchmark_suite(int argc, char **argv,
     if (matched != comparable_executed + reference_skipped) {
       throw std::runtime_error("benchmark suite accounting invariant failed");
     }
+    if (suite_name == "FLAGDNN_MATMUL_BENCHMARK" &&
+        (case_filter == nullptr || case_filter[0] == '\0'))
+      iv::emit_plain_fp8_matmul_skips();
     const bool all_skipped = comparable_executed == 0;
     std::cout << suite_name << ": " << (all_skipped ? "SKIP" : "PASS")
               << " cases=" << matched

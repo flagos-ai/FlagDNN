@@ -66,6 +66,20 @@ std::string CorexCudnnProvider::operation_name(
   case Operation::kRelu:
     return "relu";
   case Operation::kPointwise:
+    if (specification.name.ends_with("_shared")) {
+      switch (specification.pointwise_mode) {
+      case FLAGDNN_POINTWISE_IDENTITY:
+        return "identity";
+      case FLAGDNN_POINTWISE_LOGICAL_AND:
+        return "logical_and";
+      case FLAGDNN_POINTWISE_LOGICAL_OR:
+        return "logical_or";
+      case FLAGDNN_POINTWISE_LOGICAL_NOT:
+        return "logical_not";
+      default:
+        throw std::invalid_argument("unknown supplemental pointwise group");
+      }
+    }
     return performance_prefix(specification.name);
   case Operation::kAdd:
     return "add";

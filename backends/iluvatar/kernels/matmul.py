@@ -8,6 +8,15 @@ import triton.language as tl
 
 
 @triton.jit
+def _tf32(value):
+    bits = value.to(tl.uint32, bitcast=True)
+    rounded = ((bits + 0xFFF + ((bits >> 13) & 1)) & 0xFFFFE000).to(
+        tl.float32, bitcast=True
+    )
+    return tl.where((bits & 0x7F800000) == 0x7F800000, value, rounded)
+
+
+@triton.jit
 def matmul_strided_kernel(
     a_ptr,
     b_ptr,
@@ -134,7 +143,7 @@ def matmul_strided_kernel(
             other=0.0,
         )
         if INPUT_IS_FLOAT32 and USE_TF32:
-            accumulator += tl.dot(a, b, input_precision="tf32")
+            accumulator += tl.dot(_tf32(a), _tf32(b), input_precision="ieee")
         else:
             accumulator += tl.dot(a, b, input_precision="ieee")
         a_tile_ptrs += BLOCK_K * A_STRIDE_K

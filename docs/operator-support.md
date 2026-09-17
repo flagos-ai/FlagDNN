@@ -35,6 +35,7 @@
 | rope_backward | fp32、fp16、bf16 | 当前 cuDNN RoPE 接口用于 SDPA 融合，缺少独立反向对照。 |
 | moe_grouped_matmul_bwd | fp16、bf16、FP8 E4M3/E5M2 | FP16/BF16 对照要求 cuBLASLt ≥13.5，当前加载 12.8.4；FP8 不在 cuDNN backward 支持表内。 |
 
+
 # Hygon
 
 ## 已支持算子
@@ -83,3 +84,47 @@
 | rope、rope_backward | fp32、fp16、bf16 | 当前未注册性能测试，缺少等价性能对照。 |
 | sdpa、sdpa_backward | fp32、fp16、bf16 | 当前 hipDNN 未提供等价的 SDPA 性能对照。 |
 | sdpa_fp8、sdpa_fp8_backward | FP8 E4M3/E5M2 | 当前 hipDNN 未提供等价的 FP8 SDPA 性能对照。 |
+
+
+# Iluvatar
+
+## 已支持算子
+
+| 算子 | 输入与输出类型 |
+| --- | --- |
+| identity、reshape、transpose、slice、concatenate | fp32、fp16、bf16、int32、bool、FP8 E4M3/E5M2/E8M0；保持原始位模式 |
+| add、sub、mul、max、min、add_square、scale | fp32、fp16、bf16、int32 |
+| logical_and、logical_or、logical_not | bool |
+| abs、neg、sqrt | fp32、fp16、bf16 |
+| relu、leaky_relu、elu、sigmoid、swish、tanh 及对应 backward | fp32、fp16、bf16 |
+| softplus_backward | fp32、fp16、bf16 |
+| conv_fprop、conv_dgrad、conv_wgrad | fp32、tf32、fp16、bf16 |
+| conv_bias_relu | fp32、fp16、bf16 |
+| reduction | sum、avg、mul；fp32、fp16、bf16 → 同类型或 fp32；int32 → fp32 |
+| resample | fp32、fp16、bf16；maxpool 可输出 int32 索引 |
+| batchnorm、batchnorm_backward、batchnorm_inference、rmsnorm | 数据 fp32、fp16、bf16；统计量 fp32，仿射参数梯度默认 fp32 |
+
+## 不完全支持算子
+
+| 算子 | 输入与输出类型 | 不完全支持的原因 |
+| --- | --- | --- |
+| gen_index | 输出 int32 或 fp32 | 当前 CoreX DNN 没有等价的独立索引生成接口，缺少性能对照。 |
+| div、pow、mod | fp32、fp16、bf16、int32 | 当前 CoreX DNN 缺少等价的 pointwise 性能对照。 |
+| cmp_eq、cmp_neq、cmp_gt、cmp_ge、cmp_lt、cmp_le | fp32、fp16、bf16、int32 → bool | 当前 CoreX DNN 缺少等价的比较运算性能对照。 |
+| binary_select | bool 条件与 fp32、fp16、bf16、int32 数值 | 当前 CoreX DNN 缺少等价的选择运算性能对照。 |
+| rsqrt、reciprocal、ceil、floor、exp、log、erf、sin、cos、tan | fp32、fp16、bf16 | 当前 CoreX DNN 缺少对应的独立算子；功能仅检查生产执行并记录参考缺失，性能用例跳过。 |
+| softplus | fp32、fp16、bf16 | 当前 CoreX DNN 缺少等价的前向接口；功能仅检查生产执行并记录参考缺失，性能用例跳过。 |
+| gelu、gelu_approx_tanh 及对应 backward | fp32、fp16、bf16 | CoreX DNN 的直接 activation 模式返回 BAD_PARAM，缺少等价性能对照；功能保留 CPU 校验。 |
+| causal_conv1d | fp32、tf32、fp16、bf16 | 当前 CoreX DNN 没有等价的独立因果卷积接口，缺少性能对照。 |
+| matmul | fp32、tf32、fp16、bf16 | 当前 CoreX DNN 没有独立 GEMM/MatMul 接口，缺少性能对照；FP8 E4M3/E5M2 子用例按 DNN 能力跳过。 |
+| matmul_fp8 | FP8 E4M3/E5M2 或 MXFP8；输出 fp32、fp16、bf16 | 当前 CoreX DNN 缺少 FP8/MXFP8 dtype 与 MatMul 接口，功能和性能均按 DNN 能力跳过，尚未验证生产支持。 |
+| moe_grouped_matmul | fp16、bf16、FP8 E4M3/E5M2；输出 fp32、fp16、bf16 | 当前 CoreX DNN 没有分组 GEMM 或 graph 接口，功能和性能均按 DNN 能力跳过，尚未验证生产支持。 |
+| moe_grouped_matmul_bwd | fp16、bf16、FP8 E4M3/E5M2；输出 fp32、fp16、bf16 | 当前 CoreX DNN 没有分组 GEMM 反向或 graph 接口，功能和性能均按 DNN 能力跳过，尚未验证生产支持。 |
+| layernorm | 数据 fp32、fp16、bf16；统计量 fp32 | 当前 CoreX DNN 缺少等价的独立归一化接口；功能仅检查生产执行并记录参考缺失，性能用例跳过。 |
+| layernorm_backward、rmsnorm_backward、instancenorm、instancenorm_backward、adalayernorm、adalayernorm_backward | 数据 fp32、fp16、bf16；统计量 fp32，仿射参数梯度默认 fp32 | 当前 CoreX DNN 缺少对应的独立归一化接口或 graph API，缺少性能对照；功能保留 CPU 校验。 |
+| bn_finalize | 数据和统计量 fp32 | CoreX DNN 的 FP32 FusedOps 计划返回成功但未写入统计及仿射输出，性能用例跳过；功能保留 CPU 校验。 |
+| genstats | fp32、fp16、bf16 → fp32 | 当前 CoreX DNN 没有等价的独立统计接口，缺少性能对照。 |
+| rng | fp32、fp16、bf16；uniform、normal、Bernoulli | CoreX DNN 的 Dropout 接口不满足独立 RNG 的 seed、offset 和分布契约，缺少等价性能对照。 |
+| rope、rope_backward | fp32、fp16、bf16 | 当前 CoreX DNN 没有等价的独立 RoPE 接口，缺少性能对照。 |
+| sdpa、sdpa_backward | fp32、fp16、bf16 | 当前 CoreX DNN 未提供 Flash Attention 或 graph 接口；功能仅检查生产执行并记录参考缺失，性能用例跳过。 |
+| sdpa_fp8、sdpa_fp8_backward | FP8 E4M3/E5M2 | 当前 CoreX DNN 缺少 FP8 dtype 与 Attention 接口；功能仅检查生产执行并记录参考缺失，性能用例跳过。 |

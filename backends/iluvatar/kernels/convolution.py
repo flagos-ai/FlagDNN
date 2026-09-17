@@ -13,6 +13,22 @@ import triton.language as tl
 
 
 @triton.jit
+def _tf32(value):
+    bits = value.to(tl.uint32, bitcast=True)
+    rounded = ((bits + 0xFFF + ((bits >> 13) & 1)) & 0xFFFFE000).to(
+        tl.float32, bitcast=True
+    )
+    return tl.where((bits & 0x7F800000) == 0x7F800000, value, rounded)
+
+
+@triton.jit
+def _precision_operand(value, precision: tl.constexpr):
+    if precision == 2:
+        return _tf32(value)
+    return value
+
+
+@triton.jit
 def conv1d_gemm_kernel(
     x_ptr,
     w_ptr,
@@ -128,7 +144,11 @@ def conv1d_gemm_kernel(
                 & (reduction[None, :] < reduction_extent),
                 other=0.0,
             )
-        accumulator += tl.dot(input_values, tl.trans(weights), input_precision="ieee")
+        accumulator += tl.dot(
+            _precision_operand(input_values, INPUT_PRECISION),
+            _precision_operand(tl.trans(weights), INPUT_PRECISION),
+            input_precision="ieee",
+        )
 
     if HAS_BIAS:
         bias = tl.load(
@@ -700,9 +720,8 @@ def conv2d_fp32_ml_stem_kernel(
     kernel_h = kernel_hw // 3
     kernel_w = kernel_hw - kernel_h * 3
     reduction_mask = reduction < 27
-    spatial_mask = (
-        ((output_h[:, None] > 0) | (kernel_h[None, :] > 0))
-        & ((output_w[:, None] > 0) | (kernel_w[None, :] > 0))
+    spatial_mask = ((output_h[:, None] > 0) | (kernel_h[None, :] > 0)) & (
+        (output_w[:, None] > 0) | (kernel_w[None, :] > 0)
     )
     # Factor input NCHW offsets into one spatial term and one reduction term.
     spatial_base = output_h * 1280 + output_w * 2 - 641
@@ -874,28 +893,36 @@ def conv2d_spatial_nchw_kernel(
                 + input_h * X_STRIDE_H
                 + input_w * X_STRIDE_W
             )
-        if OH * OW % BLOCK_HW == 0 and reduction_extent % BLOCK_K == 0:
-            input_values = tl.load(input_ptrs, mask=spatial_mask, other=0.0)
-        elif OH * OW % BLOCK_HW == 0:
+        if exact_stem:
             input_values = tl.load(
                 input_ptrs,
                 mask=(reduction[None, :] < reduction_extent) & spatial_mask,
                 other=0.0,
             )
-        elif reduction_extent % BLOCK_K == 0:
-            input_values = tl.load(
-                input_ptrs,
-                mask=(output_hw[:, None] < OH * OW) & spatial_mask,
-                other=0.0,
-            )
         else:
-            input_values = tl.load(
-                input_ptrs,
-                mask=(output_hw[:, None] < OH * OW)
+            # CoreX can vectorize this combined tail mask into loads beyond
+            # the allocation. Clamp addresses before loading, then zero the
+            # inactive lanes explicitly; a masked load alone is insufficient.
+            input_mask = (
+                (output_hw[:, None] < OH * OW)
                 & (reduction[None, :] < reduction_extent)
-                & spatial_mask,
-                other=0.0,
+                & spatial_mask
             )
+            input_limit: tl.constexpr = (
+                (BATCH - 1) * X_STRIDE_N
+                + (C_IN - 1) * X_STRIDE_C
+                + (XH - 1) * X_STRIDE_H
+                + (XW - 1) * X_STRIDE_W
+            )
+            input_offsets = (
+                batch[:, None] * X_STRIDE_N
+                + (group * CIN_PER_GROUP + input_channel[None, :]) * X_STRIDE_C
+                + input_h * X_STRIDE_H
+                + input_w * X_STRIDE_W
+            )
+            safe_offsets = tl.minimum(tl.maximum(input_offsets, 0), input_limit)
+            input_values = tl.load(x_ptr + safe_offsets)
+            input_values = tl.where(input_mask, input_values, 0.0)
         if exact_x_stem:
             reduction_mask = reduction < reduction_extent
             weights_64 = tl.load(
@@ -908,8 +935,16 @@ def conv2d_spatial_nchw_kernel(
                 mask=reduction_mask[:, None],
                 other=0.0,
             )
-            accumulator_64 += tl.dot(input_values, weights_64, input_precision="ieee")
-            accumulator_32 += tl.dot(input_values, weights_32, input_precision="ieee")
+            accumulator_64 += tl.dot(
+                _precision_operand(input_values, INPUT_PRECISION),
+                _precision_operand(weights_64, INPUT_PRECISION),
+                input_precision="ieee",
+            )
+            accumulator_32 += tl.dot(
+                _precision_operand(input_values, INPUT_PRECISION),
+                _precision_operand(weights_32, INPUT_PRECISION),
+                input_precision="ieee",
+            )
         else:
             if exact_stem:
                 weight_ptrs = (
@@ -938,13 +973,29 @@ def conv2d_spatial_nchw_kernel(
                     other=0.0,
                 )
             else:
-                weights = tl.load(
-                    weight_ptrs,
-                    mask=(reduction[:, None] < reduction_extent)
-                    & (output_channels[None, :] < COUT_PER_GROUP),
-                    other=0.0,
+                weight_mask = (reduction[:, None] < reduction_extent) & (
+                    output_channels[None, :] < COUT_PER_GROUP
                 )
-            accumulator += tl.dot(input_values, weights, input_precision="ieee")
+                weight_limit: tl.constexpr = (
+                    (C_OUT - 1) * W_STRIDE_K
+                    + (CIN_PER_GROUP - 1) * W_STRIDE_C
+                    + (KH - 1) * W_STRIDE_R
+                    + (KW - 1) * W_STRIDE_S
+                )
+                weight_offsets = (
+                    (group * COUT_PER_GROUP + output_channels[None, :]) * W_STRIDE_K
+                    + input_channel[:, None] * W_STRIDE_C
+                    + kernel_h[:, None] * W_STRIDE_R
+                    + kernel_w[:, None] * W_STRIDE_S
+                )
+                safe_offsets = tl.minimum(tl.maximum(weight_offsets, 0), weight_limit)
+                weights = tl.load(w_ptr + safe_offsets)
+                weights = tl.where(weight_mask, weights, 0.0)
+            accumulator += tl.dot(
+                _precision_operand(input_values, INPUT_PRECISION),
+                _precision_operand(weights, INPUT_PRECISION),
+                input_precision="ieee",
+            )
 
     if exact_x_stem:
         output_ptrs_64 = (
@@ -1106,7 +1157,11 @@ def conv3d_spatial_ncdhw_m_kernel(
             & (reduction[None, :] < reduction_extent),
             other=0.0,
         )
-        accumulator += tl.dot(input_values, tl.trans(weights), input_precision="ieee")
+        accumulator += tl.dot(
+            _precision_operand(input_values, INPUT_PRECISION),
+            _precision_operand(tl.trans(weights), INPUT_PRECISION),
+            input_precision="ieee",
+        )
 
     if HAS_BIAS:
         bias = tl.load(
@@ -1682,7 +1737,11 @@ def conv_dgrad_2d_scatter_kernel(
             & (columns[None, :] < contribution_columns),
             other=0.0,
         )
-        accumulator += tl.dot(losses, weights, input_precision="ieee")
+        accumulator += tl.dot(
+            _precision_operand(losses, INPUT_PRECISION),
+            _precision_operand(weights, INPUT_PRECISION),
+            input_precision="ieee",
+        )
 
     input_h = output_h[:, None] * STRIDE_H - PAD_TOP + kernel_h[None, :] * DIL_H
     input_w = output_w[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
@@ -1822,7 +1881,11 @@ def conv_dgrad_2d_stride2_kernel(
             & (input_channels[None, :] < CIN_PER_GROUP),
             other=0.0,
         )
-        accumulator += tl.dot(losses, weights, input_precision="ieee")
+        accumulator += tl.dot(
+            _precision_operand(losses, INPUT_PRECISION),
+            _precision_operand(weights, INPUT_PRECISION),
+            input_precision="ieee",
+        )
 
     tl.store(
         dx_ptr
@@ -2021,7 +2084,11 @@ def conv_dgrad_nd_kernel(
             & (input_channels[None, :] < CIN_PER_GROUP),
             other=0.0,
         )
-        accumulator += tl.dot(losses, weights, input_precision="ieee")
+        accumulator += tl.dot(
+            _precision_operand(losses, INPUT_PRECISION),
+            _precision_operand(weights, INPUT_PRECISION),
+            input_precision="ieee",
+        )
 
     tl.store(
         dx_ptr
@@ -2949,7 +3016,11 @@ def conv_wgrad_nd_kernel(
             mask=active_rows[:, None] & (input_channels[None, :] < CIN_PER_GROUP),
             other=0.0,
         )
-        accumulator += tl.dot(losses, inputs, input_precision="ieee")
+        accumulator += tl.dot(
+            _precision_operand(losses, INPUT_PRECISION),
+            _precision_operand(inputs, INPUT_PRECISION),
+            input_precision="ieee",
+        )
 
     tl.store(
         dw_ptr

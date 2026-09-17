@@ -8,11 +8,8 @@ import shutil
 import tempfile
 from typing import Any
 
-
 SPEEDUP_METRIC = "corex_cudnn_median_us/flagdnn_median_us"
-CONVOLUTION_CASE_PATTERN = re.compile(
-    r"^conv[123]d_(fprop|dgrad|wgrad)(?:_|$)"
-)
+CONVOLUTION_CASE_PATTERN = re.compile(r"^conv[123]d_(fprop|dgrad|wgrad)(?:_|$)")
 
 DEFAULT_TIMEOUT = 1800
 REPORT_DEVICE = "cuda"
@@ -21,9 +18,23 @@ SUPPORTS_MIN_SPEEDUP = True
 FILTER_REGISTERED_TESTS = False
 
 
-def configure_environment(
-    environment: dict[str, str], device: str | None
-) -> None:
+UNSUPPORTED_OPERATORS = frozenset(
+    {"moe_grouped_matmul", "moe_grouped_matmul_bwd", "matmul_fp8"}
+)
+
+
+def select_operator_manifests(manifests):
+    # Extended benchmarks consume the same shared functional case generators
+    # as NVIDIA's native benchmark adapter, including explicit capability gates.
+    return {
+        **manifests,
+        "benchmark": list(
+            dict.fromkeys(manifests["benchmark"] + manifests["functional"])
+        ),
+    }
+
+
+def configure_environment(environment: dict[str, str], device: str | None) -> None:
     if device is not None:
         environment["CUDA_VISIBLE_DEVICES"] = device
 
@@ -40,6 +51,8 @@ def preflight_tests(_suites: list[str] | tuple[str, ...]) -> set[str]:
         "integration.iluvatar.corex_cudnn_environment",
         "integration.iluvatar.jit",
         "integration.iluvatar.autotune",
+        "integration.iluvatar.convolution_tuning_contract",
+        "integration.iluvatar.dnn_support_contract",
         "integration.iluvatar.runtime",
         "integration.iluvatar.graph",
         "integration.iluvatar.installed_consumer",
@@ -54,19 +67,14 @@ def convolution_case_operator(case: str) -> str | None:
     return f"conv_{match.group(1)}"
 
 
-def benchmark_case_operator(
-    case: str, manifest_operators: list[str]
-) -> str | None:
+def benchmark_case_operator(case: str, manifest_operators: list[str]) -> str | None:
     matches = [
         candidate
         for candidate in dict.fromkeys(manifest_operators)
         if case == candidate or case.startswith(f"{candidate}_")
     ]
     convolution_operator = convolution_case_operator(case)
-    if (
-        convolution_operator is not None
-        and convolution_operator in manifest_operators
-    ):
+    if convolution_operator is not None and convolution_operator in manifest_operators:
         matches.append(convolution_operator)
     if not matches:
         return None
@@ -131,6 +139,7 @@ def validate_iluvatar_skip_records(
         "shape",
     )
     legal_reasons = {
+        "DNN_API_UNAVAILABLE",
         "NO_EXACT_CUDNN_PRIMITIVE",
         "SEMANTIC_MISMATCH",
         "DTYPE_UNSUPPORTED",
@@ -141,6 +150,8 @@ def validate_iluvatar_skip_records(
         "CAPTURE_UNSUPPORTED",
     }
     legal_dtypes = {
+        "int32",
+        "fp8_e8m0",
         "fp32",
         "fp16",
         "bf16",
@@ -169,9 +180,7 @@ def validate_iluvatar_skip_records(
                 f"owned_by={owner}; expected owner={operator}"
             )
         if record["case"] in seen_cases:
-            errors.append(
-                "CoreX cuDNN skip records contain duplicate case names"
-            )
+            errors.append("CoreX cuDNN skip records contain duplicate case names")
         seen_cases.add(record["case"])
         if record["reason"] not in legal_reasons:
             errors.append(
@@ -230,8 +239,7 @@ def _parse_iluvatar_case_accounting(
     errors: list[str] = []
     if marker != expected_marker:
         errors.append(
-            f"Iluvatar suite accounting marker={marker}; "
-            f"expected {expected_marker}"
+            f"Iluvatar suite accounting marker={marker}; " f"expected {expected_marker}"
         )
     if suite == "functional":
         pattern = re.compile(
@@ -283,9 +291,7 @@ def validate_iluvatar_case_accounting(
     records: dict[str, dict[str, Any]],
     skip_records: list[dict[str, str]],
 ) -> list[str]:
-    accounting, errors = _parse_iluvatar_case_accounting(
-        output, operator, suite
-    )
+    accounting, errors = _parse_iluvatar_case_accounting(output, operator, suite)
     if accounting is None:
         return errors
     cases = int(accounting["cases"])
@@ -327,9 +333,7 @@ def validate_iluvatar_case_accounting(
                 f"reference_executed+reference_skipped={reference + skipped}"
             )
         if reported_status == "PASS" and reference <= 0:
-            errors.append(
-                "Iluvatar functional PASS must execute a reference case"
-            )
+            errors.append("Iluvatar functional PASS must execute a reference case")
         if reported_status == "SKIP" and not (
             reference == 0 and skipped == cases and production == cases
         ):
@@ -351,12 +355,8 @@ def validate_iluvatar_case_accounting(
                 f"emitted {len(records)} timing case groups"
             )
         if reported_status == "PASS" and comparable <= 0:
-            errors.append(
-                "Iluvatar benchmark PASS must execute a comparable case"
-            )
-        if reported_status == "SKIP" and not (
-            comparable == 0 and skipped == cases
-        ):
+            errors.append("Iluvatar benchmark PASS must execute a comparable case")
+        if reported_status == "SKIP" and not (comparable == 0 and skipped == cases):
             errors.append(
                 "Iluvatar benchmark SKIP requires every reference case skipped"
             )
@@ -458,19 +458,48 @@ def iluvatar_speedup_summary(
     }
 
 
-def prepare_run(
-    *, environment: dict[str, str], verbose: bool
-) -> dict[str, Any]:
+def prepare_run(*, environment: dict[str, str], verbose: bool) -> dict[str, Any]:
+    configured = environment.get("FLAGDNN_CACHE_PATH", "")
+    owned = not configured
     cache_path = Path(
-        tempfile.mkdtemp(prefix="flagdnn-iluvatar-run-")
+        configured or tempfile.mkdtemp(prefix="flagdnn-iluvatar-run-")
     ).resolve()
+    cache_path.mkdir(parents=True, exist_ok=True)
     environment["FLAGDNN_CACHE_PATH"] = str(cache_path)
     if verbose:
         print(f"Iluvatar cache: {cache_path}", flush=True)
     return {
         "cache_path": str(cache_path),
-        "cache_preserved": bool(verbose),
+        "cache_owned": owned,
+        "cache_preserved": bool(verbose) or not owned,
     }
+
+
+def partial_capability_skips(output: str, operator: str):
+    records, errors, seen = [], [], set()
+    for raw in output.splitlines():
+        line = re.sub(r"^\s*\d+:\s?", "", raw).strip()
+        if not line.startswith("[SKIP][iluvatar]"):
+            continue
+        match = re.fullmatch(
+            r"\[SKIP\]\[iluvatar\] op=matmul "
+            r"case=(matmul_a(?:e4m3|e5m2)_b(?:e4m3|e5m2)_mode3_"
+            r"[0-9]+_[0-9]+_[0-9]+(?:_out_(?:fp16|bf16))?) "
+            r"reason=DNN_FP8_UNAVAILABLE",
+            line,
+        )
+        if operator != "matmul" or match is None or match[1] in seen:
+            errors.append("invalid or duplicate partial capability SKIP: " + line)
+            continue
+        seen.add(match[1])
+        records.append(
+            {
+                "operator": "matmul",
+                "case": match[1],
+                "reason": "DNN_FP8_UNAVAILABLE",
+            }
+        )
+    return records, errors
 
 
 def postprocess_result(
@@ -483,6 +512,31 @@ def postprocess_result(
     records: dict[str, dict[str, Any]],
     manifest_operators: list[str],
 ) -> None:
+    if ctest_reported_status == "skipped" and operator in UNSUPPORTED_OPERATORS:
+        expected = f"DNN_CAPABILITY_UNAVAILABLE: iluvatar: {operator} reason=DNN_API_UNAVAILABLE"
+        lines = [
+            re.sub(r"^\s*\d+:\s?", "", line).strip() for line in output.splitlines()
+        ]
+        if expected in lines:
+            result["capability_skip"] = {
+                "reason": "DNN_API_UNAVAILABLE",
+                "operator": operator,
+            }
+            result["case_accounting"] = {
+                "status": "SKIP",
+                "cases": 0,
+                "production_executed": 0,
+                "reference_executed": 0,
+                "reference_skipped": 0,
+                "comparable_executed": 0,
+            }
+            return
+    partial_skips, partial_errors = partial_capability_skips(output, operator)
+    if partial_skips:
+        result["partial_capability_skips"] = partial_skips
+    if partial_errors:
+        result["skip_record_errors"] = partial_errors
+        result["status"] = "failed"
     skip_records = corex_cudnn_skip_records(output)
     if skip_records:
         result["skip_records"] = skip_records
@@ -491,7 +545,7 @@ def postprocess_result(
             skip_records, operator, manifest_operators
         )
         if skip_errors:
-            result["skip_record_errors"] = skip_errors
+            result.setdefault("skip_record_errors", []).extend(skip_errors)
             result["status"] = "failed"
     if suite == "benchmark" and result["status"] == "passed":
         pair_errors = validate_iluvatar_benchmark_pairs(
@@ -543,13 +597,13 @@ def _cache_summary_and_cleanup(state: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(cache_value, str) or not cache_value:
         raise RuntimeError("Iluvatar adapter state has no run cache path")
     cache_path = Path(cache_value).resolve()
+    if state.get("cache_owned") is False:
+        return {"path": str(cache_path), "preserved": True}
     temporary_root = Path(tempfile.gettempdir()).resolve()
     if cache_path.parent != temporary_root or not cache_path.name.startswith(
         "flagdnn-iluvatar-run-"
     ):
-        raise RuntimeError(
-            f"Iluvatar adapter refuses unsafe cache path: {cache_path}"
-        )
+        raise RuntimeError(f"Iluvatar adapter refuses unsafe cache path: {cache_path}")
     preserved = bool(state.get("cache_preserved", False))
     summary = {"path": str(cache_path), "preserved": preserved}
     if not preserved:
@@ -579,9 +633,13 @@ def finalize(
     comparable_executed = 0
     benchmark_reference_skipped = 0
     skip_reasons: dict[str, int] = {}
+    partial_capability_counts = {"functional": 0, "benchmark": 0}
 
     for operator_results in results.values():
         for suite_name, result in operator_results.items():
+            partial_capability_counts[suite_name] += len(
+                result.get("partial_capability_skips", [])
+            )
             records = result.get("records", {})
             if result.get("status") == "passed" and isinstance(records, dict):
                 complete_pairs += sum(
@@ -604,15 +662,11 @@ def finalize(
                 functional_cases += int(accounting["cases"])
                 production_executed += int(accounting["production_executed"])
                 reference_executed += int(accounting["reference_executed"])
-                functional_reference_skipped += int(
-                    accounting["reference_skipped"]
-                )
+                functional_reference_skipped += int(accounting["reference_skipped"])
             elif suite_name == "benchmark":
                 benchmark_cases += int(accounting["cases"])
                 comparable_executed += int(accounting["comparable_executed"])
-                benchmark_reference_skipped += int(
-                    accounting["reference_skipped"]
-                )
+                benchmark_reference_skipped += int(accounting["reference_skipped"])
 
     performance = (
         iluvatar_speedup_summary(results, min_speedup)
@@ -628,9 +682,7 @@ def finalize(
             "required_case_count": comparable_executed,
             "observed_pair_case_count": complete_pairs,
             "missing_case_count": missing_pairs,
-            "verified": (
-                performance["coverage_gate_passed"] and missing_pairs == 0
-            ),
+            "verified": (performance["coverage_gate_passed"] and missing_pairs == 0),
         }
         if not comparable_coverage["verified"]:
             print(
@@ -666,6 +718,7 @@ def finalize(
         failed = failed or not performance["gate_passed"]
 
     iluvatar_coverage = {
+        "partial_capability_skipped": partial_capability_counts,
         "production": {
             "functional_cases": functional_cases,
             "functional_executed": production_executed,

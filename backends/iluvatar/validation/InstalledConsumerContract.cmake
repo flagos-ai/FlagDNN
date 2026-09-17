@@ -139,9 +139,9 @@ set(_installed_compiler
 set(_installed_provider
   "${_sdk}/share/flagdnn/backends/iluvatar/compiler.py")
 set(_installed_identity
-  "${_sdk}/share/flagdnn/backends/iluvatar/compiler_identity.py")
+  "${_sdk}/share/flagdnn/backends/iluvatar/codegen/identity.py")
 set(_installed_environment
-  "${_sdk}/share/flagdnn/backends/iluvatar/python_environment_identity.py")
+  "${_sdk}/share/flagdnn/backends/iluvatar/codegen/environment.py")
 set(_installed_platform_registry
   "${_sdk}/share/flagdnn/backends/iluvatar/kernels/registry.json")
 set(_installed_common_registry
@@ -166,6 +166,9 @@ foreach(_required IN ITEMS
     "${_installed_compiler}"
     "${_installed_provider}"
     "${_installed_identity}"
+    "${_sdk}/share/flagdnn/backends/iluvatar/codegen/emit.py"
+    "${_sdk}/share/flagdnn/backends/iluvatar/dispatch/extended.py"
+    "${_sdk}/share/flagdnn/backends/iluvatar/kernels/random.py"
     "${_installed_environment}"
     "${_installed_platform_registry}"
     "${_installed_common_registry}"
@@ -247,6 +250,9 @@ foreach(_identity_resource IN ITEMS
     "${_installed_compiler}"
     "${_installed_provider}"
     "${_installed_identity}"
+    "${_sdk}/share/flagdnn/backends/iluvatar/codegen/emit.py"
+    "${_sdk}/share/flagdnn/backends/iluvatar/dispatch/extended.py"
+    "${_sdk}/share/flagdnn/backends/iluvatar/kernels/random.py"
     "${_installed_environment}"
     "${_installed_platform_registry}"
     "${_installed_common_registry}"

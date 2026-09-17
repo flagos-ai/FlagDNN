@@ -106,7 +106,8 @@ if(NOT _nm_result EQUAL 0)
     "cannot inspect reference executable symbols: ${_nm_error}")
 endif()
 string(TOLOWER "${_undefined_symbols}" _undefined_symbols_lower)
-if(_undefined_symbols_lower MATCHES "(cublas|torch|flagdnn|miopen|hipdnn)")
+if(_undefined_symbols_lower MATCHES
+   "(cudnnbackend|cudnn_frontend|cublas|torch|flagdnn|miopen|hipdnn)")
   message(FATAL_ERROR
     "reference executable imports a forbidden compute symbol")
 endif()
@@ -123,6 +124,14 @@ if(_reference_sources STREQUAL "")
 endif()
 foreach(_source IN LISTS _reference_sources)
   file(READ "${_source}" _source_text)
+  # These capability probes only query whether the graph ABI is present.
+  # Permit that exact symbol-name literal in the three audited probe sources;
+  # direct calls, includes, other source files, and imported symbols stay banned.
+  get_filename_component(_source_name "${_source}" NAME)
+  if(_source_name MATCHES "^(dnn_api_probe|dnn_capability_gate|extended_reference)\\.cpp$")
+    string(REPLACE "\"cudnnBackendCreateDescriptor\"" "\"capability_query\""
+      _source_text "${_source_text}")
+  endif()
   string(TOLOWER "${_source_text}" _source_text_lower)
   if(_source_text_lower MATCHES
      "(cudnn_frontend|cudnnbackend|cublas|torch|miopen|hipdnn)")

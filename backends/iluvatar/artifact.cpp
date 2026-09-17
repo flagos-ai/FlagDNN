@@ -121,14 +121,14 @@ std::string read_text_file(const std::filesystem::path &path,
 }
 
 std::size_t element_size(std::string_view data_type) {
-  if (data_type == "float32") {
+  if (data_type == "float32" || data_type == "int32") {
     return 4;
   }
   if (data_type == "float16" || data_type == "bfloat16") {
     return 2;
   }
   if (data_type == "boolean" || data_type == "fp8_e4m3" ||
-      data_type == "fp8_e5m2") {
+      data_type == "fp8_e5m2" || data_type == "fp8_e8m0") {
     return 1;
   }
   artifact_error("artifact tensor data type is invalid");

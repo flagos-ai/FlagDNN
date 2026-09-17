@@ -26,23 +26,23 @@ struct Evidence {
 
 std::string data_type_token(flagdnnDataType_t data_type) {
   switch (data_type) {
-    case FLAGDNN_DATA_INT32:
-      return "int32";
+  case FLAGDNN_DATA_INT32:
+    return "int32";
 
-    case FLAGDNN_DATA_FP8_E8M0:
-      return "fp8_e8m0";
-    case FLAGDNN_DATA_FLOAT32:
-      return "fp32";
-    case FLAGDNN_DATA_FLOAT16:
-      return "fp16";
-    case FLAGDNN_DATA_BFLOAT16:
-      return "bfloat16";
-    case FLAGDNN_DATA_BOOLEAN:
-      return "bool";
-    case FLAGDNN_DATA_FP8_E4M3:
-      return "fp8_e4m3";
-    case FLAGDNN_DATA_FP8_E5M2:
-      return "fp8_e5m2";
+  case FLAGDNN_DATA_FP8_E8M0:
+    return "fp8_e8m0";
+  case FLAGDNN_DATA_FLOAT32:
+    return "fp32";
+  case FLAGDNN_DATA_FLOAT16:
+    return "fp16";
+  case FLAGDNN_DATA_BFLOAT16:
+    return "bfloat16";
+  case FLAGDNN_DATA_BOOLEAN:
+    return "bool";
+  case FLAGDNN_DATA_FP8_E4M3:
+    return "fp8_e4m3";
+  case FLAGDNN_DATA_FP8_E5M2:
+    return "fp8_e5m2";
   }
   throw std::invalid_argument("unknown benchmark data type");
 }
@@ -145,9 +145,27 @@ benchmark_capability_from_catalog(const CorexCudnnCapabilityCatalog &catalog,
     throw std::runtime_error("CoreX cuDNN catalog has no benchmark operator " +
                              std::string(operation));
   }
+  if (specification.name.ends_with("_shared")) {
+    const auto name =
+        specification.name.substr(0, specification.name.size() - 7);
+    const auto exact = operation_iterator->second.find(name);
+    if (exact == operation_iterator->second.end())
+      throw std::runtime_error(
+          "shared benchmark has no exact functional evidence: " + name);
+    return finish({{exact->first, &exact->second}}, operation);
+  }
   std::vector<Evidence> evidence;
   evidence.reserve(operation_iterator->second.size());
   for (const auto &[case_name, record] : operation_iterator->second) {
+    // Default benchmark groups use same-dtype IEEE semantics. The extra
+    // precision/output groups are resolved against exact shared cases above.
+    if (((operation == "relu_backward" || operation == "elu_backward" ||
+          operation == "leaky_relu_backward") &&
+         case_name.find("_attributes_") != std::string::npos) ||
+        case_name.ends_with("_tf32") ||
+        (operation == "reduction" &&
+         case_name.find("_to_fp32_") != std::string::npos))
+      continue;
     evidence.push_back({case_name, &record});
   }
   if (const auto capability = uniform_capability(evidence);
@@ -163,7 +181,8 @@ benchmark_capability_from_catalog(const CorexCudnnCapabilityCatalog &catalog,
   retain(
       evidence,
       [&](const Evidence &item) {
-        return contains_token(item.case_name, dtype);
+        return contains_token(item.case_name, dtype) ||
+               (dtype == "bfloat16" && contains_token(item.case_name, "bf16"));
       },
       operation, dtype);
   if (const auto capability = uniform_capability(evidence);
@@ -213,6 +232,18 @@ benchmark_capability_from_catalog(const CorexCudnnCapabilityCatalog &catalog,
           return item.case_name.starts_with(prefix);
         },
         operation, prefix);
+    if (rank == 1 && specification.operation == Operation::kConvolutionFprop &&
+        !uniform_capability(evidence).has_value()) {
+      const bool asymmetric = specification.convolution.pre_padding !=
+                              specification.convolution.post_padding;
+      retain(
+          evidence,
+          [asymmetric](const Evidence &item) {
+            return asymmetric == (item.case_name.find("_asymmetric_") !=
+                                  std::string_view::npos);
+          },
+          operation, asymmetric ? "asymmetric_padding" : "symmetric_padding");
+    }
     if (specification.operation == Operation::kConvolutionDgrad ||
         specification.operation == Operation::kConvolutionWgrad) {
       const bool convolution =
@@ -226,6 +257,21 @@ benchmark_capability_from_catalog(const CorexCudnnCapabilityCatalog &catalog,
             return convolution == named_convolution;
           },
           operation, convolution ? "convolution" : "cross_correlation");
+    }
+    if (specification.operation == Operation::kConvolutionWgrad &&
+        !uniform_capability(evidence).has_value()) {
+      const auto &input = specification.tensors.front();
+      const bool channels_last = input.strides[1] == 1;
+      retain(
+          evidence,
+          [channels_last](const Evidence &item) {
+            const bool named_channels_last =
+                item.case_name.find("_nwc_") != std::string_view::npos ||
+                item.case_name.find("_nhwc_") != std::string_view::npos ||
+                item.case_name.find("_ndhwc_") != std::string_view::npos;
+            return channels_last == named_channels_last;
+          },
+          operation, channels_last ? "channels_last" : "contiguous");
     }
     break;
   }

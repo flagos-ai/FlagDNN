@@ -72,6 +72,29 @@ void run_capability_contract() {
   using namespace flagdnn::benchmarking;
   CorexCudnnProvider provider;
 
+  // The qualified INT8 ADD/MUL/MAX compositions implement boolean inputs.
+  // Floating-input truth conversion still has no matching DNN contract.
+  const auto boolean_only = [](const BenchmarkCase &test_case) {
+    if (test_case.tensors.front().data_type == FLAGDNN_DATA_BOOLEAN)
+      return std::pair<bool, std::string_view>{true, {}};
+    return std::pair<bool, std::string_view>{false, "DTYPE_UNSUPPORTED"};
+  };
+  check_cases(provider,
+              binary_pointwise_benchmark_cases(FLAGDNN_POINTWISE_LOGICAL_AND,
+                                               "logical_and",
+                                               InputDomain::kLogical),
+              boolean_only);
+  check_cases(provider,
+              binary_pointwise_benchmark_cases(FLAGDNN_POINTWISE_LOGICAL_OR,
+                                               "logical_or",
+                                               InputDomain::kLogical),
+              boolean_only);
+  check_cases(provider,
+              unary_pointwise_benchmark_cases(FLAGDNN_POINTWISE_LOGICAL_NOT,
+                                              "logical_not",
+                                              InputDomain::kLogical),
+              boolean_only);
+
   check_cases(provider, batchnorm_benchmark_cases(), fp32_only);
   check_cases(provider, batchnorm_inference_benchmark_cases(),
               [](const BenchmarkCase &) {
@@ -79,10 +102,20 @@ void run_capability_contract() {
               });
   check_cases(provider, reduction_benchmark_cases(), vendor_rejects_bfloat16);
   check_cases(provider, conv_dgrad_benchmark_cases(), vendor_rejects_bfloat16);
-  check_cases(provider, conv_wgrad_benchmark_cases(), vendor_rejects_bfloat16);
+  check_cases(provider, conv_wgrad_benchmark_cases(),
+              [](const BenchmarkCase &test_case) {
+                // New shared channels-last BF16 cases execute successfully.
+                if (test_case.tensors.front().strides[1] == 1)
+                  return std::pair<bool, std::string_view>{true, {}};
+                return vendor_rejects_bfloat16(test_case);
+              });
   check_cases(
       provider, conv_fprop_benchmark_cases(),
       [](const BenchmarkCase &test_case) {
+        if (test_case.convolution.spatial_rank == 1 &&
+            test_case.convolution.pre_padding !=
+                test_case.convolution.post_padding)
+          return std::pair<bool, std::string_view>{false, "SEMANTIC_MISMATCH"};
         if (test_case.tensors.front().data_type == FLAGDNN_DATA_BFLOAT16 &&
             test_case.convolution.spatial_rank == 1) {
           return std::pair<bool, std::string_view>{false, "DTYPE_UNSUPPORTED"};
