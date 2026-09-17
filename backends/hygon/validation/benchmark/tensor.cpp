@@ -92,6 +92,13 @@ ProviderCapability tensor_capability(const BenchmarkCase &specification) {
     throw std::invalid_argument(
         "Hygon tensor benchmark adapter requires exactly one output");
   }
+  if (specification.operation == Operation::kReduction &&
+      specification.tensors.front().data_type !=
+          output_tensor(specification).data_type) {
+    return ProviderCapability::unsupported(
+        "The validated hipDNN reduction reference requires matching "
+        "input/output data types");
+  }
   const hv::HipdnnCapability result = hv::hipdnn_tensor_capability(
       operation(specification), tensor_diagnostic_tensors(specification));
   hv::require_valid_hipdnn_adapter_contract(

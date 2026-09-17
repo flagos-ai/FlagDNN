@@ -325,6 +325,21 @@ structural_capability(const HipdnnTensorOperation &operation,
       return HipdnnCapability::vendor_unsupported(
           "slice positive-step input view is not representable exactly");
     }
+    // DTK hipDNN merges adjacent dimensions using an integer stride ratio.
+    // For a [3, 3] view with strides [7, 2], it reads the second row at
+    // offset 6 instead of 7. Equivalent padded descriptors have the same
+    // failure. Keep these views outside the exact-reference capability.
+    for (std::size_t axis = 1; axis < rank; ++axis) {
+      const std::int64_t outer_stride = effective.strides[axis - 1];
+      const std::int64_t inner_stride = effective.strides[axis];
+      if (effective.dimensions[axis - 1] > 1 &&
+          outer_stride / inner_stride == effective.dimensions[axis] &&
+          outer_stride % inner_stride != 0) {
+        return HipdnnCapability::vendor_unsupported(
+            "hipdnnTransformTensor slice cannot preserve non-integral "
+            "packed stride ratios on the validated DTK stack");
+      }
+    }
     return {};
   }
 

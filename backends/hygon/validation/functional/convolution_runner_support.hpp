@@ -7,6 +7,8 @@
 #include "common/convolution.hpp"
 #include "convolution_reference.hpp"
 #include "hip_driver.hpp"
+#include "host_runner.hpp"
+#include "reference/cpu/matrix.hpp"
 #include "tensor_io.hpp"
 
 #include <flagdnn/flagdnn.hpp>
@@ -331,6 +333,85 @@ inline void emit_skip(std::string_view operation, std::string_view case_name,
 
 enum class CaseResult { kExecuted, kSkipped };
 
+inline reference::cpu::ConvolutionParameters
+cpu_parameters(const ConvolutionTestCase &c) {
+  using Direction = reference::cpu::ConvolutionDirection;
+  return {c.x.dimensions,
+          c.w.dimensions,
+          c.y.dimensions,
+          c.stride,
+          c.pre_padding,
+          c.dilation,
+          c.direction == ConvolutionDirection::kFprop ? Direction::kForward
+          : c.direction == ConvolutionDirection::kDgrad
+              ? Direction::kInputGradient
+              : Direction::kWeightGradient,
+          c.groups,
+          c.input_precision,
+          c.mode == ConvolutionMode::kConvolution};
+}
+inline reference::cpu::ConvolutionParameters
+cpu_parameters(const ConvBiasReluTestCase &c) {
+  return {c.x.dimensions,
+          c.w.dimensions,
+          c.output.dimensions,
+          c.stride,
+          c.padding,
+          c.dilation,
+          reference::cpu::ConvolutionDirection::kForward,
+          1,
+          0,
+          false};
+}
+template <class Case>
+CaseResult
+run_host_convolution(const Case &c,
+                     const std::function<flagdnn::Handle &()> &handle,
+                     hv::Stream &stream) {
+  namespace host = hygon_functional::host;
+  const auto all = semantic_tensors(c);
+  const auto output = output_tensor(c);
+  std::vector<TestTensor> inputs;
+  host::Values values;
+  for (std::size_t i = 0; i < all.size(); ++i)
+    if (all[i].uid != output.uid) {
+      inputs.push_back(all[i]);
+      values.push_back(make_input(io::element_count(all[i]), i));
+    }
+  host::run_case(
+      c.name, inputs, std::vector<TestTensor>{output}, values, handle, stream,
+      [&](flagdnn::Handle &h) { return build_flagdnn(h, c); },
+      [&](const host::Values &v) {
+        host::Values semantic;
+        std::size_t next = 0;
+        for (const auto &t : all)
+          semantic.push_back(t.uid == output.uid
+                                 ? std::vector<float>(io::element_count(t), 0)
+                                 : v[next++]);
+        auto result =
+            reference::cpu::evaluate_convolution(cpu_parameters(c), semantic);
+        if constexpr (requires { c.bias; }) {
+          // The frontend graph materializes its convolution and bias-add
+          // tensors in output storage precision before the following pointwise
+          // node.
+          result = io::decode(io::encode(result, output.data_type),
+                              output.data_type, result.size());
+          for (std::size_t i = 0; i < result.size(); ++i)
+            result[i] +=
+                semantic[3][(i / (result.size() / output.dimensions[0] /
+                                  output.dimensions[1])) %
+                            output.dimensions[1]];
+          result = io::decode(io::encode(result, output.data_type),
+                              output.data_type, result.size());
+          for (auto &x : result)
+            x = std::max(x, 0.0F);
+        }
+        return host::Values{result};
+      },
+      c.absolute_tolerance, c.relative_tolerance);
+  return CaseResult::kExecuted;
+}
+
 template <typename Case>
 CaseResult run_case(const Case &test_case,
                     const std::function<flagdnn::Handle &()> &get_handle,
@@ -339,6 +420,14 @@ CaseResult run_case(const Case &test_case,
   const std::vector<TestTensor> tensors = semantic_tensors(test_case);
   const std::vector<hv::ReferenceTensor> references =
       reference_tensors(tensors);
+  if constexpr (requires { test_case.input_precision; }) {
+    if (test_case.input_precision == 2) {
+      emit_skip(operation_name(test_case), test_case.name,
+                "Hygon implements IEEE dot products; TF32 is unsupported",
+                references);
+      return CaseResult::kSkipped;
+    }
+  }
   const hv::HipdnnConvolutionOperation operation =
       reference_operation(test_case);
   const hv::HipdnnCapability structural =
@@ -346,9 +435,7 @@ CaseResult run_case(const Case &test_case,
   hv::require_valid_hipdnn_adapter_contract(structural,
                                             operation_name(test_case));
   if (!structural.supported) {
-    emit_skip(operation_name(test_case), test_case.name, structural.reason,
-              references);
-    return CaseResult::kSkipped;
+    return run_host_convolution(test_case, get_handle, stream);
   }
 
   hv::HipdnnConvolutionPlan reference(
@@ -357,9 +444,7 @@ CaseResult run_case(const Case &test_case,
   const hv::HipdnnCapability setup = reference.capability();
   hv::require_valid_hipdnn_adapter_contract(setup, operation_name(test_case));
   if (!setup.supported) {
-    emit_skip(operation_name(test_case), test_case.name, setup.reason,
-              references);
-    return CaseResult::kSkipped;
+    return run_host_convolution(test_case, get_handle, stream);
   }
 
   PreparedBuffers reference_buffers =
@@ -372,9 +457,7 @@ CaseResult run_case(const Case &test_case,
       reference.workspace_size(), stream.opaque());
   hv::require_valid_hipdnn_adapter_contract(actual, operation_name(test_case));
   if (!actual.supported) {
-    emit_skip(operation_name(test_case), test_case.name, actual.reason,
-              references);
-    return CaseResult::kSkipped;
+    return run_host_convolution(test_case, get_handle, stream);
   }
   const std::string_view selected_algorithm =
       reference.selected_algorithm_name();

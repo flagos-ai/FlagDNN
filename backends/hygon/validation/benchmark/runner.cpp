@@ -1,6 +1,8 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
 #include "common/runner.hpp"
+#include "cases.hpp"
+#include "native.hpp"
 
 #include "benchmark_phase.hpp"
 #include "common/flagdnn_provider.hpp"
@@ -481,7 +483,9 @@ static_assert(
 CaseResult
 run_case(const BenchmarkCase &specification, HipdnnProvider &hipdnn_provider,
          const std::function<FlagdnnProvider &()> &get_flagdnn_provider,
-         hv::Stream &stream) {
+         hv::Stream &stream,
+         const std::function<std::unique_ptr<BenchmarkExecutable>(
+             const BenchmarkCase&)>& native_builder) {
   const std::vector<hv::ReferenceTensor> diagnostics =
       hipdnn_provider.diagnostic_tensors(specification);
   const ProviderCapability capability =
@@ -544,7 +548,8 @@ run_case(const BenchmarkCase &specification, HipdnnProvider &hipdnn_provider,
   FlagdnnProvider &flagdnn_provider = get_flagdnn_provider();
   flagdnn_provider.set_autotune(true);
   std::unique_ptr<BenchmarkExecutable> flagdnn =
-      flagdnn_provider.build(specification);
+      native_builder ? native_builder(specification)
+                     : flagdnn_provider.build(specification);
   PreparedBuffers flagdnn_buffers = run_benchmark_phase(
       BenchmarkProviderKind::kFlagdnn, BenchmarkPhase::kProbe, [&] {
         return prepare_buffers(specification.tensors, inputs, logical_inputs,
@@ -859,9 +864,10 @@ run_case(const BenchmarkCase &specification, HipdnnProvider &hipdnn_provider,
 
 } // namespace
 
-int run_benchmark_suite(int argc, char **argv,
+int run_hygon_benchmark_suite(int argc, char **argv,
                         std::span<const BenchmarkCase> cases,
-                        std::string_view suite_name) {
+                        std::string_view suite_name,
+                        const NativeBuilder& builder) {
   if (argc != 3) {
     std::cerr << "usage: " << suite_name
               << " COMPILER_EXECUTABLE COMPILER_ENTRY" << std::endl;
@@ -885,6 +891,11 @@ int run_benchmark_suite(int argc, char **argv,
       return *flagdnn_provider;
     };
 
+    std::function<std::unique_ptr<BenchmarkExecutable>(const BenchmarkCase&)> native_builder;
+    if (builder) native_builder = [&](const BenchmarkCase& specification) {
+      (void)get_flagdnn_provider();
+      return builder(*handle, specification);
+    };
     const char *case_filter = std::getenv("FLAGDNN_BENCHMARK_CASE");
     std::size_t matched = 0;
     std::size_t executed = 0;
@@ -896,7 +907,7 @@ int run_benchmark_suite(int argc, char **argv,
       }
       ++matched;
       const CaseResult result = run_case(specification, hipdnn_provider,
-                                         get_flagdnn_provider, stream);
+                                         get_flagdnn_provider, stream, native_builder);
       if (result == CaseResult::kExecuted) {
         ++executed;
       } else {
@@ -915,6 +926,12 @@ int run_benchmark_suite(int argc, char **argv,
     std::cerr << suite_name << "_FAILED: " << error.what() << std::endl;
     return 1;
   }
+}
+
+int run_benchmark_suite(int argc, char** argv,
+    std::span<const BenchmarkCase> cases, std::string_view suite_name) {
+  const auto selected = aligned_benchmark_cases(cases);
+  return run_hygon_benchmark_suite(argc, argv, selected, suite_name);
 }
 
 } // namespace flagdnn::benchmarking

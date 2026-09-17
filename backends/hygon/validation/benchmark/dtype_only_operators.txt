@@ -1,0 +1,4 @@
+logical_not
+reshape
+slice
+transpose

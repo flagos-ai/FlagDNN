@@ -28,16 +28,54 @@ FUNCTIONAL_ACCOUNTING_MARKER_OVERRIDES = {
     "conv_wgrad": "CONVOLUTION",
 }
 
-DEFAULT_TIMEOUT = 1800
+# Allow complete dtype/shape corpora and precision sub-suites with cold caches.
+DEFAULT_TIMEOUT = 21600
 REPORT_DEVICE = "cuda"
 PREFLIGHT_BY_DEFAULT = True
 SUPPORTS_MIN_SPEEDUP = True
 FILTER_REGISTERED_TESTS = False
 
 
+def select_operator_manifests(
+    manifests: dict[str, list[str]]
+) -> dict[str, list[str]]:
+    additional = (
+        (Path(__file__).parent / "benchmark" / "additional_operators.txt")
+        .read_text()
+        .split()
+    )
+    if set(additional) - set(manifests["functional"]) or len(
+        set(additional)
+    ) != len(additional):
+        raise ValueError("Invalid Hygon additional benchmark operators")
+    return {
+        **manifests,
+        "benchmark": list(dict.fromkeys(manifests["benchmark"] + additional)),
+    }
+
+
+def test_expression(suite: str, operator: str) -> str | None:
+    if suite == "functional" and operator in {
+        "matmul",
+        "conv_fprop",
+        "conv_dgrad",
+        "conv_wgrad",
+    }:
+        suffix = "ieee|tf32|fp8" if operator == "matmul" else "ieee|tf32"
+        return rf"^functional\.hygon\.{operator}(\.({suffix}))?$"
+    if suite == "benchmark":
+        return (
+            rf"^benchmark\.hygon\.{re.escape(operator)}"
+            r"(\.(boolean|copy|ieee|tf32|fp32_output|fp8))?$"
+        )
+    return None
+
+
 def configure_environment(
     environment: dict[str, str], device: str | None
 ) -> None:
+    environment.pop("FLAGDNN_INPUT_PRECISION", None)
+    environment.pop("FLAGDNN_FP8_MATMUL_API", None)
     for variable in tuple(environment):
         if CASE_FILTER_PATTERN.fullmatch(variable) is not None:
             environment.pop(variable, None)
@@ -87,6 +125,8 @@ def convolution_case_operator(case: str) -> str | None:
 def benchmark_case_operator(
     case: str, manifest_operators: list[str]
 ) -> str | None:
+    if case.startswith("matmul_mxfp8_") and "matmul_fp8" in manifest_operators:
+        return "matmul_fp8"
     matches = [
         candidate
         for candidate in dict.fromkeys(manifest_operators)
@@ -410,6 +450,7 @@ def validate_hygon_case_accounting(
     skip_records: list[dict[str, str]],
 ) -> list[str]:
     marker_records: list[tuple[str, str]] = []
+    marker_test_ids: list[str | None] = []
     marker_pattern = re.compile(
         r"^(FLAGDNN_[A-Z0-9_]+_(?:FUNCTIONAL|BENCHMARK)):\s*(.*)$"
     )
@@ -422,61 +463,78 @@ def validate_hygon_case_accounting(
         match = marker_pattern.fullmatch(line)
         if match is not None:
             marker_records.append((match.group(1), match.group(2)))
+            prefix = re.match(r"^\s*(\d+):", raw_line)
+            marker_test_ids.append(prefix.group(1) if prefix else None)
     marker_operator = operator.upper()
     if suite == "functional":
         marker_operator = FUNCTIONAL_ACCOUNTING_MARKER_OVERRIDES.get(
             operator, marker_operator
         )
     expected_marker = f"FLAGDNN_{marker_operator}_{suite.upper()}"
-    if len(marker_records) != 1:
-        found_markers = [record[0] for record in marker_records]
+    if not marker_records:
         return [
-            f"Hygon {suite} suite for op={operator} must emit exactly one "
-            f"{expected_marker} case accounting record; found "
-            f"{len(marker_records)} markers={found_markers}"
+            f"Hygon {suite} suite omitted {expected_marker} case accounting"
         ]
-    marker, accounting = marker_records[0]
     errors: list[str] = []
-    if marker != expected_marker:
-        errors.append(
-            f"Hygon suite accounting marker={marker}; "
-            f"expected {expected_marker}"
-        )
-    match = accounting_pattern.fullmatch(accounting)
-    if match is None:
-        errors.append(
-            f"Hygon suite accounting payload for marker={marker} is malformed"
-        )
-        return errors
-    reported = match.group(1)
-    matched = int(match.group(2)) if match.group(2) is not None else None
-    executed = int(match.group(3))
-    skipped = int(match.group(4))
-    expected_reported = (
-        "SKIP" if ctest_reported_status == "skipped" else "PASS"
+    finished = re.findall(
+        r"^\s*\d+/\d+\s+Test\s+#(\d+):\s+"
+        + re.escape(f"{suite}.hygon.{operator}")
+        + r"(?:\.[a-z0-9_]+)?\s+\.*\s*(?:\*\*\*)?(Passed|Skipped)\s",
+        output,
+        re.MULTILINE,
     )
-    if reported != expected_reported:
-        errors.append(
-            f"Hygon suite accounting status={reported}; "
-            f"CTest status requires {expected_reported}"
-        )
-    if matched is None:
-        errors.append(f"Hygon {suite} accounting omitted cases=<count>")
-    else:
-        if matched <= 0:
-            errors.append("Hygon suite accounting cases must be positive")
-        if matched != executed + skipped:
+    if finished:
+        statuses = dict(finished)
+        if len(marker_test_ids) != len(statuses) or set(
+            marker_test_ids
+        ) != set(statuses):
             errors.append(
-                f"Hygon suite cases={matched} but executed+skipped="
-                f"{executed + skipped}"
+                "Hygon must emit one accounting marker per CTest child"
             )
-    if reported == "PASS" and executed <= 0:
-        errors.append("Hygon PASS suite must execute at least one case")
-    if reported == "SKIP" and (
-        executed != 0 or matched is None or skipped != matched
-    ):
+        for test_id, (_, payload) in zip(marker_test_ids, marker_records):
+            expected = "PASS" if statuses.get(test_id) == "Passed" else "SKIP"
+            if test_id in statuses and not payload.startswith(expected + " "):
+                errors.append(
+                    f"Hygon accounting disagrees with CTest child #{test_id}"
+                )
+    executed = skipped = 0
+    for marker, accounting in marker_records:
+        if marker != expected_marker:
+            errors.append(
+                f"Hygon suite accounting marker={marker}; "
+                f"expected {expected_marker}"
+            )
+        match = accounting_pattern.fullmatch(accounting)
+        if match is None:
+            errors.append(
+                f"Hygon suite accounting payload for marker={marker} "
+                "is malformed"
+            )
+            continue
+        reported = match.group(1)
+        matched = int(match.group(2)) if match.group(2) is not None else None
+        group_executed, group_skipped = int(match.group(3)), int(
+            match.group(4)
+        )
+        executed += group_executed
+        skipped += group_skipped
+        if matched is None:
+            errors.append(f"Hygon {suite} accounting omitted cases=<count>")
+        elif matched <= 0 or matched != group_executed + group_skipped:
+            errors.append(
+                "Hygon suite cases must be positive and equal executed+skipped"
+            )
+        if reported == "PASS" and group_executed <= 0:
+            errors.append("Hygon PASS suite must execute at least one case")
+        if reported == "SKIP" and (
+            group_executed != 0 or matched is None or group_skipped != matched
+        ):
+            errors.append(
+                "Hygon SKIP suite must execute zero cases and skip every case"
+            )
+    if (ctest_reported_status == "passed") != (executed > 0):
         errors.append(
-            "Hygon SKIP suite must execute zero cases and skip every case"
+            "Hygon aggregate execution count disagrees with CTest status"
         )
     if len(skip_records) != skipped:
         errors.append(
@@ -583,6 +641,24 @@ def postprocess_result(
     records: dict[str, dict[str, Any]],
     manifest_operators: list[str],
 ) -> None:
+    # Common CTest parsing labels a group skipped when any child is skipped.
+    # Hygon allows explicit capability skips alongside measured child suites.
+    if ctest_reported_status == "skipped" and re.search(
+        r"FLAGDNN_[A-Z0-9_]+_(?:FUNCTIONAL|BENCHMARK): PASS cases=[1-9]",
+        output,
+    ):
+        ctest_reported_status = "passed"
+        errors = result.get("record_errors", [])
+        errors = [
+            error
+            for error in errors
+            if error != "skipped benchmark emitted timing provider records"
+        ]
+        if errors:
+            result["record_errors"] = errors
+        else:
+            result.pop("record_errors", None)
+            result["status"] = "passed"
     skip_records = hipdnn_skip_records(output)
     if skip_records:
         result["skip_records"] = skip_records

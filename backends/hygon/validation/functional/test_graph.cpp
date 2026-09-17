@@ -269,9 +269,11 @@ int main(int argc, char **argv) {
     hv::DeviceBuffer flagdnn_right(bytes);
     hv::DeviceBuffer flagdnn_output(bytes);
     hv::DeviceBuffer graph_workspace(static_cast<std::size_t>(workspace_size) +
-                                     1);
+                                     256);
+    // Public execution requires 256-byte alignment; the backend must still
+    // align this address to the larger virtual-tensor requirement.
     void *const deliberately_misaligned_workspace =
-        graph_workspace.opaque_at(1);
+        graph_workspace.opaque_at(256);
     if (reinterpret_cast<std::uintptr_t>(deliberately_misaligned_workspace) %
             static_cast<std::uintptr_t>(kVirtualAlignment) ==
         0) {

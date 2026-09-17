@@ -4,6 +4,12 @@
   "backend": "hygon",
   "kernels": [
     {
+      "operation": "rope_backward",
+      "provider": "hygon_triton",
+      "source": "position_embedding.py",
+      "functions": ["rope_kernel"]
+    },
+    {
       "operations": ["min", "max"],
       "provider": "hygon_triton",
       "source": "binary_minmax.py",

@@ -1,25 +1,81 @@
 # FlagDNN Hygon 全量适配与后续维护指南
 
+## 2026-09 架构更新
+
+Hygon 对照 NVIDIA 的 provider 分层，将原 `compiler.py`、`compiler_nn.py`、
+`compiler_tensor.py`、`compiler_identity.py` 拆分为以下结构。旧章节中的
+`compiler_nn` / `compiler_tensor` 指下述 dispatch 模块。
+
+```text
+backends/hygon/
+├── compiler.py                 # request/identity 协议、图验证和 program 装配
+├── dispatch/                   # 纯 Python 算子规划，不导入 Triton/Torch
+│   ├── common.py               # schema、目标、类型与基本检查
+│   ├── graph.py                # 算子族分发、图和内部 workspace 布局
+│   ├── tensor_metadata.py      # Graph tensor 解析、storage/stride 检查
+│   ├── pointwise.py            # pointwise schema、布局和参数选择
+│   ├── tensor.py               # layout/reduction/matmul 规划
+│   ├── nn.py / nn_common.py    # DNN 分发、stage/plan 数据结构
+│   ├── convolution.py          # Hygon 卷积与多阶段方案
+│   ├── normalization.py        # normalization 规划
+│   ├── attention.py            # attention 规划
+│   ├── extended.py / extended_schema.py  # 扩展算子分发和端口约束
+│   ├── index.py / statistics.py / random.py
+│   ├── position_embedding.py / resample.py / causal_convolution.py
+│   ├── normalization_extended.py / moe_matmul.py / fp8_matmul.py
+│   └── tuning.py               # 调优配置与 HCU LDS 候选过滤
+└── codegen/
+    ├── emit.py                 # registry source 到可执行 stage
+    ├── abi.py                  # 参数、signature、wave64 launch ABI
+    ├── pointwise.py            # Hygon FP32 compute source 特化
+    ├── io.py                   # 原子文件写入和生成模块载入
+    └── identity.py             # 编译资源、环境与 JIT 身份
+```
+
+依赖方向是 `compiler → codegen → dispatch`；dispatch 可以独立用于规划测试。
+全部 codegen/dispatch Python 文件参与 identity 哈希和 dependency snapshot，
+包目录变动也使缓存失效。CMake 同步安装两套包，安装态 consumer 使用安装树
+内的 provider、kernel、tuning 和私有 JIT 资源。Hygon 保留现有 artifact schema 5、
+wave64、严格 IEEE dot、私有卷积规划、workspace 和 JIT provenance 契约。
+
+公共执行接口现在要求 workspace 基址至少 256 字节对齐。Hygon 图测试仍验证
+更大的虚拟张量对齐，但传入地址也必须满足公共接口的 256 字节要求。
+
+当前算子支持范围以 [operator-support.md](operator-support.md) 的 Hygon 章节为准。
+下文 2026-08 的数量和 hipDNN 能力矩阵属于历史记录，不代表当前功能覆盖。
+
+新增算子族的 schema 和 launch 规划分别放在 `dispatch/extended_schema.py`、
+`dispatch/extended.py` 及对应 family 模块中；仍由 `codegen/emit.py` 生成
+现有 stage/artifact ABI。FP8 普通 matmul 保留 Graph operation 名称，只切换
+后端 kernel 选择；concatenate 拆为依赖有序的逐输入 copy stages。
+RoPE backward 注册 Hygon 私有 kernel：逻辑坐标保持 INT32，仅在存储地址
+计算时扩展为 INT64，规避当前 DTK 对部分旋转宽度下成对频率读取的错误编译。
+
+功能参考先按输入 dtype 量化数据。Hygon 默认 matmul 明确使用 IEEE 参考，
+避免继承公共 CPU oracle 的 NVIDIA 默认 TF32 策略。扩展算子采用 NV paired
+runner 的容差公式和重复执行检查；MoE 直接比较高精度 CPU 累加结果，避免
+先将参考输出降为 FP16/BF16 后产生额外舍入误差。
+
+
 > 适用环境：Hygon/DTK/HIP，当前目标架构为 `gfx936`
 >
 > 当前代码目录：`backends/hygon`
 >
-> 当前注册面：61 个 functional、57 个 benchmark。重新配置后
-> `build/hygon` 应由 `ctest -N` 列出 146 项；catalog listing 只证明注册
-> 结构，不代表其中任何测试已经执行或通过。
+> 2026-08 历史注册面：61 个 functional、57 个 benchmark、146 项 CTest。
+> 当前支持范围见上方链接的 operator-support.md。
 
 ## 1. 结论与不可破坏的边界
 
-Hygon 适配沿用 FlagDNN 已有的多平台架构：FlagDNN Frontend Graph API 是用户入口和被测接口，Hygon backend 独立完成 Graph IR 到 HCU Triton kernel 的编译和执行。validation 以 hipDNN classic primitive API 作为唯一 vendor 数值 reference；对明确列入 allowlist 的 `div`、`pow`、`mod`、`cmp_eq`，functional 使用平台无关 CPU semantic oracle，benchmark 仍因没有 hipDNN 精确 primitive 而 SKIP。
+Hygon 适配沿用 FlagDNN 已有的多平台架构：FlagDNN Frontend Graph API 是用户入口和被测接口，Hygon backend 独立完成 Graph IR 到 HCU Triton kernel 的编译和执行。validation 以 hipDNN classic primitive API 作为 vendor 数值 reference；缺少等价 primitive 的功能测试使用独立 CPU 数学参考，实际执行 Hygon kernel 并比较结果。CPU 参考仅用于功能测试，缺少等价 hipDNN 对照的性能测试仍 SKIP。
 
 必须同时遵守以下约束：
 
 1. `backends/hygon/**` 独立拥有 Hygon 的 artifact、backend、context、error、engine、compiler、tuning 和 validation 实现。
-2. 不修改、include、import、编译或链接 `backends/nvidia/**`。与 NVIDIA “架构一致”是指职责和 contract 对齐，不是复用 NVIDIA 私有源码。
+2. 生产代码与常规功能/性能测试不 include、import、编译或链接 `backends/nvidia/**`，也不修改 NVIDIA 源码。唯一例外是独立的 `integration.hygon.dtype_catalog` 元数据检查：直接编译 NVIDIA 原始用例选择器，以只记录 tensor 元数据的执行器替换实际运行，核对两端 shape/stride/dtype/offset；不调用 NVIDIA kernel，不依赖 CUDA/cuDNN。与 NVIDIA “架构一致”仍指生产职责和 contract 对齐。
 3. 不在公共 Graph、Graph IR、`src/graph/lowering`、`tests/common` 或 `benchmark/common` 中增加 Hygon 算子分支。
 4. production backend 不直接查找、链接或调用 hipDNN、MIOpen、hipBLAS、rocBLAS；hipDNN 只能出现在 `backends/hygon/validation/**`。
-5. hipDNN 是 validation 唯一允许的 vendor reference SDK；不得直接调用 MIOpen、BLAS 或自定义 device oracle，也不得用 FlagDNN 自身 kernel 充当 reference。仅 `reference/cpu` 中经评审的 allowlist 可以作为 functional host oracle。
-6. 除上述四个 CPU-oracle functional 算子外，hipDNN 无法精确表达某个 case 时必须结构化 SKIP。CPU oracle 不得用于 benchmark，也不能产出 latency 或 speedup。
+5. hipDNN 是 validation 唯一允许的 vendor reference SDK；不得直接调用 MIOpen、BLAS 或自定义 device oracle，也不得用 FlagDNN 自身 kernel 充当 reference。功能参考优先复用 `reference/cpu`；公共库缺少的逐元素公式、FP8 注意力公式及原始字节拷贝校验由 Hygon validation 自身维护。
+6. 没有 hipDNN 对照不代表算子无法适配。功能测试可走独立 CPU 参考；确实未实现的 dtype/precision 必须明确 SKIP。CPU oracle 不得用于 benchmark，也不能产出 latency 或 speedup。
 7. Hygon production 当前只支持 `libtriton_jit` execution engine；稳态执行必须使用调用者的 `hipStream_t`。
 
 主验证关系固定为：
@@ -31,16 +87,16 @@ Hygon 适配沿用 FlagDNN 已有的多平台架构：FlagDNN Frontend Graph API
         |
         +--> hipDNN primitive/sequence -------------------------> output B
         |                                                         |
-        +--> allowlisted CPU semantic oracle (functional only) -> output C
+        +--> independent CPU semantic oracle (functional only) -> output C
                                                                   |
                                                         stride-aware compare
 ```
 
-hipDNN 没有与 cuDNN Frontend Graph 对等的 Graph builder 不构成阻塞。一个 FlagDNN Graph 节点可以映射为一个 hipDNN primitive，也可以映射为严格等价的 primitive sequence；只有显式列入 CPU allowlist 的 functional 算子可改走 CPU semantic oracle，其余无法精确映射的 case 均 SKIP。
+hipDNN 没有与 cuDNN Frontend Graph 对等的 Graph builder 不构成阻塞。一个 FlagDNN Graph 节点可以映射为一个 hipDNN primitive，也可以映射为严格等价的 primitive sequence；functional 也可以使用独立 CPU semantic oracle；benchmark 缺少等价 hipDNN 对照时 SKIP。
 
 ## 2. 目录与职责对齐
 
-当前 Hygon 目录按 NVIDIA backend 的职责边界独立实现：
+下图记录 2026-08 拆分前的目录，用于理解后续历史章节；现行目录见文首：
 
 ```text
 backends/hygon/
@@ -99,7 +155,7 @@ reference/
     └── cpu_pointwise_reference.cpp   # div/pow/mod/cmp_eq 的 cuDNN 独立验证
 ```
 
-`reference/cpu` 不 include/link CUDA、cuDNN、HIP、hipDNN、MIOpen 或 BLAS；它只实现按右对齐规则广播的标量语义。`reference/tests` 在 NVIDIA 构建中使用 cuDNN Graph，分别对 `div`、`pow`、`mod`、`cmp_eq` 的相同形状、标量和多轴广播语义做独立验证。
+`reference/cpu` 不 include/link CUDA、cuDNN、HIP、hipDNN、MIOpen 或 BLAS；最初实现按右对齐规则广播的标量语义，当前还包含矩阵、卷积、归一化、注意力和其他扩展算子的数学参考。`reference/tests` 在 NVIDIA 构建中使用 cuDNN Graph，分别对 `div`、`pow`、`mod`、`cmp_eq` 的相同形状、标量和多轴广播语义做独立验证。
 
 允许复用的代码必须是真正的 platform-neutral contract 或 utility，例如：
 
@@ -109,11 +165,11 @@ reference/
 - common kernel registry 和 common Triton kernel；
 - `tests/common` 与 `benchmark/common` 的 case/runner contract。
 
-如果 Hygon 与 NVIDIA 后续出现可证明的公共逻辑，应先在独立变更中抽到中立目录，并为两个 backend 建立 no-regression 测试。不得从 Hygon 反向 include NVIDIA 文件，也不得为了 Hygon 修改 NVIDIA 私有实现。
+如果 Hygon 与 NVIDIA 后续出现可证明的公共逻辑，应先在独立变更中抽到中立目录，并为两个 backend 建立 no-regression 测试。除上述独立元数据检查外，Hygon 不反向依赖 NVIDIA 文件，也不为 Hygon 修改 NVIDIA 私有实现。
 
-## 3. 全量算子目录
+## 3. 2026-08 算子目录（历史记录）
 
-公共 manifest 定义 61 个 functional 和 57 个 benchmark。Hygon CMake 必须一一注册，不能通过漏注册隐藏 unsupported reference。
+当时公共 manifest 定义 61 个 functional 和 57 个 benchmark。Hygon CMake 必须一一注册，不能通过漏注册隐藏 unsupported reference。
 
 | Family | Functional | Benchmark | 说明 |
 |---|---:|---:|---|
@@ -367,9 +423,8 @@ lib/flagdnn/share/triton_jit/scripts/gen_ssig.py
 lib/flagdnn/share/triton_jit/scripts/flagdnn_python_environment_identity.py
 share/flagdnn/compiler/flagdnn_codegen/main.py
 share/flagdnn/backends/hygon/compiler.py
-share/flagdnn/backends/hygon/compiler_tensor.py
-share/flagdnn/backends/hygon/compiler_nn.py
-share/flagdnn/backends/hygon/compiler_identity.py
+share/flagdnn/backends/hygon/dispatch/*.py
+share/flagdnn/backends/hygon/codegen/*.py
 share/flagdnn/backends/hygon/python_environment_identity.py
 share/flagdnn/backends/hygon/flagdnn_hygon_compiler_environment.json
 share/flagdnn/backends/hygon/tuning/common.yaml
@@ -417,14 +472,14 @@ Hygon validation 的 vendor reference 只直接使用 HIP runtime 与 hipDNN pub
 - composite reference 使用多个 hipDNN primitive 和独立 reference workspace；
 - 不使用 hipDNN Graph API，也不假设它存在。
 
-`div`、`pow`、`mod`、`cmp_eq` 是唯一 CPU functional allowlist。该 allowlist 由 Hygon adapter 显式维护，与 `reference/cpu` 自身声明的实现能力分离，因此未来 CPU 库新增算子不会让 Hygon 测试静默改变 reference 路由。runner 先将与 DUT 完全相同、且已经过目标 dtype 量化的逻辑输入交给 `reference/cpu`，CPU 按右对齐 broadcasting 计算，再把期望输出量化到 DUT output dtype；只有该路径保存量化后的逻辑输入，普通 hipDNN 路径不承担额外的 host decode/gather。DUT 仍在 HCU 上真实构建和执行，并继续检查原始 strides、offset 与 padding sentinel。该路径不调用 hipDNN capability，也不进入任何 benchmark provider。对应 CTest 使用 `cpu-reference` 标签而非 `hipdnn`。
+`functional/host_runner.hpp` 管理独立 CPU 参考的输入量化、设备缓冲区、Graph 执行和比较；`host_pointwise.hpp` 与 `fp8_attention_reference.hpp` 实现公共库缺少的标量数学公式。其余算子优先调用 `reference/cpu`。期望值只能依赖输入与公开算子语义，不能读取 DUT 输出，也不能调用 DUT kernel。输入先按实际 dtype 量化，结果按输出 dtype 量化后比较；INT32 算术使用精确整数参考，identity/layout/concatenate 按原始字节比较，保留 NaN payload 和 signed zero。缓冲区检查同时覆盖输入不变性、非连续布局、binding offset 和输出 padding。
 
 functional case 有三种 reference 状态：
 
 | 状态 | 行为 |
 |---|---|
 | `HIPDNN_SUPPORTED` | 构建并执行 hipDNN primitive/sequence，再与 FlagDNN Graph 输出比较 |
-| `CPU_FUNCTIONAL_ORACLE` | 仅对四个 allowlist 算子计算 CPU 期望值，执行 FlagDNN Graph 后逐逻辑元素比较 |
+| `CPU_FUNCTIONAL_ORACLE` | 计算独立 CPU 期望值，执行 FlagDNN Graph 后逐逻辑元素比较 |
 | `HIPDNN_UNSUPPORTED` | 在构建 DUT 前输出结构化原因并跳过该 case |
 
 capability 可以包含独立的 descriptor/build/real-execute probe，例如 convolution algorithm 和 BatchNorm runtime gate；当前已知无可执行 primitive 的 BF16 reduction 则在 validated allowlist 之前明确 SKIP。native status 分类严格限定为：只有 `HIPDNN_STATUS_NOT_SUPPORTED` 可以作为 runtime capability SKIP；`ARCH_MISMATCH`、`RUNTIME_PREREQUISITE_MISSING`、`ALLOC_FAILED`、`BAD_PARAM`、`INTERNAL_ERROR`、`INVALID_VALUE`、`EXECUTION_FAILED`、`VERSION_MISMATCH` 等全部是硬失败。语义上无法映射的 case 可以在调用 DUT 前由显式 capability reason SKIP，但不能用环境损坏或执行错误伪装 unsupported。capability 已返回 supported 后，正式 hipDNN plan 的任何非 `NOT_SUPPORTED` build/execute 错误都必须 FAIL。
@@ -446,7 +501,7 @@ capability 可以包含独立的 descriptor/build/real-execute probe，例如 co
 5. benchmark 对 unsupported case 不执行 FlagDNN-only 计时，不输出 reference latency 或 speedup。
 6. DTK 升级后 skip reason 或 capability 变化必须评审，不能长期固化过时 SKIP。
 
-SKIP 只说明当前 hipDNN 无法提供精确 oracle。它既不表示 production 不支持，也不构成该 production kernel 的数值正确性证明。四个 CPU allowlist 算子的 functional mismatch、runtime 错误或 timeout 都是 FAIL；其 benchmark 仍按 hipDNN unsupported contract SKIP。
+SKIP 只说明当前 hipDNN 无法提供精确 oracle。它既不表示 production 不支持，也不构成该 production kernel 的数值正确性证明。CPU-reference functional 的 mismatch、runtime 错误或 timeout 都是 FAIL；缺少等价 hipDNN 对照的 benchmark 仍 SKIP。
 
 ### 5.3 Functional 与 benchmark
 
@@ -462,7 +517,7 @@ functional supported case 的顺序：
 6. 比较数值、NaN/Inf 分类和 padding sentinel；
 7. 应用公共 case 的 atol/rtol。
 
-四个 CPU-oracle case 保持相同顺序与检查项，但第 1 至 3 步替换为：准备并保存实际 dtype 量化后的逻辑输入，在 host 上按算子语义和 broadcasting 计算期望值，再按 output dtype 量化。CPU oracle 与 DUT 不共享输出或实现代码；其语义另由 `reference/tests` 在 NVIDIA/cuDNN 进程中独立验证，不依赖 Hygon DUT。
+CPU-oracle case 保持相同顺序与检查项，但第 1 至 3 步替换为：准备并保存实际 dtype 量化后的逻辑输入，在 host 上按算子语义和 broadcasting 计算期望值，再按 output dtype 量化。CPU oracle 与 DUT 不共享输出或实现代码；公共 CPU 参考可通过 `reference/tests` 与 NVIDIA/cuDNN 交叉检查；Hygon 私有标量参考使用独立数学实现，不依赖 Hygon DUT。
 
 对 FlagDNN 合法、但 hipDNN OpTensor 无法直接接收相同物理 descriptor 的 strided/broadcast case，允许使用“逻辑等价 packed reference”，但必须满足以下边界：
 
@@ -568,7 +623,7 @@ benchmark capture-build gate、上一段精确的 NEG capture-replay qualificati
 精确 hipDNN reference 的 case 不执行任何 provider 计时，也不产生 FlagDNN-only
 latency 或 speedup。
 
-attention 当前没有精确 hipDNN reference，因此只注册四个 functional capability test，不注册 benchmark。不得为了得到 attention 性能数字而引入其他 reference 或输出 FlagDNN-only speedup。
+attention 功能测试使用独立 CPU 参考，包括 FP8 中间量的量化、scale/descale 和 amax。性能用例保持公共注册集合，因没有等价 hipDNN 对照而 SKIP，不输出 FlagDNN-only speedup。
 
 ### 5.4 直接依赖与 vendor 传递闭包
 
@@ -583,7 +638,7 @@ attention 当前没有精确 hipDNN reference，因此只注册四个 functional
 
 ## 6. 当前 reference capability 矩阵
 
-以下矩阵描述当前 DTK/hipDNN 可比较覆盖与受控 CPU functional allowlist。最终结果以每个 case 的 reference 路由、capability 与 real-execute gate 为准。
+以下矩阵保留 2026-08 的 hipDNN primitive 对照能力记录。表内 SKIP 不再代表功能算子未适配：当前独立 CPU 参考可覆盖其中多类算子；功能支持范围以 operator-support.md 为准。
 
 ### 6.1 Pointwise/composite
 

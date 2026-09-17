@@ -53,6 +53,20 @@ bool is_binary(HipdnnPointwiseKind kind) noexcept {
   }
 }
 
+bool is_activation_backward(HipdnnPointwiseKind kind) noexcept {
+  switch (kind) {
+  case HipdnnPointwiseKind::kSigmoidBackward:
+  case HipdnnPointwiseKind::kReluBackward:
+  case HipdnnPointwiseKind::kTanhBackward:
+  case HipdnnPointwiseKind::kEluBackward:
+  case HipdnnPointwiseKind::kSoftplusBackward:
+  case HipdnnPointwiseKind::kSwishBackward:
+    return true;
+  default:
+    return false;
+  }
+}
+
 bool is_activation_forward(HipdnnPointwiseKind kind) noexcept {
   switch (kind) {
   case HipdnnPointwiseKind::kSigmoid:
@@ -93,18 +107,23 @@ hipdnnActivationMode_t activation_mode(HipdnnPointwiseKind kind) {
   case HipdnnPointwiseKind::kSigmoidBackward:
     return HIPDNN_ACTIVATION_SIGMOID;
   case HipdnnPointwiseKind::kRelu:
+  case HipdnnPointwiseKind::kReluBackward:
     return HIPDNN_ACTIVATION_RELU;
   case HipdnnPointwiseKind::kTanh:
+  case HipdnnPointwiseKind::kTanhBackward:
     return HIPDNN_ACTIVATION_TANH;
   case HipdnnPointwiseKind::kElu:
+  case HipdnnPointwiseKind::kEluBackward:
     return HIPDNN_ACTIVATION_ELU;
   case HipdnnPointwiseKind::kSoftplus:
+  case HipdnnPointwiseKind::kSoftplusBackward:
     return HIPDNN_ACTIVATION_SOFTRELU;
   case HipdnnPointwiseKind::kAbs:
     return HIPDNN_ACTIVATION_ABS;
   case HipdnnPointwiseKind::kIdentity:
     return HIPDNN_ACTIVATION_IDENTITY;
   case HipdnnPointwiseKind::kSwish:
+  case HipdnnPointwiseKind::kSwishBackward:
     return HIPDNN_ACTIVATION_SWISH;
   default:
     break;
@@ -272,6 +291,41 @@ make_hipdnn_pointwise_operation(flagdnnPointwiseMode_t mode,
     }
     return unavailable(
         "SWISH attributes have no exact validated hipDNN activation mapping");
+  case FLAGDNN_POINTWISE_RELU_BWD:
+    result = make_hipdnn_pointwise_operation(
+        FLAGDNN_POINTWISE_RELU_FWD, attributes, alpha);
+    if (result.kind == HipdnnPointwiseKind::kRelu) {
+      result.kind = HipdnnPointwiseKind::kReluBackward;
+    }
+    return result;
+  case FLAGDNN_POINTWISE_TANH_BWD:
+    result = make_hipdnn_pointwise_operation(
+        FLAGDNN_POINTWISE_TANH_FWD, attributes, alpha);
+    if (result.kind == HipdnnPointwiseKind::kTanh) {
+      result.kind = HipdnnPointwiseKind::kTanhBackward;
+    }
+    return result;
+  case FLAGDNN_POINTWISE_ELU_BWD:
+    result = make_hipdnn_pointwise_operation(
+        FLAGDNN_POINTWISE_ELU_FWD, attributes, alpha);
+    if (result.kind == HipdnnPointwiseKind::kElu) {
+      result.kind = HipdnnPointwiseKind::kEluBackward;
+    }
+    return result;
+  case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
+    result = make_hipdnn_pointwise_operation(
+        FLAGDNN_POINTWISE_SOFTPLUS_FWD, attributes, alpha);
+    if (result.kind == HipdnnPointwiseKind::kSoftplus) {
+      result.kind = HipdnnPointwiseKind::kSoftplusBackward;
+    }
+    return result;
+  case FLAGDNN_POINTWISE_SWISH_BWD:
+    result = make_hipdnn_pointwise_operation(
+        FLAGDNN_POINTWISE_SWISH_FWD, attributes, alpha);
+    if (result.kind == HipdnnPointwiseKind::kSwish) {
+      result.kind = HipdnnPointwiseKind::kSwishBackward;
+    }
+    return result;
   case FLAGDNN_POINTWISE_SIGMOID_BWD:
     if (attributes.flags == 0U) {
       result.kind = HipdnnPointwiseKind::kSigmoidBackward;
@@ -284,12 +338,7 @@ make_hipdnn_pointwise_operation(flagdnnPointwiseMode_t mode,
   case FLAGDNN_POINTWISE_LOGICAL_NOT:
     return unavailable("hipDNN BOOLEAN tensor/OpTensor NOT is unavailable on "
                        "the validated DTK stack");
-  case FLAGDNN_POINTWISE_RELU_BWD:
-  case FLAGDNN_POINTWISE_TANH_BWD:
-  case FLAGDNN_POINTWISE_ELU_BWD:
   case FLAGDNN_POINTWISE_GELU_BWD:
-  case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
-  case FLAGDNN_POINTWISE_SWISH_BWD:
   case FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD:
   case FLAGDNN_POINTWISE_NOT_SET:
   case FLAGDNN_POINTWISE_ERF:
@@ -336,7 +385,7 @@ hipdnn_pointwise_capability(const HipdnnPointwiseOperation &operation,
       is_activation_forward(operation.kind)
           ? 2
           : (is_binary(operation.kind) ||
-                     operation.kind == HipdnnPointwiseKind::kSigmoidBackward
+                     is_activation_backward(operation.kind)
                  ? 3
                  : 0);
   if (tensors.size() != expected_tensors) {
@@ -403,11 +452,11 @@ hipdnn_pointwise_capability(const HipdnnPointwiseOperation &operation,
     }
     return {};
   }
-  if (operation.kind == HipdnnPointwiseKind::kSigmoidBackward) {
+  if (is_activation_backward(operation.kind)) {
     if (tensors[0].dimensions != output.dimensions ||
         tensors[1].dimensions != output.dimensions) {
       return HipdnnCapability::invalid_adapter_contract(
-          "sigmoid backward dy/x/dx dimensions must be equal");
+          "activation backward dy/x/dx dimensions must be equal");
     }
     return {};
   }
@@ -446,10 +495,10 @@ hipdnn_pointwise_descriptor_tensors(const HipdnnPointwiseOperation &operation,
                                     std::span<const ReferenceTensor> tensors) {
   const bool activation_forward =
       is_activation_forward(operation.kind) && tensors.size() == 2;
-  const bool sigmoid_backward_activation_sequence =
-      operation.kind == HipdnnPointwiseKind::kSigmoidBackward &&
+  const bool activation_backward_sequence =
+      is_activation_backward(operation.kind) &&
       tensors.size() == 3;
-  if (!activation_forward && !sigmoid_backward_activation_sequence) {
+  if (!activation_forward && !activation_backward_sequence) {
     return std::vector<ReferenceTensor>(tensors.begin(), tensors.end());
   }
   return hipdnn_activation_descriptor_tensors(tensors);
@@ -457,7 +506,7 @@ hipdnn_pointwise_descriptor_tensors(const HipdnnPointwiseOperation &operation,
 
 bool hipdnn_pointwise_uses_sequence(HipdnnPointwiseKind kind) noexcept {
   return kind == HipdnnPointwiseKind::kAddSquare ||
-         kind == HipdnnPointwiseKind::kSigmoidBackward;
+         is_activation_backward(kind);
 }
 
 class HipdnnPointwisePlan::Impl final {
@@ -509,7 +558,8 @@ public:
                                 HIPDNN_PROPAGATE_NAN,
                                 operation_.activation_coefficient),
                             "hipdnnSetActivationDescriptor");
-        if (operation_.kind == HipdnnPointwiseKind::kSwish) {
+        if (operation_.kind == HipdnnPointwiseKind::kSwish ||
+            operation_.kind == HipdnnPointwiseKind::kSwishBackward) {
           check_hipdnn_status(hipdnnSetActivationDescriptorSwishBeta(
                                   activation_, operation_.swish_beta),
                               "hipdnnSetActivationDescriptorSwishBeta");
@@ -550,20 +600,20 @@ public:
       return;
     }
 
-    if (operation_.kind == HipdnnPointwiseKind::kSigmoidBackward) {
-      require_workspace(workspace, workspace_size, "sigmoid_backward");
+    if (is_activation_backward(operation_.kind)) {
+      require_workspace(workspace, workspace_size, "activation_backward");
       void *dy = binding_pointer(bindings, tensors_[0]);
       void *x = binding_pointer(bindings, tensors_[1]);
       void *dx = binding_pointer(bindings, tensors_[2]);
       check_hipdnn_status(hipdnnActivationForward(handle_, activation_, &one,
                                                   descriptors_[1], x, &zero,
                                                   descriptors_[2], workspace),
-                          "hipdnnActivationForward(sigmoid_backward y)");
+                          "hipdnnActivationForward(activation_backward y)");
       check_hipdnn_status(hipdnnActivationBackward(
                               handle_, activation_, &one, descriptors_[2],
                               workspace, descriptors_[0], dy, descriptors_[1],
                               x, &zero, descriptors_[2], dx),
-                          "hipdnnActivationBackward(sigmoid_backward dx)");
+                          "hipdnnActivationBackward(activation_backward dx)");
       return;
     }
 

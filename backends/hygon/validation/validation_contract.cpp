@@ -9,8 +9,8 @@
 #include "functional/binding_address.hpp"
 #include "hipdnn_reference.hpp"
 #include "pointwise_reference.hpp"
-#include "tensor_reference.hpp"
 #include "tensor_io.hpp"
+#include "tensor_reference.hpp"
 
 #include <algorithm>
 #include <array>
@@ -100,8 +100,7 @@ hb::BenchmarkCase convolution_case(hb::Operation operation,
   return result;
 }
 
-bool same_tensor_spec(const hb::TensorSpec &left,
-                      const hb::TensorSpec &right) {
+bool same_tensor_spec(const hb::TensorSpec &left, const hb::TensorSpec &right) {
   return left.uid == right.uid && left.data_type == right.data_type &&
          left.dimensions == right.dimensions && left.strides == right.strides &&
          left.binding_byte_offset == right.binding_byte_offset;
@@ -235,8 +234,7 @@ void test_convolution_algorithm_policy() {
 void test_benchmark_fp16_convolution_oracle_policy() {
   using Policy = hb::HipdnnReferencePolicy;
   hb::BenchmarkCase fp16 =
-      convolution_case(hb::Operation::kConvolutionFprop,
-                       FLAGDNN_DATA_FLOAT16);
+      convolution_case(hb::Operation::kConvolutionFprop, FLAGDNN_DATA_FLOAT16);
   fp16.tensors[0].binding_byte_offset = 0;
   fp16.tensors[1].binding_byte_offset = 2;
   fp16.tensors[2].binding_byte_offset = 6;
@@ -252,13 +250,13 @@ void test_benchmark_fp16_convolution_oracle_policy() {
           "convolution reference policy changed tensor arity");
   const std::array<std::size_t, 3> expected_offsets = {0, 4, 12};
   for (std::size_t index = 0; index < fp16.tensors.size(); ++index) {
-    require(correctness[index].data_type == FLAGDNN_DATA_FLOAT32 &&
-                correctness[index].uid == fp16.tensors[index].uid &&
-                correctness[index].dimensions == fp16.tensors[index].dimensions &&
-                correctness[index].strides == fp16.tensors[index].strides &&
-                correctness[index].binding_byte_offset ==
-                    expected_offsets[index],
-            "FP32 oracle policy did not preserve element-addressed metadata");
+    require(
+        correctness[index].data_type == FLAGDNN_DATA_FLOAT32 &&
+            correctness[index].uid == fp16.tensors[index].uid &&
+            correctness[index].dimensions == fp16.tensors[index].dimensions &&
+            correctness[index].strides == fp16.tensors[index].strides &&
+            correctness[index].binding_byte_offset == expected_offsets[index],
+        "FP32 oracle policy did not preserve element-addressed metadata");
     require(same_tensor_spec(performance[index], fp16.tensors[index]),
             "performance policy did not retain the original FP16 tensor");
   }
@@ -273,8 +271,8 @@ void test_benchmark_fp16_convolution_oracle_policy() {
     hb::BenchmarkCase test_case =
         convolution_case(operation, FLAGDNN_DATA_FLOAT16);
     const std::vector<hv::ReferenceTensor> semantic =
-        hd::convolution_semantic_reference_tensors(
-            test_case, Policy::kCorrectnessOracle);
+        hd::convolution_semantic_reference_tensors(test_case,
+                                                   Policy::kCorrectnessOracle);
     require(semantic.size() == expected_uids.size(),
             "convolution semantic policy changed tensor arity");
     for (std::size_t index = 0; index < semantic.size(); ++index) {
@@ -291,8 +289,7 @@ void test_benchmark_fp16_convolution_oracle_policy() {
     require(!hd::convolution_uses_fp32_correctness_oracle(unchanged),
             "non-FP16 convolution entered the FP32-upcast policy");
     const std::vector<hb::TensorSpec> specs =
-        hd::convolution_reference_specs(unchanged,
-                                        Policy::kCorrectnessOracle);
+        hd::convolution_reference_specs(unchanged, Policy::kCorrectnessOracle);
     require(specs.size() == unchanged.tensors.size(),
             "non-FP16 convolution reference changed tensor arity");
     for (std::size_t index = 0; index < specs.size(); ++index) {
@@ -305,8 +302,8 @@ void test_benchmark_fp16_convolution_oracle_policy() {
   misaligned.tensors[1].binding_byte_offset = 1;
   require_invalid_argument(
       [&] {
-        (void)hd::convolution_reference_specs(
-            misaligned, Policy::kCorrectnessOracle);
+        (void)hd::convolution_reference_specs(misaligned,
+                                              Policy::kCorrectnessOracle);
       },
       "FP16 oracle policy accepted a sub-element binding offset");
 
@@ -315,8 +312,8 @@ void test_benchmark_fp16_convolution_oracle_policy() {
       std::numeric_limits<std::size_t>::max() - 1;
   require_runtime_error(
       [&] {
-        (void)hd::convolution_reference_specs(
-            overflowing, Policy::kCorrectnessOracle);
+        (void)hd::convolution_reference_specs(overflowing,
+                                              Policy::kCorrectnessOracle);
       },
       "FP16 oracle policy accepted an overflowing FP32 binding offset");
 
@@ -340,7 +337,73 @@ void test_benchmark_fp16_convolution_oracle_policy() {
           "FP32 oracle inputs were not quantized through source FP16 first");
 }
 
+void test_extended_storage_codecs() {
+  namespace io = hv::tensor_io;
+  for (const auto type :
+       {FLAGDNN_DATA_FP8_E4M3, FLAGDNN_DATA_FP8_E5M2, FLAGDNN_DATA_FP8_E8M0}) {
+    for (unsigned value = 0; value < 256; ++value) {
+      const std::array<std::uint8_t, 1> bytes{static_cast<std::uint8_t>(value)};
+      const auto decoded = io::decode(bytes, type, 1);
+      if (std::isfinite(decoded[0]))
+        require(io::encode(decoded, type)[0] == bytes[0],
+                "finite FP8 byte did not round-trip exactly");
+    }
+  }
+  const std::array<float, 6> values{1.0625F, 1.1875F, 1.0e6F,
+                                    -1.0e6F, 0.0F,    -0.0F};
+  const auto bytes = io::encode(values, FLAGDNN_DATA_FP8_E4M3);
+  require(bytes == std::vector<std::uint8_t>{0x38, 0x3a, 0x7e, 0xfe, 0, 0x80},
+          "E4M3 rounding, saturation or signed zero changed");
+  const auto e5 = io::decode(
+      io::encode(std::span(values).subspan(2, 2), FLAGDNN_DATA_FP8_E5M2),
+      FLAGDNN_DATA_FP8_E5M2, 2);
+  require(e5 == std::vector<float>{57344, -57344}, "E5M2 saturation changed");
+  const std::array<float, 9> scales{1.0F,
+                                    1.125F,
+                                    2.25F,
+                                    0.5625F,
+                                    std::nextafter(1.0F, 2.0F),
+                                    std::nextafter(1.0F, 0.0F),
+                                    std::numeric_limits<float>::denorm_min(),
+                                    std::ldexp(1.0F, 127),
+                                    std::numeric_limits<float>::max()};
+  require(
+      io::encode(scales, FLAGDNN_DATA_FP8_E8M0) ==
+          std::vector<std::uint8_t>{127, 128, 129, 127, 128, 127, 0, 254, 255},
+      "E8M0 scale rounding must match NVIDIA's upward conversion");
+  const std::array<float, 7> invalid_scales{
+      0.0F,
+      -0.0F,
+      -1.0F,
+      std::numeric_limits<float>::infinity(),
+      -std::numeric_limits<float>::infinity(),
+      std::numeric_limits<float>::quiet_NaN(),
+      io::kPaddingSentinel};
+  require(io::encode(invalid_scales, FLAGDNN_DATA_FP8_E8M0) ==
+              std::vector<std::uint8_t>{255, 255, 255, 255, 255, 255, 0},
+          "E8M0 invalid values and padding must match NVIDIA's encoding");
+  const std::array<float, 5> integers{-2147483648.0F, -16777216.0F, 0,
+                                      16777216.0F, 2147483520.0F};
+  const auto integer_result =
+      io::decode(io::encode(integers, FLAGDNN_DATA_INT32), FLAGDNN_DATA_INT32,
+                 integers.size());
+  require(std::equal(integers.begin(), integers.end(), integer_result.begin()),
+          "representable INT32 values changed");
+  for (const float value :
+       {2147483648.0F, std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity()}) {
+    require_invalid_argument(
+        [&] { (void)io::encode(std::span(&value, 1), FLAGDNN_DATA_INT32); },
+        "invalid INT32 float conversion accepted");
+  }
+}
+
 void test_accuracy_contract() {
+  const auto scalar = hb::tensor(1, {});
+  require(hv::tensor_io::storage_element_count(scalar) == 1 &&
+              hv::tensor_io::scatter(std::array{3.0F}, scalar) ==
+                  std::vector<float>{3.0F},
+          "rank-zero tensors must have one storage element");
   const std::array<float, 2> exact = {1.0F, -2.0F};
   (void)hf::compare_outputs(exact, exact, 0.0, 0.0, "finite_exact");
 
@@ -356,6 +419,37 @@ void test_accuracy_contract() {
         (void)hf::compare_outputs(infinity, infinity, 0.0, 0.0, "infinity");
       },
       "matching infinities must fail like the NVIDIA functional comparator");
+  const std::array<float, 2> pool_boundaries = {
+      -std::numeric_limits<float>::infinity(),
+      std::numeric_limits<float>::infinity()};
+  (void)hf::compare_outputs(pool_boundaries, pool_boundaries, 0.0, 0.0,
+                            "pool_boundaries", "CPU",
+                            hf::ComparisonRule::kCombinedTolerance);
+  require_runtime_error(
+      [&] {
+        (void)hf::compare_outputs(nan, nan, 0.0, 0.0, "nan", "CPU",
+                                  hf::ComparisonRule::kCombinedTolerance);
+      },
+      "allowing matching infinities must still reject NaNs");
+  const std::array<float, 1> half_actual{-3.697265625F};
+  const std::array<float, 1> half_expected{-3.6953125F};
+  (void)hf::compare_outputs(half_actual, half_expected, 5e-4, 5e-4,
+                            "NV_paired_tolerance", "CPU",
+                            hf::ComparisonRule::kCombinedTolerance);
+  require_runtime_error(
+      [&] {
+        (void)hf::compare_outputs(half_actual, half_expected, 5e-4, 5e-4,
+                                  "either_tolerance", "CPU");
+      },
+      "paired comparison must not change existing comparison semantics");
+  const std::array<float, 1> negative_infinity = {-infinity[0]};
+  require_runtime_error(
+      [&] {
+        (void)hf::compare_outputs(infinity, negative_infinity, 0.0, 0.0,
+                                  "opposite_infinities", "CPU",
+                                  hf::ComparisonRule::kCombinedTolerance);
+      },
+      "opposite infinities must fail");
 }
 
 void test_binding_contract() {
@@ -390,6 +484,50 @@ void test_reduction_dtype_capability() {
   tensors[1].data_type = FLAGDNN_DATA_FLOAT32;
   require(hv::hipdnn_tensor_capability(operation, tensors).supported,
           "FP32 reduction unexpectedly left the validated hipDNN allowlist");
+}
+
+void test_slice_stride_capability() {
+  const auto check = [](std::vector<std::int64_t> dimensions,
+                        std::vector<std::pair<std::int64_t, std::int64_t>>
+                            slices,
+                        std::vector<std::int64_t> steps, bool supported) {
+    hv::ReferenceTensor input = hv::dense_reference_tensor(
+        {1, FLAGDNN_DATA_FLOAT32, std::move(dimensions), {}, 0});
+    std::vector<std::int64_t> output_dimensions;
+    for (std::size_t axis = 0; axis < slices.size(); ++axis) {
+      output_dimensions.push_back(
+          (slices[axis].second - slices[axis].first + steps[axis] - 1) /
+          steps[axis]);
+    }
+    const std::array<hv::ReferenceTensor, 2> tensors = {
+        input, hv::dense_reference_tensor(
+                   {2, FLAGDNN_DATA_FLOAT32, output_dimensions, {}, 0})};
+    const auto operation =
+        hv::make_hipdnn_slice_operation(std::move(slices), std::move(steps));
+    const auto capability = hv::hipdnn_tensor_capability(operation, tensors);
+    require(capability.supported == supported,
+            "Slice stride capability differs from the validated DTK behavior");
+    if (!supported) {
+      require(capability.classification ==
+                      hv::HipdnnCapabilityClass::kVendorUnsupported &&
+                  capability.reason.find("non-integral packed stride ratios") !=
+                      std::string::npos,
+              "Slice reference limitation must have a specific vendor reason");
+    }
+  };
+
+  // These descriptors return incorrect row/batch offsets with hipDNN runtime
+  // 8910.
+  check({3, 7}, {{0, 3}, {1, 7}}, {1, 2}, false);
+  check({2, 3, 9}, {{0, 2}, {0, 3}, {1, 9}}, {1, 1, 2}, false);
+  check({2, 16, 31}, {{0, 2}, {1, 16}, {0, 31}}, {1, 3, 2}, false);
+  check({4, 8, 65}, {{1, 4}, {0, 8}, {1, 65}}, {2, 1, 4}, false);
+  // Preserve adjacent aligned/padded rows and the existing 3D Slice cases.
+  check({3, 6}, {{0, 3}, {0, 6}}, {1, 2}, true);
+  check({3, 8}, {{0, 3}, {1, 7}}, {1, 2}, true);
+  check({2, 4, 5}, {{0, 2}, {1, 4}, {0, 5}}, {1, 2, 1}, true);
+  check({4, 6, 8}, {{1, 4}, {0, 6}, {2, 8}}, {1, 2, 3}, true);
+  check({3, 5, 7}, {{1, 3}, {0, 5}, {1, 7}}, {1, 2, 2}, true);
 }
 
 void test_capability_classification() {
@@ -745,9 +883,11 @@ int main() {
   test_convolution_heuristic_fallback_classification();
   test_convolution_algorithm_policy();
   test_benchmark_fp16_convolution_oracle_policy();
+  test_extended_storage_codecs();
   test_accuracy_contract();
   test_binding_contract();
   test_reduction_dtype_capability();
+  test_slice_stride_capability();
   test_capability_classification();
   test_pointwise_broadcast_stride_capability();
   test_pointwise_capture_capability();

@@ -14,7 +14,7 @@
 
 """Graph-IR planning for Hygon tensor, reduction, and MatMul kernels.
 
-This module is intentionally independent from :mod:`backends.hygon.compiler`.
+This module is independent from Hygon code generation.
 The provider can import it without creating a circular dependency, while pure
 Python schema/configuration tests can import it without Triton or a GPU.
 
@@ -24,6 +24,8 @@ arguments when it renders the libtriton_jit ABI.
 """
 
 from __future__ import annotations
+
+from .common import require_ieee_precision
 
 import math
 from dataclasses import dataclass
@@ -41,6 +43,8 @@ MAX_I64 = 2**63 - 1
 
 POINTER_TYPES = {
     "float32": "*fp32",
+    "int32": "*i32",
+    "fp8_e8m0": "*u8",
     "float16": "*fp16",
     "bfloat16": "*bf16",
     "fp8_e4m3": "*fp8e4nv",
@@ -50,6 +54,8 @@ POINTER_TYPES = {
 FLOAT_TYPES = frozenset(("float32", "float16", "bfloat16"))
 ELEMENT_SIZES = {
     "float32": 4,
+    "int32": 4,
+    "fp8_e8m0": 1,
     "float16": 2,
     "bfloat16": 2,
     "fp8_e4m3": 1,
@@ -150,8 +156,14 @@ class GridSpec:
     kind: str
     extents: tuple[int, ...]
 
-    def evaluate(self, constants: Mapping[str, int | bool]) -> Grid:
-        if self.kind == "linear":
+    def evaluate(self, constants: Mapping[str, object]) -> Grid:
+        if self.kind == "fixed":
+            if len(self.extents) != 3:
+                raise ValueError(
+                    "fixed launch grid must have three dimensions"
+                )
+            result = (self.extents[0], self.extents[1], self.extents[2])
+        elif self.kind == "linear":
             block = _positive_meta_integer(constants, "BLOCK_SIZE")
             result = (_ceil_div(self.extents[0], block), 1, 1)
         elif self.kind == "reduction_rows":
@@ -324,7 +336,7 @@ def _require_integer_list(
     return list(raw)
 
 
-def _positive_meta_integer(values: Mapping[str, int | bool], name: str) -> int:
+def _positive_meta_integer(values: Mapping[str, object], name: str) -> int:
     value = values.get(name)
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"kernel constant {name} must be a positive integer")
@@ -835,9 +847,13 @@ def _reduction_configuration(
         raise ValueError("reduction tensor count is invalid")
     input_tensor, output_tensor = tensors
     data_types = [tensor["data_type"] for tensor in tensors]
-    if len(set(data_types)) != 1 or data_types[0] not in FLOAT_TYPES:
+    if data_types[0] not in FLOAT_TYPES | {"int32"} or not (
+        data_types[1] == "float32"
+        or data_types[0] in FLOAT_TYPES
+        and data_types[1] == data_types[0]
+    ):
         raise ValueError(
-            "reduction tensors must use one matching floating data type"
+            "reduction requires floating output matching input or FP32"
         )
     input_dimensions = list(input_tensor["dimensions"])
     rank = len(input_dimensions)
@@ -890,7 +906,7 @@ def _reduction_configuration(
     }
     signature = {
         "x_ptr": POINTER_TYPES[data_types[0]],
-        "out_ptr": POINTER_TYPES[data_types[0]],
+        "out_ptr": POINTER_TYPES[data_types[1]],
         "M": "i32",
     }
     contiguous = _is_row_major_contiguous(
@@ -960,6 +976,7 @@ def _matmul_configuration(
     data_types = [tensor["data_type"] for tensor in tensors]
     if len(set(data_types)) != 1 or data_types[0] not in FLOAT_TYPES:
         raise ValueError("matmul tensors must use one matching floating type")
+    require_ieee_precision(dict(parameters), data_types[0])
     if any(
         not 2 <= len(tensor["dimensions"]) <= MAX_RANK for tensor in tensors
     ):

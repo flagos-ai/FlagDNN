@@ -31,6 +31,11 @@ enum class HipdnnPointwiseKind {
   kIdentity,
   kSwish,
   kSigmoidBackward,
+  kReluBackward,
+  kTanhBackward,
+  kEluBackward,
+  kSoftplusBackward,
+  kSwishBackward,
   kUnavailable,
 };
 

@@ -39,8 +39,7 @@ template <typename Tensor>
 
 template <typename Tensor>
 [[nodiscard]] std::size_t storage_element_count(const Tensor &tensor) {
-  if (tensor.dimensions.empty() ||
-      tensor.dimensions.size() != tensor.strides.size()) {
+  if (tensor.dimensions.size() != tensor.strides.size()) {
     throw std::invalid_argument("validation tensor metadata is invalid");
   }
   std::size_t maximum_offset = 0;

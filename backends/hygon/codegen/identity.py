@@ -23,9 +23,10 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from . import compiler_nn
-from . import compiler_tensor
-from . import python_environment_identity
+from ..dispatch import nn as compiler_nn
+from ..dispatch import tensor as compiler_tensor
+from ..dispatch.graph import SUPPORTED_OPERATIONS as _SUPPORTED_OPERATIONS
+from .. import python_environment_identity
 
 from flagdnn_codegen.kernel_registry import (
     iter_kernel_registry_sources,
@@ -35,53 +36,6 @@ from flagdnn_codegen.kernel_registry import (
 )
 
 
-_SUPPORTED_OPERATIONS = (
-    (
-        "add",
-        "sub",
-        "mul",
-        "div",
-        "min",
-        "max",
-        "mod",
-        "pow",
-        "cmp_eq",
-        "cmp_neq",
-        "cmp_gt",
-        "cmp_ge",
-        "cmp_lt",
-        "cmp_le",
-        "logical_and",
-        "logical_or",
-        "sigmoid_backward",
-        "relu",
-        "sqrt",
-        "erf",
-        "identity",
-        "exp",
-        "log",
-        "neg",
-        "abs",
-        "ceil",
-        "cos",
-        "floor",
-        "rsqrt",
-        "sin",
-        "tan",
-        "reciprocal",
-        "logical_not",
-        "sigmoid",
-        "tanh",
-        "elu",
-        "gelu",
-        "softplus",
-        "swish",
-        "gelu_approx_tanh",
-        "binary_select",
-    )
-    + tuple(sorted(compiler_tensor.SUPPORTED_OPERATIONS))
-    + tuple(sorted(compiler_nn.SUPPORTED_OPERATIONS))
-)
 _SUPPORTED_TARGET = "gfx936"
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _TRITON_JIT_SONAME_PATTERN = re.compile(r"libtriton_jit\.so(?:\.[0-9]+)*")
@@ -89,9 +43,9 @@ _COMPILER_ENVIRONMENT_FILE = "flagdnn_hygon_compiler_environment.json"
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
 
 
 def _runtime_python_environment() -> dict[str, Any]:
@@ -139,12 +93,9 @@ def _jit_script_directory_candidates(source: Path) -> tuple[Path, ...]:
     for entry in os.environ.get("FLAGDNN_BACKEND_PATH", "").split(os.pathsep):
         if entry:
             candidates.append(
-                Path(entry).expanduser()
-                / "flagdnn/share/triton_jit/scripts"
+                Path(entry).expanduser() / "flagdnn/share/triton_jit/scripts"
             )
-    candidates.append(
-        source.parent / "flagdnn/share/triton_jit/scripts"
-    )
+    candidates.append(source.parent / "flagdnn/share/triton_jit/scripts")
     for parent in (source.parent, *tuple(source.parents)[:6]):
         candidates.append(parent / "share/triton_jit/scripts")
 
@@ -170,7 +121,9 @@ def _discover_jit_script_hashes(
         standalone = directory / "standalone_compile.py"
         gen_ssig = directory / "gen_ssig.py"
         installed_helper = directory / "flagdnn_python_environment_identity.py"
-        helper = installed_helper if installed_helper.is_file() else local_helper
+        helper = (
+            installed_helper if installed_helper.is_file() else local_helper
+        )
         if standalone.is_file() and gen_ssig.is_file() and helper.is_file():
             return (
                 _sha256_file(standalone),
@@ -190,11 +143,11 @@ def _compiler_environment_candidate_paths(
     configured = os.environ.get("FLAGDNN_HYGON_COMPILER_ENVIRONMENT", "")
     if configured:
         candidates.append(Path(configured).expanduser())
-    for entry in os.environ.get("FLAGDNN_BACKEND_PATH", "").split(
-        os.pathsep
-    ):
+    for entry in os.environ.get("FLAGDNN_BACKEND_PATH", "").split(os.pathsep):
         if entry:
-            candidates.append(Path(entry).expanduser() / _COMPILER_ENVIRONMENT_FILE)
+            candidates.append(
+                Path(entry).expanduser() / _COMPILER_ENVIRONMENT_FILE
+            )
     candidates.append(provider_path.with_name(_COMPILER_ENVIRONMENT_FILE))
 
     return tuple(candidates)
@@ -300,7 +253,10 @@ def _validate_compiler_environment(
     )
     for name in required_hashes:
         digest = value.get(name)
-        if not isinstance(digest, str) or _SHA256_PATTERN.fullmatch(digest) is None:
+        if (
+            not isinstance(digest, str)
+            or _SHA256_PATTERN.fullmatch(digest) is None
+        ):
             raise ValueError(f"{source}: {name} must be a SHA-256 digest")
     build_identity = value.get("build_identity")
     if (
@@ -318,7 +274,8 @@ def _validate_compiler_environment(
     )
     if build_identity != expected_build_identity:
         raise ValueError(
-            f"{source}: build_identity does not match its JIT/environment hashes"
+            f"{source}: build_identity does not match its "
+            "JIT/environment hashes"
         )
     if value["python_environment_sha256"] != runtime_environment_sha256:
         raise RuntimeError(
@@ -340,11 +297,11 @@ def _validate_compiler_environment(
         "origin": "cmake",
         "libtriton_jit_soname": soname,
         "libtriton_jit_install_relative_path": library_relative.as_posix(),
-        "jit_script_install_relative_path": private_scripts_relative.as_posix(),
+        "jit_script_install_relative_path": (
+            private_scripts_relative.as_posix()
+        ),
         "libtriton_jit_sha256": value["libtriton_jit_sha256"],
-        "triton_jit_provenance_sha256": value[
-            "triton_jit_provenance_sha256"
-        ],
+        "triton_jit_provenance_sha256": value["triton_jit_provenance_sha256"],
         "python_environment_sha256": value["python_environment_sha256"],
         "python_environment_helper_sha256": value[
             "python_environment_helper_sha256"
@@ -392,9 +349,7 @@ def _validate_compiler_environment(
     for directory in private_script_candidates:
         private_standalone = directory / "standalone_compile.py"
         private_gen_ssig = directory / "gen_ssig.py"
-        private_helper = (
-            directory / "flagdnn_python_environment_identity.py"
-        )
+        private_helper = directory / "flagdnn_python_environment_identity.py"
         if not (
             private_standalone.is_file()
             and private_gen_ssig.is_file()
@@ -404,8 +359,7 @@ def _validate_compiler_environment(
         if (
             _sha256_file(private_standalone)
             != value["standalone_compile_sha256"]
-            or _sha256_file(private_gen_ssig)
-            != value["gen_ssig_sha256"]
+            or _sha256_file(private_gen_ssig) != value["gen_ssig_sha256"]
             or _sha256_file(private_helper)
             != value["python_environment_helper_sha256"]
         ):
@@ -460,9 +414,7 @@ def _libtriton_jit_candidate_paths(provider_path: Path) -> tuple[Path, ...]:
     for environment_file in _compiler_environment_candidate_paths(
         provider_path
     ):
-        candidates.append(
-            environment_file.parent / "flagdnn/hygon" / soname
-        )
+        candidates.append(environment_file.parent / "flagdnn/hygon" / soname)
         for parent in tuple(environment_file.parents)[:6]:
             candidates.append(parent / library_relative)
     candidates.append(
@@ -491,7 +443,9 @@ def _discover_libtriton_jit(provider_path: Path) -> str:
     return hashlib.sha256(b"unconfigured-libtriton-jit").hexdigest()
 
 
-def _compiler_environment(provider_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+def _compiler_environment(
+    provider_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     runtime_environment = _runtime_python_environment()
     runtime_environment_sha256 = hashlib.sha256(
         _canonical(runtime_environment)
@@ -562,6 +516,13 @@ def _identity_inputs(
         source = compiler_entry.with_name(name)
         if source.is_file():
             identity_inputs[f"codegen:{name}"] = source
+
+    for package in ("codegen", "dispatch"):
+        for source in sorted((provider_path.parent / package).rglob("*.py")):
+            label = source.relative_to(provider_path.parent).as_posix()
+            identity_inputs[f"provider_module:hygon:{label}"] = (
+                source.resolve()
+            )
 
     resource_root = compiler_entry.parents[2]
     for registry_path in iter_kernel_registry_sources("hygon"):
@@ -664,9 +625,7 @@ def _kernel_dependency_candidates(
                 resource_root / "backends/hygon/tuning",
             ]
             for root in tuning_roots:
-                dependencies.extend(
-                    (root, root / candidate.tuning.source)
-                )
+                dependencies.extend((root, root / candidate.tuning.source))
     return tuple(dependencies)
 
 
@@ -691,15 +650,24 @@ def compiler_identity_dependency_paths(
         Path(python_environment_identity.__file__),
     ):
         add_dependency(path)
+    # Track package directories so additions/removals invalidate the memo too.
+    for package in ("codegen", "dispatch"):
+        directory = provider_path.resolve().parent / package
+        add_dependency(directory)
+        for child in directory.rglob("*"):
+            if child.is_dir() and "__pycache__" not in child.parts:
+                add_dependency(child)
     for path in _identity_inputs(provider_path, compiler_entry).values():
         add_dependency(path)
     for path in iter_kernel_registry_sources("hygon"):
         add_dependency(path)
     for path in _kernel_dependency_candidates(compiler_entry):
         add_dependency(path)
-    for path in (
-        python_environment_identity.runtime_python_environment_dependency_paths()
-    ):
+    environment_helper = python_environment_identity
+    environment_paths = (
+        environment_helper.runtime_python_environment_dependency_paths()
+    )
+    for path in environment_paths:
         add_dependency(path)
     for path in _compiler_environment_candidate_paths(provider_path):
         add_dependency(path)
@@ -709,9 +677,7 @@ def compiler_identity_dependency_paths(
         add_dependency(directory)
         add_dependency(directory / "standalone_compile.py")
         add_dependency(directory / "gen_ssig.py")
-        add_dependency(
-            directory / "flagdnn_python_environment_identity.py"
-        )
+        add_dependency(directory / "flagdnn_python_environment_identity.py")
 
     # The configured environment searches these deterministic locations for
     # its exact JIT image. Keep missing candidates too: creation of a
@@ -724,9 +690,7 @@ def compiler_identity_dependency_paths(
         *_compiler_environment_candidates(provider_path),
     )
     for environment_file in environment_files:
-        add_dependency(
-            environment_file.parent / "flagdnn/hygon" / soname
-        )
+        add_dependency(environment_file.parent / "flagdnn/hygon" / soname)
         add_dependency(
             environment_file.parent / "flagdnn/share/triton_jit/scripts"
         )
@@ -737,8 +701,7 @@ def compiler_identity_dependency_paths(
             add_dependency(private_scripts / "standalone_compile.py")
             add_dependency(private_scripts / "gen_ssig.py")
             add_dependency(
-                private_scripts
-                / "flagdnn_python_environment_identity.py"
+                private_scripts / "flagdnn_python_environment_identity.py"
             )
     return tuple(sorted(dependencies))
 
@@ -786,9 +749,7 @@ def build_compiler_identity(
         "target": target_name,
         "target_backend": "hip",
         "target_warp_size": 64,
-        "python_implementation": runtime_environment[
-            "python_implementation"
-        ],
+        "python_implementation": runtime_environment["python_implementation"],
         "python_version": runtime_environment["python_version"],
         "python_cache_tag": runtime_environment["python_cache_tag"],
         "torch_version": runtime_environment["torch_version"],

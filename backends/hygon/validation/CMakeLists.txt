@@ -39,7 +39,8 @@ set(_flagdnn_hygon_operators
   leaky_relu log logical_not neg reciprocal relu rsqrt sigmoid sin
   softplus sqrt swish tan tanh
   binary_select cmp_ge cmp_gt cmp_le cmp_lt cmp_neq logical_and
-  logical_or scale sigmoid_backward)
+  logical_or scale sigmoid_backward
+  ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS})
 
 # These functional tests deliberately use the repository CPU semantic oracle.
 # Keep this Hygon routing policy separate from the set of operations that the
@@ -62,7 +63,6 @@ set(_flagdnn_hygon_normalization_operators
 # equality check instead of silently disappearing from tools/run_tests.py.
 set(_flagdnn_hygon_functional_catalog
   ${FLAGDNN_EXTENDED_OPERATORS}
-  ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS}
   ${_flagdnn_hygon_operators}
   ${_flagdnn_hygon_tensor_operators}
   ${_flagdnn_hygon_convolution_operators}
@@ -85,8 +85,6 @@ set(_flagdnn_hygon_benchmark_catalog
   ${_flagdnn_hygon_normalization_operators})
 set(_flagdnn_hygon_expected_benchmark_catalog
   ${FLAGDNN_BENCHMARK_OPERATORS})
-list(REMOVE_ITEM _flagdnn_hygon_expected_benchmark_catalog
-  ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS})
 list(SORT _flagdnn_hygon_benchmark_catalog)
 list(SORT _flagdnn_hygon_expected_benchmark_catalog)
 if(NOT "${_flagdnn_hygon_benchmark_catalog}" STREQUAL
@@ -117,6 +115,29 @@ target_link_libraries(flagdnn_validation_hygon_reference PUBLIC
   flagdnn_validation_hygon_platform
   "${FLAGDNN_HIPDNN_LIBRARY}")
 flagdnn_enable_warnings(flagdnn_validation_hygon_reference)
+
+# Shared shape generators are also available in benchmark-only builds.
+if(TARGET flagdnn_test_common_objects)
+  set(_flagdnn_hygon_case_sources $<TARGET_OBJECTS:flagdnn_test_common_objects>)
+else()
+  set(_flagdnn_hygon_case_sources)
+  foreach(family IN ITEMS add attention composite convolution index layout matmul
+      normalization pointwise reduction statistics moe_matmul fp8_matmul
+      causal_convolution resample random position_embedding normalization_extended)
+    list(APPEND _flagdnn_hygon_case_sources "${PROJECT_SOURCE_DIR}/tests/common/${family}.cpp")
+  endforeach()
+endif()
+add_library(flagdnn_validation_hygon_cases STATIC
+  ${_flagdnn_hygon_case_sources}
+  functional/extended_runner.cpp
+  functional/attention_runner.cpp)
+target_compile_features(flagdnn_validation_hygon_cases PUBLIC cxx_std_20)
+target_include_directories(flagdnn_validation_hygon_cases PUBLIC
+  "${PROJECT_SOURCE_DIR}/tests" "${PROJECT_SOURCE_DIR}/benchmark"
+  "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(flagdnn_validation_hygon_cases PUBLIC
+  FlagDNN::flagdnn flagdnn_validation_hygon_reference flagdnn_validation_cpu_reference)
+flagdnn_enable_warnings(flagdnn_validation_hygon_cases)
 
 if(FLAGDNN_BUILD_TESTS)
   get_target_property(_flagdnn_hygon_jit_include_dir
@@ -168,6 +189,34 @@ if(FLAGDNN_BUILD_TESTS)
     integration.hygon.cmake_configuration_contract PROPERTIES
     LABELS "integration;hygon;cmake;contract")
 
+  # Compile NVIDIA's native catalog selectors with a recording executor only.
+  # This optional contract never links CUDA/cuDNN or changes production targets.
+  add_library(flagdnn_hygon_catalog_probe OBJECT benchmark/native_dtype.cpp)
+  target_compile_definitions(flagdnn_hygon_catalog_probe PRIVATE
+    run_native_dtype_benchmark=run_hygon_dtype_catalog FLAGDNN_HYGON_CATALOG_PROBE=1)
+  target_link_libraries(flagdnn_hygon_catalog_probe PRIVATE flagdnn_validation_hygon_cases)
+  flagdnn_enable_warnings(flagdnn_hygon_catalog_probe)
+  add_executable(flagdnn_test_hygon_dtype_catalog
+    catalog/dtype_contract.cpp
+    $<TARGET_OBJECTS:flagdnn_hygon_catalog_probe>
+    "${PROJECT_SOURCE_DIR}/backends/nvidia/validation/benchmark/native_matrix.cpp"
+    "${PROJECT_SOURCE_DIR}/backends/nvidia/validation/benchmark/native_copy.cpp"
+    "${PROJECT_SOURCE_DIR}/backends/nvidia/validation/benchmark/native_dtype.cpp"
+    "${PROJECT_SOURCE_DIR}/backends/nvidia/validation/benchmark/dtype_boolean.cpp"
+    "${PROJECT_SOURCE_DIR}/backends/nvidia/validation/functional/layout_runner.cpp")
+  target_include_directories(flagdnn_test_hygon_dtype_catalog BEFORE PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/catalog" "${PROJECT_SOURCE_DIR}/backends/nvidia")
+  target_link_libraries(flagdnn_test_hygon_dtype_catalog PRIVATE flagdnn_validation_hygon_cases)
+  flagdnn_enable_warnings(flagdnn_test_hygon_dtype_catalog)
+  add_test(NAME integration.hygon.dtype_catalog COMMAND flagdnn_test_hygon_dtype_catalog)
+  set_tests_properties(integration.hygon.dtype_catalog PROPERTIES LABELS "integration;hygon;catalog")
+  add_test(NAME integration.hygon.catalog_registration
+    COMMAND "${FLAGDNN_CODEGEN_PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/catalog_contract.py"
+      "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}")
+  set_tests_properties(integration.hygon.catalog_registration PROPERTIES
+    LABELS "integration;hygon;catalog")
+
+
   add_executable(flagdnn_test_hygon_validation_contract
     benchmark/convolution.cpp
     validation_contract.cpp)
@@ -185,9 +234,8 @@ if(FLAGDNN_BUILD_TESTS)
     LABELS "integration;hygon;validation;contract")
 
   add_library(flagdnn_test_hygon_adapter STATIC
-    $<TARGET_OBJECTS:flagdnn_test_common_objects>
+    "${PROJECT_SOURCE_DIR}/tests/common/pointwise_runner.cpp"
     functional/add_runner.cpp
-    functional/attention_runner.cpp
     functional/composite_runner.cpp
     functional/convolution_runner.cpp
     functional/hipdnn_add.cpp
@@ -211,13 +259,13 @@ if(FLAGDNN_BUILD_TESTS)
   target_link_libraries(flagdnn_test_hygon_adapter PUBLIC
     FlagDNN::flagdnn
     flagdnn_validation_cpu_reference
+    flagdnn_validation_hygon_cases
     flagdnn_validation_hygon_platform
     flagdnn_validation_hygon_reference)
   flagdnn_enable_warnings(flagdnn_test_hygon_adapter)
 
   flagdnn_register_functional_suite(
     PLATFORM hygon
-    UNSUPPORTED_OPERATORS ${FLAGDNN_EXTENDED_OPERATORS} ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS}
     ADAPTER_TARGET flagdnn_test_hygon_adapter
     BACKEND_TARGET flagdnn_backend_hygon
     COMMAND_ARGS
@@ -225,14 +273,57 @@ if(FLAGDNN_BUILD_TESTS)
       "${FLAGDNN_CODEGEN_COMPILER}"
     ENVIRONMENT
       "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_hygon>"
-    LABELS hipdnn
-    TIMEOUT 1200
+    LABELS "hipdnn;cpu-reference"
+    TIMEOUT 7200
     BUILD_RPATH "${_flagdnn_hipdnn_library_directory}")
 
   foreach(operator IN LISTS FLAGDNN_FUNCTIONAL_OPERATORS)
     set_tests_properties("functional.hygon.${operator}" PROPERTIES
       SKIP_RETURN_CODE 77)
   endforeach()
+
+  foreach(operator IN ITEMS matmul conv_fprop conv_dgrad conv_wgrad)
+    foreach(precision IN ITEMS ieee tf32)
+      if(precision STREQUAL "ieee")
+        set(input_precision 1)
+      else()
+        set(input_precision 2)
+      endif()
+      add_test(NAME "functional.hygon.${operator}.${precision}"
+        COMMAND "flagdnn_test_hygon_${operator}"
+          "${FLAGDNN_CODEGEN_PYTHON}" "${FLAGDNN_CODEGEN_COMPILER}")
+      set_tests_properties("functional.hygon.${operator}.${precision}" PROPERTIES
+        LABELS "functional;correctness;hygon;hipdnn;${operator};${precision}"
+        RUN_SERIAL TRUE TIMEOUT 14400 SKIP_RETURN_CODE 77
+        ENVIRONMENT "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_hygon>;FLAGDNN_INPUT_PRECISION=${input_precision}")
+    endforeach()
+    set_property(TEST "functional.hygon.${operator}" APPEND PROPERTY
+      ENVIRONMENT "FLAGDNN_INPUT_PRECISION=0")
+  endforeach()
+  add_test(NAME functional.hygon.matmul.fp8 COMMAND flagdnn_test_hygon_matmul_fp8
+    "${FLAGDNN_CODEGEN_PYTHON}" "${FLAGDNN_CODEGEN_COMPILER}")
+  set_tests_properties(functional.hygon.matmul.fp8 PROPERTIES
+    LABELS "functional;correctness;hygon;hipdnn;matmul;fp8"
+    RUN_SERIAL TRUE TIMEOUT 14400 SKIP_RETURN_CODE 77
+    ENVIRONMENT "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_hygon>;FLAGDNN_FP8_MATMUL_API=matmul")
+  set_property(TEST functional.hygon.matmul_fp8 APPEND PROPERTY
+    ENVIRONMENT "FLAGDNN_FP8_MATMUL_API=matmul_fp8")
+
+  add_executable(flagdnn_test_hygon_private_convolution functional/test_private_convolution.cpp)
+  target_link_libraries(flagdnn_test_hygon_private_convolution PRIVATE flagdnn_test_hygon_adapter)
+  flagdnn_enable_warnings(flagdnn_test_hygon_private_convolution)
+  add_test(NAME integration.hygon.private_convolution COMMAND flagdnn_test_hygon_private_convolution
+    "${FLAGDNN_CODEGEN_PYTHON}" "${FLAGDNN_CODEGEN_COMPILER}")
+  set_tests_properties(integration.hygon.private_convolution PROPERTIES
+    LABELS "integration;hygon;convolution" RUN_SERIAL TRUE TIMEOUT 14400 SKIP_RETURN_CODE 77
+    ENVIRONMENT "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_hygon>;FLAGDNN_INPUT_PRECISION=0")
+
+  # Functional host references exercise the complete public dtype/shape
+  # catalog, including cases that previously returned immediately as SKIP.
+  # Each cold-cache shape compiles a graph; keep a bounded budget for the
+  # largest corpora without removing any cases.
+  set_tests_properties(functional.hygon.reduction functional.hygon.matmul_fp8
+    functional.hygon.matmul PROPERTIES TIMEOUT 14400)
 
   foreach(operator IN LISTS _flagdnn_hygon_cpu_reference_operators)
     set_tests_properties("functional.hygon.${operator}" PROPERTIES
@@ -442,6 +533,8 @@ endif()
 if(FLAGDNN_BUILD_BENCHMARKS)
   add_library(flagdnn_benchmark_hygon_adapter STATIC
     benchmark/runner.cpp
+    benchmark/native_runner.cpp
+    benchmark/native_dtype.cpp
     benchmark/hipdnn_provider.cpp
     benchmark/pointwise.cpp
     benchmark/tensor.cpp
@@ -454,9 +547,20 @@ if(FLAGDNN_BUILD_BENCHMARKS)
   target_link_libraries(flagdnn_benchmark_hygon_adapter PUBLIC
     FlagDNN::flagdnn
     flagdnn_benchmark_cases
+    flagdnn_validation_hygon_cases
     flagdnn_validation_hygon_platform
     flagdnn_validation_hygon_reference)
   flagdnn_enable_warnings(flagdnn_benchmark_hygon_adapter)
+
+  file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/benchmark/additional_operators.txt"
+    _flagdnn_hygon_additional_benchmarks)
+  file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/benchmark/dtype_only_operators.txt"
+    _flagdnn_hygon_dtype_only)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/benchmark/additional_operators.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/benchmark/dtype_only_operators.txt")
+  list(REMOVE_ITEM _flagdnn_hygon_benchmark_catalog ${_flagdnn_hygon_dtype_only})
+  list(APPEND _flagdnn_hygon_benchmark_catalog ${_flagdnn_hygon_additional_benchmarks})
 
   flagdnn_register_benchmark_suite(
     PLATFORM hygon
@@ -471,6 +575,44 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     LABELS hipdnn
     TIMEOUT 1800
     BUILD_RPATH "${_flagdnn_hipdnn_library_directory}")
+
+  add_executable(flagdnn_benchmark_hygon_dtype "${PROJECT_SOURCE_DIR}/benchmark/dtype_main.cpp")
+  target_link_libraries(flagdnn_benchmark_hygon_dtype PRIVATE flagdnn_benchmark_hygon_adapter)
+  flagdnn_enable_warnings(flagdnn_benchmark_hygon_dtype)
+  foreach(category IN ITEMS boolean copy ieee tf32 fp32_output)
+    set(dtype_category "${category}")
+    set(dtype_environment "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_hygon>")
+    if(category STREQUAL "boolean")
+      set(dtype_operators logical_and logical_or logical_not)
+    elseif(category STREQUAL "copy")
+      set(dtype_operators identity reshape transpose slice)
+    elseif(category STREQUAL "fp32_output")
+      set(dtype_operators reduction)
+    else()
+      set(dtype_operators matmul conv_fprop conv_dgrad conv_wgrad)
+      set(dtype_category precision)
+      if(category STREQUAL "ieee")
+        list(APPEND dtype_environment "FLAGDNN_INPUT_PRECISION=1")
+      else()
+        list(APPEND dtype_environment "FLAGDNN_INPUT_PRECISION=2")
+      endif()
+    endif()
+    foreach(operator IN LISTS dtype_operators)
+      add_test(NAME "benchmark.hygon.${operator}.${category}"
+        COMMAND flagdnn_benchmark_hygon_dtype "${FLAGDNN_CODEGEN_PYTHON}"
+          "${FLAGDNN_CODEGEN_COMPILER}" "${operator}" "${dtype_category}")
+      set_tests_properties("benchmark.hygon.${operator}.${category}" PROPERTIES
+        LABELS "benchmark;hygon;hipdnn;${operator};${category}"
+        RUN_SERIAL TRUE TIMEOUT 14400 SKIP_RETURN_CODE 77 ENVIRONMENT "${dtype_environment}")
+    endforeach()
+  endforeach()
+  add_test(NAME benchmark.hygon.matmul.fp8 COMMAND flagdnn_benchmark_hygon_matmul_fp8
+    "${FLAGDNN_CODEGEN_PYTHON}" "${FLAGDNN_CODEGEN_COMPILER}")
+  set_tests_properties(benchmark.hygon.matmul.fp8 PROPERTIES
+    LABELS "benchmark;hygon;hipdnn;matmul;fp8" RUN_SERIAL TRUE TIMEOUT 14400 SKIP_RETURN_CODE 77
+    ENVIRONMENT "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_hygon>;FLAGDNN_FP8_MATMUL_API=matmul")
+  set_property(TEST benchmark.hygon.matmul_fp8 APPEND PROPERTY
+    ENVIRONMENT "FLAGDNN_FP8_MATMUL_API=matmul_fp8")
 
   foreach(operator IN LISTS _flagdnn_hygon_benchmark_catalog)
     set_tests_properties("benchmark.hygon.${operator}" PROPERTIES

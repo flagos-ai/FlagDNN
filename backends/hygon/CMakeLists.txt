@@ -21,9 +21,8 @@ endif()
 # build successfully but cannot compile a Hygon graph after installation.
 foreach(_flagdnn_hygon_required_resource IN ITEMS
     compiler.py
-    compiler_identity.py
-    compiler_nn.py
-    compiler_tensor.py
+    codegen
+    dispatch
     python_environment_identity.py
     kernels
     tuning)
@@ -361,9 +360,12 @@ add_custom_command(TARGET flagdnn_backend_hygon POST_BUILD
     "$<TARGET_FILE_DIR:flagdnn_backend_hygon>/flagdnn_hygon_compiler_environment.json"
   VERBATIM)
 
-install(FILES compiler.py compiler_identity.py compiler_nn.py
-  compiler_tensor.py python_environment_identity.py
+install(FILES compiler.py python_environment_identity.py
   DESTINATION "${FLAGDNN_RESOURCE_INSTALL_DIR}/backends/hygon")
+install(DIRECTORY dispatch codegen
+  DESTINATION "${FLAGDNN_RESOURCE_INSTALL_DIR}/backends/hygon"
+  FILES_MATCHING PATTERN "*.py"
+  PATTERN "__pycache__" EXCLUDE)
 install(FILES python_environment_identity.py
   DESTINATION
     "${_flagdnn_hygon_triton_jit_private_script_install_directory}"

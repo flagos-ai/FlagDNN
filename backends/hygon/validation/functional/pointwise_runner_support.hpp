@@ -196,8 +196,7 @@ inline PreparedBuffers
 prepare_buffers(std::span<const TestTensor> inputs, const TestTensor &output,
                 std::span<const PointwiseInputDomain> domains,
                 BindingAddress binding_address,
-                LogicalInputCapture logical_input_capture,
-                hv::Stream &stream) {
+                LogicalInputCapture logical_input_capture, hv::Stream &stream) {
   if (inputs.size() != domains.size()) {
     throw std::invalid_argument("functional input domains do not match arity");
   }
@@ -251,8 +250,8 @@ quantize_logical_output(std::span<const float> logical,
   const std::vector<float> physical = io::scatter(logical, output);
   const std::vector<std::uint8_t> encoded =
       io::encode(physical, output.data_type);
-  return io::gather(
-      io::decode(encoded, output.data_type, physical.size()), output);
+  return io::gather(io::decode(encoded, output.data_type, physical.size()),
+                    output);
 }
 
 inline std::vector<float> read_output(const PreparedBuffers &prepared,
@@ -302,14 +301,14 @@ uses_hygon_cpu_reference(flagdnnPointwiseMode_t mode) noexcept {
 }
 
 template <typename BuildFlagdnn>
-CaseResult run_cpu_case(
-    std::string_view operation, std::string_view case_name,
-    std::span<const TestTensor> inputs, const TestTensor &output,
-    std::span<const PointwiseInputDomain> domains,
-    flagdnnPointwiseMode_t mode, double absolute_tolerance,
-    double relative_tolerance,
-    const std::function<flagdnn::Handle &()> &get_handle, hv::Stream &stream,
-    BuildFlagdnn &&build_flagdnn) {
+CaseResult run_cpu_case(std::string_view operation, std::string_view case_name,
+                        std::span<const TestTensor> inputs,
+                        const TestTensor &output,
+                        std::span<const PointwiseInputDomain> domains,
+                        flagdnnPointwiseMode_t mode, double absolute_tolerance,
+                        double relative_tolerance,
+                        const std::function<flagdnn::Handle &()> &get_handle,
+                        hv::Stream &stream, BuildFlagdnn &&build_flagdnn) {
   if (!uses_hygon_cpu_reference(mode) || inputs.size() != 2) {
     throw std::invalid_argument(
         "CPU pointwise reference requires a supported binary operation");
@@ -320,9 +319,9 @@ CaseResult run_cpu_case(
   }
 
   auto flagdnn = build_flagdnn(get_handle());
-  PreparedBuffers flagdnn_buffers = prepare_buffers(
-      inputs, output, domains, BindingAddress::kTensorEntrance,
-      LogicalInputCapture::kEnabled, stream);
+  PreparedBuffers flagdnn_buffers =
+      prepare_buffers(inputs, output, domains, BindingAddress::kTensorEntrance,
+                      LogicalInputCapture::kEnabled, stream);
   if (flagdnn_buffers.logical_inputs.size() != 2) {
     throw std::logic_error("CPU pointwise reference input preparation failed");
   }
@@ -339,11 +338,9 @@ CaseResult run_cpu_case(
 
   const Accuracy accuracy = compare_outputs(
       read_output(flagdnn_buffers, stream, "FlagDNN"), expected,
-      absolute_tolerance, relative_tolerance, case_name,
-      "CPU semantic oracle");
+      absolute_tolerance, relative_tolerance, case_name, "CPU semantic oracle");
   std::cout << case_name << ": FlagDNN Graph vs CPU semantic oracle PASS"
-            << " op=" << operation
-            << " max_abs=" << accuracy.maximum_absolute
+            << " op=" << operation << " max_abs=" << accuracy.maximum_absolute
             << " max_rel=" << accuracy.maximum_relative << std::endl;
   return CaseResult::kExecuted;
 }
@@ -364,7 +361,6 @@ CaseResult run_case(std::string_view operation, std::string_view case_name,
       hv::hipdnn_pointwise_capability(reference_operation, tensors, true);
   hv::require_valid_hipdnn_adapter_contract(capability, operation);
   if (!capability.supported) {
-    emit_skip(operation, case_name, capability.reason, tensors);
     return CaseResult::kSkipped;
   }
 
@@ -372,9 +368,9 @@ CaseResult run_case(std::string_view operation, std::string_view case_name,
   PreparedBuffers reference_buffers;
   try {
     reference = build_reference();
-    reference_buffers = prepare_buffers(inputs, output, domains,
-                                        BindingAddress::kStorageBase,
-                                        LogicalInputCapture::kDisabled, stream);
+    reference_buffers =
+        prepare_buffers(inputs, output, domains, BindingAddress::kStorageBase,
+                        LogicalInputCapture::kDisabled, stream);
     hv::DeviceBuffer reference_workspace(reference->workspace_size());
     stream.synchronize();
     execute(*reference, reference_buffers.bindings, reference_workspace,
@@ -384,17 +380,13 @@ CaseResult run_case(std::string_view operation, std::string_view case_name,
     if (!hv::hipdnn_status_is_capability(error.status())) {
       throw;
     }
-    emit_skip(operation, case_name,
-              std::string("hipDNN pointwise runtime capability: ") +
-                  error.what(),
-              tensors);
     return CaseResult::kSkipped;
   }
 
   auto flagdnn = build_flagdnn(get_handle());
-  PreparedBuffers flagdnn_buffers = prepare_buffers(
-      inputs, output, domains, BindingAddress::kTensorEntrance,
-      LogicalInputCapture::kDisabled, stream);
+  PreparedBuffers flagdnn_buffers =
+      prepare_buffers(inputs, output, domains, BindingAddress::kTensorEntrance,
+                      LogicalInputCapture::kDisabled, stream);
   hv::DeviceBuffer flagdnn_workspace(flagdnn->workspace_size());
   stream.synchronize();
   execute(*flagdnn, flagdnn_buffers.bindings, flagdnn_workspace, stream);

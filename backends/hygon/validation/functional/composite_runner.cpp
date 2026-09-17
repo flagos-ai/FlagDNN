@@ -2,6 +2,7 @@
 
 #include "common/composite.hpp"
 #include "convolution_runner_support.hpp"
+#include "host_runner.hpp"
 #include "pointwise_runner_support.hpp"
 
 #include <algorithm>
@@ -15,45 +16,53 @@ namespace flagdnn::testing {
 
 int run_add_square_functional_test(int argc, char **argv,
                                    std::span<const AddSquareTestCase> cases) {
-  // This backend's reference adapter currently accepts floating storage.
-  std::vector<AddSquareTestCase> supported_cases(cases.begin(), cases.end());
-  std::erase_if(supported_cases, [](const AddSquareTestCase &test_case) {
-    const auto type = test_case.left.data_type;
-    return type != FLAGDNN_DATA_FLOAT32 && type != FLAGDNN_DATA_FLOAT16 &&
-           type != FLAGDNN_DATA_BFLOAT16;
-  });
-  cases = supported_cases;
-
-  namespace support = hygon_functional::pointwise;
-  namespace hv = validation::hygon;
-  return support::run_suite(
-      argc, argv, "add_square", "FLAGDNN_ADD_SQUARE_FUNCTIONAL",
-      [&](const std::function<flagdnn::Handle &()> &get_handle,
-          hv::Stream &stream, std::size_t &matched, std::size_t &executed,
-          std::size_t &skipped) {
-        const char *filter = std::getenv("FLAGDNN_COMPOSITE_CASE");
-        for (const AddSquareTestCase &test_case : cases) {
-          if (filter != nullptr &&
-              test_case.name.find(filter) == std::string::npos) {
-            continue;
-          }
-          ++matched;
-          validate_composite_case(test_case);
-          const std::array<TestTensor, 2> inputs = {test_case.left,
-                                                    test_case.right};
-          const std::array<PointwiseInputDomain, 2> domains = {
-              PointwiseInputDomain::kReal, PointwiseInputDomain::kReal};
-          const support::CaseResult result = support::run_case(
-              "add_square", test_case.name, inputs, test_case.output, domains,
-              support::fixed_operation(hv::HipdnnPointwiseKind::kAddSquare),
-              test_case.absolute_tolerance, test_case.relative_tolerance,
-              get_handle, stream,
-              [&](flagdnn::Handle &value) {
-                return build_flagdnn_add_square(value, test_case);
+  namespace host = hygon_functional::host;
+  return host::run_suite(
+      argc, argv, cases, "add_square", false,
+      [](const AddSquareTestCase &c, const auto &handle, auto &stream) {
+        PointwiseTestCase pointwise;
+        pointwise.name = c.name;
+        pointwise.inputs = {c.left, c.right};
+        pointwise.output = c.output;
+        pointwise.mode = FLAGDNN_POINTWISE_ADD;
+        pointwise.alpha = 1.0;
+        if (c.left.data_type == FLAGDNN_DATA_INT32) {
+          host::run_integer_case(
+              pointwise, handle, stream,
+              [&](flagdnn::Handle &h) {
+                return build_flagdnn_add_square(h, c);
               },
-              [&] { return build_add_square_reference(test_case); });
-          result == support::CaseResult::kExecuted ? ++executed : ++skipped;
+              [&](auto a, auto b, bool predicate, auto alpha) {
+                (void)predicate;
+                return reference::cpu::pointwise_integer_reference(
+                    FLAGDNN_POINTWISE_ADD, a,
+                    reference::cpu::pointwise_integer_reference(
+                        FLAGDNN_POINTWISE_MUL, b, b, false, 1),
+                    false, alpha);
+              });
+          return;
         }
+        host::run_case(
+            c.name, pointwise.inputs, std::vector<TestTensor>{c.output},
+            host::default_inputs(pointwise.inputs), handle, stream,
+            [&](flagdnn::Handle &h) { return build_flagdnn_add_square(h, c); },
+            [&](const host::Values &v) {
+              std::vector<float> right(host::io::element_count(c.output));
+              for (std::size_t i = 0; i < right.size(); ++i) {
+                const float b =
+                    v[1][host::pw::broadcast_index(i, c.right, c.output)];
+                right[i] = b * b;
+              }
+              right =
+                  host::io::decode(host::io::encode(right, c.output.data_type),
+                                   c.output.data_type, right.size());
+              for (std::size_t i = 0; i < right.size(); ++i)
+                right[i] =
+                    v[0][host::pw::broadcast_index(i, c.left, c.output)] +
+                    right[i];
+              return host::Values{right};
+            },
+            c.absolute_tolerance, c.relative_tolerance);
       });
 }
 

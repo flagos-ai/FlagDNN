@@ -118,9 +118,9 @@ pointwise_diagnostic_tensors(const BenchmarkCase &specification) {
 }
 
 std::string pointwise_operation_name(const BenchmarkCase &specification) {
-  constexpr std::array<std::string_view, 7> kMarkers = {
+  constexpr std::array<std::string_view, 9> kMarkers = {
       "_strided_", "_perf_",     "_fp32_", "_fp16_",
-      "_bf16_",    "_bfloat16_", "_bool_"};
+      "_bf16_",    "_bfloat16_", "_bool_", "_int32_", "_fp8_"};
   const std::string_view case_name = specification.name;
   std::size_t end = std::string_view::npos;
   for (const std::string_view marker : kMarkers) {

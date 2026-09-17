@@ -18,10 +18,21 @@ import textwrap
 from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
 
 
 sys.dont_write_bytecode = True
+
+# Loaded after the requested source root has been added to sys.path.
+if TYPE_CHECKING:
+    codegen_abi: Any = None
+    codegen_emit: Any = None
+    codegen_io: Any = None
+    dispatch_common: Any = None
+    dispatch_graph: Any = None
+    dispatch_pointwise: Any = None
+    dispatch_tuning: Any = None
+    resolve_kernel_source: Any = None
 
 
 _JIT_DISCOVERY_ENVIRONMENT = (
@@ -57,17 +68,33 @@ def _load_modules(
     sys.path.insert(0, str(source_root))
     sys.path.insert(0, str(source_root / "compiler"))
 
-    from backends.hygon import compiler, compiler_nn, compiler_tensor
+    from backends.hygon import compiler
+
+    global codegen_abi, codegen_emit, codegen_io, dispatch_common
+    global dispatch_graph, dispatch_pointwise, dispatch_tuning
+    global resolve_kernel_source
+    import backends.hygon.codegen.abi as codegen_abi
+    import backends.hygon.codegen.emit as codegen_emit
+    import backends.hygon.codegen.io as codegen_io
+    import backends.hygon.dispatch.common as dispatch_common
+    import backends.hygon.dispatch.graph as dispatch_graph
+    import backends.hygon.dispatch.pointwise as dispatch_pointwise
+    import backends.hygon.dispatch.tuning as dispatch_tuning
+    from flagdnn_codegen.kernel_registry import resolve_kernel_source
+    from backends.hygon.dispatch import (
+        nn as compiler_nn,
+        tensor as compiler_tensor,
+    )
     from flagdnn_codegen.kernel_registry import select_kernel_candidate
 
     return compiler, compiler_nn, compiler_tensor, select_kernel_candidate
 
 
 def _check_pointer_range_specialization(compiler: ModuleType) -> None:
-    assert not compiler._triton_supports_pointer_range("3.1.0")
-    assert not compiler._triton_supports_pointer_range("3.2.0")
-    assert compiler._triton_supports_pointer_range("3.3.0")
-    assert compiler._triton_supports_pointer_range("3.6.0+git")
+    assert not codegen_abi._triton_supports_pointer_range("3.1.0")
+    assert not codegen_abi._triton_supports_pointer_range("3.2.0")
+    assert codegen_abi._triton_supports_pointer_range("3.3.0")
+    assert codegen_abi._triton_supports_pointer_range("3.6.0+git")
 
     function = type(
         "FakeKernel",
@@ -92,7 +119,7 @@ def _check_pointer_range_specialization(compiler: ModuleType) -> None:
         {
             "kind": "workspace_tensor",
             "alignment": 16,
-            "size": compiler.MAX_I32 + 1,
+            "size": dispatch_common.MAX_I32 + 1,
         },
         {"kind": "tensor", "alignment": 4, "size": 4096},
         {"kind": "scalar_i32"},
@@ -100,10 +127,10 @@ def _check_pointer_range_specialization(compiler: ModuleType) -> None:
         {"kind": "profile_scratch_pointer"},
     ]
 
-    previous_support = compiler.TRITON_SUPPORTS_POINTER_RANGE
+    previous_support = codegen_abi.TRITON_SUPPORTS_POINTER_RANGE
     try:
-        compiler.TRITON_SUPPORTS_POINTER_RANGE = True
-        specialized = compiler._jit_runtime_signature(
+        codegen_abi.TRITON_SUPPORTS_POINTER_RANGE = True
+        specialized = codegen_abi._jit_runtime_signature(
             function, runtime_signature, argument_abi
         )
         assert specialized == {
@@ -113,8 +140,8 @@ def _check_pointer_range_specialization(compiler: ModuleType) -> None:
             "count": "i32",
         }
 
-        compiler.TRITON_SUPPORTS_POINTER_RANGE = False
-        legacy = compiler._jit_runtime_signature(
+        codegen_abi.TRITON_SUPPORTS_POINTER_RANGE = False
+        legacy = codegen_abi._jit_runtime_signature(
             function, runtime_signature, argument_abi
         )
         assert legacy == {
@@ -124,7 +151,7 @@ def _check_pointer_range_specialization(compiler: ModuleType) -> None:
             "count": "i32",
         }
     finally:
-        compiler.TRITON_SUPPORTS_POINTER_RANGE = previous_support
+        codegen_abi.TRITON_SUPPORTS_POINTER_RANGE = previous_support
 
     from backends.hygon.prepare_standalone_compile import _HYGON
 
@@ -190,6 +217,7 @@ def _check_hcu_llvm_compatibility() -> None:
     assert "call void @other() #50" in compatible
     assert "attributes #50 = { nounwind }" in compatible
 
+    value: Any
     for value in (None, b"llvm"):
         try:
             _flagdnn_hygon_compatible_llir(value, 18)
@@ -241,7 +269,7 @@ def _check_fp8_layout(compiler_tensor: ModuleType) -> None:
     }
     assert not set(pointer_types).intersection(compiler_tensor.FLOAT_TYPES)
 
-    operation_cases = {
+    operation_cases: dict[str, tuple[list[int], list[int], dict[str, Any]]] = {
         "reshape": (
             [2, 3],
             [3, 2],
@@ -367,8 +395,8 @@ def _tuning_configurations(
     stage: Any,
 ) -> list[dict[str, Any]]:
     candidate = select_kernel_candidate("hygon", operation)
-    configurations, _ = compiler._load_nn_tuning(
-        compiler._compiler_entry_path(), candidate, stage
+    configurations, _ = dispatch_tuning._load_nn_tuning(
+        codegen_io._compiler_entry_path(), candidate, stage
     )
     return configurations
 
@@ -377,7 +405,7 @@ def _assert_mixed_stage_emission(
     compiler: ModuleType, parsed: dict[str, Any]
 ) -> None:
     maximum_uid = max(tensor["uid"] for tensor in parsed["tensors"])
-    plans, workspaces, _ = compiler._nn_workspace_layout(
+    plans, workspaces, _ = dispatch_graph._nn_workspace_layout(
         [parsed], 0, maximum_uid
     )
     plan = plans[parsed["id"]]
@@ -390,14 +418,14 @@ def _assert_mixed_stage_emission(
                 local_stage_ids[name] for name in configuration.dependencies
             )
             emitted.append(
-                compiler._compile_nn_stage(
+                codegen_emit._compile_nn_stage(
                     stage_id=stage_id,
                     node=parsed,
                     configuration=configuration,
                     dependencies=dependencies,
                     workspace={},
                     local_workspace=workspaces[parsed["id"]],
-                    compiler_path=compiler._compiler_entry_path(),
+                    compiler_path=codegen_io._compiler_entry_path(),
                     output_directory=Path(temporary),
                     enable_autotune=True,
                 )
@@ -891,6 +919,7 @@ def _check_private_convolution_autotune(
         wgrad_noncontiguous_node
     )
     wgrad_fp32_resource_plans: list[Any] = []
+    options: Any
     for image, weight, stride, padding, options in (
         ([2, 8, 16, 16], [16, 8, 3, 3], [1, 1], [1, 1], {}),
         ([8, 32, 32, 32], [64, 32, 3, 3], [1, 1], [1, 1], {}),
@@ -1301,7 +1330,9 @@ def _check_private_convolution_autotune(
         "hygon_conv_dgrad2d_exact_3x3_s1_gemm_kernel",
         "hygon_conv_dgrad2d_exact_3x3_s1_col2im_kernel",
     }
-    stride1_fallback_cases = (
+    stride1_fallback_cases: tuple[
+        tuple[list[int], list[int], list[int], list[int], dict[str, Any]], ...
+    ] = (
         (
             [7, 32, 32, 32],
             [64, 32, 3, 3],
@@ -1662,8 +1693,8 @@ def _check_private_convolution_autotune(
         "hygon_conv_wgrad2d_rowmajor_kernel": "BLOCK_CI_K",
         "hygon_conv_wgrad2d_stem_split_kernel": "BLOCK_CI_K",
     }
-    assert compiler._WGRAD_DOT_RIGHT_META == wgrad_dot_right_meta
-    assert compiler.HYGON_MAX_SHARED_MEMORY_BYTES == 64 * 1024
+    assert dispatch_tuning._WGRAD_DOT_RIGHT_META == wgrad_dot_right_meta
+    assert dispatch_tuning.HYGON_MAX_SHARED_MEMORY_BYTES == 64 * 1024
 
     def collect_wgrad_dot_stages(plans: tuple[Any, ...]) -> dict[str, Any]:
         result: dict[str, Any] = {}
@@ -1710,7 +1741,9 @@ def _check_private_convolution_autotune(
                 * 4
             )
             assert required_bytes <= 64 * 1024
-            assert compiler._wgrad_dot_tuning_fits_shared_memory(stage, meta)
+            assert dispatch_tuning._wgrad_dot_tuning_fits_shared_memory(
+                stage, meta
+            )
 
     p5_large_configurations = _tuning_configurations(
         compiler,
@@ -1761,7 +1794,7 @@ def _check_private_convolution_autotune(
     missing_meta = dict(sample_meta)
     missing_meta.pop("BLOCK_M")
     try:
-        compiler._wgrad_dot_tuning_fits_shared_memory(
+        dispatch_tuning._wgrad_dot_tuning_fits_shared_memory(
             sample_stage, missing_meta
         )
     except ValueError as error:
@@ -1778,7 +1811,7 @@ def _check_private_convolution_autotune(
         },
     )()
     try:
-        compiler._wgrad_dot_tuning_fits_shared_memory(
+        dispatch_tuning._wgrad_dot_tuning_fits_shared_memory(
             invalid_token_stage, sample_meta
         )
     except ValueError as error:
@@ -2265,8 +2298,8 @@ def _check_large_normalization(
     assert layernorm_candidate.source_layout == "platform"
     assert layernorm_candidate.source == "normalization.py"
     assert layernorm_candidate.functions == ("layer_norm_kernel",)
-    normalization_source = compiler.resolve_kernel_source(
-        compiler._compiler_entry_path(), layernorm_candidate
+    normalization_source = resolve_kernel_source(
+        codegen_io._compiler_entry_path(), layernorm_candidate
     )
     assert normalization_source.parent.name == "kernels"
     assert normalization_source.parent.parent.name == "hygon"
@@ -2292,8 +2325,8 @@ def _check_large_normalization(
         assert len(plan.stages) == 1
         stage = plan.stages[0]
         candidate = select_kernel_candidate("hygon", operation)
-        source = compiler.resolve_kernel_source(
-            compiler._compiler_entry_path(), candidate
+        source = resolve_kernel_source(
+            codegen_io._compiler_entry_path(), candidate
         )
         function = next(
             node
@@ -2306,7 +2339,7 @@ def _check_large_normalization(
             (),
             {"arg_names": [argument.arg for argument in function.args.args]},
         )()
-        compiler._jit_full_signature(
+        codegen_abi._jit_full_signature(
             signature, stage.runtime_signature, stage.constants
         )
         configurations = _tuning_configurations(
@@ -2400,50 +2433,57 @@ def _check_batchnorm_dispatch(
     ] == [256, 512, 1024, 1024, 2048, 4096]
 
 
-def _check_sigmoid_backward_common_source(compiler: ModuleType) -> None:
-    # Sigmoid backward shares the activation-gradient module. Exercise actual
+def _check_activation_backward_common_source(compiler: ModuleType) -> None:
+    # Activation backward shares the common gradient module. Exercise actual
     # source materialization and the complete JIT ABI without a device SDK.
     with tempfile.TemporaryDirectory(prefix="flagdnn-hygon-sigmoid-") as path:
-        for dtype in ("float32", "float16", "bfloat16"):
-            for strided in (False, True):
-                registry = {
-                    uid: _tensor(uid, dtype, [2, 3]) for uid in (1, 2, 3)
-                }
-                if strided:
-                    for tensor in registry.values():
-                        tensor["strides"] = [8, 2]
-                node = {
-                    "id": 0,
-                    "type": "sigmoid_backward",
-                    "compute_data_type": "float32",
-                    "attributes": {
-                        "n_elements": 6,
-                        "pointwise_mode": 40,
-                        "alpha": 1.0,
-                    },
-                    "inputs": [
-                        {"name": "left", "uid": 1},
-                        {"name": "right", "uid": 2},
-                    ],
-                    "outputs": [{"name": "output", "uid": 3}],
-                }
-                parsed = compiler._parse_pointwise_node(node, 0, 1, registry)
-                stage = compiler._compile_pointwise_stage(
-                    stage_id=0,
-                    node=parsed,
-                    dependencies=[],
-                    workspace={},
-                    compiler_path=compiler._compiler_entry_path(),
-                    output_directory=Path(path),
-                    enable_autotune=False,
-                )
-                assert stage["kernel"]["source"] == "activation_backward.py"
-                expected = (
-                    "activation_backward_strided_kernel"
-                    if strided
-                    else "activation_backward_contiguous_kernel"
-                )
-                assert stage["kernel"]["function"] == expected
+        for operation, mode in dispatch_pointwise.POINTWISE_MODES.items():
+            if not operation.endswith("_backward"):
+                continue
+            for dtype in ("float32", "float16", "bfloat16"):
+                for strided in (False, True):
+                    registry = {
+                        uid: _tensor(uid, dtype, [2, 3]) for uid in (1, 2, 3)
+                    }
+                    if strided:
+                        for tensor in registry.values():
+                            tensor["strides"] = [8, 2]
+                    node = {
+                        "id": 0,
+                        "type": operation,
+                        "compute_data_type": "float32",
+                        "attributes": {
+                            "n_elements": 6,
+                            "pointwise_mode": mode,
+                            "alpha": 1.0,
+                        },
+                        "inputs": [
+                            {"name": "left", "uid": 1},
+                            {"name": "right", "uid": 2},
+                        ],
+                        "outputs": [{"name": "output", "uid": 3}],
+                    }
+                    parsed = dispatch_pointwise._parse_pointwise_node(
+                        node, 0, 1, registry
+                    )
+                    stage = codegen_emit._compile_pointwise_stage(
+                        stage_id=0,
+                        node=parsed,
+                        dependencies=[],
+                        workspace={},
+                        compiler_path=codegen_io._compiler_entry_path(),
+                        output_directory=Path(path),
+                        enable_autotune=False,
+                    )
+                    assert (
+                        stage["kernel"]["source"] == "activation_backward.py"
+                    )
+                    expected = (
+                        "activation_backward_strided_kernel"
+                        if strided
+                        else "activation_backward_contiguous_kernel"
+                    )
+                    assert stage["kernel"]["function"] == expected
 
 
 def _check_pointwise_kernel_ownership(
@@ -2455,9 +2495,7 @@ def _check_pointwise_kernel_ownership(
     assert add.source_layout == "kernels"
     assert add.source == "binary.py"
     assert (
-        compiler.resolve_kernel_source(
-            compiler._compiler_entry_path(), add
-        ).name
+        resolve_kernel_source(codegen_io._compiler_entry_path(), add).name
         == "binary.py"
     )
 
@@ -2467,8 +2505,8 @@ def _check_pointwise_kernel_ownership(
         assert candidate.provider == "hygon_triton"
         assert candidate.source_layout == "platform"
         assert candidate.source == "binary_minmax.py"
-        source = compiler.resolve_kernel_source(
-            compiler._compiler_entry_path(), candidate
+        source = resolve_kernel_source(
+            codegen_io._compiler_entry_path(), candidate
         )
         assert source.name == "binary_minmax.py"
         assert source.parent.name == "kernels"
@@ -2507,13 +2545,15 @@ def _check_pointwise_kernel_ownership(
                 ],
                 "outputs": [{"name": "output", "uid": 3, "optional": False}],
             }
-            parsed = compiler._parse_pointwise_node(node, 0, 1, registry)
-            stage = compiler._compile_pointwise_stage(
+            parsed = dispatch_pointwise._parse_pointwise_node(
+                node, 0, 1, registry
+            )
+            stage = codegen_emit._compile_pointwise_stage(
                 stage_id=stage_id,
                 node=parsed,
                 dependencies=[],
                 workspace={},
-                compiler_path=compiler._compiler_entry_path(),
+                compiler_path=codegen_io._compiler_entry_path(),
                 output_directory=Path(temporary),
                 enable_autotune=False,
             )
@@ -2539,15 +2579,15 @@ def _check_pointwise_kernel_ownership(
             "inputs": [{"name": "input", "uid": 1, "optional": False}],
             "outputs": [{"name": "output", "uid": 2, "optional": False}],
         }
-        parsed_identity = compiler._parse_pointwise_node(
+        parsed_identity = dispatch_pointwise._parse_pointwise_node(
             identity_node, 0, 1, identity_registry
         )
-        identity_stage = compiler._compile_pointwise_stage(
+        identity_stage = codegen_emit._compile_pointwise_stage(
             stage_id=4,
             node=parsed_identity,
             dependencies=[],
             workspace={},
-            compiler_path=compiler._compiler_entry_path(),
+            compiler_path=codegen_io._compiler_entry_path(),
             output_directory=Path(temporary),
             enable_autotune=True,
         )
@@ -2576,15 +2616,15 @@ def _check_pointwise_kernel_ownership(
             uid: _tensor(uid, "float32", [8, 1024, 2048]) for uid in (1, 2)
         }
         strided_registry[1]["strides"] = [1024 * 2049, 2049, 1]
-        parsed_strided = compiler._parse_pointwise_node(
+        parsed_strided = dispatch_pointwise._parse_pointwise_node(
             identity_node, 0, 1, strided_registry
         )
-        strided_stage = compiler._compile_pointwise_stage(
+        strided_stage = codegen_emit._compile_pointwise_stage(
             stage_id=5,
             node=parsed_strided,
             dependencies=[],
             workspace={},
-            compiler_path=compiler._compiler_entry_path(),
+            compiler_path=codegen_io._compiler_entry_path(),
             output_directory=Path(temporary),
             enable_autotune=True,
         )
@@ -2605,10 +2645,10 @@ def _check_pointwise_kernel_ownership(
 
 
 def _check_platform_kernel_identity_inputs(compiler: ModuleType) -> None:
-    from backends.hygon import compiler_identity
+    from backends.hygon.codegen import identity as compiler_identity
 
     inputs = compiler_identity._identity_inputs(
-        Path(compiler.__file__).resolve(), compiler._compiler_entry_path()
+        Path(compiler.__file__).resolve(), codegen_io._compiler_entry_path()
     )
     common_normalization = (
         "kernel:common:kernels:common_triton:normalization.py"
@@ -2625,6 +2665,7 @@ def _check_platform_kernel_identity_inputs(compiler: ModuleType) -> None:
         platform_unary,
         "kernel:platform:platform:hygon_triton:reduction.py",
         "kernel:platform:platform:hygon_triton:convolution.py",
+        "kernel:platform:platform:hygon_triton:position_embedding.py",
     ):
         assert label in inputs
         assert inputs[label].is_file()
@@ -2735,7 +2776,7 @@ def _write_compiler_environment_fixture(
 
 
 def _check_private_build_mirror_layout(compiler: ModuleType) -> None:
-    from backends.hygon import compiler_identity
+    from backends.hygon.codegen import identity as compiler_identity
 
     with _isolated_jit_discovery_environment(), tempfile.TemporaryDirectory(
         prefix="flagdnn-hygon-compiler-layout-contract-"
@@ -2827,7 +2868,7 @@ def _check_private_build_mirror_layout(compiler: ModuleType) -> None:
         dependencies = set(
             compiler_identity.compiler_identity_dependency_paths(
                 provider_path=provider,
-                compiler_entry=compiler._compiler_entry_path(),
+                compiler_entry=codegen_io._compiler_entry_path(),
             )
         )
         expected_dependencies = {
@@ -2917,6 +2958,208 @@ def _check_private_build_mirror_layout(compiler: ModuleType) -> None:
             )
 
 
+def _check_module_boundaries(source_root: Path, compiler: ModuleType) -> None:
+    import ast
+    import subprocess
+    from backends.hygon.codegen import identity
+
+    provider = Path(compiler.__file__).resolve()
+    inputs = identity._identity_inputs(
+        provider, codegen_io._compiler_entry_path()
+    )
+    dependencies = set(compiler.compiler_identity_dependencies("gfx936"))
+    for package in ("dispatch", "codegen"):
+        for path in (provider.parent / package).glob("*.py"):
+            assert path.resolve() in inputs.values(), path
+            assert path.resolve() in dependencies, path
+    for path in (provider.parent / "dispatch").glob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom):
+                assert not any(
+                    part in (node.module or "").split(".")
+                    for part in ("codegen", "compiler", "triton", "nvidia")
+                ), path
+    # Planning must remain usable without initializing Triton or a GPU.
+    code = """
+import importlib, pathlib, sys
+sys.path[:0] = [sys.argv[1], str(pathlib.Path(sys.argv[1]) / 'compiler')]
+directory = pathlib.Path(sys.argv[1]) / 'backends/hygon/dispatch'
+for path in directory.glob('*.py'):
+    importlib.import_module('backends.hygon.dispatch.' + path.stem)
+assert 'triton' not in sys.modules
+assert 'torch' not in sys.modules
+"""
+    subprocess.run([sys.executable, "-c", code, str(source_root)], check=True)
+
+
+def _check_explicit_precision(compiler_nn, compiler_tensor):
+    nodes = []
+    for operation in (
+        "convolution_fprop",
+        "convolution_dgrad",
+        "convolution_wgrad",
+    ):
+        node, _ = _convolution_case(
+            compiler_nn,
+            operation,
+            [1, 2, 5, 5],
+            [2, 2, 3, 3],
+            [1, 1],
+            [1, 1],
+            data_type="float32",
+        )
+        nodes.append(node)
+    tensors = [
+        {"data_type": "float32", "dimensions": dims, "strides": strides}
+        for dims, strides in (
+            ([2, 3], [3, 1]),
+            ([3, 4], [4, 1]),
+            ([2, 4], [4, 1]),
+        )
+    ]
+    parameters = {"batch": 1, "m": 2, "n": 4, "k": 3}
+    for precision in (0, 1, 2, -1, True):
+
+        def matmul():
+            return compiler_tensor._matmul_configuration(
+                {**parameters, "input_precision": precision}, tensors
+            )
+
+        checks = [matmul]
+        for node in nodes:
+            node["parameters"]["input_precision"] = precision
+            checks.append(
+                lambda node=node: compiler_nn._validate_convolution(node)
+            )
+        for check in checks:
+            if type(precision) is int and precision in (0, 1):
+                check()
+            else:
+                try:
+                    check()
+                except ValueError as error:
+                    assert "precision" in str(error) or "TF32" in str(error)
+                else:
+                    raise AssertionError("unsupported precision was accepted")
+
+
+def _check_extended_operator_contracts(source_root: Path) -> None:
+    from backends.hygon.dispatch import extended
+    from backends.hygon.dispatch.causal_convolution import (
+        _causal_conv1d_kernel_configuration,
+    )
+    from backends.hygon.dispatch.fp8_matmul import _fp8_matmul_configuration
+    from backends.hygon.dispatch.resample import _resample_kernel_configuration
+
+    registry = {
+        t["uid"]: t
+        for t in (
+            _tensor(1, "float16", [2, 3, 4]),
+            _tensor(2, "float32", [1, 3, 1]),
+            _tensor(3, "float32", [1, 3, 1]),
+        )
+    }
+    node: dict[str, Any] = dict(
+        id=0,
+        type="genstats",
+        compute_data_type="float16",
+        inputs=[dict(name="x", uid=1)],
+        outputs=[dict(name="sum", uid=2), dict(name="sq_sum", uid=3)],
+        attributes=dict(channels=3, reduction=8),
+    )
+    parsed = extended.parse_node(node, 0, 1, registry)
+    assert (
+        extended.kernel_configuration(parsed).runtime_signature["x_ptr"]
+        == "*fp16"
+    )
+    for mutation in (
+        "role",
+        "count",
+        "unknown_uid",
+        "output_alias",
+        "optional_type",
+    ):
+        invalid = copy.deepcopy(node)
+        if mutation == "role":
+            invalid["inputs"][0]["name"] = "sum"
+        elif mutation == "count":
+            invalid["outputs"].pop()
+        elif mutation == "unknown_uid":
+            invalid["inputs"][0]["uid"] = 99
+        elif mutation == "output_alias":
+            invalid["outputs"][0]["uid"] = 1
+        else:
+            invalid["inputs"][0]["optional"] = 0
+        try:
+            extended.parse_node(invalid, 0, 1, registry)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(
+                f"invalid extended Graph port accepted: {mutation}"
+            )
+
+    # Ignored optional pointers still have to agree with the aliased tensor's
+    # storage type. The artifact validator checks every runtime ABI argument.
+    fp8 = _fp8_matmul_configuration(
+        dict(scale_mode=0, m=16, n=16, k=32, batch=1),
+        [
+            _tensor(1, "fp8_e4m3", [16, 32]),
+            _tensor(2, "fp8_e5m2", [32, 16]),
+            _tensor(3, "float16", [16, 16]),
+        ],
+    )
+    assert fp8[1]["sa_ptr"] == fp8[1]["sb_ptr"] == "*fp16"
+    resample = _resample_kernel_configuration(
+        dict(
+            mode=4,
+            padding=1,
+            generate_index=0,
+            align_corners=0,
+            window=[1, 1],
+            stride=[1, 1],
+            pre_padding=[0, 0],
+            post_padding=[0, 0],
+            n_elements=64,
+        ),
+        [
+            _tensor(1, "bfloat16", [1, 1, 4, 4]),
+            _tensor(2, "bfloat16", [1, 1, 8, 8]),
+        ],
+    )
+    assert resample[1]["index_ptr"] == "*bf16"
+    causal = _causal_conv1d_kernel_configuration(
+        dict(
+            has_bias=0,
+            activation=1,
+            input_precision=1,
+            dilation=2,
+            n_elements=32,
+        ),
+        [
+            _tensor(1, "float32", [1, 4, 8]),
+            _tensor(2, "float32", [4, 3]),
+            _tensor(3, "float32", [1, 4, 8]),
+        ],
+    )
+    for config, filename in [
+        (fp8, "fp8_matmul.py"),
+        (resample, "resample.py"),
+        (causal, "causal_convolution.py"),
+    ]:
+        tree = ast.parse(
+            (source_root / "kernels/common" / filename).read_text()
+        )
+        definition = next(
+            n
+            for n in tree.body
+            if isinstance(n, ast.FunctionDef) and n.name == config[0]
+        )
+        assert set(config[1]) | set(config[2]) == {
+            a.arg for a in definition.args.args
+        }, "planner/kernel signature drift"
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         raise SystemExit(f"usage: {argv[0]} SOURCE_ROOT")
@@ -2936,6 +3179,9 @@ def main(argv: list[str]) -> int:
             raise AssertionError(
                 f"unsupported Hygon target {unsupported_target} was accepted"
             )
+    _check_extended_operator_contracts(source_root)
+    _check_explicit_precision(compiler_nn, compiler_tensor)
+    _check_module_boundaries(source_root, compiler)
     _check_pointer_range_specialization(compiler)
     _check_hcu_llvm_compatibility()
     _check_fp8_layout(compiler_tensor)
@@ -2949,7 +3195,7 @@ def main(argv: list[str]) -> int:
     _check_large_normalization(compiler, compiler_nn, select_kernel_candidate)
     _check_batchnorm_dispatch(compiler, compiler_nn, select_kernel_candidate)
     _check_pointwise_kernel_ownership(compiler, select_kernel_candidate)
-    _check_sigmoid_backward_common_source(compiler)
+    _check_activation_backward_common_source(compiler)
     _check_platform_kernel_identity_inputs(compiler)
     _check_private_build_mirror_layout(compiler)
     print("Hygon compiler contract: PASS")

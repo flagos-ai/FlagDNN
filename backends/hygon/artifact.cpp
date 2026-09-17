@@ -18,8 +18,8 @@
 #include <limits>
 #include <map>
 #include <optional>
-#include <span>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -106,6 +106,10 @@ std::size_t align_up(std::size_t value, std::size_t alignment,
 }
 
 std::string pointer_token_for(std::string_view data_type) {
+  if (data_type == "int32")
+    return "*i32";
+  if (data_type == "fp8_e8m0")
+    return "*u8";
   if (data_type == "float32") {
     return "*fp32";
   }
@@ -128,14 +132,14 @@ std::string pointer_token_for(std::string_view data_type) {
 }
 
 std::size_t element_size_for(std::string_view data_type) {
-  if (data_type == "float32") {
+  if (data_type == "float32" || data_type == "int32") {
     return 4;
   }
   if (data_type == "float16" || data_type == "bfloat16") {
     return 2;
   }
-  if (data_type == "boolean" || data_type == "fp8_e4m3" ||
-      data_type == "fp8_e5m2") {
+  if (data_type == "fp8_e8m0" || data_type == "boolean" ||
+      data_type == "fp8_e4m3" || data_type == "fp8_e5m2") {
     return 1;
   }
   invalid_artifact("request tensor data type is unsupported");
@@ -266,8 +270,7 @@ parse_request_graph(const flagdnn::native::json::Value &request_root) {
       try {
         const std::int64_t integer = value.as_int();
         metadata.integer_attributes.emplace(name, integer);
-        metadata.numeric_attributes.emplace(name,
-                                            static_cast<double>(integer));
+        metadata.numeric_attributes.emplace(name, static_cast<double>(integer));
         continue;
       } catch (const std::exception &) {
       }
@@ -473,8 +476,8 @@ parse_argument_abi(const flagdnn::native::json::Value &value,
         throw HygonError(FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
                          "artifact tensor argument metadata is invalid");
       }
-      result.push_back({ArgumentKind::kTensor, uid, 0, 0.0F, 0, size,
-                        alignment, role});
+      result.push_back(
+          {ArgumentKind::kTensor, uid, 0, 0.0F, 0, size, alignment, role});
       if (std::find(binding_uids.begin(), binding_uids.end(), uid) ==
           binding_uids.end()) {
         binding_uids.push_back(uid);
@@ -562,7 +565,7 @@ runtime_signature_tokens(std::string_view full_signature) {
 }
 
 std::optional<std::int64_t> binary_pointwise_mode(std::string_view operation) {
-  static constexpr std::array<std::pair<std::string_view, std::int64_t>, 17>
+  static constexpr std::array<std::pair<std::string_view, std::int64_t>, 24>
       modes = {{{"add", 1},
                 {"sub", 17},
                 {"mul", 18},
@@ -579,7 +582,14 @@ std::optional<std::int64_t> binary_pointwise_mode(std::string_view operation) {
                 {"cmp_le", 30},
                 {"logical_and", 31},
                 {"logical_or", 32},
-                {"sigmoid_backward", 40}}};
+                {"sigmoid_backward", 40},
+                {"relu_backward", 42},
+                {"tanh_backward", 43},
+                {"elu_backward", 44},
+                {"gelu_backward", 45},
+                {"softplus_backward", 46},
+                {"swish_backward", 47},
+                {"gelu_approx_tanh_backward", 48}}};
   const auto entry =
       std::find_if(modes.begin(), modes.end(), [&](const auto &candidate) {
         return candidate.first == operation;
@@ -597,18 +607,25 @@ bool contains_string(std::span<const std::string_view> values,
 
 bool is_unary_pointwise_operation(std::string_view operation) {
   static constexpr std::array<std::string_view, 23> operations = {
-      "relu", "sqrt", "erf", "identity", "exp", "log", "neg", "abs",
-      "ceil", "cos", "floor", "rsqrt", "sin", "tan", "reciprocal",
-      "sigmoid", "tanh", "elu", "gelu", "softplus", "swish",
-      "gelu_approx_tanh", "logical_not"};
+      "relu",       "sqrt",
+      "erf",        "identity",
+      "exp",        "log",
+      "neg",        "abs",
+      "ceil",       "cos",
+      "floor",      "rsqrt",
+      "sin",        "tan",
+      "reciprocal", "sigmoid",
+      "tanh",       "elu",
+      "gelu",       "softplus",
+      "swish",      "gelu_approx_tanh",
+      "logical_not"};
   return contains_string(operations, operation);
 }
 
 bool kernel_function_allowed(std::string_view operation,
                              std::string_view function) {
   static constexpr std::array<std::string_view, 3> unary_functions = {
-      "unary_pointwise_contiguous_kernel",
-      "unary_pointwise_strided_kernel",
+      "unary_pointwise_contiguous_kernel", "unary_pointwise_strided_kernel",
       "identity_packed_contiguous_kernel"};
   static constexpr std::array<std::string_view, 4> reduction_functions = {
       "reduction_2d_kernel", "reduction_3d_small_extent_kernel",
@@ -648,15 +665,18 @@ bool kernel_function_allowed(std::string_view operation,
       "hygon_conv_wgrad2d_reduce_kernel"};
   static constexpr std::array<std::string_view, 5> sdpa_backward_functions = {
       "_zero_contiguous_kernel", "_sdpa_bwd_dq_dbias_kernel",
-      "_sdpa_bwd_dkdv_kernel", "_sdpa_bwd_dk_kernel",
-      "_sdpa_bwd_dv_kernel"};
+      "_sdpa_bwd_dkdv_kernel", "_sdpa_bwd_dk_kernel", "_sdpa_bwd_dv_kernel"};
   static constexpr std::array<std::string_view, 2> sdpa_fp8_functions = {
       "_zero_sdpa_fp8_fwd_amax_kernel", "_sdpa_fp8_fwd_kernel"};
-  static constexpr std::array<std::string_view, 3>
-      sdpa_fp8_backward_functions = {"_zero_sdpa_fp8_bwd_amax_kernel",
-                                     "_sdpa_fp8_bwd_dq_kernel",
-                                     "_sdpa_fp8_bwd_dkdv_kernel"};
+  static constexpr std::array<std::string_view, 3> sdpa_fp8_backward_functions =
+      {"_zero_sdpa_fp8_bwd_amax_kernel", "_sdpa_fp8_bwd_dq_kernel",
+       "_sdpa_fp8_bwd_dkdv_kernel"};
 
+  if (operation.ends_with("_backward") &&
+      binary_pointwise_mode(operation).has_value()) {
+    return function == "activation_backward_contiguous_kernel" ||
+           function == "activation_backward_strided_kernel";
+  }
   if (binary_pointwise_mode(operation).has_value()) {
     return function == "binary_contiguous_kernel" ||
            function == "binary_strided_kernel";
@@ -677,7 +697,8 @@ bool kernel_function_allowed(std::string_view operation,
     return contains_string(reduction_functions, function);
   }
   if (operation == "matmul") {
-    return function == "matmul_strided_kernel";
+    return function == "matmul_strided_kernel" ||
+           function == "fp8_matmul_kernel";
   }
   if (operation == "conv2d_fprop" || operation == "convolution_fprop") {
     return contains_string(conv_fprop_functions, function);
@@ -714,6 +735,36 @@ bool kernel_function_allowed(std::string_view operation,
   if (operation == "sdpa_fp8_backward") {
     return contains_string(sdpa_fp8_backward_functions, function);
   }
+  if (operation == "gen_index")
+    return function == "gen_index_kernel";
+  if (operation == "concatenate")
+    return function == "concatenate_copy_kernel";
+  if (operation == "genstats")
+    return function == "genstats_kernel";
+  if (operation == "bn_finalize")
+    return function == "bn_finalize_kernel";
+  if (operation == "rng")
+    return function == "rng_kernel";
+  if (operation == "rope" || operation == "rope_backward")
+    return function == "rope_kernel";
+  if (operation == "resample")
+    return function == "resample_kernel";
+  if (operation == "causal_conv1d")
+    return function == "causal_conv1d_kernel";
+  if (operation == "matmul_fp8")
+    return function == "fp8_matmul_kernel";
+  if (operation == "moe_grouped_matmul" ||
+      operation == "moe_grouped_matmul_bwd")
+    return function == "moe_matmul_kernel";
+  if (operation == "instancenorm" || operation == "adalayernorm")
+    return function == "extended_normalization_forward" ||
+           function == "compact_normalization_forward";
+  if (operation == "instancenorm_backward" ||
+      operation == "adalayernorm_backward" ||
+      operation == "layernorm_backward" || operation == "rmsnorm_backward" ||
+      operation == "batchnorm_backward")
+    return function == "extended_normalization_backward" ||
+           function == "compact_batchnorm_backward";
   return false;
 }
 
@@ -846,8 +897,12 @@ void validate_pointwise_constants(const HygonKernelArtifact &kernel,
       right.dimensions == output.dimensions && left.strides == output.strides &&
       right.strides == output.strides && is_physically_dense(left) &&
       is_physically_dense(right) && is_physically_dense(output);
+  const bool activation_backward = node.operation.ends_with("_backward");
   const std::string_view expected_function =
-      dense ? "binary_contiguous_kernel" : "binary_strided_kernel";
+      activation_backward
+          ? (dense ? "activation_backward_contiguous_kernel"
+                   : "activation_backward_strided_kernel")
+          : (dense ? "binary_contiguous_kernel" : "binary_strided_kernel");
   if (function_name != expected_function) {
     invalid_artifact(
         "pointwise kernel function does not match request Graph IR layout");
@@ -867,7 +922,8 @@ void validate_pointwise_constants(const HygonKernelArtifact &kernel,
   const std::vector<std::string_view> tokens =
       full_signature_tokens(kernel.full_signature);
   const std::size_t constant_offset = dense ? 4 : 36;
-  const std::size_t expected_token_count = dense ? 7 : 39;
+  const std::size_t expected_token_count =
+      (dense ? 7 : 39) + (activation_backward ? (dense ? 8 : 7) : 0);
   if (tokens.size() != expected_token_count) {
     invalid_artifact(
         "pointwise full signature does not match request Graph IR layout");
@@ -915,6 +971,40 @@ void validate_pointwise_constants(const HygonKernelArtifact &kernel,
       (!graph.autotune && block_size != 256)) {
     invalid_artifact(
         "pointwise BLOCK_SIZE does not match compiler tuning contract");
+  }
+  if (activation_backward) {
+    if (left.dimensions != output.dimensions ||
+        right.dimensions != output.dimensions) {
+      invalid_artifact("activation backward tensor shapes must match");
+    }
+    const std::array<std::pair<std::string_view, double>, 7> attributes = {
+        {{"relu_lower_clip_slope", 0.0},
+         {"relu_lower_clip", 0.0},
+         {"relu_upper_clip", 0.0},
+         {"has_upper_clip", 0.0},
+         {"swish_beta", 1.0},
+         {"elu_alpha", 1.0},
+         {"softplus_beta", 1.0}}};
+    for (std::size_t index = 0; index < attributes.size(); ++index) {
+      const auto [name, default_value] = attributes[index];
+      const auto found = node.numeric_attributes.find(std::string(name));
+      const double expected = found == node.numeric_attributes.end()
+                                  ? default_value
+                                  : found->second;
+      const auto token = tokens[constant_offset + 3 + index];
+      if (name == "has_upper_clip") {
+        if ((expected != 0.0 && expected != 1.0) ||
+            token != (expected == 1.0 ? "true" : "false")) {
+          invalid_artifact("activation clip flag does not match Graph IR");
+        }
+      } else if (signature_double(token, "invalid activation attribute") !=
+                 expected) {
+        invalid_artifact("activation attribute does not match Graph IR");
+      }
+    }
+    if (dense && tokens.back() != "true") {
+      invalid_artifact("activation tail mask does not match compiler contract");
+    }
   }
   if (graph.autotune) {
     const auto config = entry.as_object().find("config");
@@ -1016,12 +1106,18 @@ void validate_kernel_semantics(const HygonKernelArtifact &kernel,
         pointwise_tensor(graph, node.outputs, "output");
     const bool dense = input.dimensions == output.dimensions &&
                        input.strides == output.strides &&
-                       is_physically_dense(input) && is_physically_dense(output);
+                       is_physically_dense(input) &&
+                       is_physically_dense(output);
     std::string_view expected_function =
         dense ? "unary_pointwise_contiguous_kernel"
               : "unary_pointwise_strided_kernel";
-    const std::size_t pack_factor = input.pointer_token == "*fp32" ? 2 : 4;
-    if (node.operation == "identity" && dense && output.element_count >= 4096 &&
+    const std::size_t pack_factor =
+        input.pointer_token == "*fp32" ? 2
+        : (input.pointer_token == "*fp16" || input.pointer_token == "*bf16")
+            ? 4
+            : 1;
+    if (node.operation == "identity" && pack_factor > 1 && dense &&
+        output.element_count >= 4096 &&
         output.element_count % pack_factor == 0 && input.alignment >= 8 &&
         output.alignment >= 8) {
       expected_function = "identity_packed_contiguous_kernel";
@@ -1050,9 +1146,22 @@ void validate_kernel_semantics(const HygonKernelArtifact &kernel,
   }
 }
 
+bool storage_pointer_matches(std::string_view actual, std::string_view expected,
+                             std::string_view function) {
+  if (actual == expected)
+    return true;
+  if (function != "concatenate_copy_kernel" && function != "layout_copy_kernel")
+    return false;
+  return (actual == "*i32" && expected == "*fp32") ||
+         (actual == "*u16" && (expected == "*fp16" || expected == "*bf16")) ||
+         (actual == "*u8" && (expected == "*i8" || expected == "*fp8e4nv" ||
+                              expected == "*fp8e5"));
+}
+
 void validate_argument_abi(const HygonKernelArtifact &kernel,
                            const RequestGraphMetadata &graph,
-                           const std::set<std::int64_t> &source_tensor_uids) {
+                           const std::set<std::int64_t> &source_tensor_uids,
+                           std::string_view function_name) {
   const std::vector<std::string_view> signature_tokens =
       runtime_signature_tokens(kernel.full_signature);
   if (signature_tokens.size() != kernel.arguments.size()) {
@@ -1082,11 +1191,11 @@ void validate_argument_abi(const HygonKernelArtifact &kernel,
         annotation == std::string_view::npos
             ? std::string_view{}
             : signature_token.substr(annotation);
-    const bool aligned_signature = specialization == ":16" ||
-                                   specialization == ":16S";
-    const bool range32_signature = specialization == ":S" ||
-                                   specialization == ":16S";
-    if (specialization != std::string_view{} && specialization != ":16" &&
+    const bool aligned_signature =
+        specialization == ":16" || specialization == ":16S";
+    const bool range32_signature =
+        specialization == ":S" || specialization == ":16S";
+    if (specialization != std::string_view{} &&specialization != ":16" &&
         specialization != ":S" && specialization != ":16S") {
       invalid_artifact("libtriton_jit pointer specialization is invalid");
     }
@@ -1113,7 +1222,8 @@ void validate_argument_abi(const HygonKernelArtifact &kernel,
           !source_tensor_uids.contains(argument.uid) ||
           argument.storage_size != tensor->second.storage_size ||
           argument.alignment != tensor->second.alignment ||
-          pointer_token != tensor->second.pointer_token) {
+          !storage_pointer_matches(pointer_token, tensor->second.pointer_token,
+                                   function_name)) {
         invalid_artifact(
             "artifact external tensor ABI does not match request Graph IR");
       }
@@ -1129,7 +1239,8 @@ void validate_argument_abi(const HygonKernelArtifact &kernel,
           argument.storage_size != tensor->second.storage_size ||
           argument.alignment !=
               std::max(kWorkspaceAlignment, tensor->second.alignment) ||
-          pointer_token != tensor->second.pointer_token) {
+          !storage_pointer_matches(pointer_token, tensor->second.pointer_token,
+                                   function_name)) {
         invalid_artifact(
             "artifact virtual tensor ABI does not match request Graph IR");
       }
@@ -1246,7 +1357,7 @@ HygonKernelArtifact parse_kernel(
                      "libtriton_jit launch plan is inconsistent");
   }
   if (engine == EngineKind::kLibTritonJit) {
-    validate_argument_abi(result, graph, source_tensor_uids);
+    validate_argument_abi(result, graph, source_tensor_uids, function_name);
     if (semantic_node != nullptr) {
       validate_kernel_semantics(result, function_name, graph, *semantic_node,
                                 entry);
@@ -1662,11 +1773,10 @@ HygonArtifact parse_hygon_artifact(const EngineBuildContext &context,
             argument.storage_size, argument.alignment};
         const auto [entry, inserted] =
             internal_workspaces.emplace(argument.uid, contract);
-        if (!inserted &&
-            (entry->second.role != contract.role ||
-             entry->second.offset != contract.offset ||
-             entry->second.size != contract.size ||
-             entry->second.alignment != contract.alignment)) {
+        if (!inserted && (entry->second.role != contract.role ||
+                          entry->second.offset != contract.offset ||
+                          entry->second.size != contract.size ||
+                          entry->second.alignment != contract.alignment)) {
           throw HygonError(
               FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
               "internal workspace tensor ABI differs across execution stages");

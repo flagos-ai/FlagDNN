@@ -2,6 +2,7 @@
 
 #include "common/normalization.hpp"
 #include "hip_driver.hpp"
+#include "host_runner.hpp"
 #include "normalization_reference.hpp"
 #include "tensor_io.hpp"
 
@@ -285,21 +286,21 @@ bool is_large_offset_batchnorm_case(const BatchnormTestCase &test_case) {
 
 float large_offset_base(flagdnnDataType_t data_type) {
   switch (data_type) {
-    case FLAGDNN_DATA_INT32:
-      throw std::invalid_argument(
-          "INT32 is not supported by this validation adapter");
+  case FLAGDNN_DATA_INT32:
+    throw std::invalid_argument(
+        "INT32 is not supported by this validation adapter");
 
-    case FLAGDNN_DATA_FLOAT32:
-      return 10000.0F;
-    case FLAGDNN_DATA_FLOAT16:
-      return 1024.0F;
-    case FLAGDNN_DATA_BFLOAT16:
-      return 128.0F;
-    case FLAGDNN_DATA_FP8_E8M0:
-    case FLAGDNN_DATA_FP8_E4M3:
-    case FLAGDNN_DATA_FP8_E5M2:
-    case FLAGDNN_DATA_BOOLEAN:
-      break;
+  case FLAGDNN_DATA_FLOAT32:
+    return 10000.0F;
+  case FLAGDNN_DATA_FLOAT16:
+    return 1024.0F;
+  case FLAGDNN_DATA_BFLOAT16:
+    return 128.0F;
+  case FLAGDNN_DATA_FP8_E8M0:
+  case FLAGDNN_DATA_FP8_E4M3:
+  case FLAGDNN_DATA_FP8_E5M2:
+  case FLAGDNN_DATA_BOOLEAN:
+    break;
   }
   throw std::invalid_argument(
       "large-offset normalization case has an unsupported data type");
@@ -702,21 +703,21 @@ void run_cpu_oracle_stability_case(flagdnn::Handle &handle,
 
 double stability_tolerance(flagdnnDataType_t data_type) {
   switch (data_type) {
-    case FLAGDNN_DATA_INT32:
-      throw std::invalid_argument(
-          "INT32 is not supported by this validation adapter");
+  case FLAGDNN_DATA_INT32:
+    throw std::invalid_argument(
+        "INT32 is not supported by this validation adapter");
 
-    case FLAGDNN_DATA_FLOAT32:
-      return 5.0e-3;
-    case FLAGDNN_DATA_FLOAT16:
-      return 3.0e-2;
-    case FLAGDNN_DATA_BFLOAT16:
-      return 8.0e-2;
-    case FLAGDNN_DATA_FP8_E8M0:
-    case FLAGDNN_DATA_FP8_E4M3:
-    case FLAGDNN_DATA_FP8_E5M2:
-    case FLAGDNN_DATA_BOOLEAN:
-      break;
+  case FLAGDNN_DATA_FLOAT32:
+    return 5.0e-3;
+  case FLAGDNN_DATA_FLOAT16:
+    return 3.0e-2;
+  case FLAGDNN_DATA_BFLOAT16:
+    return 8.0e-2;
+  case FLAGDNN_DATA_FP8_E8M0:
+  case FLAGDNN_DATA_FP8_E4M3:
+  case FLAGDNN_DATA_FP8_E5M2:
+  case FLAGDNN_DATA_BOOLEAN:
+    break;
   }
   throw std::invalid_argument(
       "normalization stability tolerance has an unsupported data type");
@@ -760,6 +761,11 @@ std::vector<LayernormTestCase> layernorm_stability_cases() {
 std::vector<BatchnormTestCase> batchnorm_stability_cases() {
   std::vector<BatchnormTestCase> result;
   for (const BatchnormTestCase &base : make_batchnorm_cases()) {
+    // This stability gate uses one fixed channel geometry and two layouts;
+    // the per-operator suite covers the full, independently growing catalog.
+    if (base.x.dimensions != std::vector<std::int64_t>{2, 8, 8, 8}) {
+      continue;
+    }
     const bool contiguous = base.name.find("_contiguous") != std::string::npos;
     const bool fp32_channels_last =
         base.x.data_type == FLAGDNN_DATA_FLOAT32 &&
@@ -798,14 +804,48 @@ std::vector<BatchnormTestCase> batchnorm_stability_cases() {
   return result;
 }
 
-void emit_skip(std::string_view operation_name, std::string_view case_name,
-               std::string_view reason,
-               std::span<const hv::ReferenceTensor> tensors) {
-  std::cout << "[SKIP][hipdnn] op=" << operation_name << " case=" << case_name
-            << " reason=" << reason << ' ' << hv::hipdnn_environment() << ' '
-            << hv::describe_reference_tensors(
-                   tensors.empty() ? tensors : tensors.first(1))
-            << std::endl;
+std::vector<std::vector<float>>
+cpu_outputs(const LayernormTestCase &c,
+            const std::vector<std::vector<float>> &v) {
+  return layernorm_cpu_outputs(c, v);
+}
+std::vector<std::vector<float>>
+cpu_outputs(const BatchnormTestCase &c,
+            const std::vector<std::vector<float>> &v) {
+  return batchnorm_cpu_outputs(c, v);
+}
+std::vector<std::vector<float>>
+cpu_outputs(const RmsnormTestCase &c,
+            const std::vector<std::vector<float>> &v) {
+  const auto width = v[1].size(), rows = v[0].size() / width;
+  std::vector<float> y(v[0].size()), inverse(rows);
+  for (std::size_t r = 0; r < rows; ++r) {
+    double square = 0;
+    for (std::size_t j = 0; j < width; ++j) {
+      const double x = v[0][r * width + j];
+      square += x * x;
+    }
+    const double inv = 1 / std::sqrt(square / width + c.epsilon);
+    inverse[r] = static_cast<float>(inv);
+    for (std::size_t j = 0; j < width; ++j)
+      y[r * width + j] =
+          static_cast<float>(v[0][r * width + j] * inv * v[1][j] + v[2][j]);
+  }
+  return {y, inverse};
+}
+std::vector<std::vector<float>>
+cpu_outputs(const BatchnormInferenceTestCase &c,
+            const std::vector<std::vector<float>> &v) {
+  const auto channels = c.x.dimensions[1];
+  const auto spatial = v[0].size() / c.x.dimensions[0] / channels;
+  std::vector<float> y(v[0].size());
+  for (std::size_t i = 0; i < y.size(); ++i) {
+    const auto channel = (i / spatial) % channels;
+    y[i] = static_cast<float>((double(v[0][i]) - v[1][channel]) *
+                                  v[2][channel] * v[3][channel] +
+                              v[4][channel]);
+  }
+  return {y};
 }
 
 enum class CaseResult { kExecuted, kSkipped };
@@ -824,9 +864,13 @@ CaseResult run_case(const Case &test_case,
   hv::require_valid_hipdnn_adapter_contract(capability,
                                             operation_name(test_case));
   if (!capability.supported) {
-    emit_skip(operation_name(test_case), test_case.name, capability.reason,
-              reference_tensors);
-    return CaseResult::kSkipped;
+    hygon_functional::host::run_case(
+        test_case.name, inputs(test_case), outputs(test_case),
+        logical_inputs(test_case), get_handle, stream,
+        [&](flagdnn::Handle &h) { return build_flagdnn(h, test_case); },
+        [&](const auto &v) { return cpu_outputs(test_case, v); },
+        test_case.absolute_tolerance, test_case.relative_tolerance);
+    return CaseResult::kExecuted;
   }
 
   const std::vector<TestTensor> flagdnn_specs = all_specs(test_case, false);

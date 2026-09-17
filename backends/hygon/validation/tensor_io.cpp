@@ -2,6 +2,7 @@
 
 #include "tensor_io.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstring>
@@ -91,23 +92,79 @@ float bfloat16_to_float(std::uint16_t value) {
   return std::bit_cast<float>(static_cast<std::uint32_t>(value) << 16U);
 }
 
+float fp8_decode(std::uint8_t value, flagdnnDataType_t type) {
+  if (type == FLAGDNN_DATA_FP8_E8M0)
+    return value == 255 ? std::numeric_limits<float>::quiet_NaN()
+                        : std::ldexp(1.0F, int(value) - 127);
+  const int bits = type == FLAGDNN_DATA_FP8_E4M3 ? 3 : 2;
+  const int bias = bits == 3 ? 7 : 15;
+  const int exponent = (value & 127) >> bits,
+            mantissa = value & ((1 << bits) - 1);
+  float result;
+  if ((bits == 3 && (value & 127) == 127) ||
+      (bits == 2 && exponent == 31 && mantissa != 0))
+    result = std::numeric_limits<float>::quiet_NaN();
+  else if (bits == 2 && exponent == 31)
+    result = std::numeric_limits<float>::infinity();
+  else
+    result = exponent == 0 ? std::ldexp(float(mantissa), 1 - bias - bits)
+                           : std::ldexp(1.0F + float(mantissa) / (1 << bits),
+                                        exponent - bias);
+  return value & 128 ? -result : result;
+}
+
+std::uint8_t fp8_encode(float value, flagdnnDataType_t type) {
+  if (type == FLAGDNN_DATA_FP8_E8M0) {
+    // Match NVIDIA's scale codec: round upward to a power of two and
+    // encode invalid or overflowing scales as NaN. frexp also avoids
+    // rounding log2 near powers of two or converting infinity to int.
+    if (value == kPaddingSentinel)
+      return 0;
+    if (!(value > 0.0F) || !std::isfinite(value))
+      return 255;
+    int exponent = 0;
+    const float mantissa = std::frexp(value, &exponent);
+    const int power = exponent - (mantissa == 0.5F ? 1 : 0);
+    return static_cast<std::uint8_t>(std::clamp(power + 127, 0, 255));
+  }
+  if (std::isnan(value))
+    return 255;
+  const int limit = type == FLAGDNN_DATA_FP8_E4M3 ? 126 : 123;
+  const float magnitude = std::abs(value);
+  int lo = 0, hi = limit;
+  while (lo < hi) {
+    const int mid = (lo + hi) / 2;
+    if (fp8_decode(static_cast<std::uint8_t>(mid), type) < magnitude)
+      lo = mid + 1;
+    else
+      hi = mid;
+  }
+  if (lo && (magnitude - fp8_decode(static_cast<std::uint8_t>(lo - 1), type) <
+                 fp8_decode(static_cast<std::uint8_t>(lo), type) - magnitude ||
+             (magnitude - fp8_decode(static_cast<std::uint8_t>(lo - 1), type) ==
+                  fp8_decode(static_cast<std::uint8_t>(lo), type) - magnitude &&
+              (lo & 1))))
+    --lo;
+  return static_cast<std::uint8_t>(lo | (std::signbit(value) ? 128 : 0));
+}
+
 } // namespace
 
 std::size_t data_type_size(flagdnnDataType_t data_type) {
   switch (data_type) {
-    case FLAGDNN_DATA_INT32:
-      return 4;
+  case FLAGDNN_DATA_INT32:
+    return 4;
 
-    case FLAGDNN_DATA_FLOAT32:
-      return 4;
-    case FLAGDNN_DATA_FLOAT16:
-    case FLAGDNN_DATA_BFLOAT16:
-      return 2;
-    case FLAGDNN_DATA_BOOLEAN:
-    case FLAGDNN_DATA_FP8_E8M0:
-    case FLAGDNN_DATA_FP8_E4M3:
-    case FLAGDNN_DATA_FP8_E5M2:
-      return 1;
+  case FLAGDNN_DATA_FLOAT32:
+    return 4;
+  case FLAGDNN_DATA_FLOAT16:
+  case FLAGDNN_DATA_BFLOAT16:
+    return 2;
+  case FLAGDNN_DATA_BOOLEAN:
+  case FLAGDNN_DATA_FP8_E8M0:
+  case FLAGDNN_DATA_FP8_E4M3:
+  case FLAGDNN_DATA_FP8_E5M2:
+    return 1;
   }
   throw std::invalid_argument("unsupported validation tensor data type");
 }
@@ -130,8 +187,15 @@ std::vector<std::uint8_t> encode(std::span<const float> physical,
       *destination = physical[index] == kPaddingSentinel
                          ? kBooleanPaddingSentinel
                          : static_cast<std::uint8_t>(physical[index] != 0.0F);
+    } else if (data_type == FLAGDNN_DATA_INT32) {
+      if (!std::isfinite(physical[index]) ||
+          double(physical[index]) < std::numeric_limits<std::int32_t>::min() ||
+          double(physical[index]) > std::numeric_limits<std::int32_t>::max())
+        throw std::invalid_argument("INT32 host value is not representable");
+      const auto value = static_cast<std::int32_t>(physical[index]);
+      std::memcpy(destination, &value, sizeof(value));
     } else {
-      throw std::invalid_argument("FP8 validation encoding is not implemented");
+      *destination = fp8_encode(physical[index], data_type);
     }
   }
   return result;
@@ -161,8 +225,12 @@ std::vector<float> decode(std::span<const std::uint8_t> bytes,
       result[index] = *source == kBooleanPaddingSentinel
                           ? kPaddingSentinel
                           : static_cast<float>(*source != 0U);
+    } else if (data_type == FLAGDNN_DATA_INT32) {
+      std::int32_t value;
+      std::memcpy(&value, source, sizeof(value));
+      result[index] = static_cast<float>(value);
     } else {
-      throw std::invalid_argument("FP8 validation decoding is not implemented");
+      result[index] = fp8_decode(*source, data_type);
     }
   }
   return result;

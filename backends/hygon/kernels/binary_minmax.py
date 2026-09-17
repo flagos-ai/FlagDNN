@@ -13,22 +13,28 @@ POINTWISE_MAX = tl.constexpr(21)
 
 @triton.jit
 def _apply_minmax(left, right, OP_KIND: tl.constexpr):
-    left_fp32 = left.to(tl.float32)
-    right_fp32 = right.to(tl.float32)
-    both_zero = (left_fp32 == 0.0) & (right_fp32 == 0.0)
-    either_nan = (left_fp32 != left_fp32) | (right_fp32 != right_fp32)
-    if OP_KIND == POINTWISE_MIN:
-        result = tl.minimum(left, right)
-        # The validated hipDNN OpTensor MIN canonicalizes every zero/zero tie
-        # to +0, regardless of the input sign bits.
-        result = tl.where(
-            both_zero, tl.zeros(left.shape, dtype=tl.float32), result
-        )
-    elif OP_KIND == POINTWISE_MAX:
-        result = tl.maximum(left, right)
-    # On the validated DTK stack OpTensor resolves an unordered comparison to
-    # B/right: A=NaN,B=number returns B; A=number,B=NaN returns B (NaN).
-    result = tl.where(either_nan, right_fp32, result)
+    if left.dtype == tl.int32:
+        if OP_KIND == POINTWISE_MIN:
+            result = tl.minimum(left, right)
+        else:
+            result = tl.maximum(left, right)
+    else:
+        left_fp32 = left.to(tl.float32)
+        right_fp32 = right.to(tl.float32)
+        both_zero = (left_fp32 == 0.0) & (right_fp32 == 0.0)
+        either_nan = (left_fp32 != left_fp32) | (right_fp32 != right_fp32)
+        if OP_KIND == POINTWISE_MIN:
+            result = tl.minimum(left, right)
+            # hipDNN MIN canonicalizes every zero/zero tie
+            # to +0, regardless of the input sign bits.
+            result = tl.where(
+                both_zero, tl.zeros(left.shape, dtype=tl.float32), result
+            )
+        elif OP_KIND == POINTWISE_MAX:
+            result = tl.maximum(left, right)
+        # DTK OpTensor resolves an unordered comparison to B/right:
+        # A=NaN,B=number returns B; A=number,B=NaN returns B (NaN).
+        result = tl.where(either_nan, right_fp32, result)
     return result
 
 

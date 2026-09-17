@@ -640,7 +640,15 @@ void test_execute_argument_contracts(
       },
       FLAGDNN_STATUS_INVALID_VALUE, "undersized workspace was not rejected");
 
-  executable.execute(buffers.bindings, workspace_storage.opaque_at(16),
+  require_flagdnn_failure_contains(
+      [&] {
+        executable.execute(buffers.bindings, workspace_storage.opaque_at(16),
+                           executable.workspace_size(), stream.opaque());
+      },
+      FLAGDNN_STATUS_INVALID_VALUE,
+      "workspace base address is not 256-byte aligned",
+      "misaligned workspace was not rejected");
+  executable.execute(buffers.bindings, aligned_workspace,
                      executable.workspace_size(), stream.opaque());
 
   std::array<flagdnnBinding_t, 3> null_pointer_bindings = buffers.bindings;

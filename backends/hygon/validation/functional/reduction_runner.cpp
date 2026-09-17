@@ -1,50 +1,25 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
-
-#include <algorithm>
-#include <cstdlib>
-#include <functional>
-#include <span>
-#include <vector>
-
 #include "common/reduction.hpp"
-#include "tensor_runner_support.hpp"
-
+#include "host_runner.hpp"
+#include "reference/cpu/matrix.hpp"
 namespace flagdnn::testing {
-
 int run_reduction_functional_test(int argc, char **argv,
                                   std::span<const ReductionTestCase> cases) {
-  // This adapter currently validates matching floating input/output storage.
-  // Other shared dtype/output combinations are enabled with their backend
-  // support.
-  std::vector<ReductionTestCase> supported_cases(cases.begin(), cases.end());
-  std::erase_if(supported_cases, [](const ReductionTestCase &test_case) {
-    const auto type = test_case.input.data_type;
-    return (type != FLAGDNN_DATA_FLOAT32 && type != FLAGDNN_DATA_FLOAT16 &&
-            type != FLAGDNN_DATA_BFLOAT16) ||
-           test_case.output.data_type != type;
-  });
-  cases = supported_cases;
-
-  namespace support = hygon_functional::tensor;
-  namespace hv = validation::hygon;
-  return support::run_suite(
-      argc, argv, "reduction", "FLAGDNN_REDUCTION_FUNCTIONAL",
-      [&](const std::function<flagdnn::Handle &()> &get_handle,
-          hv::Stream &stream, std::size_t &matched, std::size_t &executed,
-          std::size_t &skipped) {
-        const char *filter = std::getenv("FLAGDNN_REDUCTION_CASE");
-        for (const ReductionTestCase &test_case : cases) {
-          if (filter != nullptr &&
-              test_case.name.find(filter) == std::string::npos) {
-            continue;
-          }
-          ++matched;
-          validate_reduction_case(test_case);
-          const support::CaseResult result =
-              support::run_reduction_case(test_case, get_handle, stream);
-          result == support::CaseResult::kExecuted ? ++executed : ++skipped;
-        }
+  namespace host = hygon_functional::host;
+  return host::run_suite(
+      argc, argv, cases, "reduction", false,
+      [](const ReductionTestCase &c, const auto &handle, auto &stream) {
+        validate_reduction_case(c);
+        host::run_case(
+            c.name, std::vector<TestTensor>{c.input},
+            std::vector<TestTensor>{c.output},
+            host::Values{reduction_host_input(c)}, handle, stream,
+            [&](flagdnn::Handle &h) { return build_flagdnn_reduction(h, c); },
+            [&](const host::Values &v) {
+              return host::Values{reference::cpu::evaluate_reduction(
+                  {c.input.dimensions, c.axis, c.mode}, v[0])};
+            },
+            c.absolute_tolerance, c.relative_tolerance);
       });
 }
-
 } // namespace flagdnn::testing
