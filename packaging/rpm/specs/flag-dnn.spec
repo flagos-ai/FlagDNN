@@ -5,8 +5,8 @@
 %global __requires_exclude ^(libcuda[.]so[.]1|libtorch(_cpu|_cuda|_python)?[.]so|libc10(_cuda)?[.]so)[(][)][(]64bit[)]$
 
 Name:           libflagdnn-nvidia
-Version:        0.2.0
-Release:        2%{?dist}
+Version:        0.3.0
+Release:        1%{?dist}
 Summary:        FlagDNN native graph runtime (NVIDIA backend)
 
 License:        Apache-2.0
@@ -82,6 +82,9 @@ test -f %{buildroot}%{_datadir}/flagdnn/kernels/registry.json
 %{_libdir}/cmake/FlagDNN/
 
 %changelog
+* Fri Sep 18 2026 FlagOS Contributors <contact@flagos.io> - 0.3.0-1
+- Align the packaging baseline with the 0.3.0 release line.
+
 * Fri Aug 07 2026 FlagOS Contributors <contact@flagos.io> - 0.2.0-2
 - Replace the retired Python package with native runtime packages
 - Build the NVIDIA backend against system libtriton-jit-nvidia
