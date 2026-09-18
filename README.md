@@ -111,8 +111,8 @@ python3 tools/run_tests.py \
 - [FlagTree](https://github.com/flagos-ai/flagtree)：用于替代 Triton，无需单独安装 Triton。
 - [`libtriton_jit`](https://github.com/flagos-ai/libtriton_jit)：需编译为 HCU 版本。
 
-请选择与当前 DTK 兼容的依赖版本。建议将 FlagDNN 与 `libtriton_jit` 放在同一级
-目录。
+请选择与当前 DTK 兼容的依赖版本。`libtriton_jit` 可放在任意目录；未指定路径时，
+默认从 FlagDNN 同级的 `../libtriton_jit` 查找其构建产物或安装文件。
 
 #### 编译
 
@@ -125,6 +125,22 @@ tools/build.sh \
 ```
 
 该命令以 `Release` 模式编译 FlagDNN，并同时构建功能测试和性能测试。
+
+若 `libtriton_jit` 位于其他目录，在 `--` 后传入 Hygon 专用的 CMake 参数：
+
+```bash
+tools/build.sh \
+  --backends hygon \
+  --build-dir build/hygon \
+  -- \
+  -DFLAGDNN_HYGON_TRITON_JIT_DIR=/path/to/libtriton_jit/build
+```
+
+`FLAGDNN_HYGON_TRITON_JIT_DIR` 指向包含 `TritonJITConfig.cmake` 的目录，
+不是 `.so` 文件。源码构建通常位于 `<repo>/build`，安装包通常位于
+`<prefix>/lib/cmake/TritonJIT` 或 `<prefix>/lib64/cmake/TritonJIT`。
+也可改用 `-DFLAGDNN_HYGON_TRITON_JIT_ROOT=/path/to/libtriton_jit` 指定已构建的
+源码仓库根目录或完整安装前缀。
 
 #### 安装
 
