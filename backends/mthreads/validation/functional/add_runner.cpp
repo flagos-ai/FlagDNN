@@ -1,12 +1,5 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
-#include "common/add.hpp"
-
-#include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
-#include "backends/mthreads/validation/musa_driver.hpp"
-
-#include <flagdnn/flagdnn.hpp>
-
 #include <unistd.h>
 
 #include <algorithm>
@@ -16,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <flagdnn/flagdnn.hpp>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -26,6 +20,11 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
+#include "backends/mthreads/validation/musa_driver.hpp"
+#include "backends/mthreads/validation/paired_timing.hpp"
+#include "common/add.hpp"
 
 namespace flagdnn::testing {
 namespace {
@@ -199,6 +198,15 @@ Accuracy run_case(
   enqueue(
       *production, production_bindings, production_workspace, stream);
   enqueue(*reference, reference_bindings, reference_workspace, stream);
+  mv::timing::paired(
+      test_case.name, stream,
+      [&] {
+        enqueue(*production, production_bindings, production_workspace,
+                stream);
+      },
+      [&] {
+        enqueue(*reference, reference_bindings, reference_workspace, stream);
+      });
 
   std::vector<std::uint8_t> observed_production_left;
   std::vector<std::uint8_t> observed_production_right;
@@ -243,19 +251,8 @@ Accuracy run_case(
 
 }  // namespace
 
-int run_add_functional_test(
-    int argc,
-    char** argv,
-    std::span<const AddTestCase> cases) {
-  // This backend's reference adapter currently accepts floating storage.
-  std::vector<AddTestCase> supported_cases(cases.begin(), cases.end());
-  std::erase_if(supported_cases, [](const AddTestCase& test_case) {
-    const auto type = test_case.left.data_type;
-    return type != FLAGDNN_DATA_FLOAT32 && type != FLAGDNN_DATA_FLOAT16 &&
-           type != FLAGDNN_DATA_BFLOAT16;
-  });
-  cases = supported_cases;
-
+int run_add_functional_test(int argc, char** argv,
+                            std::span<const AddTestCase> cases) {
   if (argc != 3) {
     std::cerr << "usage: " << argv[0]
               << " COMPILER_EXECUTABLE COMPILER_ENTRY\n";
@@ -271,25 +268,29 @@ int run_add_functional_test(
 
     const char* filter = std::getenv("FLAGDNN_ADD_CASE");
     std::size_t executed = 0;
+    std::size_t skipped = 0;
     for (const AddTestCase& test_case : cases) {
       if (filter != nullptr &&
           test_case.name.find(filter) == std::string::npos) {
         continue;
       }
-      const Accuracy accuracy = run_case(test_case, handle, stream);
-      ++executed;
-      std::cout << test_case.name
-                << ": FlagDNN Graph vs muDNN Binary PASS max_abs="
-                << accuracy.maximum_absolute
-                << " max_rel=" << accuracy.maximum_relative << '\n';
+      try {
+        const Accuracy accuracy = run_case(test_case, handle, stream);
+        ++executed;
+        std::cout << test_case.name
+                  << ": FlagDNN Graph vs muDNN Binary PASS max_abs="
+                  << accuracy.maximum_absolute
+                  << " max_rel=" << accuracy.maximum_relative << '\n';
+      } catch (const mv::ReferenceUnsupported& error) {
+        ++skipped;
+        mv::report_skip(test_case.name, error);
+      }
     }
-    if (executed == 0) {
+    if (executed + skipped == 0) {
       throw std::runtime_error(
           "FLAGDNN_ADD_CASE matched no mthreads Add cases");
     }
-    std::cout << "FLAGDNN_ADD_FUNCTIONAL: PASS cases=" << executed
-              << " executed=" << executed << " skipped=0\n";
-    return 0;
+    return mv::report_cases("FLAGDNN_ADD_FUNCTIONAL", executed, skipped);
   } catch (const std::exception& error) {
     std::cerr << "FLAGDNN_ADD_FUNCTIONAL_FAILED: "
               << error.what() << '\n';

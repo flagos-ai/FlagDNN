@@ -176,64 +176,92 @@ target_link_libraries(
     "${FLAGDNN_MTHREADS_VALIDATION_MUDNN_LIBRARY}")
 flagdnn_enable_warnings(flagdnn_validation_mthreads_support)
 
-if(FLAGDNN_BUILD_TESTS)
-  add_library(
-    flagdnn_test_mthreads_adapter STATIC
-    $<TARGET_OBJECTS:flagdnn_test_common_objects>
-    functional/add_runner.cpp
-    functional/attention_runner.cpp
-    functional/composite_runner.cpp
-    functional/convolution_runner.cpp
-    functional/layout_runner.cpp
-    functional/matmul_runner.cpp
-    functional/mudnn_add.cpp
-    functional/mudnn_attention.cpp
-    functional/mudnn_composite.cpp
-    functional/mudnn_convolution.cpp
-    functional/mudnn_layout.cpp
-    functional/mudnn_matmul.cpp
-    functional/mudnn_normalization.cpp
-    functional/mudnn_pointwise.cpp
-    functional/mudnn_reduction.cpp
-    functional/normalization_runner.cpp
-    functional/pointwise_runner.cpp
-    functional/reduction_runner.cpp
-    mudnn_reference.cpp)
-  target_compile_features(
-    flagdnn_test_mthreads_adapter PUBLIC cxx_std_20)
-  target_include_directories(
-    flagdnn_test_mthreads_adapter
-    PUBLIC
-      "${PROJECT_SOURCE_DIR}"
-      "${PROJECT_SOURCE_DIR}/tests")
-  target_include_directories(
-    flagdnn_test_mthreads_adapter
-    SYSTEM PUBLIC
-      "${FLAGDNN_MTHREADS_VALIDATION_MUDNN_INCLUDE_DIR}")
-  target_link_libraries(
-    flagdnn_test_mthreads_adapter
-    PUBLIC
-      FlagDNN::flagdnn
-      flagdnn_validation_mthreads_support)
-  flagdnn_enable_warnings(flagdnn_test_mthreads_adapter)
+# Share the neutral objects when available; benchmark-only builds compile
+# the same case sources privately, as on NVIDIA.
+if(TARGET flagdnn_test_common_objects)
+  set(_mthreads_matrix_case_sources
+    $<TARGET_OBJECTS:flagdnn_test_common_objects>)
+else()
+  set(_mthreads_matrix_case_sources)
+  foreach(case_module IN ITEMS
+      add attention composite convolution index layout matmul normalization
+      pointwise pointwise_runner reduction statistics moe_matmul fp8_matmul
+      causal_convolution resample random position_embedding normalization_extended)
+    list(APPEND _mthreads_matrix_case_sources
+      "${PROJECT_SOURCE_DIR}/tests/common/${case_module}.cpp")
+  endforeach()
+endif()
 
+add_library(
+  flagdnn_test_mthreads_adapter STATIC
+  ${_mthreads_matrix_case_sources}
+  functional/index_runner.cpp
+  functional/statistics_runner.cpp
+  functional/normalization_extended_runner.cpp
+  functional/resample_runner.cpp
+  functional/rope_runner.cpp
+  functional/mudnn_extended.cpp
+  functional/mudnn_extended_matrix.cpp
+  functional/causal_convolution_runner.cpp
+  functional/fp8_matmul_runner.cpp
+  functional/moe_matmul_runner.cpp
+  functional/random_runner.cpp
+  functional/add_runner.cpp
+  functional/attention_runner.cpp
+  functional/composite_runner.cpp
+  functional/convolution_runner.cpp
+  functional/layout_runner.cpp
+  functional/matmul_runner.cpp
+  functional/mudnn_add.cpp
+  functional/mudnn_attention.cpp
+  functional/mudnn_composite.cpp
+  functional/mudnn_convolution.cpp
+  functional/mudnn_layout.cpp
+  functional/mudnn_matmul.cpp
+  functional/mudnn_normalization.cpp
+  functional/mudnn_pointwise.cpp
+  functional/mudnn_reduction.cpp
+  functional/normalization_runner.cpp
+  functional/pointwise_runner.cpp
+  functional/reduction_runner.cpp
+  mudnn_reference.cpp)
+target_compile_features(
+  flagdnn_test_mthreads_adapter PUBLIC cxx_std_20)
+target_include_directories(
+  flagdnn_test_mthreads_adapter
+  PUBLIC
+    "${PROJECT_SOURCE_DIR}"
+    "${PROJECT_SOURCE_DIR}/tests")
+target_include_directories(
+  flagdnn_test_mthreads_adapter
+  SYSTEM PUBLIC
+    "${FLAGDNN_MTHREADS_VALIDATION_MUDNN_INCLUDE_DIR}")
+target_link_libraries(
+  flagdnn_test_mthreads_adapter
+  PUBLIC
+    FlagDNN::flagdnn
+    flagdnn_validation_mthreads_support)
+flagdnn_enable_warnings(flagdnn_test_mthreads_adapter)
+
+set(_mthreads_matrix_environment
+  "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_mthreads>"
+  "FLAGDNN_MTHREADS_ENVIRONMENT_REPORT=${FLAGDNN_MTHREADS_VALIDATION_ENVIRONMENT_REPORT}"
+  "FLAGDNN_MTHREADS_CONVOLUTION_CACHE_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/convolution-functional-cache"
+  "LD_LIBRARY_PATH=${_flagdnn_mthreads_test_library_path_value}"
+  "TRITON_JIT_BACKEND=MTGPU"
+  "TORCH_DEVICE_BACKEND_AUTOLOAD=0"
+  "PYTHONDONTWRITEBYTECODE=1")
+
+if(FLAGDNN_BUILD_TESTS)
   flagdnn_register_functional_suite(
     PLATFORM mthreads
-    UNSUPPORTED_OPERATORS ${FLAGDNN_EXTENDED_OPERATORS} ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS}
     OPERATORS ${FLAGDNN_FUNCTIONAL_OPERATORS}
     ADAPTER_TARGET flagdnn_test_mthreads_adapter
     BACKEND_TARGET flagdnn_backend_mthreads
     COMMAND_ARGS
       "${FLAGDNN_CODEGEN_PYTHON}"
       "${FLAGDNN_CODEGEN_COMPILER}"
-    ENVIRONMENT
-      "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_mthreads>"
-      "FLAGDNN_MTHREADS_ENVIRONMENT_REPORT=${FLAGDNN_MTHREADS_VALIDATION_ENVIRONMENT_REPORT}"
-      "FLAGDNN_MTHREADS_CONVOLUTION_CACHE_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/convolution-functional-cache"
-      "LD_LIBRARY_PATH=${_flagdnn_mthreads_test_library_path_value}"
-      "TRITON_JIT_BACKEND=MTGPU"
-      "TORCH_DEVICE_BACKEND_AUTOLOAD=0"
-      "PYTHONDONTWRITEBYTECODE=1"
+    ENVIRONMENT ${_mthreads_matrix_environment}
     LABELS mudnn
     TIMEOUT 1800
     BUILD_RPATH "${_flagdnn_mthreads_mudnn_library_directory}")
@@ -316,6 +344,21 @@ if(FLAGDNN_BUILD_TESTS)
     PROPERTIES TIMEOUT 7200)
 endif()
 
+# Matrix executables are also needed without functional CTest registration.
+if(NOT FLAGDNN_BUILD_TESTS)
+  foreach(operator IN LISTS FLAGDNN_FUNCTIONAL_OPERATORS)
+    set(target "flagdnn_test_mthreads_${operator}")
+    add_executable("${target}"
+      "${PROJECT_SOURCE_DIR}/tests/test_${operator}.cpp")
+    target_compile_features("${target}" PRIVATE cxx_std_20)
+    target_link_libraries("${target}" PRIVATE flagdnn_test_mthreads_adapter)
+    add_dependencies("${target}" flagdnn_backend_mthreads)
+    flagdnn_enable_warnings("${target}")
+    set_target_properties("${target}" PROPERTIES
+      BUILD_RPATH "${_flagdnn_mthreads_mudnn_library_directory}")
+  endforeach()
+endif()
+
 if(FLAGDNN_BUILD_BENCHMARKS)
   add_library(
     flagdnn_benchmark_mthreads_adapter STATIC
@@ -335,8 +378,6 @@ if(FLAGDNN_BUILD_BENCHMARKS)
   flagdnn_enable_warnings(flagdnn_benchmark_mthreads_adapter)
 
   set(_flagdnn_mthreads_benchmark_operators ${FLAGDNN_BENCHMARK_OPERATORS})
-  list(REMOVE_ITEM _flagdnn_mthreads_benchmark_operators
-    ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS})
   flagdnn_register_benchmark_suite(
     PLATFORM mthreads
     OPERATORS ${_flagdnn_mthreads_benchmark_operators}
@@ -433,7 +474,7 @@ set_tests_properties(
     LABELS "integration;mthreads;dependency;abi"
     TIMEOUT 120)
 
-if(FLAGDNN_BUILD_TESTS)
+if(TARGET flagdnn_test_mthreads_adapter)
   add_test(
     NAME integration.mthreads.reference_dependency_boundary
     COMMAND
@@ -595,3 +636,46 @@ set_tests_properties(
     LABELS "unit;mthreads;environment"
     TIMEOUT 120
     ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+
+# Exercise the same neutral shape/dtype matrix in correctness and timing mode.
+# These tests supplement the large workloads in benchmark/common without
+# maintaining a second backend-specific list of tensor shapes.
+foreach(operator IN LISTS FLAGDNN_FUNCTIONAL_OPERATORS)
+  if(TEST "functional.mthreads.${operator}")
+    set_tests_properties("functional.mthreads.${operator}" PROPERTIES
+      SKIP_RETURN_CODE 77 RESOURCE_LOCK mthreads_gpu TIMEOUT 7200)
+  endif()
+  if(TEST "benchmark.mthreads.${operator}")
+    set_tests_properties("benchmark.mthreads.${operator}" PROPERTIES
+      SKIP_RETURN_CODE 77)
+  endif()
+  if(FLAGDNN_BUILD_BENCHMARKS)
+    add_test(NAME "benchmark.mthreads.${operator}.matrix"
+      COMMAND "$<TARGET_FILE:flagdnn_test_mthreads_${operator}>"
+        "${FLAGDNN_CODEGEN_PYTHON}" "${FLAGDNN_CODEGEN_COMPILER}")
+    set_tests_properties("benchmark.mthreads.${operator}.matrix" PROPERTIES
+      ENVIRONMENT "${_mthreads_matrix_environment};FLAGDNN_MTHREADS_NATIVE_BENCHMARK=1"
+      LABELS "benchmark;matrix;mthreads;${operator};mudnn"
+      RUN_SERIAL TRUE TIMEOUT 7200 SKIP_RETURN_CODE 77)
+  endif()
+endforeach()
+
+# Exercise FP8 through the unscaled public matmul API as on NVIDIA.
+if(FLAGDNN_BUILD_TESTS)
+  add_test(NAME functional.mthreads.matmul.fp8
+    COMMAND flagdnn_test_mthreads_matmul_fp8
+      "${FLAGDNN_CODEGEN_PYTHON}" "${FLAGDNN_CODEGEN_COMPILER}")
+  set_tests_properties(functional.mthreads.matmul.fp8 PROPERTIES
+    ENVIRONMENT "${_mthreads_matrix_environment};FLAGDNN_FP8_MATMUL_API=matmul"
+    LABELS "functional;mthreads;mudnn;matmul;fp8"
+    RUN_SERIAL TRUE TIMEOUT 7200 SKIP_RETURN_CODE 77)
+endif()
+if(FLAGDNN_BUILD_BENCHMARKS)
+  add_test(NAME benchmark.mthreads.matmul.fp8
+    COMMAND flagdnn_test_mthreads_matmul_fp8
+      "${FLAGDNN_CODEGEN_PYTHON}" "${FLAGDNN_CODEGEN_COMPILER}")
+  set_tests_properties(benchmark.mthreads.matmul.fp8 PROPERTIES
+    ENVIRONMENT "${_mthreads_matrix_environment};FLAGDNN_FP8_MATMUL_API=matmul;FLAGDNN_MTHREADS_NATIVE_BENCHMARK=1"
+    LABELS "benchmark;mthreads;mudnn;matmul;fp8"
+    RUN_SERIAL TRUE TIMEOUT 7200 SKIP_RETURN_CODE 77)
+endif()

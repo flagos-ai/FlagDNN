@@ -326,125 +326,6 @@ class WorkspaceBump final {
   std::size_t offset_ = 0;
 };
 
-std::vector<float> copy_logical_to_host(const TensorDescriptor& tensor,
-                                        void* pointer,
-                                        musaStream_t stream) {
-  std::vector<std::uint8_t> encoded(tensor_bytes(tensor));
-  check_musa(musaMemcpyAsync(encoded.data(),
-                             pointer,
-                             encoded.size(),
-                             musaMemcpyDeviceToHost,
-                             stream),
-             "musaMemcpyAsync(SDPA device-to-host)");
-  check_musa(musaStreamSynchronize(stream),
-             "musaStreamSynchronize(SDPA host reference)");
-  return tensor_io::gather(
-      tensor_io::decode(encoded, tensor.data_type), tensor);
-}
-
-std::size_t logical_offset(const TensorDescriptor& tensor,
-                           std::int64_t b,
-                           std::int64_t h,
-                           std::int64_t s,
-                           std::int64_t d) {
-  return static_cast<std::size_t>(
-      (((b * tensor.dimensions[1] + h) * tensor.dimensions[2] + s) *
-       tensor.dimensions[3]) + d);
-}
-
-void calculate_dbias(const MudnnSdpaBackwardDescriptor& descriptor,
-                     const AttentionGeometry& geometry,
-                     const BindingMap& bindings,
-                     musaStream_t stream) {
-  if (!descriptor.dbias.has_value()) {
-    return;
-  }
-  const std::vector<float> q = copy_logical_to_host(
-      descriptor.q, binding_pointer(descriptor.q, bindings), stream);
-  const std::vector<float> k = copy_logical_to_host(
-      descriptor.k, binding_pointer(descriptor.k, bindings), stream);
-  const std::vector<float> v = copy_logical_to_host(
-      descriptor.v, binding_pointer(descriptor.v, bindings), stream);
-  const std::vector<float> output = copy_logical_to_host(
-      descriptor.output, binding_pointer(descriptor.output, bindings), stream);
-  const std::vector<float> doutput = copy_logical_to_host(
-      descriptor.doutput,
-      binding_pointer(descriptor.doutput, bindings),
-      stream);
-  const std::vector<float> stats = copy_logical_to_host(
-      descriptor.stats, binding_pointer(descriptor.stats, bindings), stream);
-  const std::vector<float> bias = copy_logical_to_host(
-      *descriptor.bias, binding_pointer(*descriptor.bias, bindings), stream);
-
-  const TensorDescriptor& dbias_descriptor = *descriptor.dbias;
-  std::vector<float> dbias(tensor_io::element_count(dbias_descriptor), 0.0F);
-  const std::int64_t head_group =
-      geometry.query_heads / geometry.key_value_heads;
-  for (std::int64_t b = 0; b < geometry.batch; ++b) {
-    for (std::int64_t h = 0; h < geometry.query_heads; ++h) {
-      const std::int64_t kv_head = h / head_group;
-      for (std::int64_t m = 0; m < geometry.sequence_q; ++m) {
-        double delta = 0.0;
-        for (std::int64_t d = 0; d < geometry.value_dimension; ++d) {
-          delta += static_cast<double>(output[logical_offset(
-                       descriptor.output, b, h, m, d)]) *
-                   static_cast<double>(doutput[logical_offset(
-                       descriptor.doutput, b, h, m, d)]);
-        }
-        const double logsumexp = stats[static_cast<std::size_t>(
-            (b * geometry.query_heads + h) * geometry.sequence_q + m)];
-        for (std::int64_t n = 0; n < geometry.sequence_kv; ++n) {
-          if (descriptor.causal && n > m) {
-            continue;
-          }
-          double score = 0.0;
-          for (std::int64_t d = 0; d < geometry.head_dimension; ++d) {
-            score += static_cast<double>(q[logical_offset(
-                         descriptor.q, b, h, m, d)]) *
-                     static_cast<double>(k[logical_offset(
-                         descriptor.k, b, kv_head, n, d)]);
-          }
-          score *= descriptor.attention_scale;
-          const std::int64_t bias_batch =
-              descriptor.bias->dimensions[0] == 1 ? 0 : b;
-          const std::int64_t bias_head =
-              descriptor.bias->dimensions[1] == 1 ? 0 : h;
-          score += bias[logical_offset(
-              *descriptor.bias, bias_batch, bias_head, m, n)];
-          const double probability = std::exp(score - logsumexp);
-          double dp = 0.0;
-          for (std::int64_t d = 0; d < geometry.value_dimension; ++d) {
-            dp += static_cast<double>(doutput[logical_offset(
-                      descriptor.doutput, b, h, m, d)]) *
-                  static_cast<double>(v[logical_offset(
-                      descriptor.v, b, kv_head, n, d)]);
-          }
-          const std::int64_t dbias_batch =
-              dbias_descriptor.dimensions[0] == 1 ? 0 : b;
-          const std::int64_t dbias_head =
-              dbias_descriptor.dimensions[1] == 1 ? 0 : h;
-          dbias[logical_offset(
-              dbias_descriptor, dbias_batch, dbias_head, m, n)] +=
-              static_cast<float>(probability * (dp - delta));
-        }
-      }
-    }
-  }
-
-  const std::vector<float> physical =
-      tensor_io::scatter(dbias, dbias_descriptor);
-  const std::vector<std::uint8_t> encoded =
-      tensor_io::encode(physical, dbias_descriptor.data_type);
-  check_musa(musaMemcpyAsync(binding_pointer(dbias_descriptor, bindings),
-                             encoded.data(),
-                             encoded.size(),
-                             musaMemcpyHostToDevice,
-                             stream),
-             "musaMemcpyAsync(SDPA dBias host-to-device)");
-  check_musa(musaStreamSynchronize(stream),
-             "musaStreamSynchronize(SDPA dBias)");
-}
-
 }  // namespace
 
 struct MudnnSdpaOperation::Impl {
@@ -612,17 +493,10 @@ struct MudnnSdpaBackwardOperation::Impl {
                     "bias");
     }
     if (descriptor.dbias.has_value()) {
-      if (!descriptor.bias.has_value()) {
-        throw std::invalid_argument("muDNN SDPA dBias requires bias");
-      }
-      validate_bias(*descriptor.dbias,
-                    geometry,
-                    descriptor.q.data_type,
-                    "dBias");
-      if (descriptor.dbias->dimensions != descriptor.bias->dimensions) {
-        throw std::invalid_argument("muDNN SDPA bias/dBias shapes differ");
-      }
+      throw ReferenceUnsupported(
+          "muDNN 3.1.5 SDPA backward has no dBias output");
     }
+
     const TensorDescriptor* bias =
         descriptor.bias.has_value() ? &*descriptor.bias : nullptr;
     const TensorDescriptor* dbias =
@@ -734,24 +608,10 @@ void MudnnSdpaBackwardOperation::execute(
   WorkspaceBump arena(workspace, workspace_size);
   const musa::dnn::MemoryMaintainer maintainer =
       [&arena](std::size_t requested) { return arena.allocate(requested); };
-  check_mudnn(state.attention.RunFlashBwd(state.handle,
-                                          dq,
-                                          dk,
-                                          dv,
-                                          doutput,
-                                          q,
-                                          k,
-                                          v,
-                                          bias,
-                                          output,
-                                          stats,
-                                          dropout,
-                                          maintainer),
-              "muDNN SDPA::RunFlashBwd");
-  calculate_dbias(state.descriptor,
-                  state.geometry,
-                  bindings,
-                  reinterpret_cast<musaStream_t>(stream));
+  check_mudnn(
+      state.attention.RunFlashBwd(state.handle, dq, dk, dv, doutput, q, k, v,
+                                  bias, output, stats, dropout, maintainer),
+      "muDNN SDPA::RunFlashBwd");
 }
 
 }  // namespace flagdnn::validation::mthreads

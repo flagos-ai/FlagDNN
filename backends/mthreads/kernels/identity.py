@@ -18,6 +18,10 @@ def identity_contiguous_packed_kernel(
 ):
     """Copy aligned dense tensors as 64-bit words with a scalar tail."""
 
+    # Preserve raw FP8 bytes without converting the masked-load value.
+    if input_ptr.dtype.element_ty.primitive_bitwidth == 8:
+        input_ptr = input_ptr.to(tl.pointer_type(tl.uint8), bitcast=True)
+        output_ptr = output_ptr.to(tl.pointer_type(tl.uint8), bitcast=True)
     packed_input = input_ptr.to(tl.pointer_type(tl.uint64), bitcast=True)
     packed_output = output_ptr.to(tl.pointer_type(tl.uint64), bitcast=True)
     word_count = n_elements // PACK_SIZE
@@ -26,9 +30,7 @@ def identity_contiguous_packed_kernel(
 
     for tile_index in tl.static_range(TILES_PER_PROGRAM):
         word_offsets = (
-            program_base
-            + tile_index * BLOCK_SIZE
-            + tl.arange(0, BLOCK_SIZE)
+            program_base + tile_index * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
         )
         active = word_offsets < word_count
         values = tl.load(packed_input + word_offsets, mask=active, other=0)
@@ -48,12 +50,14 @@ def identity_contiguous_kernel(
     TILES_PER_PROGRAM: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
+    # Preserve raw FP8 bytes without converting the masked-load value.
+    if input_ptr.dtype.element_ty.primitive_bitwidth == 8:
+        input_ptr = input_ptr.to(tl.pointer_type(tl.uint8), bitcast=True)
+        output_ptr = output_ptr.to(tl.pointer_type(tl.uint8), bitcast=True)
     program_base = tl.program_id(0) * BLOCK_SIZE * TILES_PER_PROGRAM
     for tile_index in tl.static_range(TILES_PER_PROGRAM):
         offsets = (
-            program_base
-            + tile_index * BLOCK_SIZE
-            + tl.arange(0, BLOCK_SIZE)
+            program_base + tile_index * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
         )
         active = offsets < n_elements
         values = tl.load(input_ptr + offsets, mask=active, other=0)
@@ -91,6 +95,10 @@ def identity_strided_kernel(
     OUTPUT_STRIDE_7: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
+    # Preserve raw FP8 bytes without converting the masked-load value.
+    if input_ptr.dtype.element_ty.primitive_bitwidth == 8:
+        input_ptr = input_ptr.to(tl.pointer_type(tl.uint8), bitcast=True)
+        output_ptr = output_ptr.to(tl.pointer_type(tl.uint8), bitcast=True)
     logical = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     active = logical < n_elements
     remaining = logical

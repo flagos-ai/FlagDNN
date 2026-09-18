@@ -15,6 +15,7 @@ struct MudnnMatmulDescriptor {
   TensorDescriptor a;
   TensorDescriptor b;
   TensorDescriptor output;
+  int input_precision = 0;
 };
 
 // muDNN exposes MatMul and BatchMatMul C++ operators, but no Frontend Graph

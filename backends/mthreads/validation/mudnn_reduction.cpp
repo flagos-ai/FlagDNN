@@ -26,8 +26,7 @@ namespace {
 musa::dnn::Tensor::Type mudnn_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
     case FLAGDNN_DATA_INT32:
-      throw std::invalid_argument(
-          "INT32 is not supported by this validation adapter");
+      return musa::dnn::Tensor::Type::INT32;
 
     case FLAGDNN_DATA_FLOAT32:
       return musa::dnn::Tensor::Type::FLOAT;
@@ -98,7 +97,8 @@ void validate_descriptor(const MudnnReductionDescriptor& descriptor) {
   validate_tensor(descriptor.input, "input", false);
   validate_tensor(descriptor.output, "output", true);
   if (descriptor.input.uid == descriptor.output.uid ||
-      descriptor.input.data_type != descriptor.output.data_type) {
+      (descriptor.input.data_type != descriptor.output.data_type &&
+       descriptor.output.data_type != FLAGDNN_DATA_FLOAT32)) {
     throw std::invalid_argument(
         "muDNN Reduction requires distinct same-type tensors");
   }
@@ -234,9 +234,19 @@ struct MudnnReductionOperation::Impl {
     validate_descriptor(descriptor);
     axis = normalized_axis(descriptor);
     output_view = full_rank_output(descriptor, axis);
-    bridge_layout = !is_row_major_contiguous(descriptor.input) ||
+    // Reduce derives arithmetic precision from its input type. In
+    // particular, INT32 MEAN truncates before storing even into FLOAT.
+    // Promote with native CAST whenever the public output requests FP32.
+    promote_input = descriptor.input.data_type != descriptor.output.data_type;
+    bridge_layout = promote_input ||
+                    !is_row_major_contiguous(descriptor.input) ||
                     !is_row_major_contiguous(descriptor.output);
     reduction_input = descriptor.input;
+    if (promote_input) {
+      reduction_input.data_type = descriptor.output.data_type;
+      check_mudnn(cast.SetMode(musa::dnn::Unary::Mode::CAST),
+                  "muDNN Unary::SetMode(Reduction cast)");
+    }
     reduction_output = output_view;
     if (bridge_layout) {
       reduction_input.strides =
@@ -289,6 +299,8 @@ struct MudnnReductionOperation::Impl {
   musa::dnn::Handle handle;
   musa::dnn::Reduce reduction;
   musa::dnn::Permute permute;
+  musa::dnn::Unary cast;
+  bool promote_input = false;
   bool bridge_layout = false;
   std::size_t dense_input_offset = 0;
   std::size_t dense_output_offset = 0;
@@ -363,9 +375,13 @@ void MudnnReductionOperation::execute(
         dense_output,
         state.reduction_output,
         workspace_bytes + state.dense_output_offset);
-    check_mudnn(
-        state.permute.Run(state.handle, dense_input, input),
-        "muDNN Permute::Run(Reduction gather)");
+    if (state.promote_input) {
+      check_mudnn(state.cast.Run(state.handle, dense_input, input),
+                  "muDNN Unary::Run(Reduction cast)");
+    } else {
+      check_mudnn(state.permute.Run(state.handle, dense_input, input),
+                  "muDNN Permute::Run(Reduction gather)");
+    }
     reduction_input = &dense_input;
     reduction_output = &dense_output;
     scratch = state.scratch_bytes == 0

@@ -1,13 +1,6 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
-#include "common/normalization.hpp"
-
-#include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
-#include "backends/mthreads/validation/musa_driver.hpp"
-
-#include <flagdnn/flagdnn.hpp>
 #include <musa_runtime_api.h>
-
 #include <unistd.h>
 
 #include <algorithm>
@@ -16,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <flagdnn/flagdnn.hpp>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -26,6 +20,11 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
+#include "backends/mthreads/validation/musa_driver.hpp"
+#include "backends/mthreads/validation/paired_timing.hpp"
+#include "common/normalization.hpp"
 
 namespace flagdnn::testing {
 namespace {
@@ -392,6 +391,18 @@ Accuracy run_graph_case(const Case& test_case,
                      reference_workspace.opaque(),
                      reference->workspace_size(),
                      stream.opaque());
+  mv::timing::paired(
+      test_case.name, stream,
+      [&] {
+        production->execute(production_buffers.bindings,
+                            production_workspace.opaque(),
+                            production->workspace_size(), stream.opaque());
+      },
+      [&] {
+        reference->execute(reference_buffers.bindings,
+                           reference_workspace.opaque(),
+                           reference->workspace_size(), stream.opaque());
+      });
   stream.synchronize();
   require_inputs_unchanged(production_buffers, stream, "FlagDNN");
   require_inputs_unchanged(reference_buffers, stream, "muDNN");
@@ -430,25 +441,29 @@ int run_suite(int argc,
     handle.set_compiler(argv[1], argv[2], cache.path().string());
     const char* filter = std::getenv("FLAGDNN_NORMALIZATION_CASE");
     std::size_t executed = 0;
+    std::size_t skipped = 0;
     for (const Case& test_case : cases) {
       if (filter != nullptr && filter[0] != '\0' &&
           test_case.name.find(filter) == std::string::npos) {
         continue;
       }
-      const Accuracy accuracy = run_graph_case(test_case, handle, stream);
-      ++executed;
-      std::cout << test_case.name
-                << ": FlagDNN Graph vs direct muDNN C++ PASS max_abs="
-                << accuracy.maximum_absolute
-                << " max_rel=" << accuracy.maximum_relative << '\n';
+      try {
+        const Accuracy accuracy = run_graph_case(test_case, handle, stream);
+        ++executed;
+        std::cout << test_case.name
+                  << ": FlagDNN Graph vs direct muDNN C++ PASS max_abs="
+                  << accuracy.maximum_absolute
+                  << " max_rel=" << accuracy.maximum_relative << '\n';
+      } catch (const mv::ReferenceUnsupported& error) {
+        ++skipped;
+        mv::report_skip(test_case.name, error);
+      }
     }
-    if (executed == 0) {
+    if (executed + skipped == 0) {
       throw std::runtime_error(
           "FLAGDNN_NORMALIZATION_CASE matched no mthreads cases");
     }
-    std::cout << suite_name << ": PASS cases=" << executed
-              << " executed=" << executed << " skipped=0\n";
-    return 0;
+    return mv::report_cases(std::string(suite_name), executed, skipped);
   } catch (const std::exception& error) {
     std::cerr << suite_name << "_FAILED: " << error.what() << '\n';
     return 1;

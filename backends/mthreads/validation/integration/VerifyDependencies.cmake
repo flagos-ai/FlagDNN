@@ -69,12 +69,15 @@ function(_flagdnn_require_python_cache_isolation)
   file(REMOVE_RECURSE "${_build_dir}")
   execute_process(
     COMMAND
+      "${CMAKE_COMMAND}" -E env
+      "FLAGDNN_MTHREADS_MUSA_ROOT=${_build_dir}/caller-musa-sentinel"
       "${CMAKE_COMMAND}"
       -S "${_source_dir}"
       -B "${_build_dir}"
       ${_base_arguments}
       "-DFLAGDNN_MTHREADS_MUSA_ROOT=${FLAGDNN_MUSA_ROOT}"
       "-DPython_EXECUTABLE:FILEPATH=${_sentinel}"
+      "-DTritonJIT_DIR:PATH=${_build_dir}/caller-jit-sentinel"
     RESULT_VARIABLE _result
     OUTPUT_VARIABLE _stdout
     ERROR_VARIABLE _stderr)
@@ -91,9 +94,37 @@ function(_flagdnn_require_python_cache_isolation)
   endif()
 endfunction()
 
-_flagdnn_expect_configure_failure(
-  missing_musa_root
-  "FLAGDNN_MTHREADS_MUSA_ROOT is required")
+# An omitted backend-specific path must use the normal environment hints.
+set(_auto_build_dir "${_binary_root}/automatic_dependency_paths")
+file(REMOVE_RECURSE "${_auto_build_dir}")
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env
+    "MUSA_HOME=${FLAGDNN_MUSA_ROOT}"
+    --unset=FLAGDNN_MTHREADS_MUSA_ROOT
+    --unset=FLAGDNN_MTHREADS_TRITON_JIT_DIR
+    --unset=TritonJIT_DIR
+    --unset=LIBTRITON_JIT_ROOT
+    "${CMAKE_COMMAND}" -S "${_source_dir}" -B "${_auto_build_dir}"
+    ${_base_arguments}
+    -DFLAGDNN_MTHREADS_MUSA_ROOT:PATH=
+    -DFLAGDNN_MTHREADS_TRITON_JIT_DIR:PATH=
+    "-DTritonJIT_DIR:PATH=${FLAGDNN_TRITON_JIT_DIR}"
+  RESULT_VARIABLE _auto_result
+  OUTPUT_VARIABLE _auto_stdout
+  ERROR_VARIABLE _auto_stderr)
+if(NOT _auto_result EQUAL 0)
+  message(FATAL_ERROR
+    "automatic dependency discovery failed:\n${_auto_stdout}\n${_auto_stderr}")
+endif()
+file(STRINGS "${_auto_build_dir}/CMakeCache.txt" _auto_paths
+  REGEX "^FLAGDNN_MTHREADS_(MUSA_ROOT|TRITON_JIT_DIR):PATH=")
+foreach(_expected IN ITEMS
+    "FLAGDNN_MTHREADS_MUSA_ROOT:PATH=${FLAGDNN_MUSA_ROOT}"
+    "FLAGDNN_MTHREADS_TRITON_JIT_DIR:PATH=${FLAGDNN_TRITON_JIT_DIR}")
+  if(NOT _expected IN_LIST _auto_paths)
+    message(FATAL_ERROR "automatic dependency discovery did not select ${_expected}")
+  endif()
+endforeach()
 
 _flagdnn_expect_configure_failure(
   missing_triton_jit_directory
@@ -110,5 +141,5 @@ _flagdnn_require_python_cache_isolation()
 
 message(STATUS
   "mthreads configure-failure contracts passed: "
-  "missing root, invalid root, missing TritonJIT directory; "
-  "Python cache isolation passed")
+  "invalid root, missing TritonJIT directory; "
+  "automatic discovery, explicit JIT selection and Python cache isolation passed")

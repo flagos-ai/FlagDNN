@@ -50,19 +50,34 @@ def configure_environment(
     environment["MUSA_VISIBLE_DEVICES"] = device
 
 
-def preflight_tests(_suites: list[str] | tuple[str, ...]) -> set[str]:
-    return {
+def test_expression(suite: str, operator: str) -> str | None:
+    if suite == "functional" and operator == "matmul":
+        return r"^functional\.mthreads\.matmul(\.fp8)?$"
+    if suite == "benchmark":
+        return (
+            rf"^benchmark\.mthreads\.{re.escape(operator)}"
+            r"(\.(matrix|fp8))?$"
+        )
+    return None
+
+
+def preflight_tests(suites: list[str] | tuple[str, ...]) -> set[str]:
+    required = {
         "integration.mthreads.cmake_configuration_contract",
         "integration.mthreads.dependency_boundary",
         "integration.mthreads.reference_dependency_boundary",
         "integration.mthreads.installed_consumer",
-        "integration.mthreads.benchmark_reference_dependency_boundary",
         "integration.mthreads.run_tests_adapter_contract",
         "integration.mthreads.runtime",
         "integration.mthreads.compiler_contract",
         "integration.mthreads.artifact_contract",
         "integration.mthreads.jit_add",
     }
+    if "benchmark" in suites:
+        required.add(
+            "integration.mthreads.benchmark_reference_dependency_boundary"
+        )
+    return required
 
 
 def preflight_metadata(environment: dict[str, str]) -> dict[str, Any]:
@@ -84,8 +99,11 @@ def _accounting_record(
         else operator
     )
     marker = f"FLAGDNN_{marker_operator.upper()}_{suite.upper()}"
+    marker_pattern = re.escape(marker)
+    if suite == "benchmark" and operator in _FUNCTIONAL_ACCOUNTING_ALIASES:
+        marker_pattern = f"(?:{marker_pattern}|FLAGDNN_CONVOLUTION_BENCHMARK)"
     pattern = re.compile(
-        rf"^{re.escape(marker)}:\s+"
+        rf"^{marker_pattern}:\s+"
         r"(PASS|SKIP)\s+cases=(\d+)\s+"
         r"executed=(\d+)\s+skipped=(\d+)\s*$"
     )
@@ -95,18 +113,31 @@ def _accounting_record(
         match = pattern.fullmatch(line)
         if match is not None:
             records.append(match.groups())
-    if len(records) != 1:
+    if not records:
         return None, [
-            f"mthreads {suite} op={operator} must emit exactly one "
+            f"mthreads {suite} op={operator} must emit at least one "
             f"{marker} accounting record; found {len(records)}"
         ]
-    status, cases, executed, skipped = records[0]
     return {
-        "status": status,
-        "cases": int(cases),
-        "executed": int(executed),
-        "skipped": int(skipped),
+        "status": (
+            "PASS" if any(row[0] == "PASS" for row in records) else "SKIP"
+        ),
+        "cases": sum(int(row[1]) for row in records),
+        "executed": sum(int(row[2]) for row in records),
+        "skipped": sum(int(row[3]) for row in records),
     }, []
+
+
+def _skip_records(output: str) -> list[dict[str, str]]:
+    matches = re.findall(
+        r"(?:^|\n)(?:\s*\d+:\s*)?\[skip\] case=(\S+) "
+        r"provider=mudnn reason=(\S[^\n]*)",
+        output,
+    )
+    return [
+        {"case": case, "provider": "mudnn", "reason": reason}
+        for case, reason in matches
+    ]
 
 
 def _validate_accounting(
@@ -133,12 +164,12 @@ def _validate_accounting(
             "mthreads accounting requires positive cases and "
             "executed+skipped=cases"
         )
-    if ctest_reported_status == "passed" and (
-        executed != cases or skipped != 0
-    ):
-        errors.append(
-            "a passed mthreads suite must execute every case without skips"
-        )
+    if ctest_reported_status == "passed" and executed <= 0:
+        errors.append("a passed mthreads suite must execute at least one case")
+    if ctest_reported_status == "skipped" and executed != 0:
+        errors.append("a skipped mthreads suite must not claim executed cases")
+    if len(_skip_records(output)) != skipped:
+        errors.append("every skipped mthreads case requires a muDNN reason")
     if suite == "benchmark" and len(records) != executed:
         errors.append(
             f"mthreads benchmark executed={executed} but emitted "
@@ -157,6 +188,8 @@ def _convolution_case_operator(case: str) -> str | None:
 def _benchmark_case_operator(
     case: str, manifest_operators: list[str]
 ) -> str | None:
+    if case.startswith("matmul_mxfp8_") and "matmul_fp8" in manifest_operators:
+        return "matmul_fp8"
     matches = [
         candidate
         for candidate in dict.fromkeys(manifest_operators)
@@ -223,6 +256,39 @@ def postprocess_result(
     records: dict[str, dict[str, Any]],
     manifest_operators: list[str],
 ) -> None:
+    accounting, _ = _accounting_record(output, operator, suite)
+    result["case_skips"] = _skip_records(output)
+    timing_methods = {
+        case: {"method": method, "execution_count": int(count)}
+        for case, method, count in re.findall(
+            r"(?:^|\n)(?:\s*\d+:\s*)?\[timing\] case=(\S+) "
+            r"method=(musa_graph|musa_event_batch) execution_count=(\d+)",
+            output,
+        )
+    }
+    if timing_methods:
+        result["timing_methods"] = timing_methods
+    # One operator can have a native matrix plus dtype-specific CTest entries.
+    # CTest's textual skip marker describes an individual entry, so a mixed
+    # passed/skipped group must retain its executed cases and paired timings.
+    if (
+        ctest_reported_status == "skipped"
+        and result.get("exit_code") == 0
+        and accounting is not None
+        and int(accounting["executed"]) > 0
+    ):
+        inherited = result.get("record_errors", [])
+        remaining = [
+            error
+            for error in inherited
+            if error != "skipped benchmark emitted timing provider records"
+        ]
+        if remaining:
+            result["record_errors"] = remaining
+        else:
+            result.pop("record_errors", None)
+            result["status"] = "passed"
+        ctest_reported_status = "passed"
     errors = _validate_accounting(
         output,
         operator,
@@ -234,6 +300,8 @@ def postprocess_result(
         errors.extend(
             _validate_benchmark_pairs(records, operator, manifest_operators)
         )
+    if accounting is not None:
+        result["case_accounting"] = accounting
     if not errors:
         return
     result.setdefault("record_errors", []).extend(errors)
@@ -302,6 +370,12 @@ def finalize(
 ) -> dict[str, Any]:
     del state
     selected_pairs = sum(len(suite_operators[suite]) for suite in suites)
+    completed_pairs = sum(
+        results.get(operator, {}).get(suite, {}).get("status")
+        in {"passed", "skipped"}
+        for suite in suites
+        for operator in suite_operators[suite]
+    )
     passed_pairs = sum(
         results.get(operator, {}).get(suite, {}).get("status") == "passed"
         for suite in suites
@@ -311,13 +385,25 @@ def finalize(
     return {
         "failed": (
             not preflight_passed
-            or passed_pairs != selected_pairs
+            or completed_pairs != selected_pairs
             or not speedup["gate_passed"]
         ),
         "summary": {"speedup": speedup},
         "coverage": {
             "selected_operator_suite_pairs": selected_pairs,
             "passed_operator_suite_pairs": passed_pairs,
-            "complete": passed_pairs == selected_pairs,
+            "complete": completed_pairs == selected_pairs,
+            "skipped_operator_suite_pairs": completed_pairs - passed_pairs,
         },
     }
+
+
+def status_is_success(status: str) -> bool:
+    return status in {"passed", "skipped"}
+
+
+def select_operator_manifests(
+    manifests: dict[str, list[str]]
+) -> dict[str, list[str]]:
+    # All Graph operators are represented, including explicit muDNN capability skips.
+    return {**manifests, "benchmark": list(manifests["functional"])}

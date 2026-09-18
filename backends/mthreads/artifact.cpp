@@ -76,7 +76,15 @@ void require_exact_keys(
     std::initializer_list<std::string_view> expected,
     std::string_view field) {
   const auto& object = value.as_object();
-  if (object.size() != expected.size()) {
+  const bool has_precision =
+      object.contains("input_precision") &&
+      (std::find(expected.begin(), expected.end(), "k") != expected.end() ||
+       std::find(expected.begin(), expected.end(), "spatial_rank") !=
+           expected.end());
+  if (has_precision && (object.at("input_precision").as_int() < 0 ||
+                        object.at("input_precision").as_int() > 2))
+    artifact_error("input precision is invalid");
+  if (object.size() != expected.size() + (has_precision ? 1U : 0U)) {
     artifact_error(
         "mthreads artifact/request object has invalid keys: " +
         std::string(field));
@@ -88,6 +96,46 @@ void require_exact_keys(
           std::string(key) + ": " + std::string(field));
     }
   }
+}
+
+// Keep schema-3 requests from older clients compatible with the expanded
+// pointwise attribute serialization. Non-default semantics are never dropped.
+JsonValue normalize_pointwise_attributes(const JsonValue& request) {
+  auto root = request.as_object();
+  auto graph = root.at("graph").as_object();
+  auto nodes = graph.at("nodes").as_array();
+  for (auto& value : nodes) {
+    auto node = value.as_object();
+    auto attributes = node.at("attributes").as_object();
+    const auto& operation = node.at("type").as_string();
+    if (attributes.contains("pointwise_mode") ||
+        operation == "binary_select") {
+      for (const auto& [name, expected] :
+           std::map<std::string, double>{{"relu_lower_clip", 0.0},
+                                         {"relu_upper_clip", 0.0},
+                                         {"relu_lower_clip_slope", 0.0},
+                                         {"swish_beta", 1.0},
+                                         {"elu_alpha", 1.0},
+                                         {"softplus_beta", 1.0}}) {
+        if (auto it = attributes.find(name); it != attributes.end()) {
+          if (it->second.as_double() != expected)
+            artifact_error("non-default pointwise attribute: " + name);
+          attributes.erase(it);
+        }
+      }
+      if (auto it = attributes.find("relu_upper_clip_set");
+          it != attributes.end()) {
+        if (it->second.as_bool())
+          artifact_error("unexpected pointwise upper clip");
+        attributes.erase(it);
+      }
+      node["attributes"] = JsonValue(std::move(attributes));
+      value = JsonValue(std::move(node));
+    }
+  }
+  graph["nodes"] = JsonValue(std::move(nodes));
+  root["graph"] = JsonValue(std::move(graph));
+  return JsonValue(std::move(root));
 }
 
 bool is_lower_sha256(std::string_view value) {
@@ -203,13 +251,13 @@ struct TensorSpec {
 };
 
 std::size_t element_size(std::string_view data_type) {
-  if (data_type == "float32") {
+  if (data_type == "float32" || data_type == "int32") {
     return 4;
   }
   if (data_type == "float16" || data_type == "bfloat16") {
     return 2;
   }
-  if (data_type == "boolean") {
+  if (data_type == "boolean" || data_type == "fp8_e8m0") {
     return 1;
   }
   if (data_type == "fp8_e4m3" || data_type == "fp8_e5m2") {
@@ -303,11 +351,11 @@ TensorSpec parse_tensor(const JsonValue& value) {
   std::int64_t required_span = 1;
   for (const auto& [stride, dimension] : axes) {
     if (stride < required_span ||
-        required_span >
-            std::numeric_limits<std::int64_t>::max() / dimension) {
+        stride > (std::numeric_limits<std::int64_t>::max() - required_span) /
+                     (dimension - 1)) {
       artifact_error("mthreads tensor strides overlap");
     }
-    required_span = stride * dimension;
+    required_span += stride * (dimension - 1);
   }
   return tensor;
 }
@@ -438,6 +486,7 @@ enum class PointwiseFamily {
 };
 
 struct PointwiseRequest {
+  std::int64_t input_precision = 0;
   PointwiseFamily family = PointwiseFamily::kBinary;
   std::string flagdnn_version;
   std::string target;
@@ -804,9 +853,19 @@ PointwiseRequest parse_binary_request(
   result.n_elements = element_count(result.output);
 
   const JsonValue& attributes = node.at("attributes");
-  require_exact_keys(
-      attributes, {"mode", "alpha", "n_elements", "pointwise_mode"},
-      "binary pointwise attributes");
+  if (node.at("type").as_string() == "sigmoid_backward" &&
+      attributes.as_object().contains("has_upper_clip")) {
+    require_exact_keys(
+        attributes,
+        {"mode", "alpha", "n_elements", "pointwise_mode", "has_upper_clip"},
+        "sigmoid backward attributes");
+    if (attributes.at("has_upper_clip").as_int() != 0)
+      artifact_error("mthreads sigmoid backward does not support clipping");
+  } else {
+    require_exact_keys(attributes,
+                       {"mode", "alpha", "n_elements", "pointwise_mode"},
+                       "binary pointwise attributes");
+  }
   result.pointwise_mode = attributes.at("mode").as_int();
   result.operation = binary_operation(result.pointwise_mode);
   if (attributes.at("pointwise_mode").as_int() !=
@@ -819,9 +878,9 @@ PointwiseRequest parse_binary_request(
   const std::string& compute_type =
       node.at("compute_data_type").as_string();
   if (is_comparison_mode(result.pointwise_mode)) {
-    if (!is_floating_data_type(result.left.data_type) ||
-        result.output.data_type != "boolean" ||
-        compute_type != "boolean") {
+    if ((!is_floating_data_type(result.left.data_type) &&
+         result.left.data_type != "int32") ||
+        result.output.data_type != "boolean" || compute_type != "boolean") {
       artifact_error(
           "mthreads comparison pointwise storage/compute types differ");
     }
@@ -832,7 +891,8 @@ PointwiseRequest parse_binary_request(
       artifact_error(
           "mthreads logical pointwise storage/compute types differ");
     }
-  } else if (!is_floating_data_type(result.left.data_type) ||
+  } else if ((!is_floating_data_type(result.left.data_type) &&
+              result.left.data_type != "int32") ||
              result.output.data_type != result.left.data_type ||
              compute_type != "float32") {
     artifact_error(
@@ -997,7 +1057,8 @@ PointwiseRequest parse_add_square_request(
     artifact_error(
         "mthreads AddSquare virtual/external tensor roles are invalid");
   }
-  if (!is_floating_data_type(result.output.data_type) ||
+  if ((!is_floating_data_type(result.output.data_type) &&
+       result.output.data_type != "int32") ||
       result.left.data_type != result.output.data_type ||
       result.right.data_type != result.output.data_type ||
       square.data_type != result.output.data_type ||
@@ -1008,8 +1069,7 @@ PointwiseRequest parse_add_square_request(
       result.right.strides != result.output.strides ||
       square.strides != result.output.strides ||
       !is_physically_dense(result.left) ||
-      !is_physically_dense(result.right) ||
-      !is_physically_dense(square) ||
+      !is_physically_dense(result.right) || !is_physically_dense(square) ||
       !is_physically_dense(result.output) ||
       square_node.at("compute_data_type").as_string() != "float32" ||
       add_node.at("compute_data_type").as_string() != "float32") {
@@ -1501,7 +1561,8 @@ PointwiseRequest parse_unary_request(
       artifact_error(
           "mthreads logical NOT storage/compute types differ");
     }
-  } else if (!is_floating_data_type(result.input.data_type) ||
+  } else if ((result.pointwise_mode != 5 &&
+              !is_floating_data_type(result.input.data_type)) ||
              result.output.data_type != result.input.data_type ||
              compute_type != "float32") {
     artifact_error(
@@ -1677,7 +1738,8 @@ PointwiseRequest parse_ternary_request(
     artifact_error(
         "mthreads ternary output shape is not the broadcast result");
   }
-  if (!is_floating_data_type(result.left.data_type) ||
+  if ((!is_floating_data_type(result.left.data_type) &&
+       result.left.data_type != "int32") ||
       result.right.data_type != result.left.data_type ||
       result.output.data_type != result.left.data_type ||
       result.predicate.data_type != "boolean" ||
@@ -2053,8 +2115,10 @@ PointwiseRequest parse_reduction_request(
   result.input = tensors.at(inputs.at("input"));
   result.output = tensors.at(outputs.at("output"));
   if (result.input.is_virtual || result.output.is_virtual ||
-      !is_floating_data_type(result.input.data_type) ||
-      result.input.data_type != result.output.data_type ||
+      (!is_floating_data_type(result.input.data_type) &&
+       result.input.data_type != "int32") ||
+      (result.input.data_type != result.output.data_type &&
+       result.output.data_type != "float32") ||
       node.at("compute_data_type").as_string() != "float32") {
     artifact_error("mthreads reduction tensor bindings/types are invalid");
   }
@@ -2234,7 +2298,8 @@ PointwiseRequest parse_matmul_request(
   result.output = tensors.at(outputs.at("output"));
   if (result.left.is_virtual || result.right.is_virtual ||
       result.output.is_virtual ||
-      !is_floating_data_type(result.left.data_type) ||
+      (!is_floating_data_type(result.left.data_type) &&
+       result.left.data_type != "int32") ||
       result.left.data_type != result.right.data_type ||
       result.left.data_type != result.output.data_type ||
       node.at("compute_data_type").as_string() != "float32") {
@@ -2312,6 +2377,8 @@ PointwiseRequest parse_matmul_request(
   result.matmul_output_stride_n = result.output.strides[output_rank - 1];
 
   const JsonValue& attributes = node.at("attributes");
+  if (attributes.as_object().contains("input_precision"))
+    result.input_precision = attributes.at("input_precision").as_int();
   require_exact_keys(attributes, {"batch", "m", "n", "k"},
                      "Matmul attributes");
   if (attributes.at("batch").as_int() != result.matmul_batch ||
@@ -2466,6 +2533,8 @@ PointwiseRequest parse_convolution_request(
   }
 
   const JsonValue& attributes = node.at("attributes");
+  if (attributes.as_object().contains("input_precision"))
+    result.input_precision = attributes.at("input_precision").as_int();
   if (fprop) {
     require_exact_keys(
         attributes,
@@ -2623,7 +2692,11 @@ PointwiseRequest parse_convolution_request(
 
 std::string pointer_token(const TensorSpec& tensor) {
   std::string result;
-  if (tensor.data_type == "float32") {
+  if (tensor.data_type == "int32") {
+    result = "*i32";
+  } else if (tensor.data_type == "fp8_e8m0") {
+    result = "*i8";
+  } else if (tensor.data_type == "float32") {
     result = "*fp32";
   } else if (tensor.data_type == "float16") {
     result = "*fp16";
@@ -2866,16 +2939,17 @@ std::vector<std::int64_t> matmul_constants(
       request.matmul_output_batch_strides.end());
   result.insert(
       result.end(),
-      {request.matmul_a_stride_m,
-       request.matmul_a_stride_k,
-       request.matmul_b_stride_k,
-       request.matmul_b_stride_n,
-       request.matmul_output_stride_m,
-       request.matmul_output_stride_n,
+      {request.matmul_a_stride_m, request.matmul_a_stride_k,
+       request.matmul_b_stride_k, request.matmul_b_stride_n,
+       request.matmul_output_stride_m, request.matmul_output_stride_n,
        request.left.data_type == "float32" ? 1 : 0,
        request.left.data_type == "float32" &&
-               std::min({request.matmul_m, request.matmul_n, request.matmul_k}) >= 512
-           ? 1 : 0});
+               (request.input_precision == 2 ||
+                (request.input_precision == 0 &&
+                 std::min({request.matmul_m, request.matmul_n,
+                           request.matmul_k}) >= 512))
+           ? 1
+           : 0});
   return result;
 }
 
@@ -3314,6 +3388,7 @@ unsigned int stride2_packed4_dgrad_block_m(
 
 
 bool uses_standard_wgrad(const PointwiseRequest& request) {
+  if (request.input_precision == 1) return false;
   const TensorSpec& image = request.convolution_image;
   const TensorSpec& loss = request.convolution_result;
   const TensorSpec& output = request.convolution_filter;
@@ -3363,6 +3438,7 @@ bool uses_standard_wgrad(const PointwiseRequest& request) {
 }
 
 bool uses_nd_packed_wgrad(const PointwiseRequest& request) {
+  if (request.input_precision == 1) return false;
   const TensorSpec& image = request.convolution_image;
   const TensorSpec& loss = request.convolution_result;
   const TensorSpec& output = request.convolution_filter;
@@ -3506,6 +3582,7 @@ std::size_t expected_nd_packed_wgrad_workspace_size(
   return std::max(kPhaseOneWorkspaceSize, aligned);
 }
 bool uses_stem_wgrad(const PointwiseRequest& request) {
+  if (request.input_precision == 1) return false;
   const TensorSpec& image = request.convolution_image;
   const TensorSpec& loss = request.convolution_result;
   const TensorSpec& output = request.convolution_filter;
@@ -3551,6 +3628,7 @@ std::size_t expected_stem_wgrad_workspace_size(
 }
 
 bool uses_p5_wgrad(const PointwiseRequest& request) {
+  if (request.input_precision == 1) return false;
   const TensorSpec& image = request.convolution_image;
   const TensorSpec& loss = request.convolution_result;
   const TensorSpec& output = request.convolution_filter;
@@ -3699,7 +3777,9 @@ std::vector<std::int64_t> convolution_constants(
       request.operation == "convolution_fprop";
   const std::int64_t input_precision =
       request.convolution_image.data_type == "float32" &&
-              (!fprop_operation || fprop_reduction_extent >= 64U)
+              (request.input_precision == 2 ||
+               (request.input_precision == 0 &&
+                (!fprop_operation || fprop_reduction_extent >= 64U)))
           ? 1
           : 0;
 
@@ -3843,11 +3923,13 @@ std::vector<std::int64_t> convolution_constants(
   result.insert(result.end(), image.strides.begin(), image.strides.end());
   result.insert(result.end(), filter.strides.begin(), filter.strides.end());
   result.push_back(
-      (request.operation == "convolution_wgrad" ||
-       uses_stride2_tile4_dgrad(request) ||
-       uses_stride2_packed2_1d_dgrad(request)) &&
-              request.convolution_image.data_type == "float32"
-          ? 1 : 0);
+      request.input_precision
+          ? static_cast<int>(request.input_precision == 2)
+          : static_cast<int>(request.convolution_image.data_type ==
+                                 "float32" &&
+                             (request.operation == "convolution_wgrad" ||
+                              uses_stride2_tile4_dgrad(request) ||
+                              uses_stride2_packed2_1d_dgrad(request))));
   if (function == "conv_dgrad_nd_kernel") {
     result.insert(
         result.end(),
@@ -3890,13 +3972,15 @@ bool uses_packed_identity(const PointwiseRequest& request) {
 }
 
 unsigned int identity_pack_size(const PointwiseRequest& request) {
-  if (request.input.data_type == "float32") {
+  if (request.input.data_type == "float32" ||
+      request.input.data_type == "int32") {
     return 2U;
   }
   if (request.input.data_type == "float16" ||
       request.input.data_type == "bfloat16") {
     return 4U;
   }
+  if (element_size(request.input.data_type) == 1) return 8U;
   artifact_error("mthreads packed Identity data type is invalid");
 }
 
@@ -5895,8 +5979,10 @@ AttentionVariantExpectation expected_im2col_fprop_variant(
     for (const std::int64_t value : geometry.column_strides) {
       constant(value);
     }
-    constant(
-        request.convolution_image.data_type == "float32" ? 1 : 0);
+    constant(request.convolution_image.data_type == "float32" &&
+                     request.input_precision != 1
+                 ? 1
+                 : 0);
     const Im2colFpropMmBlocks blocks =
         im2col_fprop_mm_blocks(request, geometry);
     constant(blocks.output_channels);
@@ -6005,8 +6091,10 @@ AttentionVariantExpectation expected_dense_dgrad_variant(
          request.convolution_image.strides) {
       constant(stride);
     }
-    constant(
-        request.convolution_image.data_type == "float32" ? 1 : 0);
+    constant(request.convolution_image.data_type == "float32" &&
+                     request.input_precision != 1
+                 ? 1
+                 : 0);
     constant(block_size);
     constant(block_size);
     constant(block_size);
@@ -8414,6 +8502,8 @@ void validate_artifact_tree(
   }
 }
 
+#include "backends/mthreads/codegen/extended_artifact.inc"
+
 }  // namespace
 
 MthreadsArtifact parse_mthreads_artifact(
@@ -8436,7 +8526,11 @@ MthreadsArtifact parse_mthreads_artifact(
       artifact_error(
           "mthreads Graph IR request SHA-256 does not match build input");
     }
-    const JsonValue request = flagdnn::native::json::parse(graph_ir);
+    const JsonValue raw_request = flagdnn::native::json::parse(graph_ir);
+    if (is_extended_request(raw_request))
+      return parse_extended_artifact(context, input, raw_request, graph_ir,
+                                     request_hash);
+    const JsonValue request = normalize_pointwise_attributes(raw_request);
     const PointwiseRequest pointwise_request =
         parse_pointwise_request(request, context.target_fingerprint);
     const std::string_view expected_source_path =

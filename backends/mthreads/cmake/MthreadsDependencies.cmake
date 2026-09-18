@@ -67,9 +67,19 @@ function(flagdnn_mthreads_resolve_dependencies out_prefix)
       "FLAGDNN_MTHREADS_TRITON_JIT_DIR")
   endif()
   file(REAL_PATH "${_triton_jit_config}" _triton_jit_config EXPAND_TILDE)
-  get_filename_component(_triton_jit_cmake_root "${_triton_jit_dir}" DIRECTORY)
-  get_filename_component(_triton_jit_library_root "${_triton_jit_cmake_root}" DIRECTORY)
-  get_filename_component(_triton_jit_prefix "${_triton_jit_library_root}" DIRECTORY)
+  if(EXISTS "${_triton_jit_dir}/CMakeCache.txt")
+    # Build-tree exports keep headers and scripts in the source checkout.
+    load_cache("${_triton_jit_dir}" READ_WITH_PREFIX _jit_build_
+      CMAKE_HOME_DIRECTORY)
+    set(_triton_jit_prefix "${_jit_build_CMAKE_HOME_DIRECTORY}")
+    if(NOT IS_DIRECTORY "${_triton_jit_prefix}/include/triton_jit")
+      message(FATAL_ERROR "TritonJIT build-tree source directory is missing")
+    endif()
+  else()
+    get_filename_component(_triton_jit_cmake_root "${_triton_jit_dir}" DIRECTORY)
+    get_filename_component(_triton_jit_library_root "${_triton_jit_cmake_root}" DIRECTORY)
+    get_filename_component(_triton_jit_prefix "${_triton_jit_library_root}" DIRECTORY)
+  endif()
   get_filename_component(
     _environment_directory "${MTHREADS_ENVIRONMENT_REPORT}" DIRECTORY)
   file(MAKE_DIRECTORY "${_environment_directory}")
@@ -88,6 +98,7 @@ function(flagdnn_mthreads_resolve_dependencies out_prefix)
     COMMAND
       "${CMAKE_COMMAND}" -E env
       "MUSA_HOME=${_musa_root}"
+      "FLAGDNN_MTHREADS_MUSA_ROOT=${_musa_root}"
       "MTHREADS_TRITON_JIT_PREFIX=${_triton_jit_prefix}"
       "MTHREADS_TRITON_JIT_CONFIG=${_triton_jit_config}"
       "${_codegen_python}" "${_environment_collector}"

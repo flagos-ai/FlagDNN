@@ -185,6 +185,20 @@ std::uint8_t float_to_fp8(float value, bool e4m3) {
       sign | static_cast<std::uint8_t>(selected));
 }
 
+std::uint8_t float_to_e8m0(float value) {
+  if (value == kPaddingSentinel) return 253;
+  if (!(value >= 0.0F) || !std::isfinite(value)) return 255;
+  if (value == 0.0F) return 0;
+  const double exponent = std::log2(static_cast<double>(value));
+  return static_cast<std::uint8_t>(
+      std::clamp(std::round(exponent) + 127.0, 0.0, 254.0));
+}
+
+float e8m0_to_float(std::uint8_t value) {
+  return value == 255 ? std::numeric_limits<float>::quiet_NaN()
+                      : std::ldexp(1.0F, static_cast<int>(value) - 127);
+}
+
 float fp8_to_float(std::uint8_t bits, bool e4m3) {
   const std::uint8_t magnitude = bits & 0x7fU;
   if ((e4m3 && magnitude == 0x7fU) ||
@@ -311,9 +325,14 @@ std::vector<float> make_input(
   for (std::size_t index = 0; index < result.size(); ++index) {
     const int centered = static_cast<int>(
         (index * 17U + input_index * 11U) % 41U) - 20;
-    result[index] =
-        static_cast<float>(centered) /
-        static_cast<float>(13U + input_index);
+    result[index] = tensor.data_type == FLAGDNN_DATA_FP8_E8M0
+                        ? std::ldexp(1.0F, centered % 7)
+                    : tensor.data_type == FLAGDNN_DATA_INT32
+                        ? static_cast<float>(centered)
+                    : tensor.data_type == FLAGDNN_DATA_BOOLEAN
+                        ? static_cast<float>(index % 2)
+                        : static_cast<float>(centered) /
+                              static_cast<float>(13U + input_index);
   }
   return result;
 }
@@ -357,9 +376,12 @@ std::vector<std::uint8_t> encode(
   std::vector<std::uint8_t> output(values.size() * width);
   for (std::size_t index = 0; index < values.size(); ++index) {
     const std::size_t offset = index * width;
-    if (data_type == FLAGDNN_DATA_FLOAT32) {
+    if (data_type == FLAGDNN_DATA_FLOAT32 || data_type == FLAGDNN_DATA_INT32) {
       const std::uint32_t bits =
-          std::bit_cast<std::uint32_t>(values[index]);
+          data_type == FLAGDNN_DATA_INT32
+              ? std::bit_cast<std::uint32_t>(
+                    static_cast<std::int32_t>(values[index]))
+              : std::bit_cast<std::uint32_t>(values[index]);
       for (unsigned int byte = 0; byte < 4; ++byte) {
         output[offset + byte] = static_cast<std::uint8_t>(
             (bits >> (byte * 8U)) & 0xffU);
@@ -377,6 +399,8 @@ std::vector<std::uint8_t> encode(
         throw std::invalid_argument(
             "BOOLEAN encoding requires canonical 0/1 values");
       }
+    } else if (data_type == FLAGDNN_DATA_FP8_E8M0) {
+      output[offset] = float_to_e8m0(values[index]);
     } else if (data_type == FLAGDNN_DATA_FP8_E4M3) {
       output[offset] = float_to_fp8(values[index], true);
     } else if (data_type == FLAGDNN_DATA_FP8_E5M2) {
@@ -395,19 +419,24 @@ std::vector<float> decode(
   std::vector<float> output(bytes.size() / width);
   for (std::size_t index = 0; index < output.size(); ++index) {
     const std::size_t offset = index * width;
-    if (data_type == FLAGDNN_DATA_FLOAT32) {
+    if (data_type == FLAGDNN_DATA_FLOAT32 || data_type == FLAGDNN_DATA_INT32) {
       std::uint32_t bits = 0;
       for (unsigned int byte = 0; byte < 4; ++byte) {
         bits |= static_cast<std::uint32_t>(bytes[offset + byte])
                 << (byte * 8U);
       }
-      output[index] = std::bit_cast<float>(bits);
+      output[index] =
+          data_type == FLAGDNN_DATA_INT32
+              ? static_cast<float>(std::bit_cast<std::int32_t>(bits))
+              : std::bit_cast<float>(bits);
     } else if (data_type == FLAGDNN_DATA_FLOAT16) {
       output[index] = half_to_float(read_u16(bytes, offset));
     } else if (data_type == FLAGDNN_DATA_BFLOAT16) {
       output[index] = bfloat16_to_float(read_u16(bytes, offset));
     } else if (data_type == FLAGDNN_DATA_BOOLEAN) {
       output[index] = static_cast<float>(bytes[offset]);
+    } else if (data_type == FLAGDNN_DATA_FP8_E8M0) {
+      output[index] = e8m0_to_float(bytes[offset]);
     } else if (data_type == FLAGDNN_DATA_FP8_E4M3) {
       output[index] = fp8_to_float(bytes[offset], true);
     } else if (data_type == FLAGDNN_DATA_FP8_E5M2) {
@@ -420,11 +449,10 @@ std::vector<float> decode(
 float quantize_scalar(float value, flagdnnDataType_t data_type) {
   switch (data_type) {
     case FLAGDNN_DATA_INT32:
-      throw std::invalid_argument(
-          "INT32 is not supported by this validation adapter");
+      return static_cast<float>(static_cast<std::int32_t>(value));
 
     case FLAGDNN_DATA_FP8_E8M0:
-      break;
+      return e8m0_to_float(float_to_e8m0(value));
     case FLAGDNN_DATA_FLOAT32:
       return value;
     case FLAGDNN_DATA_FLOAT16:

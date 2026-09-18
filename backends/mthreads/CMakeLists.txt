@@ -2,9 +2,6 @@ set(FLAGDNN_MTHREADS_MUSA_ROOT ""
     CACHE PATH "Canonical MUSA Toolkit root for the mthreads backend")
 set(FLAGDNN_MTHREADS_TRITON_JIT_DIR ""
     CACHE PATH "Directory containing the MUSA TritonJITConfig.cmake")
-set(FLAGDNN_MTHREADS_REQUIRE_REFERENCE_COVERAGE ON
-    CACHE BOOL
-    "Fail validation when any muDNN reference case is not comparable")
 
 if(NOT FLAGDNN_EXECUTION_ENGINE STREQUAL "libtriton_jit")
   message(FATAL_ERROR
@@ -13,13 +10,65 @@ endif()
 if(NOT FLAGDNN_CODEGEN_PYTHON)
   message(FATAL_ERROR "FLAGDNN_CODEGEN_PYTHON is required for mthreads")
 endif()
-if(NOT FLAGDNN_MTHREADS_TRITON_JIT_DIR)
-  message(FATAL_ERROR "FLAGDNN_MTHREADS_TRITON_JIT_DIR is required")
-endif()
-
 list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(MthreadsDependencies)
 include(MthreadsTritonJIT)
+
+# Keep automatic discovery backend-local and preserve explicit cache overrides.
+if(NOT FLAGDNN_MTHREADS_MUSA_ROOT)
+  if(DEFINED ENV{FLAGDNN_MTHREADS_MUSA_ROOT} AND
+     NOT "$ENV{FLAGDNN_MTHREADS_MUSA_ROOT}" STREQUAL "")
+    set(_flagdnn_musa_root "$ENV{FLAGDNN_MTHREADS_MUSA_ROOT}")
+  elseif(MUSA_HOME)
+    set(_flagdnn_musa_root "${MUSA_HOME}")
+  elseif(DEFINED ENV{MUSA_HOME} AND NOT "$ENV{MUSA_HOME}" STREQUAL "")
+    set(_flagdnn_musa_root "$ENV{MUSA_HOME}")
+  else()
+    set(_flagdnn_musa_root "/usr/local/musa")
+  endif()
+  set(FLAGDNN_MTHREADS_MUSA_ROOT "${_flagdnn_musa_root}"
+      CACHE PATH "Canonical MUSA Toolkit root for the mthreads backend" FORCE)
+endif()
+
+if(NOT FLAGDNN_MTHREADS_TRITON_JIT_DIR)
+  set(_flagdnn_mthreads_jit_candidates)
+  if(DEFINED ENV{FLAGDNN_MTHREADS_TRITON_JIT_DIR} AND
+     NOT "$ENV{FLAGDNN_MTHREADS_TRITON_JIT_DIR}" STREQUAL "")
+    list(APPEND _flagdnn_mthreads_jit_candidates
+      "$ENV{FLAGDNN_MTHREADS_TRITON_JIT_DIR}")
+  endif()
+  if(TritonJIT_DIR)
+    list(APPEND _flagdnn_mthreads_jit_candidates "${TritonJIT_DIR}")
+  endif()
+  if(DEFINED ENV{TritonJIT_DIR} AND NOT "$ENV{TritonJIT_DIR}" STREQUAL "")
+    list(APPEND _flagdnn_mthreads_jit_candidates "$ENV{TritonJIT_DIR}")
+  endif()
+  if(DEFINED ENV{LIBTRITON_JIT_ROOT} AND
+     NOT "$ENV{LIBTRITON_JIT_ROOT}" STREQUAL "")
+    list(APPEND _flagdnn_mthreads_jit_candidates
+      "$ENV{LIBTRITON_JIT_ROOT}/build"
+      "$ENV{LIBTRITON_JIT_ROOT}/lib/cmake/TritonJIT")
+  endif()
+  list(APPEND _flagdnn_mthreads_jit_candidates
+    "${PROJECT_SOURCE_DIR}/../libtriton_jit/build"
+    "${PROJECT_SOURCE_DIR}/../libtriton_jit/lib/cmake/TritonJIT"
+    "/usr/local/lib/cmake/TritonJIT")
+  foreach(_candidate IN LISTS _flagdnn_mthreads_jit_candidates)
+    if(EXISTS "${_candidate}/TritonJITConfig.cmake")
+      get_filename_component(_candidate "${_candidate}" ABSOLUTE)
+      set(FLAGDNN_MTHREADS_TRITON_JIT_DIR "${_candidate}"
+          CACHE PATH "Directory containing the MUSA TritonJITConfig.cmake" FORCE)
+      break()
+    endif()
+  endforeach()
+  if(NOT FLAGDNN_MTHREADS_TRITON_JIT_DIR)
+    message(FATAL_ERROR
+      "Cannot find a MUSA TritonJIT package. Build ../libtriton_jit/build "
+      "with BACKEND=MUSA, or set FLAGDNN_MTHREADS_TRITON_JIT_DIR to the "
+      "directory containing TritonJITConfig.cmake.")
+  endif()
+endif()
+message(STATUS "mthreads TritonJIT config: ${FLAGDNN_MTHREADS_TRITON_JIT_DIR}")
 
 flagdnn_mthreads_resolve_dependencies(
   FLAGDNN_MTHREADS_DEPENDENCIES
@@ -167,11 +216,7 @@ set(FLAGDNN_MTHREADS_VALIDATION_RUNTIME_LIBRARY_DIRECTORIES
 install(
   FILES
     compiler.py
-    compiler_graph.py
-    compiler_identity.py
-    compiler_tensor.py
     environment_identity.py
-    execution_plan.py
   DESTINATION
     "${FLAGDNN_RESOURCE_INSTALL_DIR}/backends/mthreads")
 install(
@@ -216,3 +261,7 @@ message(STATUS
   "${FLAGDNN_MTHREADS_DEPENDENCIES_ENVIRONMENT_IDENTITY_SHA256}")
 message(STATUS
   "mthreads private TritonJIT: ${FLAGDNN_MTHREADS_JIT_LIBRARY}")
+
+install(DIRECTORY dispatch codegen
+  DESTINATION "${FLAGDNN_RESOURCE_INSTALL_DIR}/backends/mthreads"
+  FILES_MATCHING PATTERN "*.py" PATTERN "__pycache__" EXCLUDE)

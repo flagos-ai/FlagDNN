@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import re
 import sys
 from types import ModuleType
 
@@ -60,6 +61,36 @@ def main() -> int:
     require(adapter.PREFLIGHT_BY_DEFAULT is True, "preflight default")
     require(adapter.SUPPORTS_MIN_SPEEDUP is True, "speedup support")
 
+    for suite, operator, suffixes in (
+        ("functional", "matmul", ("", ".fp8")),
+        ("benchmark", "matmul", ("", ".matrix", ".fp8")),
+        ("benchmark", "genstats", (".matrix",)),
+        ("benchmark", "add", ("", ".matrix")),
+    ):
+        expression = adapter.test_expression(suite, operator)
+        require(expression is not None, "missing dtype/matrix test selector")
+        for suffix in suffixes:
+            require(
+                re.fullmatch(
+                    expression, f"{suite}.mthreads.{operator}{suffix}"
+                )
+                is not None,
+                f"missing {suite} {operator}{suffix} coverage",
+            )
+        for invalid in (
+            f"{suite}.nvidia.{operator}",
+            f"{suite}.mthreads.{operator}_backward",
+            f"{suite}.mthreads.{operator}.unknown",
+        ):
+            require(
+                re.fullmatch(expression, invalid) is None,
+                "test selector escaped the operator boundary",
+            )
+    require(
+        adapter.test_expression("functional", "add") is None,
+        "ordinary functional test should use the default selector",
+    )
+
     environment = {
         "FLAGDNN_ADD_CASE": "odd_extent",
         "FLAGDNN_BENCHMARK_CASE": "add_perf_fp32",
@@ -71,9 +102,7 @@ def main() -> int:
     }
     adapter.configure_environment(environment, "3")
     require("FLAGDNN_ADD_CASE" not in environment, "functional filter")
-    require(
-        "FLAGDNN_BENCHMARK_CASE" not in environment, "benchmark filter"
-    )
+    require("FLAGDNN_BENCHMARK_CASE" not in environment, "benchmark filter")
     require(environment["MUSA_VISIBLE_DEVICES"] == "3", "device mask")
     for variable in (
         "CUDA_VISIBLE_DEVICES",
@@ -83,9 +112,7 @@ def main() -> int:
     ):
         require(variable not in environment, f"stale visibility {variable}")
 
-    inherited = {
-        variable: "kept" for variable in adapter.VISIBILITY_VARIABLES
-    }
+    inherited = {variable: "kept" for variable in adapter.VISIBILITY_VARIABLES}
     adapter.configure_environment(inherited, None)
     require(
         all(
@@ -173,6 +200,7 @@ def main() -> int:
         result=benchmark_result,
         ctest_reported_status="passed",
         output=(
+            "18: [timing] case=add_perf_fp32 method=musa_event_batch execution_count=20\n"
             "18: FLAGDNN_ADD_BENCHMARK: "
             "PASS cases=1 executed=1 skipped=0\n"
         ),
@@ -182,6 +210,16 @@ def main() -> int:
         manifest_operators=["add"],
     )
     require(benchmark_result["status"] == "passed", "benchmark accounting")
+    require(
+        benchmark_result["timing_methods"]
+        == {
+            "add_perf_fp32": {
+                "method": "musa_event_batch",
+                "execution_count": 20,
+            }
+        },
+        "direct Event timing method must remain in the diagnostic report",
+    )
 
     ownership_operators = [
         "batchnorm",
@@ -223,9 +261,7 @@ def main() -> int:
         ),
         operator="conv_wgrad",
         suite="benchmark",
-        records={
-            wrong_direction_case: paired_metrics(wrong_direction_case)
-        },
+        records={wrong_direction_case: paired_metrics(wrong_direction_case)},
         manifest_operators=ownership_operators,
     )
     require(
@@ -251,6 +287,53 @@ def main() -> int:
         overlapping_result["status"] == "failed",
         "batchnorm accepted a batchnorm_inference benchmark case",
     )
+
+    mixed_output = (
+        "17: FLAGDNN_ADD_BENCHMARK: PASS cases=1 executed=1 skipped=0\n"
+        "18: [skip] case=add_unavailable provider=mudnn reason=NOT_SUPPORTED\n"
+        "18: FLAGDNN_ADD_BENCHMARK: SKIP cases=1 executed=0 skipped=1\n"
+    )
+    mixed_result = {
+        "status": "failed",
+        "exit_code": 0,
+        "record_errors": ["skipped benchmark emitted timing provider records"],
+    }
+    adapter.postprocess_result(
+        result=mixed_result,
+        ctest_reported_status="skipped",
+        output=mixed_output,
+        operator="add",
+        suite="benchmark",
+        records=records,
+        manifest_operators=["add"],
+    )
+    require(mixed_result["status"] == "passed", "mixed CTest group")
+    require(
+        mixed_result["case_skips"]
+        == [
+            {
+                "case": "add_unavailable",
+                "provider": "mudnn",
+                "reason": "NOT_SUPPORTED",
+            }
+        ],
+        "mixed group lost native skip reasons",
+    )
+    require(
+        mixed_result["case_accounting"]["skipped"] == 1,
+        "mixed group lost skips",
+    )
+    invalid_skip = {"status": "skipped", "exit_code": 0}
+    adapter.postprocess_result(
+        result=invalid_skip,
+        ctest_reported_status="skipped",
+        output="FLAGDNN_RNG_FUNCTIONAL: SKIP cases=1 executed=0 skipped=1\n",
+        operator="rng",
+        suite="functional",
+        records={},
+        manifest_operators=["rng"],
+    )
+    require(invalid_skip["status"] == "failed", "undocumented skip accepted")
 
     invalid_result: dict[str, object] = {"status": "passed"}
     adapter.postprocess_result(

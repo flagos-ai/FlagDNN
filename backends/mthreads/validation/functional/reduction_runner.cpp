@@ -1,12 +1,5 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
-#include "common/reduction.hpp"
-
-#include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
-#include "backends/mthreads/validation/musa_driver.hpp"
-
-#include <flagdnn/flagdnn.hpp>
-
 #include <unistd.h>
 
 #include <algorithm>
@@ -16,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <flagdnn/flagdnn.hpp>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -24,6 +18,11 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
+#include "backends/mthreads/validation/musa_driver.hpp"
+#include "backends/mthreads/validation/paired_timing.hpp"
+#include "common/reduction.hpp"
 
 namespace flagdnn::testing {
 namespace {
@@ -216,6 +215,10 @@ Accuracy run_case(const ReductionTestCase& test_case,
   stream.synchronize();
   enqueue(*production, production_state, stream);
   enqueue(*reference, reference_state, stream);
+  mv::timing::paired(
+      test_case.name, stream,
+      [&] { enqueue(*production, production_state, stream); },
+      [&] { enqueue(*reference, reference_state, stream); });
 
   const std::vector<std::uint8_t> production_input =
       read_back(production_state.input, test_case.input, stream);
@@ -248,22 +251,8 @@ Accuracy run_case(const ReductionTestCase& test_case,
 
 }  // namespace
 
-int run_reduction_functional_test(
-    int argc,
-    char** argv,
-    std::span<const ReductionTestCase> cases) {
-  // This adapter currently validates matching floating input/output storage.
-  // Other shared dtype/output combinations are enabled with their backend
-  // support.
-  std::vector<ReductionTestCase> supported_cases(cases.begin(), cases.end());
-  std::erase_if(supported_cases, [](const ReductionTestCase& test_case) {
-    const auto type = test_case.input.data_type;
-    return (type != FLAGDNN_DATA_FLOAT32 && type != FLAGDNN_DATA_FLOAT16 &&
-            type != FLAGDNN_DATA_BFLOAT16) ||
-           test_case.output.data_type != type;
-  });
-  cases = supported_cases;
-
+int run_reduction_functional_test(int argc, char** argv,
+                                  std::span<const ReductionTestCase> cases) {
   if (argc != 3) {
     std::cerr << "usage: " << argv[0]
               << " COMPILER_EXECUTABLE COMPILER_ENTRY\n";
@@ -279,25 +268,29 @@ int run_reduction_functional_test(
 
     const char* filter = std::getenv("FLAGDNN_REDUCTION_CASE");
     std::size_t executed = 0;
+    std::size_t skipped = 0;
     for (const ReductionTestCase& test_case : cases) {
       if (filter != nullptr && filter[0] != '\0' &&
           test_case.name.find(filter) == std::string::npos) {
         continue;
       }
-      const Accuracy accuracy = run_case(test_case, handle, stream);
-      ++executed;
-      std::cout << test_case.name
-                << ": FlagDNN Graph vs direct muDNN Reduce PASS max_abs="
-                << accuracy.maximum_absolute
-                << " max_rel=" << accuracy.maximum_relative << '\n';
+      try {
+        const Accuracy accuracy = run_case(test_case, handle, stream);
+        ++executed;
+        std::cout << test_case.name
+                  << ": FlagDNN Graph vs direct muDNN Reduce PASS max_abs="
+                  << accuracy.maximum_absolute
+                  << " max_rel=" << accuracy.maximum_relative << '\n';
+      } catch (const mv::ReferenceUnsupported& error) {
+        ++skipped;
+        mv::report_skip(test_case.name, error);
+      }
     }
-    if (executed == 0) {
+    if (executed + skipped == 0) {
       throw std::runtime_error(
           "FLAGDNN_REDUCTION_CASE matched no mthreads Reduction cases");
     }
-    std::cout << "FLAGDNN_REDUCTION_FUNCTIONAL: PASS cases=" << executed
-              << " executed=" << executed << " skipped=0\n";
-    return 0;
+    return mv::report_cases("FLAGDNN_REDUCTION_FUNCTIONAL", executed, skipped);
   } catch (const std::exception& error) {
     std::cerr << "FLAGDNN_REDUCTION_FUNCTIONAL_FAILED: " << error.what()
               << '\n';

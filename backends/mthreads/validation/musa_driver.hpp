@@ -3,11 +3,13 @@
 #ifndef FLAGDNN_BACKENDS_MTHREADS_VALIDATION_MUSA_DRIVER_HPP_
 #define FLAGDNN_BACKENDS_MTHREADS_VALIDATION_MUSA_DRIVER_HPP_
 
-#include <musa_runtime_api.h>
 #include <mudnn.h>
+#include <musa_runtime_api.h>
 
 #include <cstddef>
 #include <string_view>
+
+#include "backends/mthreads/validation/case_status.hpp"
 
 namespace flagdnn::validation::mthreads {
 

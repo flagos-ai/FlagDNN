@@ -27,8 +27,7 @@ namespace {
 musa::dnn::Tensor::Type mudnn_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
     case FLAGDNN_DATA_INT32:
-      throw std::invalid_argument(
-          "INT32 is not supported by this validation adapter");
+      return musa::dnn::Tensor::Type::INT32;
 
     case FLAGDNN_DATA_FLOAT32:
       return musa::dnn::Tensor::Type::FLOAT;
@@ -41,7 +40,7 @@ musa::dnn::Tensor::Type mudnn_data_type(flagdnnDataType_t data_type) {
     case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
-      break;
+      return musa::dnn::Tensor::Type::UINT8;
   }
   throw std::invalid_argument("muDNN pointwise tensor type is unsupported");
 }
@@ -78,6 +77,13 @@ bool is_binary_mode(flagdnnPointwiseMode_t mode) {
     case FLAGDNN_POINTWISE_CMP_LE:
     case FLAGDNN_POINTWISE_LOGICAL_AND:
     case FLAGDNN_POINTWISE_LOGICAL_OR:
+    case FLAGDNN_POINTWISE_RELU_BWD:
+    case FLAGDNN_POINTWISE_TANH_BWD:
+    case FLAGDNN_POINTWISE_GELU_BWD:
+    case FLAGDNN_POINTWISE_SWISH_BWD:
+    case FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD:
+    case FLAGDNN_POINTWISE_ELU_BWD:
+    case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
     case FLAGDNN_POINTWISE_SIGMOID_BWD:
       return true;
     default:
@@ -223,6 +229,21 @@ musa::dnn::Binary::Mode mudnn_binary_mode(
       return musa::dnn::Binary::Mode::LOGICAL_AND;
     case FLAGDNN_POINTWISE_LOGICAL_OR:
       return musa::dnn::Binary::Mode::LOGICAL_OR;
+    case FLAGDNN_POINTWISE_RELU_BWD:
+      return musa::dnn::Binary::Mode::LEAKY_RELU_BW;
+    case FLAGDNN_POINTWISE_TANH_BWD:
+      return musa::dnn::Binary::Mode::TANH_BW;
+    case FLAGDNN_POINTWISE_GELU_BWD:
+      return musa::dnn::Binary::Mode::GELU_NONE_BW;
+    case FLAGDNN_POINTWISE_SWISH_BWD:
+      return musa::dnn::Binary::Mode::SILU_BW;
+    case FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD:
+      return musa::dnn::Binary::Mode::GELU_TANH_BW;
+    case FLAGDNN_POINTWISE_ELU_BWD:
+      throw ReferenceUnsupported("muDNN 3.1.5 has no ELU backward primitive");
+    case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
+      throw ReferenceUnsupported(
+          "muDNN 3.1.5 has no softplus backward primitive");
     case FLAGDNN_POINTWISE_SIGMOID_BWD:
       return musa::dnn::Binary::Mode::SIGMOID_BW;
     default:
@@ -327,7 +348,8 @@ void validate_descriptor(const MudnnPointwiseDescriptor& descriptor) {
         (descriptor.mode == FLAGDNN_POINTWISE_LOGICAL_NOT
              ? input_type != FLAGDNN_DATA_BOOLEAN ||
                    descriptor.output.data_type != FLAGDNN_DATA_BOOLEAN
-             : input_type == FLAGDNN_DATA_BOOLEAN ||
+             : (input_type == FLAGDNN_DATA_BOOLEAN &&
+                descriptor.mode != FLAGDNN_POINTWISE_IDENTITY) ||
                    descriptor.output.data_type != input_type)) {
       throw std::invalid_argument(
           "muDNN unary pointwise tensor types or shapes are invalid");
@@ -384,16 +406,20 @@ void validate_descriptor(const MudnnPointwiseDescriptor& descriptor) {
         "muDNN pointwise attribute ABI or values are invalid");
   }
   std::uint64_t allowed_flags = 0;
-  if (descriptor.mode == FLAGDNN_POINTWISE_RELU_FWD) {
+  if (descriptor.mode == FLAGDNN_POINTWISE_RELU_FWD ||
+      descriptor.mode == FLAGDNN_POINTWISE_RELU_BWD) {
     allowed_flags =
         FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP |
         FLAGDNN_POINTWISE_ATTRIBUTE_RELU_UPPER_CLIP |
         FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP_SLOPE;
-  } else if (descriptor.mode == FLAGDNN_POINTWISE_SWISH_FWD) {
+  } else if (descriptor.mode == FLAGDNN_POINTWISE_SWISH_FWD ||
+             descriptor.mode == FLAGDNN_POINTWISE_SWISH_BWD) {
     allowed_flags = FLAGDNN_POINTWISE_ATTRIBUTE_SWISH_BETA;
-  } else if (descriptor.mode == FLAGDNN_POINTWISE_ELU_FWD) {
+  } else if (descriptor.mode == FLAGDNN_POINTWISE_ELU_FWD ||
+             descriptor.mode == FLAGDNN_POINTWISE_ELU_BWD) {
     allowed_flags = FLAGDNN_POINTWISE_ATTRIBUTE_ELU_ALPHA;
-  } else if (descriptor.mode == FLAGDNN_POINTWISE_SOFTPLUS_FWD) {
+  } else if (descriptor.mode == FLAGDNN_POINTWISE_SOFTPLUS_FWD ||
+             descriptor.mode == FLAGDNN_POINTWISE_SOFTPLUS_BWD) {
     allowed_flags = FLAGDNN_POINTWISE_ATTRIBUTE_SOFTPLUS_BETA;
   }
   if ((attributes.flags & ~allowed_flags) != 0U ||
@@ -437,16 +463,40 @@ struct MudnnPointwiseOperation::Impl {
       : descriptor(std::move(value)),
         handle(0) {
     validate_descriptor(descriptor);
-    if (is_binary_mode(descriptor.mode)) {
+    if (descriptor.mode == FLAGDNN_POINTWISE_POW &&
+        descriptor.inputs[0].data_type == FLAGDNN_DATA_INT32) {
+      // muDNN 3.1.5 Binary POW has no INT32 kernel and throws from its
+      // type lookup instead of returning NOT_SUPPORTED. Floating casts
+      // would lose the public signed-integer overflow/negative-power rules.
+      throw ReferenceUnsupported("muDNN 3.1.5 Binary POW has no INT32 kernel");
+    }
+    if (descriptor.mode == FLAGDNN_POINTWISE_IDENTITY) {
+      copy = std::make_unique<musa::dnn::Permute>();
+    } else if (is_binary_mode(descriptor.mode)) {
       binary = std::make_unique<musa::dnn::Binary>();
       const bool scaled = descriptor.alpha != 1.0;
       check_mudnn(
           binary->SetMode(mudnn_binary_mode(descriptor.mode, scaled)),
           "muDNN Binary::SetMode(pointwise)");
-      if (scaled) {
+      if (descriptor.mode == FLAGDNN_POINTWISE_RELU_BWD) {
+        if (descriptor.attributes.relu_lower_clip != 0 ||
+            (descriptor.attributes.flags &
+             FLAGDNN_POINTWISE_ATTRIBUTE_RELU_UPPER_CLIP))
+          throw ReferenceUnsupported(
+              "muDNN LEAKY_RELU_BW cannot express clipped ReLU gradients");
         check_mudnn(
-            binary->SetAlpha(descriptor.alpha),
-            "muDNN Binary::SetAlpha(pointwise)");
+            binary->SetAlpha(descriptor.attributes.relu_lower_clip_slope),
+            "muDNN ReLU backward slope");
+      }
+      if (descriptor.mode == FLAGDNN_POINTWISE_SWISH_BWD &&
+          descriptor.attributes.swish_beta != 1.0)
+        throw ReferenceUnsupported("muDNN SILU_BW has fixed beta=1");
+      if (scaled) {
+        check_mudnn((descriptor.inputs[0].data_type == FLAGDNN_DATA_INT32
+                         ? binary->SetAlpha(
+                               static_cast<std::int64_t>(descriptor.alpha))
+                         : binary->SetAlpha(descriptor.alpha)),
+                    "muDNN Binary::SetAlpha(pointwise)");
       }
     } else if (is_unary_mode(descriptor.mode)) {
       unary = std::make_unique<musa::dnn::Unary>();
@@ -511,11 +561,14 @@ struct MudnnPointwiseOperation::Impl {
           ternary->SetMode(musa::dnn::Ternary::Mode::SELECT),
           "muDNN Ternary::SetMode(binary_select)");
     }
-    if (descriptor.mode == FLAGDNN_POINTWISE_SIGMOID_BWD) {
+    if (descriptor.mode == FLAGDNN_POINTWISE_SIGMOID_BWD ||
+        descriptor.mode == FLAGDNN_POINTWISE_TANH_BWD) {
       sigmoid_forward = std::make_unique<musa::dnn::Unary>();
-      check_mudnn(
-          sigmoid_forward->SetMode(musa::dnn::Unary::Mode::SIGMOID),
-          "muDNN Unary::SetMode(sigmoid_backward bridge)");
+      check_mudnn(sigmoid_forward->SetMode(
+                      descriptor.mode == FLAGDNN_POINTWISE_TANH_BWD
+                          ? musa::dnn::Unary::Mode::TANH
+                          : musa::dnn::Unary::Mode::SIGMOID),
+                  "muDNN Unary::SetMode(sigmoid_backward bridge)");
       sigmoid_tensor = descriptor.inputs[1];
       sigmoid_tensor.binding_byte_offset = 0;
       const std::size_t storage =
@@ -532,6 +585,7 @@ struct MudnnPointwiseOperation::Impl {
 
   MudnnPointwiseDescriptor descriptor;
   musa::dnn::Handle handle;
+  std::unique_ptr<musa::dnn::Permute> copy;
   std::unique_ptr<musa::dnn::Binary> binary;
   std::unique_ptr<musa::dnn::Unary> unary;
   std::unique_ptr<musa::dnn::Ternary> ternary;
@@ -589,6 +643,11 @@ void MudnnPointwiseOperation::execute(
       output,
       state.descriptor.output,
       binding_pointer(state.descriptor.output, bindings));
+  if (state.copy) {
+    check_mudnn(state.copy->Run(state.handle, output, left),
+                "muDNN Permute::Run(identity)");
+    return;
+  }
   if (is_unary_mode(state.descriptor.mode)) {
     check_mudnn(
         state.unary->Run(state.handle, output, left),
@@ -613,7 +672,8 @@ void MudnnPointwiseOperation::execute(
         "muDNN Ternary::Run(binary_select)");
     return;
   }
-  if (state.descriptor.mode == FLAGDNN_POINTWISE_SIGMOID_BWD) {
+  if (state.descriptor.mode == FLAGDNN_POINTWISE_SIGMOID_BWD ||
+      state.descriptor.mode == FLAGDNN_POINTWISE_TANH_BWD) {
     musa::dnn::Tensor sigmoid;
     configure_tensor(sigmoid, state.sigmoid_tensor, workspace);
     check_mudnn(

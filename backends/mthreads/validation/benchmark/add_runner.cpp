@@ -299,6 +299,13 @@ bool is_binary_pointwise_mode(flagdnnPointwiseMode_t mode) {
     case FLAGDNN_POINTWISE_CMP_LE:
     case FLAGDNN_POINTWISE_LOGICAL_AND:
     case FLAGDNN_POINTWISE_LOGICAL_OR:
+    case FLAGDNN_POINTWISE_RELU_BWD:
+    case FLAGDNN_POINTWISE_TANH_BWD:
+    case FLAGDNN_POINTWISE_ELU_BWD:
+    case FLAGDNN_POINTWISE_GELU_BWD:
+    case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
+    case FLAGDNN_POINTWISE_SWISH_BWD:
+    case FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD:
     case FLAGDNN_POINTWISE_SIGMOID_BWD:
       return true;
     default:
@@ -822,6 +829,9 @@ std::vector<float> make_benchmark_input(
     const mv::TensorDescriptor& tensor,
     std::size_t input_index,
     InputDomain domain) {
+  if (tensor.data_type == FLAGDNN_DATA_FP8_E8M0)
+    return io::make_input(tensor, input_index);
+  if (tensor.data_type == FLAGDNN_DATA_BOOLEAN) domain = InputDomain::kLogical;
   std::vector<float> result(io::element_count(tensor));
   for (std::size_t index = 0; index < result.size(); ++index) {
     const int centered =
@@ -880,6 +890,19 @@ std::vector<float> make_benchmark_input(
                             ? static_cast<float>((index / 2U) % 2U)
                             : static_cast<float>(index % 2U);
         break;
+    }
+  }
+  if (tensor.data_type == FLAGDNN_DATA_INT32) {
+    for (std::size_t i = 0; i < result.size(); ++i) {
+      result[i] = static_cast<float>(
+          static_cast<int>((i * 17 + input_index * 11) % 41) - 20);
+      if (input_index == 1 &&
+          (domain == InputDomain::kDivisor || domain == InputDomain::kModulo))
+        result[i] = 1.0F + static_cast<float>(i % 7);
+      if (domain == InputDomain::kPower)
+        result[i] = input_index == 0
+                        ? static_cast<float>(static_cast<int>(i % 9) - 4)
+                        : static_cast<float>(i % 6);
     }
   }
   return result;
@@ -1325,12 +1348,12 @@ void run_case(const BenchmarkCase& specification,
         capability.reason);
   }
 
-  std::unique_ptr<BenchmarkExecutable> flagdnn =
-      flagdnn_provider.build(specification);
   const BenchmarkCase mudnn_specification =
       mudnn_reference_case(specification);
   std::unique_ptr<BenchmarkExecutable> mudnn =
       mudnn_provider.build(mudnn_specification);
+  std::unique_ptr<BenchmarkExecutable> flagdnn =
+      flagdnn_provider.build(specification);
   const std::vector<std::vector<float>> logical_inputs =
       make_logical_inputs(specification);
   PreparedBuffers flagdnn_buffers =
@@ -1499,22 +1522,26 @@ int run_benchmark_suite(int argc,
     const char* case_filter =
         std::getenv("FLAGDNN_BENCHMARK_CASE");
     std::size_t matched = 0;
+    std::size_t skipped = 0;
     for (const BenchmarkCase& specification : cases) {
       if (case_filter != nullptr && case_filter[0] != '\0' &&
           specification.name != case_filter) {
         continue;
       }
       ++matched;
-      run_case(
-          specification, flagdnn_provider, mudnn_provider, stream);
+      try {
+        run_case(specification, flagdnn_provider, mudnn_provider, stream);
+      } catch (const mv::ReferenceUnsupported& error) {
+        ++skipped;
+        mv::report_skip(specification.name, error);
+      }
     }
     if (matched == 0) {
       throw std::invalid_argument(
           "FLAGDNN_BENCHMARK_CASE did not match any mthreads case");
     }
-    std::cout << suite_name << ": PASS cases=" << matched
-              << " executed=" << matched << " skipped=0\n";
-    return 0;
+    return mv::report_cases(std::string(suite_name), matched - skipped,
+                            skipped);
   } catch (const std::exception& error) {
     std::cerr << suite_name << "_FAILED: " << error.what() << '\n';
     return 1;

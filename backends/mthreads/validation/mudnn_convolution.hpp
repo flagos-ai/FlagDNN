@@ -42,6 +42,7 @@ struct MudnnConvolutionDescriptor {
   std::vector<std::int64_t> stride;
   std::vector<std::int64_t> dilation;
   std::int64_t groups = 1;
+  int input_precision = 0;
 };
 
 // muDNN has no cudnn-frontend-style Graph API.  Validation therefore compares

@@ -289,8 +289,23 @@ struct MudnnMatmulOperation::Impl {
   explicit Impl(MudnnMatmulDescriptor value)
       : descriptor(std::move(value)), handle(0) {
     validate_descriptor(descriptor);
-    use_direct_matrix = direct_matrix(descriptor);
-    use_direct_batch = direct_batch_matrix(descriptor);
+    const bool use_tf32 =
+        descriptor.a.data_type == FLAGDNN_DATA_FLOAT32 &&
+        (descriptor.input_precision == 2 ||
+         (descriptor.input_precision == 0 &&
+          descriptor.a.dimensions[descriptor.a.dimensions.size() - 2] >= 512 &&
+          descriptor.a.dimensions.back() >= 512 &&
+          descriptor.b.dimensions.back() >= 512));
+    check_mudnn(handle.SetAllowTF32(use_tf32),
+                "muDNN Handle::SetAllowTF32(Matmul)");
+    // muDNN 3.1.5 selects a scalar GEMM for M <= 16 even with TF32
+    // enabled. Zero-pad rows in the native bridge to select tensor GEMM
+    // without changing any logical input or output element.
+    pad_tf32_rows =
+        use_tf32 &&
+        descriptor.a.dimensions[descriptor.a.dimensions.size() - 2] <= 16;
+    use_direct_matrix = !pad_tf32_rows && direct_matrix(descriptor);
+    use_direct_batch = !pad_tf32_rows && direct_batch_matrix(descriptor);
     batch_dimensions =
         broadcast_batch_dimensions(descriptor.a, descriptor.b);
     batch_count = 1;
@@ -303,25 +318,32 @@ struct MudnnMatmulOperation::Impl {
     dense_a = dense_matrix(descriptor.a);
     dense_b = dense_matrix(descriptor.b);
     dense_output = dense_matrix(descriptor.output);
+    if (pad_tf32_rows) {
+      dense_a.dimensions[0] = 32;
+      dense_output.dimensions[0] = 32;
+    }
 
-    const auto configure_matrix = [this](musa::dnn::MatMul& operation) {
-      check_mudnn(operation.SetComputeMode(
-                      descriptor.a.data_type == FLAGDNN_DATA_FLOAT32
-                          ? musa::dnn::MatMul::ComputeMode::SCALAR
-                          : musa::dnn::MatMul::ComputeMode::TENSOR),
-                  "muDNN MatMul::SetComputeMode");
+    const auto configure_matrix = [this,
+                                   use_tf32](musa::dnn::MatMul& operation) {
+      check_mudnn(
+          operation.SetComputeMode(
+              (descriptor.a.data_type == FLAGDNN_DATA_FLOAT32 && !use_tf32)
+                  ? musa::dnn::MatMul::ComputeMode::SCALAR
+                  : musa::dnn::MatMul::ComputeMode::TENSOR),
+          "muDNN MatMul::SetComputeMode");
       check_mudnn(operation.SetTranspose(false, false),
                   "muDNN MatMul::SetTranspose");
       check_mudnn(operation.SetAlpha(1.0), "muDNN MatMul::SetAlpha");
       check_mudnn(operation.SetBeta(0.0), "muDNN MatMul::SetBeta");
     };
-    const auto configure_batch = [this](
+    const auto configure_batch = [this, use_tf32](
                                      musa::dnn::BatchMatMul& operation) {
-      check_mudnn(operation.SetComputeMode(
-                      descriptor.a.data_type == FLAGDNN_DATA_FLOAT32
-                          ? musa::dnn::BatchMatMul::ComputeMode::SCALAR
-                          : musa::dnn::BatchMatMul::ComputeMode::TENSOR),
-                  "muDNN BatchMatMul::SetComputeMode");
+      check_mudnn(
+          operation.SetComputeMode(
+              (descriptor.a.data_type == FLAGDNN_DATA_FLOAT32 && !use_tf32)
+                  ? musa::dnn::BatchMatMul::ComputeMode::SCALAR
+                  : musa::dnn::BatchMatMul::ComputeMode::TENSOR),
+          "muDNN BatchMatMul::SetComputeMode");
       check_mudnn(operation.SetTranspose(false, false),
                   "muDNN BatchMatMul::SetTranspose");
       check_mudnn(operation.SetAlpha(1.0),
@@ -386,6 +408,7 @@ struct MudnnMatmulOperation::Impl {
   musa::dnn::MatMul matmul;
   musa::dnn::BatchMatMul batch_matmul;
   musa::dnn::Permute permute;
+  bool pad_tf32_rows = false;
   bool use_direct_matrix = false;
   bool use_direct_batch = false;
   std::size_t dense_a_offset = 0;
@@ -512,8 +535,20 @@ void MudnnMatmulOperation::execute(
     configure_tensor(dense_a, state.dense_a, dense_a_pointer);
     configure_tensor(dense_b, state.dense_b, dense_b_pointer);
     configure_tensor(dense_output, state.dense_output, dense_output_pointer);
+    if (state.pad_tf32_rows) {
+      musa::dnn::Fill fill;
+      check_mudnn(fill.SetValue(0.0),
+                  "muDNN Fill::SetValue(Matmul TF32 padding)");
+      check_mudnn(fill.Run(state.handle, dense_a),
+                  "muDNN Fill::Run(Matmul TF32 padding)");
+      auto logical_a = state.dense_a;
+      logical_a.dimensions[0] = a_view.dimensions[0];
+      configure_tensor_descriptor(dense_a, logical_a);
+    }
     check_mudnn(state.permute.Run(state.handle, dense_a, source_a),
                 "muDNN Permute::Run(Matmul gather A)");
+    if (state.pad_tf32_rows)
+      configure_tensor_descriptor(dense_a, state.dense_a);
     check_mudnn(state.permute.Run(state.handle, dense_b, source_b),
                 "muDNN Permute::Run(Matmul gather B)");
     bool workspace_issued = false;
@@ -522,6 +557,11 @@ void MudnnMatmulOperation::execute(
     check_mudnn(state.matmul.Run(
                     state.handle, dense_output, dense_a, dense_b, maintainer),
                 "muDNN MatMul::Run(bridge)");
+    if (state.pad_tf32_rows) {
+      auto logical_output = state.dense_output;
+      logical_output.dimensions[0] = output_view.dimensions[0];
+      configure_tensor_descriptor(dense_output, logical_output);
+    }
     check_mudnn(
         state.permute.Run(state.handle, destination_output, dense_output),
         "muDNN Permute::Run(Matmul scatter output)");

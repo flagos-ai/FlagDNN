@@ -56,6 +56,7 @@ class MudnnFunctionalConvolutionExecutable final
             test_case.stride,
             test_case.dilation,
             test_case.groups,
+            test_case.input_precision,
         }) {
     validate_convolution_case(test_case);
   }

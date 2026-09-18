@@ -394,11 +394,24 @@ def collect_environment() -> dict[str, object]:
             ),
         )
     )
+    jit_build_root = (
+        jit_config.parent if (jit_config.parent / "CMakeCache.txt").is_file() else None
+    )
+    jit_default_library = (
+        jit_build_root / "src" / "libtriton_jit.so"
+        if jit_build_root is not None
+        else jit_prefix / "lib" / "libtriton_jit.so"
+    )
+    jit_script_dir = (
+        jit_prefix / "scripts"
+        if jit_build_root is not None
+        else jit_prefix / "share" / "triton_jit" / "scripts"
+    )
     jit_library = Path(
         os.environ.get(
             "MTHREADS_TRITON_JIT_LIBRARY",
             os.environ.get("FLAGDNN_MTHREADS_TRITON_JIT_LIBRARY")
-            or str(jit_prefix / "lib" / "libtriton_jit.so"),
+            or str(jit_default_library),
         )
     )
 
@@ -439,7 +452,7 @@ def collect_environment() -> dict[str, object]:
         resources,
         errors,
         "mcc",
-        lambda: _file_record(_require_command("mcc")),
+        lambda: _file_record(musa_root / "bin" / "mcc"),
     )
     _collect_required(
         resources,
@@ -467,6 +480,14 @@ def collect_environment() -> dict[str, object]:
         "triton_jit_prefix",
         lambda: _directory_record(jit_prefix),
     )
+
+    if jit_build_root is not None:
+        _collect_required(
+            resources,
+            errors,
+            "triton_jit_build_root",
+            lambda: _directory_record(jit_build_root),
+        )
 
     def collect_jit() -> dict[str, object]:
         backend = _parse_cmake_backend(jit_config)
@@ -499,21 +520,13 @@ def collect_environment() -> dict[str, object]:
         resources,
         errors,
         "triton_jit_gen_ssig",
-        lambda: _file_record(
-            jit_prefix / "share" / "triton_jit" / "scripts" / "gen_ssig.py"
-        ),
+        lambda: _file_record(jit_script_dir / "gen_ssig.py"),
     )
     _collect_required(
         resources,
         errors,
         "triton_jit_standalone_compile",
-        lambda: _file_record(
-            jit_prefix
-            / "share"
-            / "triton_jit"
-            / "scripts"
-            / "standalone_compile.py"
-        ),
+        lambda: _file_record(jit_script_dir / "standalone_compile.py"),
     )
 
     modules: dict[str, object] = {}
@@ -648,11 +661,26 @@ def validate_environment(document: dict[str, object]) -> list[str]:
                         "MUSA and muDNN resources do not share the selected root"
                     )
 
+        jit_build_root = None
+        if "triton_jit_build_root" in resources:
+            build_record = _mapping(
+                resources["triton_jit_build_root"], "triton_jit_build_root", errors
+            )
+            if build_record is not None:
+                jit_build_root = _validate_path_record(
+                    "triton_jit_build_root", build_record, errors
+                )
         jit_prefix = resolved_resources.get("triton_jit_prefix")
         if jit_prefix is not None:
             for name in TRITON_JIT_PREFIX_RESOURCES:
                 path = resolved_resources.get(name)
-                if path is not None and not _under(path, jit_prefix):
+                root = (
+                    jit_build_root
+                    if jit_build_root is not None
+                    and name in ("triton_jit", "triton_jit_config")
+                    else jit_prefix
+                )
+                if path is not None and not _under(path, root):
                     errors.append(
                         "TritonJIT resources do not share the selected prefix"
                     )

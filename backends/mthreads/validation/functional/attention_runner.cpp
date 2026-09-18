@@ -1,13 +1,6 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
-#include "common/attention.hpp"
-
-#include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
-#include "backends/mthreads/validation/musa_driver.hpp"
-
-#include <flagdnn/flagdnn.hpp>
 #include <musa_runtime_api.h>
-
 #include <unistd.h>
 
 #include <algorithm>
@@ -17,9 +10,10 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <flagdnn/flagdnn.hpp>
 #include <fstream>
-#include <iomanip>
 #include <initializer_list>
+#include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <limits>
@@ -33,8 +27,14 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
+
+#include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
+#include "backends/mthreads/validation/musa_driver.hpp"
+#include "backends/mthreads/validation/paired_timing.hpp"
+#include "common/attention.hpp"
 
 namespace flagdnn::testing {
 namespace {
@@ -492,9 +492,9 @@ void run_forward_case(const SdpaTestCase& test_case,
                       const std::filesystem::path& cache,
                       mv::Stream& stream) {
   const PathSet before = manifest_paths(cache);
+  auto reference = build_sdpa_reference(test_case);
   auto production = build_flagdnn_sdpa(handle, test_case);
   verify_new_manifest(cache, before, {"_sdpa_fwd_kernel"});
-  auto reference = build_sdpa_reference(test_case);
   AllocationPair q = input_pair(test_case.q, 0, stream, 0.5F);
   AllocationPair k = input_pair(test_case.k, 1, stream, 0.5F);
   AllocationPair v = input_pair(test_case.v, 2, stream, 0.5F);
@@ -537,6 +537,15 @@ void run_forward_case(const SdpaTestCase& test_case,
           production_workspace,
           stream);
   execute(*reference, reference_bindings, reference_workspace, stream);
+  mv::timing::paired(
+      test_case.name, stream,
+      [&] {
+        execute(*production, production_bindings, production_workspace,
+                stream);
+      },
+      [&] {
+        execute(*reference, reference_bindings, reference_workspace, stream);
+      });
   stream.synchronize();
   require_pair_unchanged(q, stream, "Q");
   require_pair_unchanged(k, stream, "K");
@@ -587,11 +596,9 @@ void run_backward_case(const SdpaBackwardTestCase& test_case,
                        const std::filesystem::path& cache,
                        mv::Stream& stream) {
   const PathSet before = manifest_paths(cache);
-  auto production = build_flagdnn_sdpa_backward(handle, test_case);
-  verify_new_manifest(cache,
-                      before,
-                      {"_sdpa_bwd_dq_dbias_kernel"});
   auto reference = build_sdpa_backward_reference(test_case);
+  auto production = build_flagdnn_sdpa_backward(handle, test_case);
+  verify_new_manifest(cache, before, {"_sdpa_bwd_dq_dbias_kernel"});
   AllocationPair q = input_pair(test_case.q, 10, stream, 0.5F);
   AllocationPair k = input_pair(test_case.k, 11, stream, 0.5F);
   AllocationPair v = input_pair(test_case.v, 12, stream, 0.5F);
@@ -661,6 +668,15 @@ void run_backward_case(const SdpaBackwardTestCase& test_case,
           production_workspace,
           stream);
   execute(*reference, reference_bindings, reference_workspace, stream);
+  mv::timing::paired(
+      test_case.name, stream,
+      [&] {
+        execute(*production, production_bindings, production_workspace,
+                stream);
+      },
+      [&] {
+        execute(*reference, reference_bindings, reference_workspace, stream);
+      });
   stream.synchronize();
   require_pair_unchanged(q, stream, "Q");
   require_pair_unchanged(k, stream, "K");
@@ -712,12 +728,11 @@ void run_fp8_forward_case(const SdpaFp8TestCase& test_case,
                           const std::filesystem::path& cache,
                           mv::Stream& stream) {
   const PathSet before = manifest_paths(cache);
-  auto production = build_flagdnn_sdpa_fp8(handle, test_case);
-  verify_new_manifest(cache,
-                      before,
-                      {"_zero_sdpa_fp8_fwd_amax_kernel",
-                       "_sdpa_fp8_fwd_kernel"});
   auto reference = build_sdpa_fp8_reference(test_case);
+  auto production = build_flagdnn_sdpa_fp8(handle, test_case);
+  verify_new_manifest(
+      cache, before,
+      {"_zero_sdpa_fp8_fwd_amax_kernel", "_sdpa_fp8_fwd_kernel"});
   AllocationPair q = input_pair(test_case.q, 20, stream, 1.0F);
   AllocationPair k = input_pair(test_case.k, 21, stream, 1.0F);
   AllocationPair v = input_pair(test_case.v, 22, stream, 1.0F);
@@ -790,6 +805,15 @@ void run_fp8_forward_case(const SdpaFp8TestCase& test_case,
           production_workspace,
           stream);
   execute(*reference, reference_bindings, reference_workspace, stream);
+  mv::timing::paired(
+      test_case.name, stream,
+      [&] {
+        execute(*production, production_bindings, production_workspace,
+                stream);
+      },
+      [&] {
+        execute(*reference, reference_bindings, reference_workspace, stream);
+      });
   stream.synchronize();
   for (const auto& [name, allocation] :
        std::array<std::pair<std::string_view, const AllocationPair*>, 9>{
@@ -867,13 +891,12 @@ void run_fp8_backward_case(const SdpaFp8BackwardTestCase& test_case,
                            const std::filesystem::path& cache,
                            mv::Stream& stream) {
   const PathSet before = manifest_paths(cache);
-  auto production = build_flagdnn_sdpa_fp8_backward(handle, test_case);
-  verify_new_manifest(cache,
-                      before,
-                      {"_zero_sdpa_fp8_bwd_amax_kernel",
-                       "_sdpa_fp8_bwd_dq_kernel",
-                       "_sdpa_fp8_bwd_dkdv_kernel"});
   auto reference = build_sdpa_fp8_backward_reference(test_case);
+  auto production = build_flagdnn_sdpa_fp8_backward(handle, test_case);
+  verify_new_manifest(
+      cache, before,
+      {"_zero_sdpa_fp8_bwd_amax_kernel", "_sdpa_fp8_bwd_dq_kernel",
+       "_sdpa_fp8_bwd_dkdv_kernel"});
   AllocationPair q = input_pair(test_case.q, 30, stream, 1.0F);
   AllocationPair k = input_pair(test_case.k, 31, stream, 1.0F);
   AllocationPair v = input_pair(test_case.v, 32, stream, 1.0F);
@@ -1056,6 +1079,15 @@ void run_fp8_backward_case(const SdpaFp8BackwardTestCase& test_case,
           production_workspace,
           stream);
   execute(*reference, reference_bindings, reference_workspace, stream);
+  mv::timing::paired(
+      test_case.name, stream,
+      [&] {
+        execute(*production, production_bindings, production_workspace,
+                stream);
+      },
+      [&] {
+        execute(*reference, reference_bindings, reference_workspace, stream);
+      });
   stream.synchronize();
   require_pair_unchanged(q, stream, "Q");
   require_pair_unchanged(k, stream, "K");
@@ -1152,21 +1184,40 @@ int run_suite(int argc,
     const std::string environment(filter_environment);
     const char* filter = std::getenv(environment.c_str());
     std::size_t executed = 0;
-    for (const Case& test_case : cases) {
+    std::size_t skipped = 0;
+    std::vector<Case> selected(cases.begin(), cases.end());
+    if (mv::benchmark_enabled()) {
+      // The public benchmark builders also exercise longer sequences.
+      const auto performance = [] {
+        if constexpr (std::is_same_v<Case, SdpaTestCase>)
+          return make_sdpa_benchmark_cases();
+        else if constexpr (std::is_same_v<Case, SdpaBackwardTestCase>)
+          return make_sdpa_backward_benchmark_cases();
+        else if constexpr (std::is_same_v<Case, SdpaFp8TestCase>)
+          return make_sdpa_fp8_benchmark_cases();
+        else
+          return make_sdpa_fp8_backward_benchmark_cases();
+      }();
+      selected.insert(selected.end(), performance.begin(), performance.end());
+    }
+    for (const Case& test_case : selected) {
       if (filter != nullptr && filter[0] != '\0' &&
           test_case.name.find(filter) == std::string::npos) {
         continue;
       }
-      runner(test_case, handle, cache.path(), stream);
-      ++executed;
+      try {
+        runner(test_case, handle, cache.path(), stream);
+        ++executed;
+      } catch (const mv::ReferenceUnsupported& error) {
+        ++skipped;
+        mv::report_skip(test_case.name, error);
+      }
     }
-    if (executed == 0) {
+    if (executed + skipped == 0) {
       throw std::runtime_error(
           std::string(filter_environment) + " matched no Attention cases");
     }
-    std::cout << suite_name << ": PASS cases=" << executed
-              << " executed=" << executed << " skipped=0\n";
-    return 0;
+    return mv::report_cases(std::string(suite_name), executed, skipped);
   } catch (const std::exception& error) {
     std::cerr << suite_name << "_FAILED: " << error.what() << '\n';
     return 1;
@@ -1200,12 +1251,8 @@ int run_sdpa_backward_functional_test(
                    run_backward_case);
 }
 
-int run_sdpa_fp8_functional_test(
-    int argc,
-    char** argv,
-    std::span<const SdpaFp8TestCase> cases) {
-  std::cout << "MThreads muDNN 3.1.5 rejects FP8 FlashAttention; "
-               "using the validation-only independent FP8 oracle.\n";
+int run_sdpa_fp8_functional_test(int argc, char** argv,
+                                 std::span<const SdpaFp8TestCase> cases) {
   return run_suite(argc,
                    argv,
                    cases,
@@ -1216,11 +1263,7 @@ int run_sdpa_fp8_functional_test(
 }
 
 int run_sdpa_fp8_backward_functional_test(
-    int argc,
-    char** argv,
-    std::span<const SdpaFp8BackwardTestCase> cases) {
-  std::cout << "MThreads muDNN 3.1.5 rejects FP8 FlashAttention; "
-               "using the validation-only independent FP8 oracle.\n";
+    int argc, char** argv, std::span<const SdpaFp8BackwardTestCase> cases) {
   return run_suite(argc,
                    argv,
                    cases,

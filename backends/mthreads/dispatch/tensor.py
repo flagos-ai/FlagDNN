@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 from typing import Any
-
 
 MAX_I32 = (1 << 31) - 1
 MAX_I64 = (1 << 63) - 1
@@ -14,6 +13,8 @@ MAX_I64 = (1 << 63) - 1
 # tail lanes so the index cannot wrap negative before pointer arithmetic.
 MAX_LINEAR_ELEMENTS = MAX_I32 - ((1 << 16) - 1)
 SUPPORTED_DATA_TYPES = {
+    "int32": 4,
+    "fp8_e8m0": 1,
     "float32": 4,
     "float16": 2,
     "bfloat16": 2,
@@ -22,6 +23,8 @@ SUPPORTED_DATA_TYPES = {
     "fp8_e5m2": 1,
 }
 POINTER_TYPES = {
+    "int32": "*i32",
+    "fp8_e8m0": "*i8",
     "float32": "*fp32",
     "float16": "*fp16",
     "bfloat16": "*bf16",
@@ -55,6 +58,11 @@ def require_exact_keys(
     expected: set[str],
     context: str,
 ) -> None:
+    if "input_precision" in value and ({"k", "spatial_rank"} & expected):
+        require_integer(
+            value["input_precision"], "input_precision", minimum=0, maximum=2
+        )
+        expected = expected | {"input_precision"}
     actual = set(value)
     if actual == expected:
         return
@@ -163,9 +171,9 @@ def is_non_overlapping(tensor: TensorSpec) -> bool:
     for stride, dimension in axes:
         if stride < required_span:
             return False
-        if stride > MAX_I64 // dimension:
+        if stride > (MAX_I64 - required_span) // (dimension - 1):
             return False
-        required_span = stride * dimension
+        required_span += stride * (dimension - 1)
     return True
 
 
@@ -327,9 +335,7 @@ def pointwise_constants(
     left_strides = [0] * leading + effective_strides(left)
     right_strides = [0] * leading + effective_strides(right)
     output_strides = [0] * leading + list(output.strides)
-    return tuple(
-        dimensions + left_strides + right_strides + output_strides
-    )
+    return tuple(dimensions + left_strides + right_strides + output_strides)
 
 
 def can_use_dense_binary(
@@ -512,6 +518,7 @@ def matmul_constants(
     a: TensorSpec,
     b: TensorSpec,
     output: TensorSpec,
+    input_precision: int = 0,
 ) -> tuple[int, ...]:
     if any(not 2 <= len(tensor.dimensions) <= 8 for tensor in (a, b, output)):
         raise ValueError("Matmul tensor ranks must be in [2, 8]")
@@ -551,9 +558,7 @@ def matmul_constants(
         return [0] * (6 - batch_rank) + effective
 
     padded_dimensions = [1] * (6 - batch_rank) + batch_dimensions
-    output_batch_strides = [0] * (6 - batch_rank) + list(
-        output.strides[:-2]
-    )
+    output_batch_strides = [0] * (6 - batch_rank) + list(output.strides[:-2])
     return tuple(
         [m, n, k]
         + padded_dimensions
@@ -568,7 +573,15 @@ def matmul_constants(
             output.strides[-2],
             output.strides[-1],
             1 if a.data_type == "float32" else 0,
-            1 if a.data_type == "float32" and min(m, n, k) >= 512 else 0,
+            (
+                1
+                if a.data_type == "float32"
+                and (
+                    input_precision == 2
+                    or (input_precision == 0 and min(m, n, k) >= 512)
+                )
+                else 0
+            ),
         ]
     )
 

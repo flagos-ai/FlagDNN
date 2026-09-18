@@ -5,10 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-
-ArgumentKind = Literal[
-    "tensor", "workspace", "scalar_i32", "scalar_f32"
-]
+ArgumentKind = Literal["tensor", "workspace", "scalar_i32", "scalar_f32"]
 
 
 @dataclass(frozen=True)

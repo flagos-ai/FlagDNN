@@ -22,8 +22,7 @@ namespace {
 musa::dnn::Tensor::Type mudnn_data_type(flagdnnDataType_t data_type) {
   switch (data_type) {
     case FLAGDNN_DATA_INT32:
-      throw std::invalid_argument(
-          "INT32 is not supported by this validation adapter");
+      return musa::dnn::Tensor::Type::INT32;
 
     case FLAGDNN_DATA_FLOAT32:
       return musa::dnn::Tensor::Type::FLOAT;
@@ -137,7 +136,10 @@ struct MudnnAddOperation::Impl {
         "muDNN Binary::SetMode(Add)");
     if (scaled) {
       check_mudnn(
-          binary.SetAlpha(descriptor.alpha), "muDNN Binary::SetAlpha");
+          (descriptor.left.data_type == FLAGDNN_DATA_INT32
+               ? binary.SetAlpha(static_cast<std::int64_t>(descriptor.alpha))
+               : binary.SetAlpha(descriptor.alpha)),
+          "muDNN Binary::SetAlpha");
     }
   }
 

@@ -1133,10 +1133,10 @@ void validate_static_signature(
     expected = 16;
     runtime_argument_count = 2;
   } else if (stage.function_name == "layer_norm_kernel") {
-    expected = 14;
+    expected = 17;
     runtime_argument_count = 7;
   } else if (stage.function_name == "rms_norm_kernel") {
-    expected = 13;
+    expected = 14;
     runtime_argument_count = 6;
   } else if (stage.function_name == "batch_norm_nchw_kernel") {
     expected = 21;
@@ -1198,9 +1198,17 @@ void validate_static_signature(
     runtime_argument_count = 27;
     attention_signature = true;
   } else {
-    throw MthreadsError(
-        FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
-        "mthreads Triton static signature function is unsupported");
+    // The artifact reader has validated the registered source/function pair.
+    // New operators use the common runtime/constexpr ABI without duplicating
+    // each kernel's Python signature in the execution engine.
+    require(!stage.variants.empty(), "mthreads stage has no variants",
+            FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
+    const auto& variant = stage.variants.front();
+    expected = 1 + static_cast<std::size_t>(
+                       std::count(variant.full_signature.begin(),
+                                  variant.full_signature.end(), ','));
+    runtime_argument_count = variant.arguments.size();
+    attention_signature = true;
   }
   if (signature.num_args != static_cast<int>(expected) ||
       signature.arg_type.size() != expected) {

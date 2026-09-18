@@ -1,12 +1,5 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
-#include "common/layout.hpp"
-
-#include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
-#include "backends/mthreads/validation/musa_driver.hpp"
-
-#include <flagdnn/flagdnn.hpp>
-
 #include <unistd.h>
 
 #include <algorithm>
@@ -16,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <flagdnn/flagdnn.hpp>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -25,6 +19,11 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
+#include "backends/mthreads/validation/musa_driver.hpp"
+#include "backends/mthreads/validation/paired_timing.hpp"
+#include "common/layout.hpp"
 
 namespace flagdnn::testing {
 namespace {
@@ -195,6 +194,10 @@ Accuracy run_case(const LayoutTestCase& test_case,
   stream.synchronize();
   enqueue(*production, production_state, stream);
   enqueue(*reference, reference_state, stream);
+  mv::timing::paired(
+      test_case.name, stream,
+      [&] { enqueue(*production, production_state, stream); },
+      [&] { enqueue(*reference, reference_state, stream); });
 
   const std::vector<std::uint8_t> production_input =
       read_back(production_state.input, test_case.input, stream);
@@ -227,21 +230,9 @@ Accuracy run_case(const LayoutTestCase& test_case,
 
 }  // namespace
 
-int run_layout_functional_test(int argc,
-                               char** argv,
+int run_layout_functional_test(int argc, char** argv,
                                std::span<const LayoutTestCase> cases,
                                std::string_view suite_name) {
-  // This adapter currently validates matching floating input/output storage.
-  // Other shared dtype/output combinations are enabled with their backend
-  // support.
-  std::vector<LayoutTestCase> supported_cases(cases.begin(), cases.end());
-  std::erase_if(supported_cases, [](const LayoutTestCase& test_case) {
-    const auto type = test_case.input.data_type;
-    return type != FLAGDNN_DATA_FLOAT32 && type != FLAGDNN_DATA_FLOAT16 &&
-           type != FLAGDNN_DATA_BFLOAT16;
-  });
-  cases = supported_cases;
-
   if (argc != 3) {
     std::cerr << "usage: " << argv[0]
               << " COMPILER_EXECUTABLE COMPILER_ENTRY\n";
@@ -257,25 +248,29 @@ int run_layout_functional_test(int argc,
 
     const char* filter = std::getenv("FLAGDNN_LAYOUT_CASE");
     std::size_t executed = 0;
+    std::size_t skipped = 0;
     for (const LayoutTestCase& test_case : cases) {
       if (filter != nullptr && filter[0] != '\0' &&
           test_case.name.find(filter) == std::string::npos) {
         continue;
       }
-      const Accuracy accuracy = run_case(test_case, handle, stream);
-      ++executed;
-      std::cout << test_case.name
-                << ": FlagDNN Graph vs direct muDNN Permute PASS max_abs="
-                << accuracy.maximum_absolute
-                << " max_rel=" << accuracy.maximum_relative << '\n';
+      try {
+        const Accuracy accuracy = run_case(test_case, handle, stream);
+        ++executed;
+        std::cout << test_case.name
+                  << ": FlagDNN Graph vs direct muDNN Permute PASS max_abs="
+                  << accuracy.maximum_absolute
+                  << " max_rel=" << accuracy.maximum_relative << '\n';
+      } catch (const mv::ReferenceUnsupported& error) {
+        ++skipped;
+        mv::report_skip(test_case.name, error);
+      }
     }
-    if (executed == 0) {
+    if (executed + skipped == 0) {
       throw std::runtime_error(
           "FLAGDNN_LAYOUT_CASE matched no mthreads layout cases");
     }
-    std::cout << suite_name << ": PASS cases=" << executed
-              << " executed=" << executed << " skipped=0\n";
-    return 0;
+    return mv::report_cases(std::string(suite_name), executed, skipped);
   } catch (const std::exception& error) {
     std::cerr << suite_name << "_FAILED: " << error.what() << '\n';
     return 1;

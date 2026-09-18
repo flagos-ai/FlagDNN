@@ -16,11 +16,11 @@ namespace mv = validation::mthreads;
 
 class MudnnFunctionalMatmulExecutable final : public MatmulExecutable {
  public:
-  explicit MudnnFunctionalMatmulExecutable(
-      const MatmulTestCase& test_case)
+  explicit MudnnFunctionalMatmulExecutable(const MatmulTestCase& test_case)
       : operation_({mv::describe_tensor(test_case.a),
                     mv::describe_tensor(test_case.b),
-                    mv::describe_tensor(test_case.output)}) {
+                    mv::describe_tensor(test_case.output),
+                    test_case.input_precision}) {
     validate_matmul_case(test_case);
   }
 

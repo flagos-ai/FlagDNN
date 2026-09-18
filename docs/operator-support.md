@@ -128,3 +128,46 @@
 | rope、rope_backward | fp32、fp16、bf16 | 当前 CoreX DNN 没有等价的独立 RoPE 接口，缺少性能对照。 |
 | sdpa、sdpa_backward | fp32、fp16、bf16 | 当前 CoreX DNN 未提供 Flash Attention 或 graph 接口；功能仅检查生产执行并记录参考缺失，性能用例跳过。 |
 | sdpa_fp8、sdpa_fp8_backward | FP8 E4M3/E5M2 | 当前 CoreX DNN 缺少 FP8 dtype 与 Attention 接口；功能仅检查生产执行并记录参考缺失，性能用例跳过。 |
+
+# Mthreads
+
+## 已支持算子
+
+| 算子 | 输入与输出类型 |
+| --- | --- |
+| identity、reshape、transpose、slice、concatenate | 保持输入类型与原始位模式；支持 fp32、fp16、bf16、int32、bool、FP8 E4M3/E5M2/E8M0 |
+| gen_index | 输出 int32 或 fp32 |
+| add、sub、mul、div、max、min、mod、add_square、scale | fp32、fp16、bf16、int32 |
+| pow | fp32、fp16、bf16 |
+| cmp_eq、cmp_neq、cmp_gt、cmp_ge、cmp_lt、cmp_le | fp32、fp16、bf16、int32 → bool |
+| logical_and、logical_or、logical_not | bool |
+| binary_select | bool 条件与 fp32、fp16、bf16、int32 数值 |
+| abs、neg、sqrt、rsqrt、reciprocal、ceil、floor、exp、log、erf、sin、cos、tan | fp32、fp16、bf16 |
+| relu、leaky_relu、elu、gelu、gelu_approx_tanh、sigmoid、swish、tanh、softplus | fp32、fp16、bf16 |
+| relu_backward、leaky_relu_backward、gelu_backward、gelu_approx_tanh_backward、sigmoid_backward、swish_backward、tanh_backward | fp32、fp16、bf16 |
+| conv_fprop、conv_dgrad、conv_wgrad、causal_conv1d | fp32、tf32、fp16、bf16 |
+| conv_bias_relu | fp32、fp16、bf16 |
+| matmul | fp32、tf32、fp16、bf16、FP8 E4M3/E5M2 |
+| matmul_fp8 | FP8 E4M3/E5M2；输出 fp32、fp16、bf16 |
+| moe_grouped_matmul、moe_grouped_matmul_bwd | fp16、bf16、FP8 E4M3/E5M2；输出 fp32、fp16、bf16 |
+| reduction | fp32、fp16、bf16 → 同类型或 fp32；int32 → fp32 |
+| resample | fp32、fp16、bf16；maxpool 可输出 int32 索引 |
+| batchnorm、batchnorm_backward、batchnorm_inference、layernorm、layernorm_backward、rmsnorm、rmsnorm_backward、instancenorm、instancenorm_backward、adalayernorm、adalayernorm_backward | 数据 fp32、fp16、bf16；统计量 fp32，仿射参数梯度默认 fp32 |
+| bn_finalize | fp32 统计量与参数 → fp32 |
+| genstats | fp32、fp16、bf16 → fp32 |
+| rope、rope_backward | fp32、fp16、bf16 |
+| sdpa、sdpa_backward | fp32、fp16、bf16 |
+
+## 不完全支持算子
+
+| 算子 | 输入与输出类型 | 不完全支持的原因（MTT S5000、muDNN 3.1.5） |
+| --- | --- | --- |
+| pow | int32 | 当前 muDNN Binary POW 没有 int32 kernel，相关类型用例跳过。 |
+| relu_backward、leaky_relu_backward | fp32、fp16、bf16 | 当前 muDNN LEAKY_RELU_BW 无法表达带上下界裁剪的梯度，相关属性用例跳过。 |
+| elu_backward、softplus_backward | fp32、fp16、bf16 | 当前 muDNN 没有对应的原生 backward 模式，缺少等价性能对照，相关用例全部跳过。 |
+| swish_backward | fp32、fp16、bf16 | 当前 muDNN SILU_BW 的 beta 固定为 1，非默认 beta 的属性用例跳过。 |
+| matmul_fp8 | MXFP8（E8M0 scales）；输出 fp32、fp16、bf16 | 当前 muDNN Tensor::Type 没有 E8M0，MXFP8 用例跳过。 |
+| rng | fp32、fp16、bf16；uniform、normal、Bernoulli | 当前 muDNN 没有与 Graph RNG 对应的独立计数器随机数接口，缺少等价性能对照，相关用例全部跳过。 |
+| sdpa、sdpa_backward | fp32 | 当前 muDNN RunFlash 不支持 fp32，RunMath 要求 Q/K/V 头数与头维度一致；fp32 的 GQA 或不同 QK、V 头维度用例跳过。 |
+| sdpa_backward | fp32、fp16、bf16 | 当前 muDNN RunFlashBwd / RunMathBwd 没有 dBias 输出，需要该梯度输出的用例跳过。 |
+| sdpa_fp8、sdpa_fp8_backward | FP8 E4M3/E5M2 | 当前 muDNN RunFlash / RunMath 不支持 FP8 Q/K/V，且没有 FP8 scale/amax 接口，相关用例全部跳过。 |

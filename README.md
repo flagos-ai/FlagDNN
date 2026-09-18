@@ -335,8 +335,13 @@ python3 tools/run_tests.py \
     --suites functional,benchmark \
     --no-preflight \
     --verbose \
-    --output build/thead/run-tests.json \
+    --output build/thead/psum-report/summary.json \
     2>&1 | tee build/thead/run-tests.log
+```
+
+汇总查看数据
+```bash
+./tools/psum_text /path/to/FlagDNN/build/thead/psum-report/
 ```
 
 通用测试说明见
@@ -368,6 +373,12 @@ python3 tools/run_tests.py \
 
 #### 编译
 
+```bash
+tools/build.sh \
+  --backends mthreads \
+  --build-dir build/mthreads
+```
+
 在 FlagDNN 根目录执行，以下示例假设 MUSA 安装在 `/usr/local/musa`，MUSA 版
 `libtriton_jit` 安装在 `/usr/local`：
 
@@ -384,8 +395,7 @@ tools/build.sh \
   -DFLAGDNN_MTHREADS_TRITON_JIT_DIR=/usr/local/lib/cmake/TritonJIT
 ```
 
-该命令以 `Release` 模式编译 FlagDNN，并同时构建功能测试和性能测试。当前后端
-仅支持默认的 `libtriton_jit` 执行引擎。
+该命令以 `Release` 模式编译 FlagDNN，并同时构建功能测试和性能测试。
 
 `FLAGDNN_MTHREADS_MUSA_ROOT` 和 `FLAGDNN_MTHREADS_TRITON_JIT_DIR` 均须显式
 指定，后者应指向包含 `TritonJITConfig.cmake` 的目录。若依赖安装在其他位置，
@@ -413,8 +423,13 @@ python3 tools/run_tests.py \
     --suites functional,benchmark \
     --no-preflight \
     --verbose \
-    --output build/mthreads/run-tests.json \
+    --output build/mthreads/psum-report/summary.json \
     2>&1 | tee build/mthreads/run-tests.log
+```
+
+汇总查看数据
+```bash
+./tools/psum_text /path/to/FlagDNN/build/mthreads/psum-report/
 ```
 
 ### Ascend（昇腾）

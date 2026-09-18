@@ -1,12 +1,5 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
-#include "common/pointwise.hpp"
-
-#include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
-#include "backends/mthreads/validation/musa_driver.hpp"
-
-#include <flagdnn/flagdnn.hpp>
-
 #include <unistd.h>
 
 #include <algorithm>
@@ -16,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <flagdnn/flagdnn.hpp>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -26,6 +20,11 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
+#include "backends/mthreads/validation/musa_driver.hpp"
+#include "backends/mthreads/validation/paired_timing.hpp"
+#include "common/pointwise.hpp"
 
 namespace flagdnn::testing {
 namespace {
@@ -66,6 +65,10 @@ std::vector<float> make_input(const TestTensor& tensor,
                               std::size_t input_index,
                               PointwiseInputDomain domain) {
   std::vector<float> result(io::element_count(tensor));
+  if (tensor.data_type == FLAGDNN_DATA_FP8_E8M0)
+    return io::make_input(tensor, input_index);
+  if (tensor.data_type == FLAGDNN_DATA_BOOLEAN)
+    domain = PointwiseInputDomain::kLogical;
   for (std::size_t index = 0; index < result.size(); ++index) {
     const int centered =
         static_cast<int>((index * 17U + input_index * 11U) % 41U) - 20;
@@ -123,6 +126,19 @@ std::vector<float> make_input(const TestTensor& tensor,
                             ? static_cast<float>((index / 2U) % 2U)
                             : static_cast<float>(index % 2U);
         break;
+    }
+  }
+  if (tensor.data_type == FLAGDNN_DATA_INT32) {
+    for (std::size_t i = 0; i < result.size(); ++i) {
+      result[i] = static_cast<float>(
+          static_cast<int>((i * 17 + input_index * 11) % 41) - 20);
+      if (input_index == 1 && (domain == PointwiseInputDomain::kDivisor ||
+                               domain == PointwiseInputDomain::kModulo))
+        result[i] = 1.0F + static_cast<float>(i % 7);
+      if (domain == PointwiseInputDomain::kPower)
+        result[i] = input_index == 0
+                        ? static_cast<float>(static_cast<int>(i % 9) - 4)
+                        : static_cast<float>(i % 6);
     }
   }
   return result;
@@ -299,8 +315,8 @@ Accuracy run_case(const PointwiseTestCase& test_case,
                   flagdnn::Handle& handle,
                   mv::Stream& stream) {
   validate_pointwise_case(test_case);
-  auto production = build_flagdnn_pointwise(handle, test_case);
   auto reference = build_pointwise_reference(test_case);
+  auto production = build_flagdnn_pointwise(handle, test_case);
   std::vector<std::vector<float>> logical_inputs;
   logical_inputs.reserve(test_case.inputs.size());
   for (std::size_t index = 0; index < test_case.inputs.size(); ++index) {
@@ -315,6 +331,10 @@ Accuracy run_case(const PointwiseTestCase& test_case,
   stream.synchronize();
   enqueue(*production, production_state, stream);
   enqueue(*reference, reference_state, stream);
+  mv::timing::paired(
+      test_case.name, stream,
+      [&] { enqueue(*production, production_state, stream); },
+      [&] { enqueue(*reference, reference_state, stream); });
   require_identity_alignment_rejection(
       test_case, *production, production_state, stream);
 
@@ -348,6 +368,12 @@ Accuracy run_case(const PointwiseTestCase& test_case,
       "FlagDNN pointwise", production_output, test_case.output);
   io::require_padding_unchanged(
       "muDNN pointwise", reference_output, test_case.output);
+  if (test_case.output.data_type == FLAGDNN_DATA_INT32) {
+    // Converting INT32 outputs to float would hide differences above 2^24.
+    io::require_bytes_equal("FlagDNN vs muDNN INT32 pointwise output",
+                            production_output, reference_output);
+    return {};
+  }
   const std::vector<float> production_physical =
       io::decode(production_output, test_case.output.data_type);
   const std::vector<float> reference_physical =
@@ -368,31 +394,9 @@ std::string case_filter_name(std::string_view suite_name) {
 
 }  // namespace
 
-int run_pointwise_functional_test(
-    int argc,
-    char** argv,
-    std::span<const PointwiseTestCase> cases,
-    std::string_view suite_name) {
-  // This adapter currently validates floating storage (and logical BOOL).
-  // Other shared dtype/output combinations are enabled with their backend
-  // support.
-  std::vector<PointwiseTestCase> supported_cases(cases.begin(), cases.end());
-  std::erase_if(supported_cases, [](const PointwiseTestCase& test_case) {
-    const bool logical = test_case.mode == FLAGDNN_POINTWISE_LOGICAL_NOT ||
-                         test_case.mode == FLAGDNN_POINTWISE_LOGICAL_AND ||
-                         test_case.mode == FLAGDNN_POINTWISE_LOGICAL_OR ||
-                         test_case.mode == FLAGDNN_POINTWISE_BINARY_SELECT;
-    return std::any_of(test_case.inputs.begin(), test_case.inputs.end(),
-                       [logical](const TestTensor& tensor) {
-                         const auto type = tensor.data_type;
-                         return type != FLAGDNN_DATA_FLOAT32 &&
-                                type != FLAGDNN_DATA_FLOAT16 &&
-                                type != FLAGDNN_DATA_BFLOAT16 &&
-                                !(logical && type == FLAGDNN_DATA_BOOLEAN);
-                       });
-  });
-  cases = supported_cases;
-
+int run_pointwise_functional_test(int argc, char** argv,
+                                  std::span<const PointwiseTestCase> cases,
+                                  std::string_view suite_name) {
   if (argc != 3) {
     std::cerr << "usage: " << argv[0]
               << " COMPILER_EXECUTABLE COMPILER_ENTRY\n";
@@ -409,25 +413,29 @@ int run_pointwise_functional_test(
     const std::string filter_name = case_filter_name(suite_name);
     const char* filter = std::getenv(filter_name.c_str());
     std::size_t executed = 0;
+    std::size_t skipped = 0;
     for (const PointwiseTestCase& test_case : cases) {
       if (filter != nullptr && filter[0] != '\0' &&
           test_case.name.find(filter) == std::string::npos) {
         continue;
       }
-      const Accuracy accuracy = run_case(test_case, handle, stream);
-      ++executed;
-      std::cout << test_case.name
-                << ": FlagDNN Graph vs muDNN tensor operator PASS max_abs="
-                << accuracy.maximum_absolute
-                << " max_rel=" << accuracy.maximum_relative << '\n';
+      try {
+        const Accuracy accuracy = run_case(test_case, handle, stream);
+        ++executed;
+        std::cout << test_case.name
+                  << ": FlagDNN Graph vs muDNN tensor operator PASS max_abs="
+                  << accuracy.maximum_absolute
+                  << " max_rel=" << accuracy.maximum_relative << '\n';
+      } catch (const mv::ReferenceUnsupported& error) {
+        ++skipped;
+        mv::report_skip(test_case.name, error);
+      }
     }
-    if (executed == 0) {
+    if (executed + skipped == 0) {
       throw std::runtime_error(filter_name +
                                " matched no mthreads pointwise cases");
     }
-    std::cout << suite_name << ": PASS cases=" << executed
-              << " executed=" << executed << " skipped=0\n";
-    return 0;
+    return mv::report_cases(std::string(suite_name), executed, skipped);
   } catch (const std::exception& error) {
     std::cerr << suite_name << "_FAILED: " << error.what() << '\n';
     return 1;

@@ -14,6 +14,10 @@ def reshape_contiguous_kernel(
     n_elements,
     BLOCK_SIZE: tl.constexpr,
 ):
+    # Preserve raw FP8 bytes without converting the masked-load value.
+    if input_ptr.dtype.element_ty.primitive_bitwidth == 8:
+        input_ptr = input_ptr.to(tl.pointer_type(tl.uint8), bitcast=True)
+        output_ptr = output_ptr.to(tl.pointer_type(tl.uint8), bitcast=True)
     offsets = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     active = offsets < n_elements
     values = tl.load(input_ptr + offsets, mask=active, other=0)
@@ -27,6 +31,10 @@ def transpose_physical_copy_kernel(
     n_elements,
     BLOCK_SIZE: tl.constexpr,
 ):
+    # Preserve raw FP8 bytes without converting the masked-load value.
+    if input_ptr.dtype.element_ty.primitive_bitwidth == 8:
+        input_ptr = input_ptr.to(tl.pointer_type(tl.uint8), bitcast=True)
+        output_ptr = output_ptr.to(tl.pointer_type(tl.uint8), bitcast=True)
     offsets = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     active = offsets < n_elements
     values = tl.load(input_ptr + offsets, mask=active, other=0)
@@ -66,6 +74,10 @@ def slice_copy_kernel(
     OUTPUT_STRIDE_7: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
+    # Preserve raw FP8 bytes without converting the masked-load value.
+    if input_ptr.dtype.element_ty.primitive_bitwidth == 8:
+        input_ptr = input_ptr.to(tl.pointer_type(tl.uint8), bitcast=True)
+        output_ptr = output_ptr.to(tl.pointer_type(tl.uint8), bitcast=True)
     logical = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     active = logical < n_elements
     remaining = logical
@@ -155,6 +167,10 @@ def layout_copy_kernel(
     OUTPUT_STRIDE_7: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
+    # Preserve raw FP8 bytes without converting the masked-load value.
+    if input_ptr.dtype.element_ty.primitive_bitwidth == 8:
+        input_ptr = input_ptr.to(tl.pointer_type(tl.uint8), bitcast=True)
+        output_ptr = output_ptr.to(tl.pointer_type(tl.uint8), bitcast=True)
     logical = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
         0, BLOCK_SIZE
     )

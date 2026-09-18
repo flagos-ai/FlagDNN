@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
 import hashlib
 import json
 import os
 import platform
-from pathlib import Path
 import re
 import sys
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from flagdnn_codegen.kernel_registry import (
@@ -18,9 +18,10 @@ from flagdnn_codegen.kernel_registry import (
     select_kernel_candidate,
 )
 
-from .compiler_graph import TARGET_PATTERN, validate_target
-from .environment_identity import identity_sha256 as environment_identity_sha256
-
+from ..dispatch.graph import TARGET_PATTERN, validate_target
+from ..environment_identity import (
+    identity_sha256 as environment_identity_sha256,
+)
 
 GRAPH_SCHEMA_VERSION = 3
 ARTIFACT_SCHEMA_VERSION = 1
@@ -31,11 +32,11 @@ SUPPORTED_ENGINE = "libtriton_jit"
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _LOCAL_MODULES = (
     "compiler.py",
-    "compiler_graph.py",
-    "compiler_identity.py",
-    "compiler_tensor.py",
+    "dispatch/graph.py",
+    "codegen/identity.py",
+    "dispatch/tensor.py",
     "environment_identity.py",
-    "execution_plan.py",
+    "dispatch/program.py",
 )
 _IDENTITY_RESOURCES = (
     "mcc",
@@ -61,12 +62,32 @@ def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
-def _sha256_file(path: Path) -> str:
+def _file_stamp(path: Path):
+    stat = path.stat()
+    return (
+        stat.st_dev,
+        stat.st_ino,
+        stat.st_size,
+        stat.st_mtime_ns,
+        stat.st_ctime_ns,
+    )
+
+
+@lru_cache(maxsize=1024)
+def _hash_unchanged_file(path: Path, stamp) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(chunk)
+    if _file_stamp(path) != stamp:
+        raise ValueError(f"compiler dependency changed while hashing: {path}")
     return digest.hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    # Validation and identity construction visit the same SDK libraries. Reuse
+    # their digest only within this process and while all file metadata agrees.
+    return _hash_unchanged_file(path, _file_stamp(path))
 
 
 def _canonical(value: object) -> bytes:
@@ -85,9 +106,7 @@ def _reject_duplicate_keys(
     result: dict[str, Any] = {}
     for key, value in pairs:
         if key in result:
-            raise ValueError(
-                f"environment JSON key is duplicated: {key!r}"
-            )
+            raise ValueError(f"environment JSON key is duplicated: {key!r}")
         result[key] = value
     return result
 
@@ -121,8 +140,9 @@ def _environment_report_path() -> Path | None:
     )
     if explicit_environment:
         return Path(explicit_environment).expanduser().resolve(strict=True)
-    adjacent = Path(__file__).resolve().with_name(
-        "flagdnn_mthreads_environment.json"
+    adjacent = (
+        Path(__file__).resolve().parents[1]
+        / "flagdnn_mthreads_environment.json"
     )
     if adjacent.is_file():
         return adjacent
@@ -168,7 +188,7 @@ def _installed_metadata_path(
 ) -> Path | None:
     if environment_source is None:
         return None
-    provider_directory = Path(__file__).resolve().parent
+    provider_directory = Path(__file__).resolve().parents[1]
     adjacent_environment = provider_directory / environment_source.name
     if environment_source != adjacent_environment:
         return None
@@ -247,7 +267,7 @@ def _relocate_installed_environment(
     ):
         raise ValueError("mthreads install metadata identity is invalid")
 
-    provider_directory = Path(__file__).resolve().parent
+    provider_directory = Path(__file__).resolve().parents[1]
     if len(provider_directory.parents) < 4:
         raise ValueError("installed mthreads provider path is malformed")
     sdk = provider_directory.parents[3].resolve(strict=True)
@@ -262,14 +282,14 @@ def _relocate_installed_environment(
     if (
         not isinstance(original_jit, dict)
         or not isinstance(jit_record, dict)
-        or set(jit_record) != {
+        or set(jit_record)
+        != {
             "provenance_sha256",
             "relative_path",
             "sha256",
             "soname",
         }
-        or jit_record.get("provenance_sha256")
-        != original_jit.get("sha256")
+        or jit_record.get("provenance_sha256") != original_jit.get("sha256")
         or jit_record.get("soname") != original_jit.get("soname")
     ):
         raise ValueError("installed mthreads TritonJIT metadata is invalid")
@@ -302,11 +322,11 @@ def _relocate_installed_environment(
     installed_scripts: dict[str, tuple[Path, str]] = {}
     for filename, resource_name in script_resources.items():
         script_record = scripts.get(filename)
-        if (
-            not isinstance(script_record, dict)
-            or set(script_record)
-            != {"provenance_sha256", "relative_path", "sha256"}
-        ):
+        if not isinstance(script_record, dict) or set(script_record) != {
+            "provenance_sha256",
+            "relative_path",
+            "sha256",
+        }:
             raise ValueError(
                 f"installed mthreads {filename} metadata is invalid"
             )
@@ -344,7 +364,10 @@ def _relocate_installed_environment(
     relocated_jit["size"] = jit_path.stat().st_size
     relocated_jit["runpath"] = ["$ORIGIN"]
     resources["triton_jit"] = relocated_jit
-    for resource_name, (script_path, script_digest) in installed_scripts.items():
+    for resource_name, (
+        script_path,
+        script_digest,
+    ) in installed_scripts.items():
         original_script = resources[resource_name]
         relocated_script = dict(original_script)
         relocated_script["realpath"] = str(script_path)
@@ -371,7 +394,7 @@ def _identity_resource_names(
 def _validated_environment() -> tuple[Path | None, dict[str, Any]]:
     source = _environment_report_path()
     if source is None:
-        from .environment_identity import collect_environment, _finalize
+        from ..environment_identity import _finalize, collect_environment
 
         value = _finalize(collect_environment())
     else:
@@ -409,10 +432,7 @@ def _validated_environment() -> tuple[Path | None, dict[str, Any]]:
     )
     resources = value.get("resources")
     python = value.get("python")
-    if (
-        not isinstance(resources, dict)
-        or not isinstance(python, dict)
-    ):
+    if not isinstance(resources, dict) or not isinstance(python, dict):
         raise ValueError("mthreads environment sections are invalid")
     jit = resources.get("triton_jit")
     if (
@@ -427,9 +447,7 @@ def _validated_environment() -> tuple[Path | None, dict[str, Any]]:
         raise ValueError("mthreads install metadata disappeared")
 
     executable = python.get("executable")
-    executable_path, _, _ = _file_record(
-        executable, "python.executable"
-    )
+    executable_path, _, _ = _file_record(executable, "python.executable")
     if Path(sys.executable).resolve() != executable_path:
         raise RuntimeError(
             "active compiler Python differs from environment identity"
@@ -441,9 +459,7 @@ def _validated_environment() -> tuple[Path | None, dict[str, Any]]:
         _file_record(modules.get(name), f"python.modules.{name}")
         record = modules[name]
         if not isinstance(record.get("version"), str):
-            raise ValueError(
-                f"python.modules.{name}.version is invalid"
-            )
+            raise ValueError(f"python.modules.{name}.version is invalid")
     return source, value
 
 
@@ -458,11 +474,15 @@ def _identity_inputs(
     environment_source: Path | None,
     environment: dict[str, Any],
 ) -> dict[str, Path]:
-    provider_directory = Path(__file__).resolve().parent
+    provider_directory = Path(__file__).resolve().parents[1]
     inputs: dict[str, Path] = {
         f"provider:{name}": (provider_directory / name).resolve()
         for name in _LOCAL_MODULES
     }
+    for directory in ("dispatch", "codegen"):
+        for path in sorted((provider_directory / directory).rglob("*.py")):
+            name = path.relative_to(provider_directory).as_posix()
+            inputs[f"provider:{name}"] = path.resolve()
     inputs["codegen:main.py"] = compiler_entry.resolve()
     for name in ("kernel_registry.py", "provider_loader.py"):
         path = compiler_entry.with_name(name)
@@ -481,7 +501,9 @@ def _identity_inputs(
         "binary_contiguous_kernel",
         "binary_strided_kernel",
     }.difference(binary_candidate.functions):
-        raise ValueError("mthreads Add candidate is missing required functions")
+        raise ValueError(
+            "mthreads Add candidate is missing required functions"
+        )
     inputs["kernel:mthreads:binary.py"] = resolve_kernel_source(
         compiler_entry, binary_candidate
     ).resolve()
@@ -500,7 +522,9 @@ def _identity_inputs(
     ).resolve()
     identity_candidate = select_kernel_candidate("mthreads", "identity")
     if identity_candidate.ownership != "platform":
-        raise ValueError("mthreads Identity must resolve to platform ownership")
+        raise ValueError(
+            "mthreads Identity must resolve to platform ownership"
+        )
     if {
         "identity_contiguous_packed_kernel",
         "identity_contiguous_kernel",
@@ -512,9 +536,7 @@ def _identity_inputs(
     inputs["kernel:mthreads:identity.py"] = resolve_kernel_source(
         compiler_entry, identity_candidate
     ).resolve()
-    ternary_candidate = select_kernel_candidate(
-        "mthreads", "binary_select"
-    )
+    ternary_candidate = select_kernel_candidate("mthreads", "binary_select")
     if ternary_candidate.ownership != "common":
         raise ValueError(
             "mthreads binary_select must resolve to common ownership"
@@ -556,19 +578,13 @@ def _identity_inputs(
     if (
         resolve_kernel_source(compiler_entry, slice_candidate).resolve()
         != inputs["kernel:mthreads:layout.py"]
-        or resolve_kernel_source(
-            compiler_entry, transpose_candidate
-        ).resolve()
+        or resolve_kernel_source(compiler_entry, transpose_candidate).resolve()
         != inputs["kernel:mthreads:layout.py"]
     ):
         raise ValueError("mthreads layout candidates do not share one source")
-    reduction_candidate = select_kernel_candidate(
-        "mthreads", "reduction_sum"
-    )
+    reduction_candidate = select_kernel_candidate("mthreads", "reduction_sum")
     if reduction_candidate.ownership != "common":
-        raise ValueError(
-            "mthreads reduction must resolve to common ownership"
-        )
+        raise ValueError("mthreads reduction must resolve to common ownership")
     if {
         "reduction_2d_kernel",
         "reduction_3d_kernel",
@@ -637,9 +653,7 @@ def _identity_inputs(
             or candidate.source != "normalization.py"
             or functions.difference(candidate.functions)
         ):
-            raise ValueError(
-                f"mthreads {operation} candidate is invalid"
-            )
+            raise ValueError(f"mthreads {operation} candidate is invalid")
         source = resolve_kernel_source(compiler_entry, candidate).resolve()
         if normalization_source is not None and source != normalization_source:
             raise ValueError(
@@ -676,9 +690,7 @@ def _identity_inputs(
             or candidate.source != "attention.py"
             or functions.difference(candidate.functions)
         ):
-            raise ValueError(
-                f"mthreads {operation} candidate is invalid"
-            )
+            raise ValueError(f"mthreads {operation} candidate is invalid")
         source = resolve_kernel_source(compiler_entry, candidate).resolve()
         if attention_source is not None and source != attention_source:
             raise ValueError(
@@ -705,9 +717,7 @@ def _identity_inputs(
     inputs["kernel:platform:normalization.py"] = resolve_kernel_source(
         compiler_entry, inference_candidate
     ).resolve()
-    dgrad_candidate = select_kernel_candidate(
-        "mthreads", "convolution_dgrad"
-    )
+    dgrad_candidate = select_kernel_candidate("mthreads", "convolution_dgrad")
     required_dgrad_functions = {
         "conv_dgrad_nd_kernel",
         "_conv_dgrad2d_dense_pack_filter_kernel",
@@ -729,13 +739,9 @@ def _identity_inputs(
         raise ValueError(
             "mthreads Fprop and Dgrad resolve to different sources"
         )
-    wgrad_candidate = select_kernel_candidate(
-        "mthreads", "convolution_wgrad"
-    )
+    wgrad_candidate = select_kernel_candidate("mthreads", "convolution_wgrad")
     if wgrad_candidate.ownership != "platform":
-        raise ValueError(
-            "mthreads Wgrad must resolve to platform ownership"
-        )
+        raise ValueError("mthreads Wgrad must resolve to platform ownership")
     if {
         "conv_wgrad_nd_kernel",
         "_conv_wgrad2d_p5_pack_image_kernel",
@@ -761,14 +767,11 @@ def _identity_inputs(
             "mthreads Dgrad and Wgrad resolve to different sources"
         )
     inputs["kernel:platform:convolution.py"] = platform_convolution_source
-    add_square_candidate = select_kernel_candidate(
-        "mthreads", "add_square"
-    )
+    add_square_candidate = select_kernel_candidate("mthreads", "add_square")
     if (
         add_square_candidate.ownership != "platform"
         or add_square_candidate.source != "composite.py"
-        or "add_square_tensor_kernel"
-        not in add_square_candidate.functions
+        or "add_square_tensor_kernel" not in add_square_candidate.functions
     ):
         raise ValueError(
             "mthreads AddSquare candidate is not the platform fused kernel"
@@ -782,8 +785,7 @@ def _identity_inputs(
     if (
         conv_bias_relu_candidate.ownership != "platform"
         or conv_bias_relu_candidate.source != "conv_bias_relu.py"
-        or "conv_bias_relu_2d_kernel"
-        not in conv_bias_relu_candidate.functions
+        or "conv_bias_relu_2d_kernel" not in conv_bias_relu_candidate.functions
     ):
         raise ValueError(
             "mthreads ConvBiasRelu candidate is not the platform fused kernel"
@@ -804,18 +806,14 @@ def _identity_inputs(
     resources = environment["resources"]
     modules = environment["python"]["modules"]
     for name in _identity_resource_names(environment_source):
-        path, _, _ = _file_record(
-            resources[name], f"resources.{name}"
-        )
+        path, _, _ = _file_record(resources[name], f"resources.{name}")
         inputs[f"environment:{name}"] = path
     executable, _, _ = _file_record(
         environment["python"]["executable"], "python.executable"
     )
     inputs["environment:python"] = executable
     for name in _PYTHON_MODULES:
-        path, _, _ = _file_record(
-            modules[name], f"python.modules.{name}"
-        )
+        path, _, _ = _file_record(modules[name], f"python.modules.{name}")
         inputs[f"environment:python:{name}"] = path
     for label, path in inputs.items():
         if not path.is_file():
@@ -858,19 +856,15 @@ def build_compiler_identity(
         raise ValueError("mthreads requires execution engine libtriton_jit")
     compiler_entry = _compiler_entry_path()
     environment_source, environment = _validated_environment()
-    inputs = _identity_inputs(
-        compiler_entry, environment_source, environment
-    )
+    inputs = _identity_inputs(compiler_entry, environment_source, environment)
     source_files = {
-        label: _sha256_file(path)
-        for label, path in sorted(inputs.items())
+        label: _sha256_file(path) for label, path in sorted(inputs.items())
     }
     resources = environment["resources"]
     modules = environment["python"]["modules"]
     musa_root = resources.get("musa_root")
-    if (
-        not isinstance(musa_root, dict)
-        or not isinstance(musa_root.get("realpath"), str)
+    if not isinstance(musa_root, dict) or not isinstance(
+        musa_root.get("realpath"), str
     ):
         raise ValueError("mthreads MUSA root identity is invalid")
     root_name = Path(musa_root["realpath"]).name

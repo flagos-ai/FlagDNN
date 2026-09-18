@@ -1,35 +1,19 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
-
-#include "common/attention.hpp"
-
-#include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
 #include "backends/mthreads/validation/mudnn_attention.hpp"
-#include "backends/mthreads/validation/musa_driver.hpp"
 
-#include <musa_runtime_api.h>
-
-#include <algorithm>
 #include <cmath>
-#include <cstddef>
-#include <cstdint>
-#include <limits>
 #include <memory>
 #include <optional>
-#include <span>
-#include <stdexcept>
 #include <string>
-#include <string_view>
-#include <unordered_map>
-#include <utility>
 #include <vector>
+
+#include "backends/mthreads/validation/functional/mudnn_extended.hpp"
+#include "common/attention.hpp"
 
 namespace flagdnn::testing {
 namespace {
-
 namespace mv = validation::mthreads;
-namespace io = validation::mthreads::tensor_io;
-
-using BindingMap = std::unordered_map<std::int64_t, void*>;
+namespace md = musa::dnn;
 
 template <typename Operation>
 class MudnnAttentionExecutable final : public AttentionExecutable {
@@ -37,15 +21,11 @@ class MudnnAttentionExecutable final : public AttentionExecutable {
   template <typename Descriptor>
   explicit MudnnAttentionExecutable(Descriptor descriptor)
       : operation_(std::move(descriptor)) {}
-
-  [[nodiscard]] std::size_t workspace_size() const noexcept override {
+  std::size_t workspace_size() const noexcept override {
     return operation_.workspace_size();
   }
-
-  void execute(std::span<const flagdnnBinding_t> bindings,
-               void* workspace,
-               std::size_t workspace_size,
-               flagdnnStream_t stream) override {
+  void execute(std::span<const flagdnnBinding_t> bindings, void* workspace,
+               std::size_t workspace_size, flagdnnStream_t stream) override {
     operation_.execute(bindings, workspace, workspace_size, stream);
   }
 
@@ -53,577 +33,199 @@ class MudnnAttentionExecutable final : public AttentionExecutable {
   Operation operation_;
 };
 
-double attention_scale(const AttentionOptions& options,
-                       const TestTensor& q) {
+double attention_scale(const AttentionOptions& options, const TestTensor& q) {
   return options.attention_scale.value_or(
       1.0F / std::sqrt(static_cast<float>(q.dimensions[3])));
 }
 
-bool causal_option(const AttentionOptions& options,
-                   std::string_view provider) {
+bool causal_option(const AttentionOptions& options) {
   if (options.diagonal_alignment != AttentionDiagonalAlignment::kTopLeft ||
       options.diagonal_band_left_bound.has_value() ||
       (options.diagonal_band_right_bound.has_value() &&
-       *options.diagonal_band_right_bound != 0)) {
-    throw std::invalid_argument(
-        std::string(provider) +
-        " supports only unmasked or top-left causal Attention");
-  }
+       *options.diagonal_band_right_bound != 0))
+    throw mv::ReferenceUnsupported(
+        "muDNN SDPA exposes unmasked or top-left causal attention only");
   return options.diagonal_band_right_bound.has_value();
 }
 
 std::optional<mv::TensorDescriptor> describe_optional(
     const std::optional<TestTensor>& tensor) {
-  return tensor.has_value()
-             ? std::optional<mv::TensorDescriptor>(
-                   mv::describe_tensor(*tensor))
-             : std::nullopt;
+  return tensor ? std::optional(mv::describe_tensor(*tensor)) : std::nullopt;
 }
 
-BindingMap parse_bindings(std::span<const flagdnnBinding_t> bindings,
-                          std::span<const TestTensor* const> tensors,
-                          std::string_view operation) {
-  std::size_t expected = 0;
-  for (const TestTensor* tensor : tensors) {
-    expected += static_cast<std::size_t>(tensor != nullptr);
-  }
-  if (bindings.size() != expected) {
-    throw std::invalid_argument(
-        std::string(operation) + " binding count is invalid");
-  }
-  BindingMap result;
-  result.reserve(expected);
-  for (const flagdnnBinding_t& binding : bindings) {
-    if (binding.uid <= 0 || binding.device_pointer == nullptr ||
-        !result.emplace(binding.uid, binding.device_pointer).second) {
-      throw std::invalid_argument(
-          std::string(operation) + " binding is invalid");
-    }
-  }
-  for (const TestTensor* tensor : tensors) {
-    if (tensor != nullptr && result.find(tensor->uid) == result.end()) {
-      throw std::invalid_argument(
-          std::string(operation) + " binding UID is missing");
-    }
-  }
+md::Tensor empty_tensor(md::Tensor::Type type) {
+  md::Tensor result;
+  const std::int64_t dims[] = {0}, strides[] = {1};
+  mv::check_mudnn(result.SetType(type), "muDNN SDPA empty type");
+  mv::check_mudnn(result.SetAddr(nullptr), "muDNN SDPA empty address");
+  mv::check_mudnn(result.SetNdInfo(1, dims, strides),
+                  "muDNN SDPA empty shape");
   return result;
 }
 
-void* pointer(const TestTensor& tensor, const BindingMap& bindings) {
-  const auto found = bindings.find(tensor.uid);
-  if (found == bindings.end()) {
-    throw std::invalid_argument("FP8 Attention binding UID is missing");
+// RunMath supports FP32 but requires matching Q/K/V head counts. Its public
+// probability output permits a native backward; LOGSUMEXP supplies Graph's
+// saved statistics without a CPU oracle.
+std::unique_ptr<AttentionExecutable> math_reference(
+    std::vector<TestTensor> inputs, std::vector<TestTensor> outputs,
+    const AttentionOptions& options, bool backward, bool has_bias,
+    bool has_stats, bool deterministic = false) {
+  const auto& q = inputs[0];
+  const auto& k = inputs[1];
+  const auto& v = inputs[2];
+  if (q.dimensions[1] != k.dimensions[1] || q.dimensions[1] != v.dimensions[1])
+    throw mv::ReferenceUnsupported(
+        "muDNN 3.1.5 RunMath requires equal Q/K/V heads; RunFlash rejects "
+        "FP32");
+  if (q.dimensions[3] != v.dimensions[3])
+    throw mv::ReferenceUnsupported(
+        "muDNN 3.1.5 RunMath requires equal Q/K and V head dimensions; "
+        "RunFlash rejects FP32");
+  const bool causal = causal_option(options);
+  if (causal && has_stats)
+    throw mv::ReferenceUnsupported(
+        "muDNN 3.1.5 RunMath has no causal FP32 logsumexp output");
+  auto p = std::make_unique<mthreads::NativeProgram>(inputs, outputs);
+  auto op = std::make_shared<md::ScaledDotProductAttention>();
+  const double scale = attention_scale(options, q);
+  mv::check_mudnn(op->SetEmbedDim(q.dimensions[1] * v.dimensions[3]),
+                  "muDNN SDPA math embed dimension");
+  mv::check_mudnn(op->SetHeadsNum(q.dimensions[1]), "muDNN SDPA math heads");
+  mv::check_mudnn(op->SetCausal(causal), "muDNN SDPA math causal");
+  mv::check_mudnn(op->SetMaskMode(false), "muDNN SDPA math mask mode");
+  mv::check_mudnn(op->SetKeyFormat(false), "muDNN SDPA math key format");
+  mv::check_mudnn(op->SetScale(scale), "muDNN SDPA math scale");
+  mv::check_mudnn(op->SetDropoutP(0.0), "muDNN SDPA math dropout");
+  mv::check_mudnn(op->SetIsDeterministic(deterministic),
+                  "muDNN SDPA math deterministic");
+  const mthreads::Shape scores_shape{q.dimensions[0], q.dimensions[1],
+                                     q.dimensions[2], k.dimensions[2]};
+  const auto probabilities = p->temporary(scores_shape);
+  const auto output =
+      backward ? p->temporary(inputs[3].dimensions) : p->output(0);
+  const auto bias_index = inputs.size() - 1;
+  p->add([r = p.get(), op, probabilities, output, has_bias, bias_index] {
+    auto mask = empty_tensor(md::Tensor::Type::FLOAT);
+    auto dropout = empty_tensor(md::Tensor::Type::BOOL);
+    mv::check_mudnn(
+        op->RunMath(r->handle(), r->tensor(output), r->tensor(probabilities),
+                    r->tensor(0), r->tensor(1), r->tensor(2),
+                    has_bias ? r->tensor(bias_index) : mask, dropout,
+                    r->maintainer()),
+        "muDNN SDPA::RunMath");
+  });
+  if (backward) {
+    const auto probability_gradient = p->temporary(scores_shape);
+    auto zero = std::make_shared<md::Fill>();
+    mv::check_mudnn(zero->SetValue(0.0),
+                    "muDNN SDPA probability gradient zero");
+    p->add([r = p.get(), zero, probability_gradient] {
+      mv::check_mudnn(zero->Run(r->handle(), r->tensor(probability_gradient)),
+                      "muDNN SDPA probability gradient Fill::Run");
+    });
+    p->add([r = p.get(), op, probabilities, probability_gradient] {
+      auto dropout = empty_tensor(md::Tensor::Type::BOOL);
+      mv::check_mudnn(
+          op->RunMathBwd(r->handle(), r->tensor(r->output(0)),
+                         r->tensor(r->output(1)), r->tensor(r->output(2)),
+                         r->tensor(probability_gradient), r->tensor(4),
+                         r->tensor(0), r->tensor(1), r->tensor(2),
+                         r->tensor(probabilities), dropout, r->maintainer()),
+          "muDNN SDPA::RunMathBwd");
+    });
+  } else if (has_stats) {
+    auto matmul = std::make_shared<md::BatchMatMul>();
+    mv::check_mudnn(matmul->SetTranspose(false, true),
+                    "muDNN SDPA scores transpose");
+    mv::check_mudnn(
+        matmul->SetComputeMode(md::BatchMatMul::ComputeMode::SCALAR),
+        "muDNN SDPA scores precision");
+    mv::check_mudnn(matmul->SetAlpha(scale), "muDNN SDPA scores scale");
+    mv::check_mudnn(matmul->SetBeta(0.0), "muDNN SDPA scores beta");
+    auto scores = p->temporary(scores_shape);
+    const auto collapse_heads = [&](std::size_t tensor) {
+      const auto shape = p->descriptor(tensor).dimensions;
+      return p->view(tensor, {shape[0] * shape[1], shape[2], shape[3]},
+                     {shape[2] * shape[3], shape[3], 1});
+    };
+    const auto q_matrix = collapse_heads(0), k_matrix = collapse_heads(1),
+               score_matrix = collapse_heads(scores);
+    p->add([r = p.get(), matmul, q_matrix, k_matrix, score_matrix] {
+      mv::check_mudnn(matmul->Run(r->handle(), r->tensor(score_matrix),
+                                  r->tensor(q_matrix), r->tensor(k_matrix),
+                                  r->maintainer()),
+                      "muDNN SDPA scores BatchMatMul::Run");
+    });
+    if (has_bias)
+      scores = p->binary(mthreads::Binary::ADD, scores, bias_index);
+    auto logsumexp = std::make_shared<md::Softmax>();
+    mv::check_mudnn(logsumexp->SetDim(-1), "muDNN SDPA logsumexp axis");
+    mv::check_mudnn(logsumexp->SetMode(md::Softmax::Mode::LOGSUMEXP),
+                    "muDNN SDPA logsumexp mode");
+    p->add([r = p.get(), logsumexp, scores] {
+      mv::check_mudnn(logsumexp->Run(r->handle(), r->tensor(r->output(1)),
+                                     r->tensor(scores), r->maintainer()),
+                      "muDNN SDPA logsumexp");
+    });
   }
-  return found->second;
+  return p;
 }
-
-std::size_t tensor_bytes(const TestTensor& tensor) {
-  const std::size_t elements = io::storage_element_count(tensor);
-  const std::size_t width = io::data_type_size(tensor.data_type);
-  if (elements > std::numeric_limits<std::size_t>::max() / width) {
-    throw std::overflow_error("FP8 Attention tensor bytes overflow");
-  }
-  return elements * width;
-}
-
-std::vector<float> read_logical(const TestTensor& tensor,
-                                const BindingMap& bindings,
-                                musaStream_t stream) {
-  std::vector<std::uint8_t> encoded(tensor_bytes(tensor));
-  mv::check_musa(musaMemcpyAsync(encoded.data(),
-                                 pointer(tensor, bindings),
-                                 encoded.size(),
-                                 musaMemcpyDeviceToHost,
-                                 stream),
-                 "musaMemcpyAsync(FP8 oracle device-to-host)");
-  mv::check_musa(musaStreamSynchronize(stream),
-                 "musaStreamSynchronize(FP8 oracle input)");
-  return io::gather(io::decode(encoded, tensor.data_type), tensor);
-}
-
-float read_scalar(const Fp8Scalar& scalar,
-                  const BindingMap& bindings,
-                  musaStream_t stream) {
-  const std::vector<float> values =
-      read_logical(scalar.tensor, bindings, stream);
-  if (values.size() != 1 || !std::isfinite(values[0]) || values[0] <= 0.0F) {
-    throw std::invalid_argument("FP8 Attention scale binding is invalid");
-  }
-  return values[0];
-}
-
-void write_logical(const TestTensor& tensor,
-                   std::span<const float> logical,
-                   const BindingMap& bindings,
-                   musaStream_t stream) {
-  const std::vector<float> physical = io::scatter(logical, tensor);
-  const std::vector<std::uint8_t> encoded =
-      io::encode(physical, tensor.data_type);
-  mv::check_musa(musaMemcpyAsync(pointer(tensor, bindings),
-                                 encoded.data(),
-                                 encoded.size(),
-                                 musaMemcpyHostToDevice,
-                                 stream),
-                 "musaMemcpyAsync(FP8 oracle host-to-device)");
-  // The source storage is owned by this stack frame, so complete the copy
-  // before it is released.  This oracle is validation-only and synchronous.
-  mv::check_musa(musaStreamSynchronize(stream),
-                 "musaStreamSynchronize(FP8 oracle output)");
-}
-
-std::size_t offset(const TestTensor& tensor,
-                   std::int64_t b,
-                   std::int64_t h,
-                   std::int64_t s,
-                   std::int64_t d) {
-  return static_cast<std::size_t>(
-      (((b * tensor.dimensions[1] + h) * tensor.dimensions[2] + s) *
-       tensor.dimensions[3]) + d);
-}
-
-struct Fp8ForwardResult {
-  std::vector<float> output;
-  std::vector<float> stats;
-  float amax_s = 0.0F;
-  float amax_o = 0.0F;
-};
-
-Fp8ForwardResult fp8_forward(
-    const SdpaFp8TestCase& test_case,
-    std::span<const float> q,
-    std::span<const float> k,
-    std::span<const float> v,
-    float descale_q,
-    float descale_k,
-    float descale_v,
-    float descale_s,
-    float scale_s,
-    float scale_o) {
-  const std::int64_t batch = test_case.q.dimensions[0];
-  const std::int64_t query_heads = test_case.q.dimensions[1];
-  const std::int64_t key_heads = test_case.k.dimensions[1];
-  const std::int64_t value_heads = test_case.v.dimensions[1];
-  const std::int64_t sequence_q = test_case.q.dimensions[2];
-  const std::int64_t sequence_kv = test_case.k.dimensions[2];
-  const std::int64_t head_dimension = test_case.q.dimensions[3];
-  const std::int64_t value_dimension = test_case.v.dimensions[3];
-  const double scale = attention_scale(test_case.options, test_case.q);
-  const bool causal = causal_option(
-      test_case.options, "MThreads FP8 mathematical oracle");
-  Fp8ForwardResult result;
-  result.output.resize(io::element_count(test_case.output));
-  result.stats.resize(static_cast<std::size_t>(
-      batch * query_heads * sequence_q));
-  std::vector<double> scores(static_cast<std::size_t>(sequence_kv));
-  std::vector<double> numerators(static_cast<std::size_t>(sequence_kv));
-
-  for (std::int64_t b = 0; b < batch; ++b) {
-    for (std::int64_t h = 0; h < query_heads; ++h) {
-      const std::int64_t kh = h / (query_heads / key_heads);
-      const std::int64_t vh = h / (query_heads / value_heads);
-      for (std::int64_t m = 0; m < sequence_q; ++m) {
-        double maximum = -std::numeric_limits<double>::infinity();
-        for (std::int64_t n = 0; n < sequence_kv; ++n) {
-          if (causal && n > m) {
-            scores[static_cast<std::size_t>(n)] =
-                -std::numeric_limits<double>::infinity();
-            continue;
-          }
-          double score = 0.0;
-          for (std::int64_t d = 0; d < head_dimension; ++d) {
-            score += static_cast<double>(
-                         q[offset(test_case.q, b, h, m, d)]) *
-                     static_cast<double>(
-                         k[offset(test_case.k, b, kh, n, d)]);
-          }
-          score *= static_cast<double>(descale_q) * descale_k * scale;
-          scores[static_cast<std::size_t>(n)] = score;
-          maximum = std::max(maximum, score);
-        }
-        double denominator = 0.0;
-        for (std::int64_t n = 0; n < sequence_kv; ++n) {
-          const double numerator =
-              std::isfinite(scores[static_cast<std::size_t>(n)])
-                  ? std::exp(scores[static_cast<std::size_t>(n)] - maximum)
-                  : 0.0;
-          numerators[static_cast<std::size_t>(n)] = numerator;
-          denominator += numerator;
-        }
-        if (!(denominator > 0.0) || !std::isfinite(denominator)) {
-          throw std::runtime_error("FP8 Attention oracle has an empty row");
-        }
-        result.stats[static_cast<std::size_t>(
-            (b * query_heads + h) * sequence_q + m)] =
-            static_cast<float>(maximum + std::log(denominator));
-        result.amax_s = std::max(
-            result.amax_s, static_cast<float>(1.0 / denominator));
-        for (std::int64_t d = 0; d < value_dimension; ++d) {
-          double accumulator = 0.0;
-          for (std::int64_t n = 0; n < sequence_kv; ++n) {
-            const float probability_raw = io::quantize_scalar(
-                static_cast<float>(
-                    numerators[static_cast<std::size_t>(n)] * scale_s),
-                test_case.q.data_type);
-            accumulator += static_cast<double>(probability_raw) *
-                           static_cast<double>(
-                               v[offset(test_case.v, b, vh, n, d)]);
-          }
-          const float output_value = static_cast<float>(
-              accumulator * descale_s * descale_v / denominator);
-          result.amax_o = std::max(result.amax_o, std::abs(output_value));
-          result.output[offset(test_case.output, b, h, m, d)] =
-              io::quantize_scalar(output_value * scale_o,
-                                  test_case.output.data_type);
-        }
-      }
-    }
-  }
-  return result;
-}
-
-class Fp8ForwardOracle final : public AttentionExecutable {
- public:
-  explicit Fp8ForwardOracle(SdpaFp8TestCase test_case)
-      : test_case_(std::move(test_case)) {
-    validate_sdpa_fp8_case(test_case_);
-    if (test_case_.bias.has_value()) {
-      throw std::invalid_argument(
-          "MThreads FP8 mathematical oracle does not support bias");
-    }
-    static_cast<void>(causal_option(
-        test_case_.options, "MThreads FP8 mathematical oracle"));
-  }
-
-  [[nodiscard]] std::size_t workspace_size() const noexcept override {
-    return 0;
-  }
-
-  void execute(std::span<const flagdnnBinding_t> raw_bindings,
-               void*,
-               std::size_t workspace_size,
-               flagdnnStream_t opaque_stream) override {
-    if (workspace_size != 0 || opaque_stream == nullptr) {
-      throw std::invalid_argument(
-          "FP8 Attention oracle execution contract is invalid");
-    }
-    const TestTensor* stats =
-        test_case_.stats.has_value() ? &*test_case_.stats : nullptr;
-    const std::vector<const TestTensor*> tensors{
-        &test_case_.q,
-        &test_case_.k,
-        &test_case_.v,
-        &test_case_.descale_q.tensor,
-        &test_case_.descale_k.tensor,
-        &test_case_.descale_v.tensor,
-        &test_case_.descale_s.tensor,
-        &test_case_.scale_s.tensor,
-        &test_case_.scale_o.tensor,
-        &test_case_.output,
-        stats,
-        &test_case_.amax_s,
-        &test_case_.amax_o};
-    const BindingMap bindings =
-        parse_bindings(raw_bindings, tensors, "FP8 Attention oracle");
-    const musaStream_t stream =
-        reinterpret_cast<musaStream_t>(opaque_stream);
-    const Fp8ForwardResult result = fp8_forward(
-        test_case_,
-        read_logical(test_case_.q, bindings, stream),
-        read_logical(test_case_.k, bindings, stream),
-        read_logical(test_case_.v, bindings, stream),
-        read_scalar(test_case_.descale_q, bindings, stream),
-        read_scalar(test_case_.descale_k, bindings, stream),
-        read_scalar(test_case_.descale_v, bindings, stream),
-        read_scalar(test_case_.descale_s, bindings, stream),
-        read_scalar(test_case_.scale_s, bindings, stream),
-        read_scalar(test_case_.scale_o, bindings, stream));
-    write_logical(test_case_.output, result.output, bindings, stream);
-    if (test_case_.stats.has_value()) {
-      write_logical(*test_case_.stats, result.stats, bindings, stream);
-    }
-    const float amax_s[] = {result.amax_s};
-    const float amax_o[] = {result.amax_o};
-    write_logical(test_case_.amax_s, amax_s, bindings, stream);
-    write_logical(test_case_.amax_o, amax_o, bindings, stream);
-  }
-
- private:
-  SdpaFp8TestCase test_case_;
-};
-
-struct Fp8BackwardResult {
-  std::vector<float> dq;
-  std::vector<float> dk;
-  std::vector<float> dv;
-  float amax_dq = 0.0F;
-  float amax_dk = 0.0F;
-  float amax_dv = 0.0F;
-  float amax_dp = 0.0F;
-};
-
-class Fp8BackwardOracle final : public AttentionExecutable {
- public:
-  explicit Fp8BackwardOracle(SdpaFp8BackwardTestCase test_case)
-      : test_case_(std::move(test_case)) {
-    validate_sdpa_fp8_backward_case(test_case_);
-    static_cast<void>(causal_option(
-        test_case_.options, "MThreads FP8 backward mathematical oracle"));
-  }
-
-  [[nodiscard]] std::size_t workspace_size() const noexcept override {
-    return 0;
-  }
-
-  void execute(std::span<const flagdnnBinding_t> raw_bindings,
-               void*,
-               std::size_t workspace_size,
-               flagdnnStream_t opaque_stream) override {
-    if (workspace_size != 0 || opaque_stream == nullptr) {
-      throw std::invalid_argument(
-          "FP8 Attention backward oracle execution contract is invalid");
-    }
-    const std::vector<const TestTensor*> tensors{
-        &test_case_.q,
-        &test_case_.k,
-        &test_case_.v,
-        &test_case_.output,
-        &test_case_.doutput,
-        &test_case_.stats,
-        &test_case_.descale_q.tensor,
-        &test_case_.descale_k.tensor,
-        &test_case_.descale_v.tensor,
-        &test_case_.descale_o.tensor,
-        &test_case_.descale_doutput.tensor,
-        &test_case_.descale_s.tensor,
-        &test_case_.descale_dp.tensor,
-        &test_case_.scale_s.tensor,
-        &test_case_.scale_dq.tensor,
-        &test_case_.scale_dk.tensor,
-        &test_case_.scale_dv.tensor,
-        &test_case_.scale_dp.tensor,
-        &test_case_.dq,
-        &test_case_.dk,
-        &test_case_.dv,
-        &test_case_.amax_dq,
-        &test_case_.amax_dk,
-        &test_case_.amax_dv,
-        &test_case_.amax_dp};
-    const BindingMap bindings = parse_bindings(
-        raw_bindings, tensors, "FP8 Attention backward oracle");
-    const musaStream_t stream =
-        reinterpret_cast<musaStream_t>(opaque_stream);
-    Fp8BackwardResult result = calculate(bindings, stream);
-    write_logical(test_case_.dq, result.dq, bindings, stream);
-    write_logical(test_case_.dk, result.dk, bindings, stream);
-    write_logical(test_case_.dv, result.dv, bindings, stream);
-    const float amax_dq[] = {result.amax_dq};
-    const float amax_dk[] = {result.amax_dk};
-    const float amax_dv[] = {result.amax_dv};
-    const float amax_dp[] = {result.amax_dp};
-    write_logical(test_case_.amax_dq, amax_dq, bindings, stream);
-    write_logical(test_case_.amax_dk, amax_dk, bindings, stream);
-    write_logical(test_case_.amax_dv, amax_dv, bindings, stream);
-    write_logical(test_case_.amax_dp, amax_dp, bindings, stream);
-  }
-
- private:
-  Fp8BackwardResult calculate(const BindingMap& bindings,
-                              musaStream_t stream) const {
-    const std::vector<float> q =
-        read_logical(test_case_.q, bindings, stream);
-    const std::vector<float> k =
-        read_logical(test_case_.k, bindings, stream);
-    const std::vector<float> v =
-        read_logical(test_case_.v, bindings, stream);
-    const std::vector<float> output =
-        read_logical(test_case_.output, bindings, stream);
-    const std::vector<float> doutput =
-        read_logical(test_case_.doutput, bindings, stream);
-    const std::vector<float> stats =
-        read_logical(test_case_.stats, bindings, stream);
-    const float descale_q =
-        read_scalar(test_case_.descale_q, bindings, stream);
-    const float descale_k =
-        read_scalar(test_case_.descale_k, bindings, stream);
-    const float descale_v =
-        read_scalar(test_case_.descale_v, bindings, stream);
-    const float descale_o =
-        read_scalar(test_case_.descale_o, bindings, stream);
-    const float descale_do =
-        read_scalar(test_case_.descale_doutput, bindings, stream);
-    const float descale_s =
-        read_scalar(test_case_.descale_s, bindings, stream);
-    const float descale_dp =
-        read_scalar(test_case_.descale_dp, bindings, stream);
-    const float scale_s =
-        read_scalar(test_case_.scale_s, bindings, stream);
-    const float scale_dq =
-        read_scalar(test_case_.scale_dq, bindings, stream);
-    const float scale_dk =
-        read_scalar(test_case_.scale_dk, bindings, stream);
-    const float scale_dv =
-        read_scalar(test_case_.scale_dv, bindings, stream);
-    const float scale_dp =
-        read_scalar(test_case_.scale_dp, bindings, stream);
-    const double attn_scale = attention_scale(test_case_.options,
-                                               test_case_.q);
-    const bool causal = causal_option(
-        test_case_.options, "MThreads FP8 backward mathematical oracle");
-    const std::int64_t batch = test_case_.q.dimensions[0];
-    const std::int64_t query_heads = test_case_.q.dimensions[1];
-    const std::int64_t kv_heads = test_case_.k.dimensions[1];
-    const std::int64_t sequence_q = test_case_.q.dimensions[2];
-    const std::int64_t sequence_kv = test_case_.k.dimensions[2];
-    const std::int64_t dimension = test_case_.q.dimensions[3];
-    const std::int64_t group = query_heads / kv_heads;
-
-    Fp8BackwardResult result;
-    result.dq.assign(io::element_count(test_case_.dq), 0.0F);
-    result.dk.assign(io::element_count(test_case_.dk), 0.0F);
-    result.dv.assign(io::element_count(test_case_.dv), 0.0F);
-    std::vector<double> dk_accumulator(result.dk.size(), 0.0);
-    std::vector<double> dv_accumulator(result.dv.size(), 0.0);
-    std::vector<float> ds_quant(static_cast<std::size_t>(sequence_kv));
-    std::vector<float> p_quant(static_cast<std::size_t>(sequence_kv));
-
-    for (std::int64_t b = 0; b < batch; ++b) {
-      for (std::int64_t h = 0; h < query_heads; ++h) {
-        const std::int64_t kh = h / group;
-        for (std::int64_t m = 0; m < sequence_q; ++m) {
-          double row_delta = 0.0;
-          for (std::int64_t d = 0; d < dimension; ++d) {
-            row_delta += static_cast<double>(output[offset(
-                             test_case_.output, b, h, m, d)]) *
-                         static_cast<double>(doutput[offset(
-                             test_case_.doutput, b, h, m, d)]);
-          }
-          row_delta *= static_cast<double>(descale_o) * descale_do;
-          const double lse = stats[static_cast<std::size_t>(
-              (b * query_heads + h) * sequence_q + m)];
-          for (std::int64_t n = 0; n < sequence_kv; ++n) {
-            if (causal && n > m) {
-              ds_quant[static_cast<std::size_t>(n)] = 0.0F;
-              p_quant[static_cast<std::size_t>(n)] = 0.0F;
-              continue;
-            }
-            double score = 0.0;
-            double dp = 0.0;
-            for (std::int64_t d = 0; d < dimension; ++d) {
-              score += static_cast<double>(q[offset(
-                           test_case_.q, b, h, m, d)]) *
-                       static_cast<double>(k[offset(
-                           test_case_.k, b, kh, n, d)]);
-              dp += static_cast<double>(doutput[offset(
-                        test_case_.doutput, b, h, m, d)]) *
-                    static_cast<double>(v[offset(
-                        test_case_.v, b, kh, n, d)]);
-            }
-            score *= static_cast<double>(descale_q) * descale_k *
-                     attn_scale;
-            dp *= static_cast<double>(descale_do) * descale_v;
-            const double probability = std::exp(score - lse);
-            const float ds = static_cast<float>(
-                probability * (dp - row_delta) * attn_scale);
-            result.amax_dp = std::max(result.amax_dp, std::abs(ds));
-            ds_quant[static_cast<std::size_t>(n)] = io::quantize_scalar(
-                ds * scale_dp, test_case_.q.data_type);
-            p_quant[static_cast<std::size_t>(n)] = io::quantize_scalar(
-                static_cast<float>(probability) * scale_s,
-                test_case_.q.data_type);
-          }
-
-          for (std::int64_t d = 0; d < dimension; ++d) {
-            double dq = 0.0;
-            for (std::int64_t n = 0; n < sequence_kv; ++n) {
-              const float ds = ds_quant[static_cast<std::size_t>(n)];
-              dq += static_cast<double>(ds) *
-                    static_cast<double>(k[offset(
-                        test_case_.k, b, kh, n, d)]);
-              dk_accumulator[offset(test_case_.dk, b, kh, n, d)] +=
-                  static_cast<double>(ds) *
-                  static_cast<double>(q[offset(
-                      test_case_.q, b, h, m, d)]);
-              dv_accumulator[offset(test_case_.dv, b, kh, n, d)] +=
-                  static_cast<double>(p_quant[static_cast<std::size_t>(n)]) *
-                  static_cast<double>(doutput[offset(
-                      test_case_.doutput, b, h, m, d)]);
-            }
-            const float unscaled =
-                static_cast<float>(dq * descale_dp * descale_k);
-            result.amax_dq = std::max(result.amax_dq, std::abs(unscaled));
-            result.dq[offset(test_case_.dq, b, h, m, d)] =
-                io::quantize_scalar(unscaled * scale_dq,
-                                    test_case_.dq.data_type);
-          }
-        }
-      }
-    }
-    for (std::size_t index = 0; index < result.dk.size(); ++index) {
-      const float dk = static_cast<float>(
-          dk_accumulator[index] * descale_dp * descale_q);
-      const float dv = static_cast<float>(
-          dv_accumulator[index] * descale_s * descale_do);
-      result.amax_dk = std::max(result.amax_dk, std::abs(dk));
-      result.amax_dv = std::max(result.amax_dv, std::abs(dv));
-      result.dk[index] = io::quantize_scalar(
-          dk * scale_dk, test_case_.dk.data_type);
-      result.dv[index] = io::quantize_scalar(
-          dv * scale_dv, test_case_.dv.data_type);
-    }
-    return result;
-  }
-
-  SdpaFp8BackwardTestCase test_case_;
-};
-
 }  // namespace
 
 std::unique_ptr<AttentionExecutable> build_sdpa_reference(
-    const SdpaTestCase& test_case) {
-  validate_sdpa_case(test_case);
-  return std::make_unique<
-      MudnnAttentionExecutable<mv::MudnnSdpaOperation>>(
+    const SdpaTestCase& c) {
+  validate_sdpa_case(c);
+  if (c.q.data_type == FLAGDNN_DATA_FLOAT32) {
+    std::vector<TestTensor> inputs{c.q, c.k, c.v}, outputs{c.output};
+    if (c.bias) inputs.push_back(*c.bias);
+    if (c.stats) outputs.push_back(*c.stats);
+    return math_reference(inputs, outputs, c.options, false,
+                          c.bias.has_value(), c.stats.has_value());
+  }
+  return std::make_unique<MudnnAttentionExecutable<mv::MudnnSdpaOperation>>(
       mv::MudnnSdpaDescriptor{
-          mv::describe_tensor(test_case.q),
-          mv::describe_tensor(test_case.k),
-          mv::describe_tensor(test_case.v),
-          describe_optional(test_case.bias),
-          mv::describe_tensor(test_case.output),
-          describe_optional(test_case.stats),
-          attention_scale(test_case.options, test_case.q),
-          causal_option(test_case.options, "muDNN FlashAttention")});
+          mv::describe_tensor(c.q), mv::describe_tensor(c.k),
+          mv::describe_tensor(c.v), describe_optional(c.bias),
+          mv::describe_tensor(c.output), describe_optional(c.stats),
+          attention_scale(c.options, c.q), causal_option(c.options)});
 }
 
 std::unique_ptr<AttentionExecutable> build_sdpa_backward_reference(
-    const SdpaBackwardTestCase& test_case) {
-  validate_sdpa_backward_case(test_case);
+    const SdpaBackwardTestCase& c) {
+  validate_sdpa_backward_case(c);
+  if (c.dbias)
+    throw mv::ReferenceUnsupported(
+        "muDNN 3.1.5 SDPA backward has no dBias output");
+  if (c.q.data_type == FLAGDNN_DATA_FLOAT32) {
+    std::vector<TestTensor> inputs{c.q,      c.k,       c.v,
+                                   c.output, c.doutput, c.stats};
+    if (c.bias) inputs.push_back(*c.bias);
+    return math_reference(inputs, {c.dq, c.dk, c.dv}, c.options, true,
+                          c.bias.has_value(), false, c.deterministic);
+  }
   return std::make_unique<
       MudnnAttentionExecutable<mv::MudnnSdpaBackwardOperation>>(
       mv::MudnnSdpaBackwardDescriptor{
-          mv::describe_tensor(test_case.q),
-          mv::describe_tensor(test_case.k),
-          mv::describe_tensor(test_case.v),
-          describe_optional(test_case.bias),
-          mv::describe_tensor(test_case.output),
-          mv::describe_tensor(test_case.doutput),
-          mv::describe_tensor(test_case.stats),
-          mv::describe_tensor(test_case.dq),
-          mv::describe_tensor(test_case.dk),
-          mv::describe_tensor(test_case.dv),
-          describe_optional(test_case.dbias),
-          attention_scale(test_case.options, test_case.q),
-          causal_option(test_case.options, "muDNN FlashAttention backward"),
-          test_case.deterministic});
+          mv::describe_tensor(c.q), mv::describe_tensor(c.k),
+          mv::describe_tensor(c.v), describe_optional(c.bias),
+          mv::describe_tensor(c.output), mv::describe_tensor(c.doutput),
+          mv::describe_tensor(c.stats), mv::describe_tensor(c.dq),
+          mv::describe_tensor(c.dk), mv::describe_tensor(c.dv),
+          describe_optional(c.dbias), attention_scale(c.options, c.q),
+          causal_option(c.options), c.deterministic});
 }
 
 std::unique_ptr<AttentionExecutable> build_sdpa_fp8_reference(
-    const SdpaFp8TestCase& test_case) {
-  return std::make_unique<Fp8ForwardOracle>(test_case);
+    const SdpaFp8TestCase& c) {
+  validate_sdpa_fp8_case(c);
+  throw mv::ReferenceUnsupported(
+      "muDNN 3.1.5 RunFlash and RunMath reject FP8 Q/K/V and expose no FP8 "
+      "scales/amax");
 }
-
 std::unique_ptr<AttentionExecutable> build_sdpa_fp8_backward_reference(
-    const SdpaFp8BackwardTestCase& test_case) {
-  return std::make_unique<Fp8BackwardOracle>(test_case);
+    const SdpaFp8BackwardTestCase& c) {
+  validate_sdpa_fp8_backward_case(c);
+  throw mv::ReferenceUnsupported(
+      "muDNN 3.1.5 SDPA backward has no FP8 Q/K/V, scales or amax outputs");
 }
-
 }  // namespace flagdnn::testing

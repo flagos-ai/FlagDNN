@@ -606,7 +606,10 @@ def captured_request(
         if graph.get("node_count") != 1:
             fail("captured public Graph request has no single Add node")
         node = graph["nodes"][0]
-        if node.get("type") != "add" or node.get("attributes") != {
+        if node.get("type") != "add" or {
+            key: node.get("attributes", {}).get(key)
+            for key in ("alpha", "mode", "n_elements", "pointwise_mode")
+        } != {
             "alpha": -0.75,
             "mode": 1,
             "n_elements": 24,
@@ -661,6 +664,7 @@ def captured_request(
                 "dilation": [1, 1],
                 "groups": 1,
                 "n_outputs": 180,
+                "input_precision": 0,
                 "post_padding": [1, 1],
                 "pre_padding": [1, 1],
                 "spatial_rank": 2,
@@ -5561,13 +5565,13 @@ def installed_layout_contract(
     installed_backend.mkdir(parents=True)
     for name in (
         "compiler.py",
-        "compiler_graph.py",
-        "compiler_identity.py",
-        "compiler_tensor.py",
         "environment_identity.py",
-        "execution_plan.py",
     ):
         shutil.copy2(provider_path.parent / name, installed_backend / name)
+    for directory in ("dispatch", "codegen"):
+        shutil.copytree(
+            provider_path.parent / directory, installed_backend / directory
+        )
     shutil.copytree(
         provider_path.parent / "kernels", installed_backend / "kernels"
     )
@@ -5637,6 +5641,140 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def check_fp8_target_plans(provider, fixture, identity):
+    """FP8 capability checks must use the request target, not a fixed device."""
+    extended = importlib.import_module(
+        provider.__package__ + ".dispatch.extended"
+    )
+    request = copy.deepcopy(fixture)
+    request["compiler_identity"] = identity
+    tensors = request["graph"]["tensors"]
+    for tensor, dtype, shape in zip(
+        tensors,
+        ("fp8_e4m3", "fp8_e5m2", "float32"),
+        ([1, 16, 32], [1, 32, 24], [1, 16, 24]),
+    ):
+        tensor.update(
+            data_type=dtype,
+            dimensions=shape,
+            strides=[shape[1] * shape[2], shape[2], 1],
+            alignment=16,
+            virtual=False,
+        )
+    node = request["graph"]["nodes"][0]
+    node["type"] = "matmul_fp8"
+    node["inputs"] = [
+        {"name": "a", "uid": tensors[0]["uid"]},
+        {"name": "b", "uid": tensors[1]["uid"]},
+    ]
+    node["outputs"] = [{"name": "output", "uid": tensors[2]["uid"]}]
+    node["attributes"] = {
+        "batch": 1,
+        "m": 16,
+        "n": 24,
+        "k": 32,
+        "scale_mode": 0,
+    }
+    for architecture in (30, 31, 32):
+        request["target"] = f"musa-mtgpu-cc{architecture}-w32"
+        parsed = provider.parse_compiler_request(
+            json.dumps(request).encode(),
+            expected_target=request["target"],
+            expected_identity=identity,
+        )
+        try:
+            result = extended.plan_extended(parsed, "0" * 64)
+        except ValueError as error:
+            if architecture >= 31 or "requires MUSA cc31" not in str(error):
+                raise
+        else:
+            if architecture < 31 or len(result.stages) != 1:
+                fail("FP8 target capability check differs from the request")
+
+
+def check_activation_backward_plans(provider, fixture, identity):
+    """Exercise public input roles and typed ABI without loading Torch."""
+    extended = importlib.import_module(
+        provider.__package__ + ".dispatch.extended"
+    )
+    metadata = importlib.import_module(
+        provider.__package__ + ".dispatch.metadata"
+    )
+    operations = (
+        "relu_backward",
+        "tanh_backward",
+        "elu_backward",
+        "gelu_backward",
+        "softplus_backward",
+        "swish_backward",
+        "gelu_approx_tanh_backward",
+    )
+    for operation in operations:
+        for dtype, pointer in (
+            ("float32", "*fp32:16"),
+            ("float16", "*fp16:16"),
+            ("bfloat16", "*bf16:16"),
+        ):
+            request = copy.deepcopy(fixture)
+            request["compiler_identity"] = identity
+            graph = request["graph"]
+            tensors = graph["tensors"]
+            for tensor in tensors:
+                tensor.update(
+                    data_type=dtype,
+                    dimensions=[1, 1, 17],
+                    strides=[17, 17, 1],
+                    alignment=16,
+                    virtual=False,
+                )
+            node = graph["nodes"][0]
+            node["type"] = operation
+            node["inputs"] = [
+                {"name": "left", "uid": tensors[0]["uid"]},
+                {"name": "right", "uid": tensors[1]["uid"]},
+            ]
+            node["outputs"] = [{"name": "output", "uid": tensors[2]["uid"]}]
+            node["attributes"] = {
+                "n_elements": 17,
+                "alpha": 1.0,
+                "pointwise_mode": metadata.BINARY_POINTWISE_MODES[operation],
+                "has_upper_clip": 0,
+            }
+
+            def plan(value):
+                parsed = provider.parse_compiler_request(
+                    json.dumps(value).encode(),
+                    expected_target=TARGET,
+                    expected_identity=identity,
+                )
+                return extended.plan_extended(parsed, "0" * 64)
+
+            result = plan(request)
+            variant = result.stages[0].variants[0]
+            if variant.full_signature.split(",")[:3] != [pointer] * 3:
+                fail("activation backward pointer ABI differs")
+            if [arg.uid for arg in variant.arguments[:3]] != [
+                tensor["uid"] for tensor in tensors
+            ]:
+                fail("activation backward input roles differ")
+            for mutation in ("role", "type", "elements"):
+                invalid = copy.deepcopy(request)
+                if mutation == "role":
+                    invalid["graph"]["nodes"][0]["inputs"][0]["name"] = "x"
+                elif mutation == "type":
+                    invalid["graph"]["tensors"][0]["data_type"] = "int32"
+                else:
+                    invalid["graph"]["nodes"][0]["attributes"][
+                        "n_elements"
+                    ] = 18
+                try:
+                    plan(invalid)
+                except ValueError:
+                    pass
+                else:
+                    fail("invalid activation backward accepted: " + mutation)
+
+
 def main() -> int:
     arguments = parse_arguments()
     provider_path = arguments.provider.resolve(strict=True)
@@ -5667,6 +5805,7 @@ def main() -> int:
         provider = loader.get_provider("mthreads")
     finally:
         sys.path.pop(0)
+
     if Path(provider.__file__).resolve() != provider_path:
         fail("provider loader selected a different mthreads compiler")
 
@@ -5768,6 +5907,8 @@ def main() -> int:
             environment=environment,
             expect_success=False,
         )
+        check_activation_backward_plans(provider, fixture, identity)
+        check_fp8_target_plans(provider, fixture, identity)
         negative_cases = (
             run_rejection_matrix(provider, fixture, identity)
             + run_ternary_rejection_matrix(provider, fixture, identity)

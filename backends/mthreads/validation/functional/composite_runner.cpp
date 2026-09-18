@@ -1,12 +1,5 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
-#include "common/composite.hpp"
-
-#include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
-#include "backends/mthreads/validation/musa_driver.hpp"
-
-#include <flagdnn/flagdnn.hpp>
-
 #include <unistd.h>
 
 #include <algorithm>
@@ -16,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <flagdnn/flagdnn.hpp>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -26,6 +20,11 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
+#include "backends/mthreads/validation/musa_driver.hpp"
+#include "backends/mthreads/validation/paired_timing.hpp"
+#include "common/composite.hpp"
 
 namespace flagdnn::testing {
 namespace {
@@ -270,6 +269,18 @@ Accuracy run_case(const AddSquareTestCase& test_case,
                      reference_workspace.opaque(),
                      reference->workspace_size(),
                      stream.opaque());
+  mv::timing::paired(
+      test_case.name, stream,
+      [&] {
+        production->execute(production_buffers.bindings,
+                            production_workspace.opaque(),
+                            production->workspace_size(), stream.opaque());
+      },
+      [&] {
+        reference->execute(reference_buffers.bindings,
+                           reference_workspace.opaque(),
+                           reference->workspace_size(), stream.opaque());
+      });
   const std::vector<float> production_output = checked_output(
       production_buffers, stream, "FlagDNN", "AddSquare");
   const std::vector<float> reference_output = checked_output(
@@ -298,6 +309,18 @@ Accuracy run_case(const ConvBiasReluTestCase& test_case,
                      reference_workspace.opaque(),
                      reference->workspace_size(),
                      stream.opaque());
+  mv::timing::paired(
+      test_case.name, stream,
+      [&] {
+        production->execute(production_buffers.bindings,
+                            production_workspace.opaque(),
+                            production->workspace_size(), stream.opaque());
+      },
+      [&] {
+        reference->execute(reference_buffers.bindings,
+                           reference_workspace.opaque(),
+                           reference->workspace_size(), stream.opaque());
+      });
   const std::vector<float> production_output = checked_output(
       production_buffers, stream, "FlagDNN", "ConvBiasRelu");
   const std::vector<float> reference_output = checked_output(
@@ -307,19 +330,8 @@ Accuracy run_case(const ConvBiasReluTestCase& test_case,
 
 }  // namespace
 
-int run_add_square_functional_test(
-    int argc,
-    char** argv,
-    std::span<const AddSquareTestCase> cases) {
-  // This backend's reference adapter currently accepts floating storage.
-  std::vector<AddSquareTestCase> supported_cases(cases.begin(), cases.end());
-  std::erase_if(supported_cases, [](const AddSquareTestCase& test_case) {
-    const auto type = test_case.left.data_type;
-    return type != FLAGDNN_DATA_FLOAT32 && type != FLAGDNN_DATA_FLOAT16 &&
-           type != FLAGDNN_DATA_BFLOAT16;
-  });
-  cases = supported_cases;
-
+int run_add_square_functional_test(int argc, char** argv,
+                                   std::span<const AddSquareTestCase> cases) {
   if (argc != 3) {
     std::cerr << "usage: " << argv[0]
               << " COMPILER_EXECUTABLE COMPILER_ENTRY\n";
@@ -334,25 +346,30 @@ int run_add_square_functional_test(
     handle.set_compiler(argv[1], argv[2], cache.path().string());
     const char* filter = std::getenv("FLAGDNN_COMPOSITE_CASE");
     std::size_t executed = 0;
+    std::size_t skipped = 0;
     for (const AddSquareTestCase& test_case : cases) {
       if (filter != nullptr && filter[0] != '\0' &&
           test_case.name.find(filter) == std::string::npos) {
         continue;
       }
-      const Accuracy accuracy = run_case(test_case, handle, stream);
-      ++executed;
-      std::cout << test_case.name
-                << ": FlagDNN Graph vs direct muDNN Binary sequence PASS"
-                << " max_abs=" << accuracy.maximum_absolute
-                << " max_rel=" << accuracy.maximum_relative << '\n';
+      try {
+        const Accuracy accuracy = run_case(test_case, handle, stream);
+        ++executed;
+        std::cout << test_case.name
+                  << ": FlagDNN Graph vs direct muDNN Binary sequence PASS"
+                  << " max_abs=" << accuracy.maximum_absolute
+                  << " max_rel=" << accuracy.maximum_relative << '\n';
+      } catch (const mv::ReferenceUnsupported& error) {
+        ++skipped;
+        mv::report_skip(test_case.name, error);
+      }
     }
-    if (executed == 0) {
+    if (executed + skipped == 0) {
       throw std::runtime_error(
           "FLAGDNN_COMPOSITE_CASE matched no AddSquare cases");
     }
-    std::cout << "FLAGDNN_ADD_SQUARE_FUNCTIONAL: PASS cases=" << executed
-              << " executed=" << executed << " skipped=0\n";
-    return 0;
+    return mv::report_cases("FLAGDNN_ADD_SQUARE_FUNCTIONAL", executed,
+                            skipped);
   } catch (const std::exception& error) {
     std::cerr << "FLAGDNN_ADD_SQUARE_FUNCTIONAL_FAILED: "
               << error.what() << '\n';
@@ -378,27 +395,31 @@ int run_conv_bias_relu_functional_test(
     handle.set_compiler(argv[1], argv[2], cache.path().string());
     const char* filter = std::getenv("FLAGDNN_COMPOSITE_CASE");
     std::size_t executed = 0;
+    std::size_t skipped = 0;
     for (const ConvBiasReluTestCase& test_case : cases) {
       if (filter != nullptr && filter[0] != '\0' &&
           test_case.name.find(filter) == std::string::npos) {
         continue;
       }
-      const Accuracy accuracy = run_case(test_case, handle, stream);
-      ++executed;
-      std::cout << test_case.name
-                << ": FlagDNN Graph vs direct muDNN "
-                   "Convolution/Binary/Unary sequence PASS"
-                << " max_abs=" << accuracy.maximum_absolute
-                << " max_rel=" << accuracy.maximum_relative << '\n';
+      try {
+        const Accuracy accuracy = run_case(test_case, handle, stream);
+        ++executed;
+        std::cout << test_case.name
+                  << ": FlagDNN Graph vs direct muDNN "
+                     "Convolution/Binary/Unary sequence PASS"
+                  << " max_abs=" << accuracy.maximum_absolute
+                  << " max_rel=" << accuracy.maximum_relative << '\n';
+      } catch (const mv::ReferenceUnsupported& error) {
+        ++skipped;
+        mv::report_skip(test_case.name, error);
+      }
     }
-    if (executed == 0) {
+    if (executed + skipped == 0) {
       throw std::runtime_error(
           "FLAGDNN_COMPOSITE_CASE matched no ConvBiasRelu cases");
     }
-    std::cout
-        << "FLAGDNN_CONV_BIAS_RELU_FUNCTIONAL: PASS cases=" << executed
-        << " executed=" << executed << " skipped=0\n";
-    return 0;
+    return mv::report_cases("FLAGDNN_CONV_BIAS_RELU_FUNCTIONAL", executed,
+                            skipped);
   } catch (const std::exception& error) {
     std::cerr << "FLAGDNN_CONV_BIAS_RELU_FUNCTIONAL_FAILED: "
               << error.what() << '\n';

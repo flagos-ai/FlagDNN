@@ -149,6 +149,13 @@ function(flagdnn_mthreads_resolve_triton_jit out_prefix)
       "validated Torch CMake package disappeared: ${Torch_DIR}")
   endif()
   set(MUSA_HOME "${MTHREADS_JIT_MUSA_ROOT}")
+  # Upstream build-tree exports use source-side FindTorch and a build-local fmt.
+  if(EXISTS "${_config_dir}/CMakeCache.txt")
+    list(PREPEND CMAKE_MODULE_PATH "${_reported_prefix}/cmake")
+    list(PREPEND CMAKE_PREFIX_PATH "${_config_dir}/_deps/fmt-build")
+  endif()
+  # A caller's generic TritonJIT_DIR must not override this backend's selection.
+  set(TritonJIT_DIR "${_config_dir}")
   find_package(
     TritonJIT 0.1.0 CONFIG REQUIRED
     PATHS "${_config_dir}"
@@ -157,12 +164,15 @@ function(flagdnn_mthreads_resolve_triton_jit out_prefix)
     message(FATAL_ERROR
       "TritonJIT backend must be MUSA, got '${TritonJIT_BACKEND}'")
   endif()
-  if(NOT TARGET TritonJIT::triton_jit)
-    message(FATAL_ERROR
-      "TritonJIT package does not export TritonJIT::triton_jit")
+  if(TARGET TritonJIT::triton_jit)
+    set(_jit_target TritonJIT::triton_jit)
+  elseif(TARGET triton_jit)
+    set(_jit_target triton_jit)
+  else()
+    message(FATAL_ERROR "TritonJIT package does not export a triton_jit target")
   endif()
   _flagdnn_mthreads_imported_location(
-    _exported_library TritonJIT::triton_jit)
+    _exported_library "${_jit_target}")
   if(NOT _exported_library STREQUAL _reported_library)
     message(FATAL_ERROR
       "TritonJIT imported target differs from environment identity: "
@@ -171,7 +181,7 @@ function(flagdnn_mthreads_resolve_triton_jit out_prefix)
 
   get_target_property(
     _jit_include_directories
-    TritonJIT::triton_jit
+    "${_jit_target}"
     INTERFACE_INCLUDE_DIRECTORIES)
   if(NOT _jit_include_directories)
     message(FATAL_ERROR

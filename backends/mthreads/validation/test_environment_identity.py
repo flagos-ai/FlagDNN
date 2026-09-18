@@ -223,6 +223,48 @@ class EnvironmentContract(unittest.TestCase):
             environment_identity.validate_environment(self.valid_document()), []
         )
 
+    def build_tree_document(self) -> dict[str, object]:
+        document = self.valid_document()
+        build_root = self.root / "jit-build"
+        build_root.mkdir()
+        resources = document["resources"]
+        resources["triton_jit_build_root"] = _directory_record(build_root)
+        for name in ("triton_jit", "triton_jit_config"):
+            old_record = resources[name]
+            original = Path(old_record["realpath"])
+            destination = build_root / original.name
+            destination.write_bytes(original.read_bytes())
+            resources[name] = {**old_record, **_file_record(destination)}
+        document["identity_sha256"] = environment_identity.identity_sha256(document)
+        return document
+
+    def test_build_tree_can_be_outside_source_prefix(self) -> None:
+        self.assertEqual(
+            environment_identity.validate_environment(self.build_tree_document()), []
+        )
+
+    def test_build_tree_rejects_library_from_another_build(self) -> None:
+        document = self.build_tree_document()
+        outside = self.root / "system" / "libtriton_jit.so"
+        outside.write_bytes(b"wrong-build\n")
+        document["resources"]["triton_jit"].update(_file_record(outside))
+        document["identity_sha256"] = environment_identity.identity_sha256(document)
+        self.assertIn(
+            "TritonJIT resources do not share the selected prefix",
+            environment_identity.validate_environment(document),
+        )
+
+    def test_build_tree_scripts_must_stay_in_source_prefix(self) -> None:
+        document = self.build_tree_document()
+        outside = self.root / "jit-build" / "gen_ssig.py"
+        outside.write_bytes(b"wrong-source\n")
+        document["resources"]["triton_jit_gen_ssig"] = _file_record(outside)
+        document["identity_sha256"] = environment_identity.identity_sha256(document)
+        self.assertIn(
+            "TritonJIT resources do not share the selected prefix",
+            environment_identity.validate_environment(document),
+        )
+
     def test_validation_rejects_non_musa_jit(self) -> None:
         document = self.valid_document()
         document["resources"]["triton_jit"]["backend"] = "CUDA"

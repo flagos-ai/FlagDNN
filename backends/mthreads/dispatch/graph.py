@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
 import math
 import re
 import struct
+from dataclasses import dataclass
 from typing import Any
 
-from .compiler_tensor import (
+from .tensor import (
     MAX_I32,
     MAX_I64,
     TensorSpec,
@@ -26,11 +26,8 @@ from .compiler_tensor import (
     require_object,
 )
 
-
 GRAPH_SCHEMA_VERSION = 3
-TARGET_PATTERN = re.compile(
-    r"^musa-[a-z0-9_.+-]+-cc([0-9]+)-w([0-9]+)$"
-)
+TARGET_PATTERN = re.compile(r"^musa-[a-z0-9_.+-]+-cc([0-9]+)-w([0-9]+)$")
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 _ROOT_KEYS = {
@@ -183,9 +180,9 @@ _CONVOLUTION_FPROP_ATTRIBUTE_KEYS = {
     "stride",
     "dilation",
 }
-_CONVOLUTION_BACKWARD_ATTRIBUTE_KEYS = (
-    _CONVOLUTION_FPROP_ATTRIBUTE_KEYS | {"convolution_mode"}
-)
+_CONVOLUTION_BACKWARD_ATTRIBUTE_KEYS = _CONVOLUTION_FPROP_ATTRIBUTE_KEYS | {
+    "convolution_mode"
+}
 _NORMALIZATION_ATTRIBUTE_KEYS = {
     "epsilon",
     "forward_phase",
@@ -246,6 +243,7 @@ _ATTENTION_ATTRIBUTE_KEYS = {
 _COMPARISON_MODES = frozenset(range(25, 31))
 _LOGICAL_BINARY_MODES = frozenset({31, 32})
 _FLOATING_DATA_TYPES = frozenset({"float32", "float16", "bfloat16"})
+_NUMERIC_DATA_TYPES = _FLOATING_DATA_TYPES | {"int32"}
 _FP8_DATA_TYPES = frozenset({"fp8_e4m3", "fp8_e5m2"})
 _UNBOUNDED_DIAGONAL = 1 << 30
 
@@ -366,6 +364,7 @@ class ParsedMatmulRequest:
     k: int
     external_binding_uids: tuple[int, ...]
     request_sha256: str
+    input_precision: int = 0
 
 
 @dataclass(frozen=True)
@@ -394,6 +393,7 @@ class ParsedConvolutionRequest:
     n_outputs: int
     external_binding_uids: tuple[int, ...]
     request_sha256: str
+    input_precision: int = 0
 
 
 @dataclass(frozen=True)
@@ -634,7 +634,9 @@ def load_request(request_bytes: bytes) -> dict[str, Any]:
             parse_constant=_reject_nonfinite_constant,
         )
     except json.JSONDecodeError as error:
-        raise ValueError(f"compiler request JSON is invalid: {error}") from error
+        raise ValueError(
+            f"compiler request JSON is invalid: {error}"
+        ) from error
     return require_object(value, "request")
 
 
@@ -727,11 +729,7 @@ def _parse_nodes(
         ):
             raise ValueError(f"{context}.type is invalid")
         name = value["name"]
-        if (
-            not isinstance(name, str)
-            or len(name) > 4096
-            or "\x00" in name
-        ):
+        if not isinstance(name, str) or len(name) > 4096 or "\x00" in name:
             raise ValueError(f"{context}.name is invalid")
         compute_data_type = value["compute_data_type"]
         if not isinstance(compute_data_type, str):
@@ -745,6 +743,21 @@ def _parse_nodes(
         attributes = require_object(
             value["attributes"], f"{context}.attributes"
         )
+        # Graph schema 3 now serializes the full pointwise attribute set.
+        # Non-activation binary/ternary nodes may only carry its defaults.
+        if operation in {*_BINARY_OPERATIONS.values(), "binary_select"}:
+            attributes = dict(attributes)
+            for key, default in {
+                "relu_lower_clip": 0.0,
+                "relu_upper_clip": 0.0,
+                "relu_lower_clip_slope": 0.0,
+                "relu_upper_clip_set": False,
+                "swish_beta": 1.0,
+                "elu_alpha": 1.0,
+                "softplus_beta": 1.0,
+            }.items():
+                if key in attributes and attributes.pop(key) != default:
+                    raise ValueError(f"{operation} does not accept {key}")
         for uid in outputs.values():
             if uid in producer_nodes:
                 raise ValueError("graph tensor has more than one producer")
@@ -767,10 +780,7 @@ def _parse_nodes(
             producer = producer_nodes.get(uid)
             if registry[uid].virtual and producer is None:
                 raise ValueError("virtual tensor input has no producer")
-            if (
-                producer is not None
-                and node_positions[producer] >= position
-            ):
+            if producer is not None and node_positions[producer] >= position:
                 raise ValueError(
                     "graph nodes are not in topological execution order"
                 )
@@ -786,7 +796,9 @@ def _float32(value: float, context: str) -> tuple[float, str]:
     try:
         encoded = struct.pack("<f", value)
     except (OverflowError, struct.error) as error:
-        raise ValueError(f"{context} is not representable as float32") from error
+        raise ValueError(
+            f"{context} is not representable as float32"
+        ) from error
     result = struct.unpack("<f", encoded)[0]
     if not isinstance(result, float) or not (abs(result) <= 3.4028235e38):
         raise ValueError(f"{context} is not representable as float32")
@@ -865,24 +877,18 @@ def _parse_envelope(
     )
 
 
-def _require_nonoptional_ports(
-    graph: dict[str, Any], context: str
-) -> None:
+def _require_nonoptional_ports(graph: dict[str, Any], context: str) -> None:
     if any(
         "optional" in port
         for port in (
             *require_list(graph["nodes"][0]["inputs"], f"{context} inputs"),
-            *require_list(
-                graph["nodes"][0]["outputs"], f"{context} outputs"
-            ),
+            *require_list(graph["nodes"][0]["outputs"], f"{context} outputs"),
         )
     ):
         raise ValueError(f"{context} ports must not be optional")
 
 
-def _float32_attribute(
-    attributes: dict[str, Any], name: str
-) -> float:
+def _float32_attribute(attributes: dict[str, Any], name: str) -> float:
     value = require_number(attributes[name], f"pointwise attributes.{name}")
     return _float32(value, f"pointwise attributes.{name}")[0]
 
@@ -961,12 +967,8 @@ def parse_binary_request(
     if any(
         "optional" in port
         for port in (
-            *require_list(
-                graph["nodes"][0]["inputs"], "pointwise inputs"
-            ),
-            *require_list(
-                graph["nodes"][0]["outputs"], "pointwise outputs"
-            ),
+            *require_list(graph["nodes"][0]["inputs"], "pointwise inputs"),
+            *require_list(graph["nodes"][0]["outputs"], "pointwise outputs"),
         )
     ):
         raise ValueError("binary pointwise ports must not be optional")
@@ -990,9 +992,21 @@ def parse_binary_request(
         )
     count = element_count(output)
 
-    require_exact_keys(
-        node.attributes, _BINARY_ATTRIBUTE_KEYS, "pointwise attributes"
-    )
+    attribute_keys = _BINARY_ATTRIBUTE_KEYS
+    if (
+        node.operation == "sigmoid_backward"
+        and "has_upper_clip" in node.attributes
+    ):
+        # Current Graph normalization includes this inactive backward flag.
+        # Sigmoid has no clipping semantics, so only its default is legal.
+        require_integer(
+            node.attributes["has_upper_clip"],
+            "sigmoid backward has_upper_clip",
+            minimum=0,
+            maximum=0,
+        )
+        attribute_keys = attribute_keys | {"has_upper_clip"}
+    require_exact_keys(node.attributes, attribute_keys, "pointwise attributes")
     mode = require_integer(
         node.attributes["mode"], "pointwise attributes.mode"
     )
@@ -1006,12 +1020,10 @@ def parse_binary_request(
         or pointwise_mode != mode
         or node.operation != operation
     ):
-        raise ValueError(
-            "binary pointwise node type and mode do not match"
-        )
+        raise ValueError("binary pointwise node type and mode do not match")
     if mode in _COMPARISON_MODES:
         if (
-            left.data_type not in _FLOATING_DATA_TYPES
+            left.data_type not in _NUMERIC_DATA_TYPES
             or output.data_type != "boolean"
             or node.compute_data_type != "boolean"
         ):
@@ -1029,7 +1041,7 @@ def parse_binary_request(
                 "logical pointwise requires BOOLEAN storage/compute"
             )
     elif (
-        left.data_type not in _FLOATING_DATA_TYPES
+        left.data_type not in _NUMERIC_DATA_TYPES
         or output.data_type != left.data_type
         or node.compute_data_type != "float32"
     ):
@@ -1054,9 +1066,7 @@ def parse_binary_request(
     alpha_value = require_number(
         node.attributes["alpha"], "pointwise attributes.alpha"
     )
-    alpha, alpha_bits = _float32(
-        alpha_value, "pointwise attributes.alpha"
-    )
+    alpha, alpha_bits = _float32(alpha_value, "pointwise attributes.alpha")
     if mode not in {1, 17} and alpha != 1.0:
         raise ValueError("pointwise alpha only applies to ADD or SUB")
     external_uids = tuple(tensor.uid for tensor in ordered_tensors)
@@ -1127,7 +1137,7 @@ def parse_unary_request(
                 "logical NOT requires BOOLEAN storage and compute"
             )
     elif (
-        input_tensor.data_type not in _FLOATING_DATA_TYPES
+        (mode != 5 and input_tensor.data_type not in _FLOATING_DATA_TYPES)
         or output.data_type != input_tensor.data_type
         or node.compute_data_type != "float32"
     ):
@@ -1273,7 +1283,7 @@ def parse_ternary_request(
             "tensors"
         )
     if (
-        a.data_type not in _FLOATING_DATA_TYPES
+        a.data_type not in _NUMERIC_DATA_TYPES
         or b.data_type != a.data_type
         or output.data_type != a.data_type
         or predicate.data_type != "boolean"
@@ -1411,18 +1421,14 @@ def parse_layout_request(
         ):
             raise ValueError("reshape rank or mode metadata is invalid")
         if element_count(input_tensor) != element_count(output):
-            raise ValueError(
-                "reshape input/output element counts must match"
-            )
+            raise ValueError("reshape input/output element counts must match")
     elif node.operation == "transpose":
         require_exact_keys(
             attributes,
             _TRANSPOSE_ATTRIBUTE_KEYS,
             "transpose attributes",
         )
-        rank = require_integer(
-            attributes["rank"], "transpose attributes.rank"
-        )
+        rank = require_integer(attributes["rank"], "transpose attributes.rank")
         if rank != input_rank or output_rank != input_rank:
             raise ValueError("transpose ranks must match")
         permutation = _layout_integer_array(
@@ -1468,8 +1474,7 @@ def parse_layout_request(
             if (
                 start >= limit
                 or limit > input_tensor.dimensions[axis]
-                or output.dimensions[axis]
-                != 1 + (limit - start - 1) // step
+                or output.dimensions[axis] != 1 + (limit - start - 1) // step
             ):
                 raise ValueError("slice range or output shape is invalid")
             contribution = start * input_tensor.strides[axis]
@@ -1555,8 +1560,11 @@ def parse_reduction_request(
             "reduction requires two distinct externally bound tensors"
         )
     if (
-        input_tensor.data_type != output.data_type
-        or input_tensor.data_type not in _FLOATING_DATA_TYPES
+        (
+            output.data_type != input_tensor.data_type
+            and output.data_type != "float32"
+        )
+        or input_tensor.data_type not in _NUMERIC_DATA_TYPES
         or node.compute_data_type != "float32"
     ):
         raise ValueError(
@@ -1628,16 +1636,12 @@ def parse_reduction_request(
         minimum=1,
         maximum=MAX_I32,
     )
-    if (
-        (outer, extent, inner, output_elements)
-        != (
-            expected_outer,
-            expected_extent,
-            expected_inner,
-            expected_output_elements,
-        )
-        or element_count(output) != output_elements
-    ):
+    if (outer, extent, inner, output_elements) != (
+        expected_outer,
+        expected_extent,
+        expected_inner,
+        expected_output_elements,
+    ) or element_count(output) != output_elements:
         raise ValueError(
             "reduction lowered parameters are inconsistent with tensors"
         )
@@ -1719,12 +1723,8 @@ def parse_matmul_request(
         raise ValueError("Matmul batch rank exceeds six")
     batch_dimensions = [1] * batch_rank
     for trailing in range(batch_rank):
-        a_dimension = (
-            a_batch[-1 - trailing] if trailing < len(a_batch) else 1
-        )
-        b_dimension = (
-            b_batch[-1 - trailing] if trailing < len(b_batch) else 1
-        )
+        a_dimension = a_batch[-1 - trailing] if trailing < len(a_batch) else 1
+        b_dimension = b_batch[-1 - trailing] if trailing < len(b_batch) else 1
         if (
             a_dimension != b_dimension
             and a_dimension != 1
@@ -1771,6 +1771,7 @@ def parse_matmul_request(
             tensor.uid for tensor in envelope.ordered_tensors
         ),
         request_sha256=hashlib.sha256(request_bytes).hexdigest(),
+        input_precision=node.attributes.get("input_precision", 0),
     )
 
 
@@ -1781,9 +1782,7 @@ def _convolution_integer_array(
     length: int,
     minimum: int,
 ) -> tuple[int, ...]:
-    values = require_list(
-        attributes[name], f"convolution attributes.{name}"
-    )
+    values = require_list(attributes[name], f"convolution attributes.{name}")
     if len(values) != length:
         raise ValueError(
             f"convolution attributes.{name} length must equal spatial_rank"
@@ -1837,9 +1836,9 @@ def parse_convolution_request(
 
     fprop = operation in {"conv2d_fprop", "convolution_fprop"}
     if fprop:
-        if set(node.inputs) != {"input", "filter"} or set(
-            node.outputs
-        ) != {"output"}:
+        if set(node.inputs) != {"input", "filter"} or set(node.outputs) != {
+            "output"
+        }:
             raise ValueError(
                 "convolution FProp ports must be input, filter, and output"
             )
@@ -1849,18 +1848,14 @@ def parse_convolution_request(
         output_tensor = result
     elif operation == "convolution_dgrad":
         if set(node.inputs) != {"dy", "w"} or set(node.outputs) != {"dx"}:
-            raise ValueError(
-                "convolution DGrad ports must be dy, w, and dx"
-            )
+            raise ValueError("convolution DGrad ports must be dy, w, and dx")
         result = envelope.registry[node.inputs["dy"]]
         filter_tensor = envelope.registry[node.inputs["w"]]
         image = envelope.registry[node.outputs["dx"]]
         output_tensor = image
     else:
         if set(node.inputs) != {"dy", "x"} or set(node.outputs) != {"dw"}:
-            raise ValueError(
-                "convolution WGrad ports must be dy, x, and dw"
-            )
+            raise ValueError("convolution WGrad ports must be dy, x, and dw")
         result = envelope.registry[node.inputs["dy"]]
         image = envelope.registry[node.inputs["x"]]
         filter_tensor = envelope.registry[node.outputs["dw"]]
@@ -1888,9 +1883,11 @@ def parse_convolution_request(
     attributes = node.attributes
     require_exact_keys(
         attributes,
-        _CONVOLUTION_FPROP_ATTRIBUTE_KEYS
-        if fprop
-        else _CONVOLUTION_BACKWARD_ATTRIBUTE_KEYS,
+        (
+            _CONVOLUTION_FPROP_ATTRIBUTE_KEYS
+            if fprop
+            else _CONVOLUTION_BACKWARD_ATTRIBUTE_KEYS
+        ),
         "convolution attributes",
     )
     spatial_rank = require_integer(
@@ -1935,17 +1932,12 @@ def parse_convolution_request(
 
     batch, in_channels = image.dimensions[:2]
     out_channels = filter_tensor.dimensions[0]
-    if (
-        result.dimensions[0] != batch
-        or result.dimensions[1] != out_channels
-    ):
+    if result.dimensions[0] != batch or result.dimensions[1] != out_channels:
         raise ValueError(
             "convolution loss batch or channel dimension is incorrect"
         )
     if in_channels % groups != 0 or out_channels % groups != 0:
-        raise ValueError(
-            "convolution channels must be divisible by groups"
-        )
+        raise ValueError("convolution channels must be divisible by groups")
     in_per_group = in_channels // groups
     out_per_group = out_channels // groups
     if filter_tensor.dimensions[1] != in_per_group:
@@ -2016,6 +2008,7 @@ def parse_convolution_request(
             tensor.uid for tensor in envelope.ordered_tensors
         ),
         request_sha256=hashlib.sha256(request_bytes).hexdigest(),
+        input_precision=node.attributes.get("input_precision", 0),
     )
 
 
@@ -2077,7 +2070,7 @@ def parse_add_square_request(
         )
     if (
         len({tensor.data_type for tensor in tensors}) != 1
-        or left.data_type not in _FLOATING_DATA_TYPES
+        or left.data_type not in _NUMERIC_DATA_TYPES
         or square_node.compute_data_type != "float32"
         or add_node.compute_data_type != "float32"
         or any(
@@ -2118,9 +2111,7 @@ def parse_add_square_request(
         ):
             raise ValueError(f"{context} attributes are invalid")
     referenced_uids = {tensor.uid for tensor in tensors}
-    if referenced_uids != {
-        tensor.uid for tensor in envelope.ordered_tensors
-    }:
+    if referenced_uids != {tensor.uid for tensor in envelope.ordered_tensors}:
         raise ValueError("AddSquare contains an unreferenced tensor")
     return ParsedAddSquareRequest(
         flagdnn_version=envelope.version,
@@ -2163,8 +2154,7 @@ def parse_conv_bias_relu_request(
         or bias_node.operation != "add"
         or set(bias_node.inputs) != {"left", "right"}
         or set(bias_node.outputs) != {"output"}
-        or bias_node.inputs["left"]
-        != convolution_node.outputs["output"]
+        or bias_node.inputs["left"] != convolution_node.outputs["output"]
         or relu_node.operation != "relu"
         or set(relu_node.inputs) != {"input"}
         or set(relu_node.outputs) != {"output"}
@@ -2210,10 +2200,7 @@ def parse_conv_bias_relu_request(
         len({tensor.data_type for tensor in tensors}) != 1
         or image.data_type not in _FLOATING_DATA_TYPES
         or any(len(tensor.dimensions) != 4 for tensor in tensors)
-        or any(
-            not is_physically_dense(tensor)
-            for tensor in tensors
-        )
+        or any(not is_physically_dense(tensor) for tensor in tensors)
         or convolution_node.compute_data_type != "float32"
         or bias_node.compute_data_type != "float32"
         or relu_node.compute_data_type != "float32"
@@ -2318,9 +2305,7 @@ def parse_conv_bias_relu_request(
         "ConvBiasRelu bias alpha",
     )
     if (
-        require_integer(
-            bias_node.attributes["mode"], "ConvBiasRelu bias mode"
-        )
+        require_integer(bias_node.attributes["mode"], "ConvBiasRelu bias mode")
         != 1
         or require_integer(
             bias_node.attributes["pointwise_mode"],
@@ -2343,9 +2328,7 @@ def parse_conv_bias_relu_request(
         "ConvBiasRelu ReLU attributes",
     )
     if (
-        require_integer(
-            relu_node.attributes["mode"], "ConvBiasRelu ReLU mode"
-        )
+        require_integer(relu_node.attributes["mode"], "ConvBiasRelu ReLU mode")
         != 2
         or require_integer(
             relu_node.attributes["n_elements"],
@@ -2432,13 +2415,9 @@ def _normalization_integer_array(
     *,
     length: int,
 ) -> tuple[int, ...]:
-    values = require_list(
-        attributes[name], f"normalization attributes.{name}"
-    )
+    values = require_list(attributes[name], f"normalization attributes.{name}")
     if len(values) != length:
-        raise ValueError(
-            f"normalization attributes.{name} length is invalid"
-        )
+        raise ValueError(f"normalization attributes.{name} length is invalid")
     return tuple(
         require_integer(
             value,
@@ -2553,20 +2532,15 @@ def parse_normalization_request(
             if normalized_start is None:
                 normalized_start = axis
         elif normalized_start is not None and input_dimension != 1:
-            raise ValueError(
-                "normalization scale does not describe a suffix"
-            )
+            raise ValueError("normalization scale does not describe a suffix")
     if normalized_start is None:
         normalized_start = len(x.dimensions) - 1
     normalized_elements = math.prod(x.dimensions[normalized_start:])
     rows = math.prod(x.dimensions[:normalized_start])
-    expected_statistics = (
-        x.dimensions[:normalized_start]
-        + (1,) * (len(x.dimensions) - normalized_start)
+    expected_statistics = x.dimensions[:normalized_start] + (1,) * (
+        len(x.dimensions) - normalized_start
     )
-    statistics = (
-        (mean, inv_variance) if mean is not None else (inv_variance,)
-    )
+    statistics = (mean, inv_variance) if mean is not None else (inv_variance,)
     if (
         math.prod(scale.dimensions) != normalized_elements
         or any(
@@ -2762,9 +2736,7 @@ def parse_batchnorm_request(
     mean = envelope.registry[node.outputs["mean"]]
     inv_variance = envelope.registry[node.outputs["inv_variance"]]
     next_mean = envelope.registry[node.outputs["next_running_mean"]]
-    next_variance = envelope.registry[
-        node.outputs["next_running_variance"]
-    ]
+    next_variance = envelope.registry[node.outputs["next_running_variance"]]
     tensors = (
         x,
         scale,
@@ -2867,8 +2839,7 @@ def parse_batchnorm_inference_request(
     node = envelope.node
     if (
         node.operation != "batchnorm_inference"
-        or set(node.inputs)
-        != {"x", "mean", "inv_variance", "scale", "bias"}
+        or set(node.inputs) != {"x", "mean", "inv_variance", "scale", "bias"}
         or set(node.outputs) != {"y"}
     ):
         raise ValueError("BatchNorm inference Graph ports are invalid")
@@ -2997,9 +2968,7 @@ def parse_attention_request(
             "do",
             "stats",
         ) + (("bias",) if has_bias else ())
-        output_names = ("dq", "dk", "dv") + (
-            ("dbias",) if has_dbias else ()
-        )
+        output_names = ("dq", "dk", "dv") + (("dbias",) if has_dbias else ())
     elif operation == "sdpa_fp8":
         if has_bias or has_dbias:
             raise ValueError("FP8 SDPA does not support bias or dbias")
@@ -3394,6 +3363,24 @@ def parse_compiler_request(
     preliminary = load_request(request_bytes)
     graph = require_object(preliminary.get("graph"), "request.graph")
     nodes = require_list(graph.get("nodes"), "graph.nodes")
+    from .extended import EXTENDED_OPERATIONS, parse_extended_request
+
+    fp8_matmul = (
+        len(nodes) == 1
+        and nodes[0].get("type") == "matmul"
+        and any(
+            t.get("data_type") in {"fp8_e4m3", "fp8_e5m2"}
+            for t in graph.get("tensors", [])
+        )
+    )
+    if len(nodes) == 1 and (
+        nodes[0].get("type") in EXTENDED_OPERATIONS or fp8_matmul
+    ):
+        return parse_extended_request(
+            request_bytes,
+            expected_target=expected_target,
+            expected_identity=expected_identity,
+        )
     if len(nodes) == 3:
         return parse_conv_bias_relu_request(
             request_bytes,

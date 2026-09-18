@@ -498,9 +498,7 @@ def layout_request_fixture(
         slice_strides = [1, 2, 1]
         output_strides = [
             stride * step
-            for stride, step in zip(
-                input_strides, slice_strides, strict=True
-            )
+            for stride, step in zip(input_strides, slice_strides, strict=True)
         ]
     else:
         output_strides = contiguous_strides(output_dimensions)
@@ -671,12 +669,8 @@ def matmul_request_fixture(
     batch_rank = max(len(a_batch), len(b_batch))
     batch_dimensions = [1] * batch_rank
     for trailing in range(batch_rank):
-        a_dimension = (
-            a_batch[-1 - trailing] if trailing < len(a_batch) else 1
-        )
-        b_dimension = (
-            b_batch[-1 - trailing] if trailing < len(b_batch) else 1
-        )
+        a_dimension = a_batch[-1 - trailing] if trailing < len(a_batch) else 1
+        b_dimension = b_batch[-1 - trailing] if trailing < len(b_batch) else 1
         if (
             a_dimension != b_dimension
             and a_dimension != 1
@@ -783,9 +777,7 @@ def convolution_request_fixture(
     for axis in range(spatial_rank):
         effective = (filter_dimensions[axis + 2] - 1) * dilation[axis] + 1
         padded = (
-            image_dimensions[axis + 2]
-            + pre_padding[axis]
-            + post_padding[axis]
+            image_dimensions[axis + 2] + pre_padding[axis] + post_padding[axis]
         )
         if padded < effective:
             fail("convolution fixture filter exceeds padded input")
@@ -919,9 +911,7 @@ def normalization_request_fixture(
             tensors.append(
                 tensor(base_uid + 4, "float32", [2, 3, 1], [3, 1, 1])
             )
-            outputs.append(
-                {"name": "inv_variance", "uid": base_uid + 4}
-            )
+            outputs.append({"name": "inv_variance", "uid": base_uid + 4})
         attributes: JsonObject = {
             "epsilon": 0.0010000000474974513,
             "forward_phase": 2,
@@ -1047,7 +1037,9 @@ def normalization_request_fixture(
     }
 
 
-def set_path(root: JsonObject, path: tuple[str | int, ...], value: Any) -> None:
+def set_path(
+    root: JsonObject, path: tuple[str | int, ...], value: Any
+) -> None:
     current: Any = root
     for component in path[:-1]:
         current = current[component]
@@ -1160,9 +1152,7 @@ def compile_fixture(
     request_path = root / f"{name}-request.json"
     write_json(request_path, request)
     artifact = root / f"{name}-artifact"
-    result = provider.compile_request(
-        request_path, artifact, "libtriton_jit"
-    )
+    result = provider.compile_request(request_path, artifact, "libtriton_jit")
     if (
         result.get("status") != "success"
         or result.get("torch_loaded") is not False
@@ -1252,9 +1242,7 @@ def manifest_matrix(matrix: Matrix) -> None:
         ),
         (
             "manifest target",
-            lambda value: set_path(
-                value, ("target",), "musa-mtgpu-cc32-w32"
-            ),
+            lambda value: set_path(value, ("target",), "musa-mtgpu-cc32-w32"),
         ),
         (
             "manifest engine",
@@ -1292,9 +1280,7 @@ def manifest_matrix(matrix: Matrix) -> None:
         ),
         (
             "binding unknown uid",
-            lambda value: set_path(
-                value, ("external_binding_uids", 2), 999
-            ),
+            lambda value: set_path(value, ("external_binding_uids", 2), 999),
         ),
         (
             "file count",
@@ -1318,9 +1304,7 @@ def manifest_matrix(matrix: Matrix) -> None:
         ),
         (
             "file hash",
-            lambda value: set_path(
-                value, ("files", 0, "sha256"), "0" * 64
-            ),
+            lambda value: set_path(value, ("files", 0, "sha256"), "0" * 64),
         ),
         (
             "program unknown key",
@@ -1328,9 +1312,7 @@ def manifest_matrix(matrix: Matrix) -> None:
         ),
         (
             "program schema",
-            lambda value: set_path(
-                value, ("program", "schema_version"), 2
-            ),
+            lambda value: set_path(value, ("program", "schema_version"), 2),
         ),
         (
             "program stage count",
@@ -1344,9 +1326,7 @@ def manifest_matrix(matrix: Matrix) -> None:
         ),
         (
             "stage id",
-            lambda value: set_path(
-                value, ("program", "stages", 0, "id"), 1
-            ),
+            lambda value: set_path(value, ("program", "stages", 0, "id"), 1),
         ),
         (
             "stage node id",
@@ -1430,9 +1410,7 @@ def manifest_matrix(matrix: Matrix) -> None:
             lambda value: append_path(
                 value,
                 ("program", "stages", 0, "variants"),
-                copy.deepcopy(
-                    value["program"]["stages"][0]["variants"][0]
-                ),
+                copy.deepcopy(value["program"]["stages"][0]["variants"][0]),
             ),
         ),
         (
@@ -1692,9 +1670,7 @@ def request_matrix(matrix: Matrix) -> None:
         ),
         (
             "request target",
-            lambda value: set_path(
-                value, ("target",), "musa-mtgpu-cc32-w32"
-            ),
+            lambda value: set_path(value, ("target",), "musa-mtgpu-cc32-w32"),
         ),
         (
             "request compiler identity",
@@ -1718,9 +1694,7 @@ def request_matrix(matrix: Matrix) -> None:
         ),
         (
             "request non boolean autotune",
-            lambda value: set_path(
-                value, ("build_options", "autotune"), 1
-            ),
+            lambda value: set_path(value, ("build_options", "autotune"), 1),
         ),
         (
             "request graph unknown key",
@@ -1732,9 +1706,7 @@ def request_matrix(matrix: Matrix) -> None:
         ),
         (
             "request duplicate tensor uid",
-            lambda value: set_path(
-                value, ("graph", "tensors", 1, "uid"), 100
-            ),
+            lambda value: set_path(value, ("graph", "tensors", 1, "uid"), 100),
         ),
         (
             "request tensor unknown key",
@@ -1778,15 +1750,11 @@ def request_matrix(matrix: Matrix) -> None:
         ),
         (
             "request node unknown key",
-            lambda value: add_key(
-                value, ("graph", "nodes", 0), "unknown", 1
-            ),
+            lambda value: add_key(value, ("graph", "nodes", 0), "unknown", 1),
         ),
         (
             "request negative node id",
-            lambda value: set_path(
-                value, ("graph", "nodes", 0, "id"), -1
-            ),
+            lambda value: set_path(value, ("graph", "nodes", 0, "id"), -1),
         ),
         (
             "request node operation",
@@ -2577,9 +2545,7 @@ def matmul_manifest_matrix(matrix: Matrix) -> None:
             lambda value: set_path(
                 value,
                 variant + ("full_signature",),
-                value["program"]["stages"][0]["variants"][0][
-                    "full_signature"
-                ]
+                value["program"]["stages"][0]["variants"][0]["full_signature"]
                 + ",0",
             ),
         ),
@@ -2588,8 +2554,7 @@ def matmul_manifest_matrix(matrix: Matrix) -> None:
             lambda value: set_path(
                 value,
                 variant + ("grid", 0),
-                value["program"]["stages"][0]["variants"][0]["grid"][0]
-                + 1,
+                value["program"]["stages"][0]["variants"][0]["grid"][0] + 1,
             ),
         ),
         (
@@ -2597,8 +2562,7 @@ def matmul_manifest_matrix(matrix: Matrix) -> None:
             lambda value: set_path(
                 value,
                 variant + ("grid", 1),
-                value["program"]["stages"][0]["variants"][0]["grid"][1]
-                + 1,
+                value["program"]["stages"][0]["variants"][0]["grid"][1] + 1,
             ),
         ),
         (
@@ -2750,8 +2714,7 @@ def convolution_request_matrix(matrix: Matrix) -> None:
             lambda value: set_path(
                 value,
                 ("graph", "nodes", 0, "attributes", "n_outputs"),
-                value["graph"]["nodes"][0]["attributes"]["n_outputs"]
-                + 1,
+                value["graph"]["nodes"][0]["attributes"]["n_outputs"] + 1,
             ),
         ),
         (
@@ -2830,9 +2793,7 @@ def convolution_manifest_matrix(matrix: Matrix) -> None:
             lambda value: set_path(
                 value,
                 variant + ("full_signature",),
-                value["program"]["stages"][0]["variants"][0][
-                    "full_signature"
-                ]
+                value["program"]["stages"][0]["variants"][0]["full_signature"]
                 + ",0",
             ),
         ),
@@ -2915,9 +2876,7 @@ def dense_dgrad_manifest_matrix(matrix: Matrix) -> None:
         ),
         (
             "dense Dgrad stage count",
-            lambda value: set_path(
-                value, ("program", "stage_count"), 2
-            ),
+            lambda value: set_path(value, ("program", "stage_count"), 2),
         ),
         (
             "dense Dgrad filter pack dependency",
@@ -2980,9 +2939,7 @@ def dense_dgrad_manifest_matrix(matrix: Matrix) -> None:
             lambda value: set_path(
                 value,
                 filter_variant + ("full_signature",),
-                value["program"]["stages"][0]["variants"][0][
-                    "full_signature"
-                ]
+                value["program"]["stages"][0]["variants"][0]["full_signature"]
                 + ",0",
             ),
         ),
@@ -2991,9 +2948,7 @@ def dense_dgrad_manifest_matrix(matrix: Matrix) -> None:
             lambda value: set_path(
                 value,
                 loss_variant + ("full_signature",),
-                value["program"]["stages"][1]["variants"][0][
-                    "full_signature"
-                ]
+                value["program"]["stages"][1]["variants"][0]["full_signature"]
                 + ",0",
             ),
         ),
@@ -3002,9 +2957,7 @@ def dense_dgrad_manifest_matrix(matrix: Matrix) -> None:
             lambda value: set_path(
                 value,
                 mm_variant + ("full_signature",),
-                value["program"]["stages"][2]["variants"][0][
-                    "full_signature"
-                ]
+                value["program"]["stages"][2]["variants"][0]["full_signature"]
                 + ",0",
             ),
         ),
@@ -3100,9 +3053,7 @@ def p5_wgrad_manifest_matrix(matrix: Matrix) -> None:
         ),
         (
             "P5 Wgrad stage count",
-            lambda value: set_path(
-                value, ("program", "stage_count"), 1
-            ),
+            lambda value: set_path(value, ("program", "stage_count"), 1),
         ),
         (
             "P5 Wgrad pack dependency",
@@ -3149,9 +3100,7 @@ def p5_wgrad_manifest_matrix(matrix: Matrix) -> None:
             lambda value: set_path(
                 value,
                 pack_variant + ("full_signature",),
-                value["program"]["stages"][0]["variants"][0][
-                    "full_signature"
-                ]
+                value["program"]["stages"][0]["variants"][0]["full_signature"]
                 + ",0",
             ),
         ),
@@ -3160,9 +3109,7 @@ def p5_wgrad_manifest_matrix(matrix: Matrix) -> None:
             lambda value: set_path(
                 value,
                 mm_variant + ("full_signature",),
-                value["program"]["stages"][1]["variants"][0][
-                    "full_signature"
-                ]
+                value["program"]["stages"][1]["variants"][0]["full_signature"]
                 + ",0",
             ),
         ),
@@ -3238,9 +3185,7 @@ def stem_wgrad_manifest_matrix(matrix: Matrix) -> None:
         ),
         (
             "stem Wgrad stage count",
-            lambda value: set_path(
-                value, ("program", "stage_count"), 1
-            ),
+            lambda value: set_path(value, ("program", "stage_count"), 1),
         ),
         (
             "stem Wgrad split dependency",
@@ -3287,9 +3232,7 @@ def stem_wgrad_manifest_matrix(matrix: Matrix) -> None:
             lambda value: set_path(
                 value,
                 split_variant + ("full_signature",),
-                value["program"]["stages"][0]["variants"][0][
-                    "full_signature"
-                ]
+                value["program"]["stages"][0]["variants"][0]["full_signature"]
                 + ",0",
             ),
         ),
@@ -3298,9 +3241,7 @@ def stem_wgrad_manifest_matrix(matrix: Matrix) -> None:
             lambda value: set_path(
                 value,
                 reduce_variant + ("full_signature",),
-                value["program"]["stages"][1]["variants"][0][
-                    "full_signature"
-                ]
+                value["program"]["stages"][1]["variants"][0]["full_signature"]
                 + ",0",
             ),
         ),
@@ -3352,15 +3293,11 @@ def stem_wgrad_manifest_matrix(matrix: Matrix) -> None:
         ),
         (
             "stem Wgrad split candidate count",
-            lambda value: value["program"]["stages"][0][
-                "variants"
-            ].pop(),
+            lambda value: value["program"]["stages"][0]["variants"].pop(),
         ),
         (
             "stem Wgrad reduce candidate count",
-            lambda value: value["program"]["stages"][1][
-                "variants"
-            ].pop(),
+            lambda value: value["program"]["stages"][1]["variants"].pop(),
         ),
     ]
     for label, mutation in mutations:
@@ -3386,9 +3323,7 @@ def standard_wgrad_manifest_matrix(
         ),
         (
             "standard Wgrad stage count",
-            lambda value: set_path(
-                value, ("program", "stage_count"), 1
-            ),
+            lambda value: set_path(value, ("program", "stage_count"), 1),
         ),
         (
             "standard Wgrad split dependency",
@@ -3435,9 +3370,7 @@ def standard_wgrad_manifest_matrix(
             lambda value: set_path(
                 value,
                 split_variant + ("full_signature",),
-                value["program"]["stages"][0]["variants"][0][
-                    "full_signature"
-                ]
+                value["program"]["stages"][0]["variants"][0]["full_signature"]
                 + ",0",
             ),
         ),
@@ -3446,9 +3379,7 @@ def standard_wgrad_manifest_matrix(
             lambda value: set_path(
                 value,
                 reduce_variant + ("full_signature",),
-                value["program"]["stages"][2]["variants"][0][
-                    "full_signature"
-                ]
+                value["program"]["stages"][2]["variants"][0]["full_signature"]
                 + ",0",
             ),
         ),
@@ -3500,15 +3431,11 @@ def standard_wgrad_manifest_matrix(
         ),
         (
             "standard Wgrad split candidate count",
-            lambda value: value["program"]["stages"][0][
-                "variants"
-            ].pop(),
+            lambda value: value["program"]["stages"][0]["variants"].pop(),
         ),
         (
             "standard Wgrad reduce candidate count",
-            lambda value: value["program"]["stages"][2][
-                "variants"
-            ].pop(),
+            lambda value: value["program"]["stages"][2]["variants"].pop(),
         ),
     ]
     for label, mutation in mutations:
@@ -3531,9 +3458,7 @@ def filesystem_matrix(matrix: Matrix) -> None:
     )
     matrix.reject(
         "extra directory",
-        filesystem_mutation=lambda artifact: (
-            artifact / "extra"
-        ).mkdir(),
+        filesystem_mutation=lambda artifact: (artifact / "extra").mkdir(),
     )
     matrix.reject(
         "mismatched request file",
@@ -3547,9 +3472,7 @@ def filesystem_matrix(matrix: Matrix) -> None:
         source.unlink()
         source.symlink_to(matrix.baseline_artifact / "kernels/binary.py")
 
-    matrix.reject(
-        "source symlink", filesystem_mutation=source_symlink
-    )
+    matrix.reject("source symlink", filesystem_mutation=source_symlink)
     matrix.reject(
         "dangling extra symlink",
         filesystem_mutation=lambda artifact: (
@@ -3558,9 +3481,7 @@ def filesystem_matrix(matrix: Matrix) -> None:
     )
     matrix.reject(
         "empty tuning directory",
-        filesystem_mutation=lambda artifact: (
-            artifact / "tuning"
-        ).mkdir(),
+        filesystem_mutation=lambda artifact: (artifact / "tuning").mkdir(),
     )
 
     def cache_symlink(artifact: Path) -> None:
@@ -3570,27 +3491,21 @@ def filesystem_matrix(matrix: Matrix) -> None:
             matrix.baseline_artifact / "manifest.json"
         )
 
-    matrix.reject(
-        "autotune cache symlink", filesystem_mutation=cache_symlink
-    )
+    matrix.reject("autotune cache symlink", filesystem_mutation=cache_symlink)
 
     def manifest_symlink(artifact: Path) -> None:
         manifest = artifact / "manifest.json"
         manifest.unlink()
         manifest.symlink_to(matrix.baseline_artifact / "manifest.json")
 
-    matrix.reject(
-        "manifest symlink", filesystem_mutation=manifest_symlink
-    )
+    matrix.reject("manifest symlink", filesystem_mutation=manifest_symlink)
 
     def root_symlink(root: Path, artifact: Path) -> Path:
         link = root / f"{artifact.name}-link"
         link.symlink_to(artifact, target_is_directory=True)
         return link
 
-    matrix.reject(
-        "artifact root symlink", artifact_override=root_symlink
-    )
+    matrix.reject("artifact root symlink", artifact_override=root_symlink)
     matrix.reject(
         "duplicate manifest key",
         raw_manifest=lambda payload: payload.replace(
@@ -4272,9 +4187,7 @@ def batchnorm_inference_request_matrix(matrix: Matrix) -> None:
         matrix.reject(label, request_mutation=mutation)
 
 
-def normalization_manifest_matrix(
-    matrix: Matrix, label_prefix: str
-) -> None:
+def normalization_manifest_matrix(matrix: Matrix, label_prefix: str) -> None:
     stage = ("program", "stages", 0)
     variant = stage + ("variants", 0)
     mutations: list[tuple[str, Mutation]] = [
@@ -4313,9 +4226,7 @@ def normalization_manifest_matrix(
             lambda value: set_path(
                 value,
                 variant + ("full_signature",),
-                value["program"]["stages"][0]["variants"][0][
-                    "full_signature"
-                ]
+                value["program"]["stages"][0]["variants"][0]["full_signature"]
                 + ",0",
             ),
         ),
@@ -4324,8 +4235,7 @@ def normalization_manifest_matrix(
             lambda value: set_path(
                 value,
                 variant + ("grid", 0),
-                value["program"]["stages"][0]["variants"][0]["grid"][0]
-                + 1,
+                value["program"]["stages"][0]["variants"][0]["grid"][0] + 1,
             ),
         ),
         (
@@ -4424,9 +4334,7 @@ def attention_manifest_matrix(matrix: Matrix) -> None:
         ),
         (
             "Attention stage count",
-            lambda value: set_path(
-                value, ("program", "stage_count"), 2
-            ),
+            lambda value: set_path(value, ("program", "stage_count"), 2),
         ),
         (
             "Attention stage dependency",
@@ -4457,9 +4365,7 @@ def attention_manifest_matrix(matrix: Matrix) -> None:
             lambda value: set_path(
                 value,
                 ("program", "stages", 1, "variants", 0, "full_signature"),
-                value["program"]["stages"][1]["variants"][0][
-                    "full_signature"
-                ]
+                value["program"]["stages"][1]["variants"][0]["full_signature"]
                 + ",1",
             ),
         ),
@@ -4507,6 +4413,78 @@ def attention_manifest_matrix(matrix: Matrix) -> None:
         matrix.reject(label, manifest_mutation=mutation)
 
 
+def extended_artifact_matrix(provider, root, executable, identity, version):
+    """Validate the new generic program ABI independently in the C++ reader."""
+    valid_count = 0
+    for dtype in ("float32", "float16", "bfloat16"):
+        for strided in (False, True):
+            fixture = request_fixture(
+                identity,
+                version,
+                autotune=False,
+                strided=strided,
+                alpha=1.0,
+                operation="relu_backward",
+                mode=42,
+                data_type=dtype,
+            )
+            fixture["graph"]["nodes"][0]["attributes"] = {
+                "alpha": 1.0,
+                "n_elements": 24,
+                "pointwise_mode": 42,
+                "has_upper_clip": 0,
+            }
+            request, artifact = compile_fixture(
+                provider,
+                root,
+                f"extended-{dtype}-{strided}",
+                fixture,
+            )
+            run_parser(executable, request, artifact, valid=True)
+            valid_count += 1
+    matrix = Matrix(root, executable, request, artifact)
+
+    def reject(label, path, key, value):
+        def mutate(manifest):
+            selected = manifest
+            for component in path:
+                selected = selected[component]
+            selected[key] = value
+
+        matrix.reject("extended " + label, manifest_mutation=mutate)
+
+    stage = ("program", "stages", 0)
+    variant = (*stage, "variants", 0)
+    argument = (*variant, "arguments")
+    reject("workspace", (), "workspace_size", 0)
+    reject("workspace alignment", (), "workspace_alignment", 128)
+    reject("function", stage, "function", "unregistered_kernel")
+    reject("dependency cycle", stage, "dependencies", [0])
+    reject("autotune", (*stage, "autotune"), "enabled", True)
+    reject("zero grid", variant, "grid", [0, 1, 1])
+    reject("oversized grid", variant, "grid", [1, 65536, 1])
+    reject("warps", variant, "num_warps", 8)
+    reject("stages", variant, "num_stages", 2)
+    reject("source path", variant, "source", "../activation_backward.py")
+    reject("pointer dtype", variant, "full_signature", "*fp32:16,i32,1")
+    reject("tensor uid", (*argument, 0), "uid", 999)
+    reject("argument name", (*argument, 0), "semantic_name", "other_ptr")
+    reject("scalar value", (*argument, 3), "scalar_bits", "00000000")
+    matrix.reject(
+        "extended missing argument",
+        manifest_mutation=lambda m: m["program"]["stages"][0]["variants"][0][
+            "arguments"
+        ].pop(),
+    )
+    matrix.reject(
+        "extended argument order",
+        manifest_mutation=lambda m: m["program"]["stages"][0]["variants"][0][
+            "arguments"
+        ].reverse(),
+    )
+    return valid_count, matrix.count
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--provider", type=Path, required=True)
@@ -4539,14 +4517,17 @@ def main() -> int:
         sys.path.pop(0)
     if Path(provider.__file__).resolve() != provider_path:
         fail("provider loader selected a different mthreads compiler")
-    identity = provider.compiler_identity(
-        TARGET, "libtriton_jit"
-    )["identity_sha256"]
+    identity = provider.compiler_identity(TARGET, "libtriton_jit")[
+        "identity_sha256"
+    ]
 
     with tempfile.TemporaryDirectory(
         prefix="flagdnn-mthreads-artifact-contract-"
     ) as temporary:
         root = Path(temporary)
+        extended_valid, extended_rejected = extended_artifact_matrix(
+            provider, root, executable, identity, arguments.flagdnn_version
+        )
         dense_request, dense_artifact = compile_fixture(
             provider,
             root,
@@ -4571,12 +4552,8 @@ def main() -> int:
                 alpha=0.1,
             ),
         )
-        run_parser(
-            executable, dense_request, dense_artifact, valid=True
-        )
-        run_parser(
-            executable, strided_request, strided_artifact, valid=True
-        )
+        run_parser(executable, dense_request, dense_artifact, valid=True)
+        run_parser(executable, strided_request, strided_artifact, valid=True)
         valid_binary_requests = {
             "sub-alpha": request_fixture(
                 identity,
@@ -4632,11 +4609,59 @@ def main() -> int:
                 data_type="bfloat16",
             ),
         }
+        normalized_sigmoid = copy.deepcopy(
+            valid_binary_requests["sigmoid-backward"]
+        )
+        normalized_sigmoid["graph"]["nodes"][0]["attributes"][
+            "has_upper_clip"
+        ] = 0
+        valid_binary_requests["sigmoid-backward-normalized"] = (
+            normalized_sigmoid
+        )
+        sigmoid_rejected = 0
         for name, request in valid_binary_requests.items():
             request_path, artifact = compile_fixture(
                 provider, root, name, request
             )
             run_parser(executable, request_path, artifact, valid=True)
+            if name == "sigmoid-backward-normalized":
+                sigmoid_matrix = Matrix(
+                    root, executable, request_path, artifact
+                )
+                for bad_clip in (1, False, "0"):
+
+                    def mutate(value, replacement=bad_clip):
+                        set_path(
+                            value,
+                            (
+                                "graph",
+                                "nodes",
+                                0,
+                                "attributes",
+                                "has_upper_clip",
+                            ),
+                            replacement,
+                        )
+
+                    invalid = copy.deepcopy(request)
+                    mutate(invalid)
+                    try:
+                        provider.parse_compiler_request(
+                            json.dumps(invalid).encode(),
+                            expected_target=TARGET,
+                            expected_identity=identity,
+                        )
+                    except ValueError:
+                        pass
+                    else:
+                        fail(
+                            "compiler accepted an invalid Sigmoid backward clip flag"
+                        )
+                    sigmoid_matrix.reject(
+                        "sigmoid backward clip " + repr(bad_clip),
+                        request_mutation=mutate,
+                    )
+                sigmoid_rejected = sigmoid_matrix.count
         valid_unary_requests = {
             "unary-relu": unary_request_fixture(
                 identity,
@@ -4733,6 +4758,26 @@ def main() -> int:
                 data_type="float16",
             ),
         }
+        sparse_slice = copy.deepcopy(
+            valid_layout_requests["layout-slice-float16"]
+        )
+        sparse_slice["graph"]["tensors"][0].update(
+            dimensions=[3, 5, 7], strides=[35, 7, 1]
+        )
+        sparse_slice["graph"]["tensors"][1].update(
+            dimensions=[2, 3, 3], strides=[35, 14, 2]
+        )
+        sparse_slice["graph"]["nodes"][0]["attributes"].update(
+            n_elements=18,
+            input_dimensions=[3, 5, 7],
+            input_strides=[35, 7, 1],
+            output_dimensions=[2, 3, 3],
+            output_strides=[35, 14, 2],
+            starts=[1, 0, 1],
+            limits=[3, 5, 7],
+            slice_strides=[1, 2, 2],
+        )
+        valid_layout_requests["layout-slice-gapped-strides"] = sparse_slice
         valid_layout_artifacts: dict[str, tuple[Path, Path]] = {}
         for name, request in valid_layout_requests.items():
             request_path, artifact = compile_fixture(
@@ -5136,6 +5181,50 @@ def main() -> int:
                 data_type="bfloat16",
             ),
         }
+        for operation in (
+            "convolution_fprop",
+            "convolution_dgrad",
+            "convolution_wgrad",
+        ):
+            for precision in (1, 2):
+                request = convolution_request_fixture(
+                    identity,
+                    arguments.flagdnn_version,
+                    operation=operation,
+                    image_dimensions=[1, 64, 40, 40],
+                    filter_dimensions=[128, 64, 3, 3],
+                    pre_padding=[1, 1],
+                    post_padding=[1, 1],
+                    stride=[2, 2],
+                    dilation=[1, 1],
+                    data_type="float32",
+                )
+                request["graph"]["nodes"][0]["attributes"][
+                    "input_precision"
+                ] = precision
+                valid_convolution_requests[
+                    f"{operation}-precision-{precision}"
+                ] = request
+        for operation in ("convolution_dgrad", "convolution_wgrad"):
+            for precision in (1, 2):
+                request = convolution_request_fixture(
+                    identity,
+                    arguments.flagdnn_version,
+                    operation=operation,
+                    image_dimensions=[2, 8, 16, 16],
+                    filter_dimensions=[16, 8, 3, 3],
+                    pre_padding=[1, 1],
+                    post_padding=[1, 1],
+                    stride=[1, 1],
+                    dilation=[1, 1],
+                    data_type="float32",
+                )
+                request["graph"]["nodes"][0]["attributes"][
+                    "input_precision"
+                ] = precision
+                valid_convolution_requests[
+                    f"{operation}-generic-precision-{precision}"
+                ] = request
         valid_convolution_artifacts: dict[str, tuple[Path, Path]] = {}
         for name, request in valid_convolution_requests.items():
             request_path, artifact = compile_fixture(
@@ -5143,6 +5232,23 @@ def main() -> int:
             )
             run_parser(executable, request_path, artifact, valid=True)
             valid_convolution_artifacts[name] = (request_path, artifact)
+            precision = request["graph"]["nodes"][0]["attributes"].get(
+                "input_precision", 0
+            )
+            manifest = json.loads((artifact / "manifest.json").read_text())
+            if precision:
+                for stage in manifest["program"]["stages"]:
+                    if stage["function"] in {
+                        "conv_dgrad_nd_kernel",
+                        "conv_wgrad_nd_kernel",
+                    }:
+                        for variant in stage["variants"]:
+                            if variant["full_signature"].split(",")[39] != str(
+                                int(precision == 2)
+                            ):
+                                fail(
+                                    "explicit backward convolution precision was overwritten"
+                                )
         valid_add_square_requests = {
             "add-square-fp32": add_square_request_fixture(
                 identity, arguments.flagdnn_version
@@ -5269,9 +5375,7 @@ def main() -> int:
         (core_artifact / "request.json").write_bytes(
             dense_request.read_bytes()
         )
-        run_parser(
-            executable, dense_request, core_artifact, valid=True
-        )
+        run_parser(executable, dense_request, core_artifact, valid=True)
 
         cache_artifact = root / "cache-layout-artifact"
         shutil.copytree(dense_artifact, cache_artifact)
@@ -5279,9 +5383,7 @@ def main() -> int:
         (cache_artifact / "tuning/stage-0.json").write_text(
             "{}\n", encoding="utf-8"
         )
-        run_parser(
-            executable, dense_request, cache_artifact, valid=True
-        )
+        run_parser(executable, dense_request, cache_artifact, valid=True)
 
         matrix = Matrix(
             root,
@@ -5298,9 +5400,9 @@ def main() -> int:
         )
         matrix.reject("malformed context target", target="invalid")
 
-        ternary_request_path, ternary_artifact = (
-            valid_ternary_artifacts["ternary-binary-select"]
-        )
+        ternary_request_path, ternary_artifact = valid_ternary_artifacts[
+            "ternary-binary-select"
+        ]
         ternary_matrix = Matrix(
             root,
             executable,
@@ -5320,9 +5422,9 @@ def main() -> int:
         )
         layout_request_matrix(layout_matrix)
 
-        reduction_request_path, reduction_artifact = (
-            valid_reduction_artifacts["reduction-avg-3d-autotune"]
-        )
+        reduction_request_path, reduction_artifact = valid_reduction_artifacts[
+            "reduction-avg-3d-autotune"
+        ]
         reduction_matrix = Matrix(
             root,
             executable,
@@ -5357,9 +5459,7 @@ def main() -> int:
         convolution_manifest_matrix(convolution_matrix)
 
         dense_dgrad_request_path, dense_dgrad_artifact = (
-            valid_convolution_artifacts[
-                "convolution-dgrad-dense-stride2-fp16"
-            ]
+            valid_convolution_artifacts["convolution-dgrad-dense-stride2-fp16"]
         )
         dense_dgrad_matrix = Matrix(
             root,
@@ -5402,11 +5502,9 @@ def main() -> int:
         )
         standard_wgrad_manifest_matrix(standard_matrix)
 
-        nd_wgrad_request_path, nd_wgrad_artifact = (
-            valid_convolution_artifacts[
-                "convolution-wgrad-nd-1d-fp16-autotune"
-            ]
-        )
+        nd_wgrad_request_path, nd_wgrad_artifact = valid_convolution_artifacts[
+            "convolution-wgrad-nd-1d-fp16-autotune"
+        ]
         nd_wgrad_matrix = Matrix(
             root,
             executable,
@@ -5430,9 +5528,7 @@ def main() -> int:
         add_square_manifest_matrix(add_square_matrix)
 
         conv_bias_relu_request_path, conv_bias_relu_artifact = (
-            valid_conv_bias_relu_artifacts[
-                "conv-bias-relu-bf16-autotune"
-            ]
+            valid_conv_bias_relu_artifacts["conv-bias-relu-bf16-autotune"]
         )
         conv_bias_relu_matrix = Matrix(
             root,
@@ -5455,9 +5551,9 @@ def main() -> int:
         normalization_request_matrix(layernorm_matrix)
         normalization_manifest_matrix(layernorm_matrix, "LayerNorm")
 
-        rmsnorm_request_path, rmsnorm_artifact = (
-            valid_normalization_artifacts["rmsnorm-bf16-autotune"]
-        )
+        rmsnorm_request_path, rmsnorm_artifact = valid_normalization_artifacts[
+            "rmsnorm-bf16-autotune"
+        ]
         rmsnorm_matrix = Matrix(
             root,
             executable,
@@ -5496,9 +5592,9 @@ def main() -> int:
             batchnorm_inference_matrix, "BatchNorm inference"
         )
 
-        attention_request_path, attention_artifact = (
-            valid_attention_artifacts["sdpa_fp8_backward"]
-        )
+        attention_request_path, attention_artifact = valid_attention_artifacts[
+            "sdpa_fp8_backward"
+        ]
         attention_matrix = Matrix(
             root,
             executable,
@@ -5521,6 +5617,7 @@ def main() -> int:
                 {
                     "valid_cases": (
                         4
+                        + extended_valid
                         + len(valid_binary_requests)
                         + len(valid_unary_requests)
                         + len(valid_ternary_requests)
@@ -5534,7 +5631,9 @@ def main() -> int:
                         + len(valid_attention_requests)
                     ),
                     "rejected_mutations": (
-                        matrix.count
+                        sigmoid_rejected
+                        + extended_rejected
+                        + matrix.count
                         + ternary_matrix.count
                         + layout_matrix.count
                         + reduction_matrix.count
@@ -5552,7 +5651,10 @@ def main() -> int:
                         + 1
                     ),
                     "parser_processes": (
-                        matrix.count
+                        sigmoid_rejected
+                        + extended_valid
+                        + extended_rejected
+                        + matrix.count
                         + ternary_matrix.count
                         + layout_matrix.count
                         + reduction_matrix.count

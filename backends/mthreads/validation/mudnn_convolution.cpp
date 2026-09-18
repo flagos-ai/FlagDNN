@@ -555,12 +555,12 @@ struct MudnnConvolutionOperation::Impl {
                 ? 1
                 : static_cast<int>(descriptor.groups)),
         "muDNN Convolution::SetGroups");
-    check_mudnn(
-        convolution.SetComputeMode(
-            descriptor.image.data_type == FLAGDNN_DATA_FLOAT32
-                ? musa::dnn::Convolution::ComputeMode::SCALAR
-                : musa::dnn::Convolution::ComputeMode::TENSOR),
-        "muDNN Convolution::SetComputeMode");
+    check_mudnn(convolution.SetComputeMode(
+                    (descriptor.image.data_type == FLAGDNN_DATA_FLOAT32 &&
+                     descriptor.input_precision != 2)
+                        ? musa::dnn::Convolution::ComputeMode::SCALAR
+                        : musa::dnn::Convolution::ComputeMode::TENSOR),
+                "muDNN Convolution::SetComputeMode");
 
     if (explicit_padding) {
       const std::vector<int> padding = mudnn_padding(descriptor);
@@ -635,6 +635,14 @@ struct MudnnConvolutionOperation::Impl {
             convolution.GetRecommendForwardAlgorithm(
                 handle, forward_algorithm, result, image, filter),
             "muDNN Convolution::GetRecommendForwardAlgorithm");
+        // muDNN 3.1.5 can recommend DIRECT for grouped IEEE FP32 even
+        // though Run rejects that configuration. IMPLICIT_GEMM supports it.
+        if (descriptor.image.data_type == FLAGDNN_DATA_FLOAT32 &&
+            descriptor.input_precision != 2 && descriptor.groups > 1 &&
+            forward_algorithm == musa::dnn::Convolution::Algorithm::DIRECT) {
+          forward_algorithm =
+              musa::dnn::Convolution::Algorithm::IMPLICIT_GEMM;
+        }
         check_mudnn(
             convolution.GetForwardWorkspaceSize(
                 handle,

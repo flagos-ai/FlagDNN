@@ -27,6 +27,12 @@ void check_mudnn(
   if (status == musa::dnn::Status::SUCCESS) {
     return;
   }
+  if (status == musa::dnn::Status::NOT_SUPPORTED ||
+      status == musa::dnn::Status::ARCH_MISMATCH) {
+    throw ReferenceUnsupported(std::string(operation) +
+                               " returned muDNN status " +
+                               std::to_string(static_cast<int>(status)));
+  }
   throw std::runtime_error(
       std::string(operation) + " failed with muDNN status " +
       std::to_string(static_cast<int>(status)));

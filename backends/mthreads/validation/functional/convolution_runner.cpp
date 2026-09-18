@@ -1,12 +1,5 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
-#include "common/convolution.hpp"
-
-#include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
-#include "backends/mthreads/validation/musa_driver.hpp"
-
-#include <flagdnn/flagdnn.hpp>
-
 #include <unistd.h>
 
 #include <algorithm>
@@ -15,6 +8,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <flagdnn/flagdnn.hpp>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -24,6 +18,11 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
+#include "backends/mthreads/validation/musa_driver.hpp"
+#include "backends/mthreads/validation/paired_timing.hpp"
+#include "common/convolution.hpp"
 
 namespace flagdnn::testing {
 namespace {
@@ -291,6 +290,10 @@ Accuracy run_case(const ConvolutionTestCase& test_case,
   }
   trace_case(test_case, "reference-enqueue-begin");
   enqueue(*reference, reference_state, stream);
+  mv::timing::paired(
+      test_case.name, stream,
+      [&] { enqueue(*production, production_state, stream); },
+      [&] { enqueue(*reference, reference_state, stream); });
   trace_case(test_case, "reference-enqueue-end");
   if (trace_enabled()) {
     trace_case(test_case, "reference-synchronize-begin");
@@ -352,6 +355,7 @@ int run_convolution_functional_test(
 
     const char* filter = std::getenv("FLAGDNN_CONVOLUTION_CASE");
     std::size_t executed = 0;
+    std::size_t skipped = 0;
     for (const ConvolutionTestCase& test_case : cases) {
       if (test_case.direction != expected_direction) {
         throw std::invalid_argument(
@@ -361,23 +365,25 @@ int run_convolution_functional_test(
           test_case.name.find(filter) == std::string::npos) {
         continue;
       }
-      const Accuracy accuracy = run_case(test_case, handle, stream);
-      ++executed;
-      std::cout
-          << test_case.name
-          << ": FlagDNN Graph vs direct muDNN Convolution "
-          << operation_name(test_case.direction)
-          << " PASS max_abs=" << accuracy.maximum_absolute
-          << " max_rel=" << accuracy.maximum_relative << std::endl;
+      try {
+        const Accuracy accuracy = run_case(test_case, handle, stream);
+        ++executed;
+        std::cout << test_case.name
+                  << ": FlagDNN Graph vs direct muDNN Convolution "
+                  << operation_name(test_case.direction)
+                  << " PASS max_abs=" << accuracy.maximum_absolute
+                  << " max_rel=" << accuracy.maximum_relative << std::endl;
+      } catch (const mv::ReferenceUnsupported& error) {
+        ++skipped;
+        mv::report_skip(test_case.name, error);
+      }
     }
-    if (executed == 0) {
+    if (executed + skipped == 0) {
       throw std::runtime_error(
           "FLAGDNN_CONVOLUTION_CASE matched no MThreads cases");
     }
-    std::cout << "FLAGDNN_CONVOLUTION_FUNCTIONAL: PASS cases="
-              << executed << " executed=" << executed
-              << " skipped=0" << std::endl;
-    return 0;
+    return mv::report_cases("FLAGDNN_CONVOLUTION_FUNCTIONAL", executed,
+                            skipped);
   } catch (const std::exception& error) {
     std::cerr << "FLAGDNN_CONVOLUTION_FUNCTIONAL_FAILED: "
               << error.what() << '\n';
