@@ -64,6 +64,7 @@ acdnnDataType_t backend_data_type(flagdnnDataType_t data_type,
                                    bool fp8_storage_bytes = false) {
   switch (data_type) {
     case FLAGDNN_DATA_INT32:
+      return ACDNN_DATA_INT32;
     case FLAGDNN_DATA_FP8_E8M0:
       throw std::invalid_argument(
           "THead validation does not support INT32 or E8M0 here");
@@ -121,6 +122,9 @@ bool valid_tensor_types(
              fp8(specification.output.data_type)));
   }
   if (specification.mode == ACDNN_POINTWISE_IDENTITY_FWD) {
+    if (specification.inputs.size() == 1 &&
+        specification.inputs[0].data_type == FLAGDNN_DATA_INT32)
+      return specification.output.data_type == FLAGDNN_DATA_FLOAT32;
     return specification.inputs.size() == 1 &&
            (is_floating(specification.inputs[0].data_type) ||
             specification.inputs[0].data_type == FLAGDNN_DATA_BOOLEAN) &&
@@ -327,6 +331,8 @@ class AcdnnBackendPointwiseSegment final
         check_driver(cuMemsetD16(constant_numerator_.address(), one, elements),
                      "cuMemsetD16(acDNN reciprocal numerator)");
       }
+      check_driver(cuStreamSynchronize(nullptr),
+                   "acDNN reciprocal numerator ready");
     } else {
       build_tensor_descriptor(input_, specification_.inputs[0],
                               specification_.fp8_storage_bytes);
@@ -363,7 +369,8 @@ class AcdnnBackendPointwiseSegment final
                    ACDNN_TYPE_BACKEND_DESCRIPTOR, 1, &pointwise,
                    "acdnnBackendSetAttribute(operation pointwise)");
     acdnnBackendDescriptor_t second_input = second_input_.get();
-    if (specification_.mode == ACDNN_POINTWISE_SIGMOID_BWD) {
+    if (specification_.mode >= ACDNN_POINTWISE_RELU_BWD &&
+        specification_.mode <= ACDNN_POINTWISE_GELU_APPROX_TANH_BWD) {
       operation_.set(ACDNN_ATTR_OPERATION_POINTWISE_XDESC,
                      ACDNN_TYPE_BACKEND_DESCRIPTOR, 1, &second_input,
                      "acdnnBackendSetAttribute(operation backward input)");
@@ -523,6 +530,7 @@ class AcdnnBackendPointwiseSegment final
       pointwise_.set(name, ACDNN_TYPE_DOUBLE, 1, &value, description);
     };
     switch (specification_.mode) {
+      case ACDNN_POINTWISE_RELU_BWD:
       case ACDNN_POINTWISE_RELU_FWD:
       case ACDNN_POINTWISE_LEAKYRELU_FWD:
       case ACDNN_POINTWISE_CLIP_RELU_FWD:
@@ -536,16 +544,19 @@ class AcdnnBackendPointwiseSegment final
                    specification_.relu_lower_clip_slope,
                    "acdnnBackendSetAttribute(pointwise lower clip slope)");
         break;
+      case ACDNN_POINTWISE_ELU_BWD:
       case ACDNN_POINTWISE_ELU_FWD:
         set_double(ACDNN_ATTR_POINTWISE_ELU_ALPHA,
                    specification_.elu_alpha,
                    "acdnnBackendSetAttribute(pointwise ELU alpha)");
         break;
+      case ACDNN_POINTWISE_SOFTPLUS_BWD:
       case ACDNN_POINTWISE_SOFTPLUS_FWD:
         set_double(ACDNN_ATTR_POINTWISE_SOFTPLUS_BETA,
                    specification_.softplus_beta,
                    "acdnnBackendSetAttribute(pointwise Softplus beta)");
         break;
+      case ACDNN_POINTWISE_SWISH_BWD:
       case ACDNN_POINTWISE_SWISH_FWD:
         set_double(ACDNN_ATTR_POINTWISE_SWISH_BETA,
                    specification_.swish_beta,

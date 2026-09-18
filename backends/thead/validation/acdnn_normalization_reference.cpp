@@ -372,6 +372,8 @@ class AcdnnSuffixNormalization final
         cuMemsetD32(epsilon_.address(), std::bit_cast<std::uint32_t>(epsilon),
                     element_count(test_case_.inv_variance)),
         "cuMemsetD32(acDNN normalization epsilon)");
+    check_driver(cuStreamSynchronize(nullptr),
+                 "acDNN normalization epsilon ready");
   }
 
   [[nodiscard]] std::size_t workspace_size() const noexcept override {

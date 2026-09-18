@@ -11,6 +11,12 @@
 
 namespace flagdnn::validation::thead {
 
+[[nodiscard]] std::vector<std::string> acdnn_ieee_matmul_plan();
+[[nodiscard]] std::unique_ptr<flagdnn::testing::MatmulExecutable>
+make_acdnn_ieee_matmul_reference(
+    const flagdnn::testing::MatmulTestCase &test_case,
+    const CapabilityRecord &capability);
+
 [[nodiscard]] std::unique_ptr<flagdnn::testing::MatmulExecutable>
 make_acdnn_matmul_reference(
     const flagdnn::testing::MatmulTestCase &test_case,

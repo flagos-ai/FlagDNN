@@ -154,7 +154,11 @@ class Codec final : public TestExecutable {
   }
   TestTensor constant(float value) {
     auto result=tensor();check_driver(cuMemsetD32(buffers_.at(result.uid).address(),
-        std::bit_cast<unsigned int>(value),static_cast<std::size_t>(count_)),"FP8 codec constant");return result;
+        std::bit_cast<unsigned int>(value),static_cast<std::size_t>(count_)),"FP8 codec constant");
+    // Device memset can remain queued on the default stream. Consumers use
+    // nonblocking streams, so finish initialization before exposing the tensor.
+    check_driver(cuStreamSynchronize(nullptr), "FP8 codec constant ready");
+    return result;
   }
   void append(std::unique_ptr<TestExecutable> executable,std::vector<std::int64_t> uids) {
     workspace_=std::max(workspace_,executable->workspace_size());

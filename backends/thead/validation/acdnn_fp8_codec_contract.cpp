@@ -15,7 +15,8 @@ namespace tv = flagdnn::validation::thead;
 using flagdnn::testing::TestTensor;
 
 namespace {
-void roundtrip(flagdnnDataType_t dtype, tv::DeviceStream &stream) {
+void roundtrip(flagdnnDataType_t dtype, tv::DeviceStream &stream,
+               std::size_t storage_elements = 0) {
   // Enumerate finite storage codes. The identity property exercises both GPU
   // conversions without introducing a CPU implementation of FP8 arithmetic.
   std::vector<std::uint8_t> codes;
@@ -23,6 +24,12 @@ void roundtrip(flagdnnDataType_t dtype, tv::DeviceStream &stream) {
     if ((dtype == FLAGDNN_DATA_FP8_E4M3 && (code & 127) == 127) ||
         (dtype == FLAGDNN_DATA_FP8_E5M2 && (code & 127) >= 124)) continue;
     codes.push_back(static_cast<std::uint8_t>(code));
+  }
+  if (storage_elements != 0) {
+    const auto finite_codes = codes;
+    codes.resize(storage_elements);
+    for (std::size_t i = 0; i < codes.size(); ++i)
+      codes[i] = finite_codes[i % finite_codes.size()];
   }
   const auto count = static_cast<std::int64_t>(codes.size());
   TestTensor input{1, dtype, {1, 1, count}, {count, count, 1}};
@@ -120,6 +127,10 @@ int main() {
     for (auto dtype : {FLAGDNN_DATA_FP8_E4M3, FLAGDNN_DATA_FP8_E5M2}) {
       roundtrip(dtype, stream);
       rounding(dtype, stream);
+      // Exercise the successive attention storage sizes on a nonblocking
+      // stream; every codec constant must be ready before GPU decoding.
+      roundtrip(dtype, stream, 2048);
+      roundtrip(dtype, stream, 8192);
     }
     std::cout << "PASS acDNN FP8 codec contract\n";
     return 0;

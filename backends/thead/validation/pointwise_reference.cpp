@@ -3,11 +3,6 @@
 
 #include "pointwise_reference.hpp"
 
-#include "acdnn_reference.hpp"
-#include "acdnn_pointwise_dag.hpp"
-#include "backend_pointwise_reference.hpp"
-#include "numeric_types.hpp"
-
 #include <acdnn.h>
 
 #include <algorithm>
@@ -22,6 +17,12 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "acdnn_copy_reference.hpp"
+#include "acdnn_pointwise_dag.hpp"
+#include "acdnn_reference.hpp"
+#include "backend_pointwise_reference.hpp"
+#include "numeric_types.hpp"
 
 namespace flagdnn::validation::thead {
 namespace {
@@ -1143,9 +1144,46 @@ std::unique_ptr<flagdnn::testing::TestExecutable>
 make_acdnn_pointwise_reference(
     const PointwiseReferenceSpecification &specification,
     const CapabilityRecord &capability) {
+  if (specification.mode == FLAGDNN_POINTWISE_IDENTITY &&
+      requires_raw_copy(specification.output.data_type)) {
+    if (capability.status == CapabilityStatus::kUnsupported ||
+        capability.path != ReferencePath::kBackendDescriptor ||
+        capability.reference_plan !=
+            std::vector<std::string>{std::string(kRawCopyPrimitive)} ||
+        specification.inputs.size() != 1 || specification.alpha != 1.0)
+      throw std::invalid_argument("acDNN raw identity capability mismatch");
+    return std::make_unique<AcdnnRawCopy>(specification.inputs[0],
+                                          specification.output);
+  }
   if (!acdnn_pointwise_dag_plan(specification.mode).empty() &&
       capability.reference_plan.size() > 1) {
     return make_acdnn_pointwise_dag(specification, capability);
+  }
+  if (specification.mode >= FLAGDNN_POINTWISE_RELU_BWD &&
+      specification.mode <= FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD) {
+    if (capability.status == CapabilityStatus::kUnsupported ||
+        specification.inputs.size() != 2 || specification.alpha != 1.0) {
+      throw std::invalid_argument("invalid acDNN activation backward contract");
+    }
+    const acdnnPointwiseMode_t modes[] = {ACDNN_POINTWISE_RELU_BWD,
+                                          ACDNN_POINTWISE_TANH_BWD,
+                                          ACDNN_POINTWISE_ELU_BWD,
+                                          ACDNN_POINTWISE_GELU_BWD,
+                                          ACDNN_POINTWISE_SOFTPLUS_BWD,
+                                          ACDNN_POINTWISE_SWISH_BWD,
+                                          ACDNN_POINTWISE_GELU_APPROX_TANH_BWD};
+    return make_acdnn_backend_pointwise_reference(
+        {.mode = modes[specification.mode - FLAGDNN_POINTWISE_RELU_BWD],
+         .inputs = specification.inputs,
+         .output = specification.output,
+         .primitive = "acdnnBackendExecute(activation backward)",
+         .relu_lower_clip = specification.attributes.relu_lower_clip,
+         .relu_upper_clip = specification.attributes.relu_upper_clip,
+         .relu_lower_clip_slope =
+             specification.attributes.relu_lower_clip_slope,
+         .elu_alpha = specification.attributes.elu_alpha,
+         .softplus_beta = specification.attributes.softplus_beta,
+         .swish_beta = specification.attributes.swish_beta});
   }
   const bool leaky_relu =
       specification.mode == FLAGDNN_POINTWISE_RELU_FWD &&

@@ -289,7 +289,8 @@ class AcdnnMatmulSegment final : public flagdnn::testing::MatmulExecutable {
     build_tensor_descriptor(b_, b_specification);
     build_tensor_descriptor(output_, output_specification);
 
-    constexpr acdnnDataType_t kComputeType = ACDNN_DATA_FLOAT;
+    const acdnnDataType_t kComputeType =
+        test_case_.input_precision == 2 ? ACDNN_DATA_TF32 : ACDNN_DATA_FLOAT;
     matmul_.set(ACDNN_ATTR_MATMUL_COMP_TYPE, ACDNN_TYPE_DATA_TYPE, 1,
                 &kComputeType,
                 "acdnnBackendSetAttribute(MatMul compute type)");
@@ -648,6 +649,9 @@ std::unique_ptr<flagdnn::testing::MatmulExecutable>
 make_acdnn_matmul_reference(
     const flagdnn::testing::MatmulTestCase &test_case,
     const CapabilityRecord &capability) {
+  if (test_case.input_precision == 1) {
+    return make_acdnn_ieee_matmul_reference(test_case, capability);
+  }
   if (capability.reference_plan ==
       std::vector<std::string>{std::string(kSegmentedBatchPrimitive)}) {
     return std::make_unique<AcdnnSegmentedBatchMatmul>(test_case,

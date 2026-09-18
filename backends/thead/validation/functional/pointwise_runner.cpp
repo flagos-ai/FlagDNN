@@ -1,22 +1,15 @@
 // Copyright 2026 FlagOS Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-#include "common/pointwise.hpp"
-#include "functional/pointwise_runner_support.hpp"
-
-#include "capability.hpp"
-#include "pointwise_reference.hpp"
-#include "ppu_driver.hpp"
-
 #include <acdnn.h>
 #include <cuda.h>
-#include <flagdnn/flagdnn.hpp>
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
+#include <flagdnn/flagdnn.hpp>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -26,6 +19,13 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "capability.hpp"
+#include "common/pointwise.hpp"
+#include "functional/paired.hpp"
+#include "functional/pointwise_runner_support.hpp"
+#include "pointwise_reference.hpp"
+#include "ppu_driver.hpp"
 
 #ifndef FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG
 #define FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG "capability.json"
@@ -135,6 +135,20 @@ std::string operation_from_mode(flagdnnPointwiseMode_t mode) {
       return "pow";
     case FLAGDNN_POINTWISE_MOD:
       return "mod";
+    case FLAGDNN_POINTWISE_RELU_BWD:
+      return "relu_backward";
+    case FLAGDNN_POINTWISE_TANH_BWD:
+      return "tanh_backward";
+    case FLAGDNN_POINTWISE_ELU_BWD:
+      return "elu_backward";
+    case FLAGDNN_POINTWISE_GELU_BWD:
+      return "gelu_backward";
+    case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
+      return "softplus_backward";
+    case FLAGDNN_POINTWISE_SWISH_BWD:
+      return "swish_backward";
+    case FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD:
+      return "gelu_approx_tanh_backward";
     case FLAGDNN_POINTWISE_SIGMOID_BWD:
       return "sigmoid_backward";
     case FLAGDNN_POINTWISE_RECIPROCAL:
@@ -166,6 +180,9 @@ std::string operation_from_case(const PointwiseTestCase &test_case) {
       test_case.name.starts_with("leaky_relu_")) {
     return "leaky_relu";
   }
+  if (test_case.mode == FLAGDNN_POINTWISE_RELU_BWD &&
+      test_case.name.starts_with("leaky_relu_backward_"))
+    return "leaky_relu_backward";
   return operation_from_mode(test_case.mode);
 }
 
@@ -235,13 +252,22 @@ void run_case(const PointwiseTestCase &test_case, flagdnn::Handle &handle,
               tv::DeviceStream &stream) {
   auto production = build_flagdnn_pointwise(handle, test_case);
   auto reference = build_pointwise_reference(test_case);
+  if (test_case.mode == FLAGDNN_POINTWISE_IDENTITY &&
+      tv::requires_raw_copy(test_case.output.data_type)) {
+    functional::run_raw_copy(test_case.name, test_case.inputs.at(0),
+                             test_case.output, test_case.output, *production,
+                             *reference, stream, false);
+    return;
+  }
 
   std::vector<functional::BoundTensor> inputs;
   inputs.reserve(test_case.inputs.size());
   for (std::size_t index = 0; index < test_case.inputs.size(); ++index) {
     inputs.push_back(functional::make_input_buffer(
         test_case.inputs[index], index, stream.get(),
-        test_case.input_domains.at(index)));
+        test_case.inputs[index].data_type == FLAGDNN_DATA_BOOLEAN
+            ? PointwiseInputDomain::kLogical
+            : test_case.input_domains.at(index)));
   }
   std::vector<functional::BoundTensor> production_outputs;
   production_outputs.push_back(

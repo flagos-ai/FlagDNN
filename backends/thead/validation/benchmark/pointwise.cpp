@@ -170,6 +170,29 @@ build_acdnn_pointwise_benchmark(
     const flagdnn::benchmarking::BenchmarkCase &specification,
     ComparableStatus qualification) {
   using flagdnn::benchmarking::Operation;
+  if (specification.pointwise_mode >= FLAGDNN_POINTWISE_RELU_BWD &&
+      specification.pointwise_mode <= FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD) {
+    if (specification.tensors.size() != 3) {
+      throw std::invalid_argument(
+          "activation backward benchmark arity mismatch");
+    }
+    CapabilityRecord capability;
+    capability.status = CapabilityStatus::kSupported;
+    capability.path = ReferencePath::kBackendDescriptor;
+    capability.constraints = CapabilityConstraints{};
+    if (specification.pointwise_mode == FLAGDNN_POINTWISE_RELU_BWD &&
+        specification.pointwise_attributes.flags != 0) {
+      capability.reference_plan =
+          acdnn_pointwise_dag_plan(specification.pointwise_mode);
+    }
+    return std::make_unique<ExecutableAdapter>(make_acdnn_pointwise_reference(
+        {.mode = specification.pointwise_mode,
+         .inputs = {to_test_tensor(specification.tensors[0]),
+                    to_test_tensor(specification.tensors[1])},
+         .output = to_test_tensor(specification.tensors[2]),
+         .attributes = specification.pointwise_attributes},
+        capability));
+  }
   const auto dag_plan = acdnn_pointwise_dag_plan(specification.pointwise_mode);
   if (specification.operation == Operation::kPointwise && !dag_plan.empty()) {
     const auto mode = specification.pointwise_mode;

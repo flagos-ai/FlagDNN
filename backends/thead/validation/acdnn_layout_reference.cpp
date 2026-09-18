@@ -3,10 +3,6 @@
 
 #include "acdnn_layout_reference.hpp"
 
-#include "acdnn_reference.hpp"
-#include "backend_pointwise_reference.hpp"
-#include "numeric_types.hpp"
-
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -22,6 +18,11 @@
 #include <utility>
 #include <variant>
 #include <vector>
+
+#include "acdnn_copy_reference.hpp"
+#include "acdnn_reference.hpp"
+#include "backend_pointwise_reference.hpp"
+#include "numeric_types.hpp"
 
 namespace flagdnn::validation::thead {
 namespace {
@@ -196,6 +197,8 @@ std::string expected_primitive(flagdnn::testing::LayoutOperation operation) {
   throw std::invalid_argument("unknown THead Layout operation");
 }
 
+constexpr std::string_view kSegmentedTransposePrimitive =
+    "acdnnTransformTensor(transpose-segments,alpha=1,beta=0)";
 constexpr std::string_view kBackendLayoutPrimitive =
     "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)";
 constexpr std::string_view kConvertLayoutInputFp32 =
@@ -211,10 +214,11 @@ class AcdnnLayout final : public flagdnn::testing::LayoutExecutable {
     validate_acdnn_layout_case(test_case_);
     if ((test_case_.input.data_type != FLAGDNN_DATA_FLOAT32 &&
          test_case_.input.data_type != FLAGDNN_DATA_FLOAT16 &&
-         test_case_.input.data_type != FLAGDNN_DATA_BFLOAT16) ||
+         test_case_.input.data_type != FLAGDNN_DATA_BFLOAT16 &&
+         test_case_.input.data_type != FLAGDNN_DATA_BOOLEAN) ||
         test_case_.output.data_type != test_case_.input.data_type) {
       throw std::invalid_argument(
-          "THead acDNN Layout requires matching floating types");
+          "THead acDNN Layout requires matching floating or Boolean types");
     }
     const ReferenceSelection selection = select_reference(capability);
     if (!std::holds_alternative<ReferencePlan>(selection)) {
@@ -222,10 +226,15 @@ class AcdnnLayout final : public flagdnn::testing::LayoutExecutable {
           "unsupported Layout case reached acDNN construction");
     }
     const ReferencePlan &plan = std::get<ReferencePlan>(selection);
+    const bool segmented_transpose =
+        test_case_.operation == flagdnn::testing::LayoutOperation::kTranspose &&
+        plan.primitives ==
+            std::vector<std::string>{std::string(kSegmentedTransposePrimitive)};
     const bool stable =
         plan.path == ReferencePath::kStablePrimitive &&
-        plan.primitives ==
-            std::vector<std::string>{expected_primitive(test_case_.operation)};
+        (segmented_transpose ||
+         plan.primitives == std::vector<std::string>{
+                                expected_primitive(test_case_.operation)});
     const bool backend =
         plan.path == ReferencePath::kBackendDescriptor &&
         plan.primitives ==
@@ -234,6 +243,31 @@ class AcdnnLayout final : public flagdnn::testing::LayoutExecutable {
       throw std::invalid_argument("THead acDNN Layout plan mismatch");
     }
 
+    if (segmented_transpose) {
+      const auto count = element_count(test_case_.output.dimensions);
+      segments_.reserve(count);
+      for (std::size_t output_offset = 0; output_offset < count;
+           ++output_offset) {
+        auto remaining = output_offset;
+        std::size_t input_offset = 0;
+        for (std::size_t axis = test_case_.permutation.size(); axis != 0;
+             --axis) {
+          const auto extent =
+              static_cast<std::size_t>(test_case_.output.dimensions[axis - 1]);
+          const auto input_axis =
+              static_cast<std::size_t>(test_case_.permutation[axis - 1]);
+          input_offset +=
+              (remaining % extent) *
+              static_cast<std::size_t>(test_case_.input.strides[input_axis]);
+          remaining /= extent;
+        }
+        segments_.push_back({input_offset, output_offset});
+      }
+      const std::array<int, 3> scalar{1, 1, 1};
+      input_.set(acdnn_data_type(test_case_.input.data_type), scalar, scalar);
+      output_.set(acdnn_data_type(test_case_.output.data_type), scalar, scalar);
+      return;
+    }
     std::vector<std::int64_t> logical_dimensions;
     std::vector<std::int64_t> logical_input_strides;
     std::vector<std::int64_t> logical_output_strides;
@@ -493,72 +527,78 @@ std::size_t fp32_storage_bytes(
   std::size_t maximum_offset = 0;
   if (tensor.dimensions.empty() ||
       tensor.dimensions.size() != tensor.strides.size()) {
-    throw std::invalid_argument(
-        "converted BF16 Transpose tensor geometry is invalid");
+    throw std::invalid_argument("converted Layout tensor geometry is invalid");
   }
   for (std::size_t axis = 0; axis < tensor.dimensions.size(); ++axis) {
     const std::int64_t dimension = tensor.dimensions[axis];
     const std::int64_t stride = tensor.strides[axis];
     if (dimension <= 0 || stride <= 0) {
       throw std::invalid_argument(
-          "converted BF16 Transpose tensor geometry is invalid");
+          "converted Layout tensor geometry is invalid");
     }
     const std::size_t extent = static_cast<std::size_t>(dimension - 1);
     const std::size_t physical_stride = static_cast<std::size_t>(stride);
     if (physical_stride != 0 &&
         extent >
             std::numeric_limits<std::size_t>::max() / physical_stride) {
-      throw std::overflow_error(
-          "converted BF16 Transpose storage overflows");
+      throw std::overflow_error("converted Layout storage overflows");
     }
     const std::size_t contribution = extent * physical_stride;
     if (maximum_offset >
         std::numeric_limits<std::size_t>::max() - contribution) {
-      throw std::overflow_error(
-          "converted BF16 Transpose storage overflows");
+      throw std::overflow_error("converted Layout storage overflows");
     }
     maximum_offset += contribution;
   }
   if (maximum_offset == std::numeric_limits<std::size_t>::max() ||
       maximum_offset + 1 >
           std::numeric_limits<std::size_t>::max() / sizeof(float)) {
-    throw std::overflow_error(
-        "converted BF16 Transpose storage is too large");
+    throw std::overflow_error("converted Layout storage is too large");
   }
   return (maximum_offset + 1) * sizeof(float);
 }
 
-class AcdnnConvertedBfloat16Transpose final
-    : public flagdnn::testing::LayoutExecutable {
+class AcdnnConvertedLayout final : public flagdnn::testing::LayoutExecutable {
  public:
-  AcdnnConvertedBfloat16Transpose(
-      flagdnn::testing::LayoutTestCase test_case,
-      const CapabilityRecord &capability)
+  AcdnnConvertedLayout(flagdnn::testing::LayoutTestCase test_case,
+                       const CapabilityRecord &capability)
       : test_case_(std::move(test_case)) {
     validate_acdnn_layout_case(test_case_);
+    const bool boolean = test_case_.input.data_type == FLAGDNN_DATA_BOOLEAN;
+    const bool segmented_layout =
+        test_case_.operation == flagdnn::testing::LayoutOperation::kTranspose &&
+        !legacy_acdnn_transpose_descriptor_compatible(
+            test_case_.input.dimensions, test_case_.permutation);
+    const std::string layout_primitive =
+        segmented_layout ? std::string(kSegmentedTransposePrimitive)
+                         : expected_primitive(test_case_.operation);
+    const std::string output_primitive =
+        boolean
+            ? "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output-bool)"
+            : std::string(kConvertLayoutOutputBfloat16);
     const std::vector<std::string> expected_plan = {
-        std::string(kConvertLayoutInputFp32),
-        expected_primitive(flagdnn::testing::LayoutOperation::kTranspose),
-        std::string(kConvertLayoutOutputBfloat16),
-    };
+        std::string(kConvertLayoutInputFp32), layout_primitive,
+        output_primitive};
     const ReferenceSelection selection = select_reference(capability);
-    if (test_case_.operation !=
-            flagdnn::testing::LayoutOperation::kTranspose ||
-        test_case_.input.data_type != FLAGDNN_DATA_BFLOAT16 ||
-        test_case_.output.data_type != FLAGDNN_DATA_BFLOAT16 ||
+    if ((!boolean && (test_case_.operation !=
+                          flagdnn::testing::LayoutOperation::kTranspose ||
+                      test_case_.input.data_type != FLAGDNN_DATA_BFLOAT16)) ||
+        test_case_.output.data_type != test_case_.input.data_type ||
         !std::holds_alternative<ReferencePlan>(selection) ||
         std::get<ReferencePlan>(selection).path !=
             ReferencePath::kBackendDescriptor ||
         std::get<ReferencePlan>(selection).primitives != expected_plan) {
-      throw std::invalid_argument(
-          "converted BF16 Transpose acDNN DAG plan mismatch");
+      throw std::invalid_argument("converted Layout acDNN DAG plan mismatch");
     }
     const std::int64_t maximum_uid =
         std::max(test_case_.input.uid, test_case_.output.uid);
     if (maximum_uid > std::numeric_limits<std::int64_t>::max() - 2) {
-      throw std::overflow_error(
-          "converted BF16 Transpose internal UID overflows");
+      throw std::overflow_error("converted Layout internal UID overflows");
     }
+    // Layout references write a dense output independently of the production
+    // view.
+    test_case_.output.strides =
+        contiguous_strides(test_case_.output.dimensions);
     fp32_input_ = test_case_.input;
     fp32_input_.uid = maximum_uid + 1;
     fp32_input_.data_type = FLAGDNN_DATA_FLOAT32;
@@ -580,8 +620,7 @@ class AcdnnConvertedBfloat16Transpose final
     fp32_case.output = fp32_output_;
     CapabilityRecord transpose_capability = capability;
     transpose_capability.path = ReferencePath::kStablePrimitive;
-    transpose_capability.reference_plan = {
-        expected_primitive(flagdnn::testing::LayoutOperation::kTranspose)};
+    transpose_capability.reference_plan = {layout_primitive};
     transpose_ =
         std::make_unique<AcdnnLayout>(std::move(fp32_case),
                                       transpose_capability);
@@ -589,7 +628,7 @@ class AcdnnConvertedBfloat16Transpose final
         {.mode = ACDNN_POINTWISE_IDENTITY_FWD,
          .inputs = {fp32_output_},
          .output = test_case_.output,
-         .primitive = std::string(kConvertLayoutOutputBfloat16)});
+         .primitive = output_primitive});
     workspace_size_ =
         std::max({input_conversion_->workspace_size(),
                   transpose_->workspace_size(),
@@ -626,7 +665,7 @@ class AcdnnConvertedBfloat16Transpose final
     if (workspace_size != workspace_size_ ||
         (workspace_size != 0 && workspace == nullptr)) {
       throw std::invalid_argument(
-          "converted BF16 Transpose workspace does not match plan");
+          "converted Layout workspace does not match plan");
     }
     const auto pointers = binding_map(bindings);
     const std::array<flagdnnBinding_t, 2> input_bindings = {{
@@ -654,13 +693,13 @@ class AcdnnConvertedBfloat16Transpose final
       if (binding.device_pointer == nullptr ||
           !result.emplace(binding.uid, binding.device_pointer).second) {
         throw std::invalid_argument(
-            "converted BF16 Transpose binding is null or duplicate");
+            "converted Layout binding is null or duplicate");
       }
     }
     if (result.size() != 2 || !result.contains(test_case_.input.uid) ||
         !result.contains(test_case_.output.uid)) {
       throw std::invalid_argument(
-          "converted BF16 Transpose bindings do not match graph");
+          "converted Layout bindings do not match graph");
     }
     return result;
   }
@@ -741,10 +780,18 @@ std::unique_ptr<flagdnn::testing::LayoutExecutable>
 make_acdnn_layout_reference(
     const flagdnn::testing::LayoutTestCase &test_case,
     const CapabilityRecord &capability) {
+  if (requires_raw_copy(test_case.input.data_type)) {
+    validate_acdnn_layout_case(test_case);
+    if (capability.status == CapabilityStatus::kUnsupported ||
+        capability.path != ReferencePath::kBackendDescriptor ||
+        capability.reference_plan !=
+            std::vector<std::string>{std::string(kRawCopyPrimitive)})
+      throw std::invalid_argument("acDNN raw layout capability mismatch");
+    return make_acdnn_raw_layout_reference(test_case);
+  }
   if (capability.path == ReferencePath::kBackendDescriptor &&
       capability.reference_plan.size() > 1) {
-    return std::make_unique<AcdnnConvertedBfloat16Transpose>(
-        test_case, capability);
+    return std::make_unique<AcdnnConvertedLayout>(test_case, capability);
   }
   return std::make_unique<AcdnnLayout>(test_case, capability);
 }

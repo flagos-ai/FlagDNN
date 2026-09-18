@@ -62,7 +62,7 @@ struct CapabilityRecord {
   std::string detail;
 };
 
-// Select this backend's declared cases from the shared, expanding catalog.
+// Require an explicit backend decision for every shared case.
 // Qualification and explicit unsupported records remain backend owned.
 template <typename Case, typename Records>
 std::vector<Case> select_catalog_cases(std::span<const Case> cases,
@@ -73,7 +73,11 @@ std::vector<Case> select_catalog_cases(std::span<const Case> cases,
     if (!names.insert(test_case.name).second) {
       throw std::invalid_argument("duplicate shared test case");
     }
-    if (records.contains(test_case.name)) selected.push_back(test_case);
+    if (!records.contains(test_case.name)) {
+      throw std::invalid_argument("THead catalog is missing shared case: " +
+                                  test_case.name);
+    }
+    selected.push_back(test_case);
   }
   if (selected.empty()) {
     throw std::invalid_argument("no shared cases match the THead catalog");

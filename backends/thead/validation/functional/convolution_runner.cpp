@@ -271,7 +271,9 @@ int run_convolution_functional_test(
     std::cout << std::setprecision(9);
     for (const ConvolutionTestCase &test_case : cases) {
       if (!filter.empty() &&
-          test_case.name.find(filter) == std::string::npos) {
+          (std::getenv(kIsolatedBackwardChild) != nullptr
+               ? test_case.name != filter
+               : test_case.name.find(filter) == std::string::npos)) {
         continue;
       }
       ++selected;

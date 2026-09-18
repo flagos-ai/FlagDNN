@@ -14,7 +14,43 @@ set(_flagdnn_thead_compiler_resources
   compiler.py
   compiler_identity.py
   python_environment_identity.py
-  triton_compat.py)
+  triton_compat.py
+  codegen/__init__.py
+  codegen/abi.py
+  codegen/artifacts.py
+  codegen/attention.py
+  codegen/batchnorm.py
+  codegen/convolution.py
+  codegen/emit.py
+  codegen/extended.py
+  codegen/io.py
+  codegen/layout.py
+  codegen/matmul.py
+  codegen/normalization.py
+  codegen/pointwise.py
+  codegen/reduction.py
+  codegen/resources.py
+  dispatch/__init__.py
+  dispatch/attention.py
+  dispatch/batchnorm.py
+  dispatch/common.py
+  dispatch/convolution.py
+  dispatch/extended.py
+  dispatch/extended_common.py
+  dispatch/extended_schema.py
+  dispatch/graph.py
+  dispatch/layout.py
+  dispatch/matmul.py
+  dispatch/normalization.py
+  dispatch/normalization_extended.py
+  dispatch/pointwise.py
+  dispatch/reduction.py
+  dispatch/resample.py
+  dispatch/selection.py
+  dispatch/statistics.py
+  dispatch/tensor.py
+  dispatch/tuning.py
+)
 set(_flagdnn_thead_kernel_resources
   kernels/registry.json
   kernels/attention.py
@@ -314,8 +350,11 @@ set_target_properties(flagdnn_backend_thead PROPERTIES
   FLAGDNN_THEAD_TORCH_API_INCLUDE "${_flagdnn_thead_torch_api_include}"
   FLAGDNN_THEAD_TORCH_CXX11_ABI "${_flagdnn_thead_torch_cxx11_abi}")
 
-install(FILES ${_flagdnn_thead_compiler_resources}
-  DESTINATION "${FLAGDNN_RESOURCE_INSTALL_DIR}/backends/thead")
+foreach(_resource IN LISTS _flagdnn_thead_compiler_resources)
+  get_filename_component(_directory "${_resource}" DIRECTORY)
+  install(FILES "${_resource}"
+    DESTINATION "${FLAGDNN_RESOURCE_INSTALL_DIR}/backends/thead/${_directory}")
+endforeach()
 install(FILES "${_flagdnn_thead_compiler_environment_file}"
   DESTINATION "${FLAGDNN_RESOURCE_INSTALL_DIR}/backends/thead")
 install(FILES kernels/registry.json

@@ -171,3 +171,52 @@
 | sdpa、sdpa_backward | fp32 | 当前 muDNN RunFlash 不支持 fp32，RunMath 要求 Q/K/V 头数与头维度一致；fp32 的 GQA 或不同 QK、V 头维度用例跳过。 |
 | sdpa_backward | fp32、fp16、bf16 | 当前 muDNN RunFlashBwd / RunMathBwd 没有 dBias 输出，需要该梯度输出的用例跳过。 |
 | sdpa_fp8、sdpa_fp8_backward | FP8 E4M3/E5M2 | 当前 muDNN RunFlash / RunMath 不支持 FP8 Q/K/V，且没有 FP8 scale/amax 接口，相关用例全部跳过。 |
+
+# THead
+
+## 已支持算子
+
+| 算子 | 输入与输出类型 |
+| --- | --- |
+| identity、reshape、transpose、slice | fp32、fp16、bf16、int32、bool、FP8 E4M3/E5M2/E8M0；保持原始位模式 |
+| add、sub、mul、div、pow、max、min、mod、add_square、scale | fp32、fp16、bf16 |
+| cmp_eq、cmp_neq、cmp_gt、cmp_ge、cmp_lt、cmp_le | fp32、fp16、bf16 → bool |
+| logical_and、logical_or、logical_not | bool |
+| binary_select | bool 条件与 fp32、fp16、bf16 数值 |
+| abs、neg、sqrt、rsqrt、reciprocal、ceil、floor、exp、log、erf、sin、cos、tan | fp32、fp16、bf16 |
+| relu、leaky_relu、elu、gelu、sigmoid、swish、tanh、softplus 及对应 backward | fp32、fp16、bf16 |
+| gelu_approx_tanh | fp32、fp16、bf16 |
+| conv_fprop、conv_dgrad、conv_wgrad | fp32（包括显式 IEEE）、fp16、bf16 |
+| matmul | fp32（包括显式 IEEE）、fp16、bf16 |
+| reduction | sum、avg、mul；fp32、fp16、bf16 → 同类型或 fp32；int32 → fp32 |
+| resample | fp32、fp16、bf16 |
+| batchnorm、batchnorm_inference、layernorm、rmsnorm | 数据 fp32、fp16、bf16；统计量 fp32 |
+| batchnorm_backward | 数据 fp32、fp16；统计量及参数梯度 fp32 |
+| conv_bias_relu | fp32、fp16、bf16 |
+| sdpa、sdpa_backward | fp32、fp16、bf16 |
+| sdpa_fp8、sdpa_fp8_backward | FP8 E4M3/E5M2 |
+
+当前验证平台为 PPU ZW810E，PPU SDK 2.1.0-a5f865，acDNN 1400；下列受 SDK 限制的用例跳过。
+
+## 不完全支持算子
+
+| 算子 | 输入与输出类型 | 不完全支持的原因 |
+| --- | --- | --- |
+| concatenate | fp32、fp16、bf16、int32、bool、FP8 E4M3/E5M2/E8M0；保持原始位模式 | 当前 acDNN 没有对应的独立拼接接口。 |
+| gen_index | 输出 int32 或 fp32 | 当前 acDNN 没有对应的独立索引生成接口。 |
+| add、sub、mul、div、pow、max、min、mod、add_square、scale | int32 | acDNN INT32 算术经由 FP32 舍入，不能满足大于 2²⁴ 的相邻整数及 INT32 边界的精确整数语义。 |
+| cmp_eq、cmp_neq、cmp_gt、cmp_ge、cmp_lt、cmp_le | int32 → bool | acDNN INT32 比较经由 FP32 舍入，不能准确区分大于 2²⁴ 的相邻整数及 INT32 边界值。 |
+| binary_select | bool 条件与 int32 数值 | acDNN INT32 数值路径经由 FP32 舍入，不能保持精确整数语义。 |
+| gelu_approx_tanh_backward | fp32、fp16、bf16 | acDNN 头文件声明了该模式，但 pointwise operation 初始化返回 BAD_PARAM；稳定 activation API 无此模式。 |
+| conv_fprop、conv_dgrad、conv_wgrad | tf32 | acDNN 稳定接口拒绝 TF32，backend 执行计划返回 NOT_SUPPORTED；FLOAT + TENSOR_OP_MATH 使用 FP16 舍入，不能满足公共 TF32 精度要求。 |
+| causal_conv1d | fp32、tf32、fp16、bf16 | 当前 acDNN 没有对应的独立因果卷积接口。 |
+| matmul | tf32 | acDNN 候选引擎接受 TF32 计算类型，但实际使用 FP16 舍入，不能满足公共 TF32 精度要求。 |
+| matmul_fp8 | FP8 E4M3/E5M2 或 MXFP8；输出 fp32、fp16、bf16 | 当前 acDNN 没有与公共 FP8/MXFP8 缩放接口匹配的独立 MatMul 原语。 |
+| moe_grouped_matmul、moe_grouped_matmul_bwd | fp16、bf16、FP8 E4M3/E5M2；输出 fp32、fp16、bf16 | 当前 acDNN 没有与公共分组 MatMul 接口匹配的独立原语。 |
+| resample | fp32、fp16、bf16 | acDNN resample 描述符创建返回 NOT_SUPPORTED，稳定 pooling API 无双线性插值接口且只接受对称 padding；bilinear 及无法由对称 padding 表达输出形状的 maxpool 用例跳过。 |
+| batchnorm_backward | bf16 | acDNN 稳定反向接口返回 NOT_SUPPORTED，部分 shape 会触发 SDK 的 BF16 类型断言。 |
+| layernorm_backward、rmsnorm_backward、instancenorm、instancenorm_backward、adalayernorm、adalayernorm_backward | 数据 fp32、fp16、bf16；统计量 fp32，仿射参数梯度默认 fp32 | 当前 acDNN 没有对应的独立归一化接口。 |
+| bn_finalize | 数据 fp32、fp16、bf16；统计量 fp32 | acDNN 创建对应描述符时返回 NOT_SUPPORTED。 |
+| genstats | fp32、fp16、bf16 → fp32 | acDNN 创建对应描述符时返回 NOT_SUPPORTED。 |
+| rng | fp32、fp16、bf16；uniform、normal、Bernoulli | 当前 acDNN 没有匹配这些公共随机数算子的独立接口。 |
+| rope、rope_backward | fp32、fp16、bf16 | 当前 acDNN 没有对应的独立旋转位置编码接口。 |

@@ -1,11 +1,6 @@
 // Copyright 2026 FlagOS Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-#include "acdnn_layout_reference.hpp"
-#include "capability.hpp"
-#include "common/layout.hpp"
-#include "pointwise_runner_support.hpp"
-
 #include <acdnn.h>
 
 #include <cmath>
@@ -18,6 +13,12 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "acdnn_layout_reference.hpp"
+#include "capability.hpp"
+#include "common/layout.hpp"
+#include "functional/paired.hpp"
+#include "pointwise_runner_support.hpp"
 
 #ifndef FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG
 #define FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG "capability.json"
@@ -57,8 +58,8 @@ std::string filter_name(LayoutOperation operation) {
   throw std::invalid_argument("unknown THead Layout operation");
 }
 
-std::vector<std::int64_t>
-contiguous_strides(std::span<const std::int64_t> dimensions) {
+std::vector<std::int64_t> contiguous_strides(
+    std::span<const std::int64_t> dimensions) {
   std::vector<std::int64_t> result(dimensions.size());
   std::int64_t stride = 1;
   for (std::size_t axis = dimensions.size(); axis != 0; --axis) {
@@ -69,8 +70,8 @@ contiguous_strides(std::span<const std::int64_t> dimensions) {
 }
 
 void emit_skip(const LayoutTestCase &test_case,
-               const tv::CapabilityRecord &record,
-               std::string_view operation, std::string_view target) {
+               const tv::CapabilityRecord &record, std::string_view operation,
+               std::string_view target) {
   if (record.status != tv::CapabilityStatus::kUnsupported ||
       record.reason_code.empty()) {
     throw std::runtime_error("invalid acDNN Layout skip capability");
@@ -80,16 +81,14 @@ void emit_skip(const LayoutTestCase &test_case,
             << " reason=" << record.reason_code
             << " sdk=" << FLAGDNN_THEAD_PPU_SDK_VERSION
             << " acdnn_header=" << ACDNN_VERSION
-            << " acdnn_runtime=" << acdnnGetVersion()
-            << " target=" << target
-            << " dtype=" << functional::data_type_name(
-                   test_case.input.data_type)
+            << " acdnn_runtime=" << acdnnGetVersion() << " target=" << target
+            << " dtype="
+            << functional::data_type_name(test_case.input.data_type)
             << " layout=" << functional::layout_name(test_case.input)
             << " shape=" << functional::shape_name(test_case.output) << '\n';
 }
 
-void compare(std::span<const float> actual,
-             std::span<const float> expected,
+void compare(std::span<const float> actual, std::span<const float> expected,
              const LayoutTestCase &test_case) {
   if (actual.size() != expected.size()) {
     throw std::runtime_error("FlagDNN and acDNN Layout sizes differ");
@@ -101,8 +100,7 @@ void compare(std::span<const float> actual,
     }
     std::ostringstream message;
     message << test_case.name << " differs at output element " << index
-            << ": FlagDNN=" << actual[index]
-            << " acDNN=" << expected[index];
+            << ": FlagDNN=" << actual[index] << " acDNN=" << expected[index];
     throw std::runtime_error(message.str());
   }
 }
@@ -119,8 +117,8 @@ int run_layout_functional_test(int argc, char **argv,
     }
     const LayoutOperation operation = cases.front().operation;
     const std::string operation_text = operation_name(operation);
-    const tv::CapabilityCatalog catalog = tv::CapabilityCatalog::load(
-        FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG);
+    const tv::CapabilityCatalog catalog =
+        tv::CapabilityCatalog::load(FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG);
     const auto selected_cases = catalog.select_cases(operation_text, cases);
     cases = selected_cases;
     catalog.validate_versions(FLAGDNN_THEAD_PPU_SDK_VERSION, ACDNN_VERSION,
@@ -169,11 +167,21 @@ int run_layout_functional_test(int argc, char **argv,
       }
 
       auto production = build_flagdnn_layout(handle, test_case);
-      auto reference =
-          tv::make_acdnn_layout_reference(test_case, record);
+      auto reference = tv::make_acdnn_layout_reference(test_case, record);
+      if (tv::requires_raw_copy(test_case.input.data_type)) {
+        TestTensor reference_output = test_case.output;
+        functional::run_raw_copy(test_case.name, test_case.input,
+                                 test_case.output, reference_output,
+                                 *production, *reference, stream, false);
+        ++executed;
+        continue;
+      }
       std::vector<functional::BoundTensor> inputs;
       inputs.push_back(functional::make_input_buffer(
-          test_case.input, 0, stream.get()));
+          test_case.input, 0, stream.get(),
+          test_case.input.data_type == FLAGDNN_DATA_BOOLEAN
+              ? PointwiseInputDomain::kLogical
+              : PointwiseInputDomain::kReal));
       std::vector<functional::BoundTensor> production_outputs;
       production_outputs.push_back(
           functional::make_output_buffer(test_case.output, stream.get()));
@@ -194,8 +202,8 @@ int run_layout_functional_test(int argc, char **argv,
                        "cuStreamSynchronize(before Layout)");
       functional::execute(*production, production_bindings,
                           production_workspace, stream);
-      functional::execute(*reference, reference_bindings,
-                          reference_workspace, stream);
+      functional::execute(*reference, reference_bindings, reference_workspace,
+                          stream);
       tv::check_driver(cuStreamSynchronize(stream.get()),
                        "cuStreamSynchronize(after Layout)");
 
@@ -203,23 +211,21 @@ int run_layout_functional_test(int argc, char **argv,
           functional::read_output(production_outputs.front(), stream.get());
       const std::vector<float> reference_physical =
           functional::read_output(reference_outputs.front(), stream.get());
-      functional::require_padding_unchanged(
-          "FlagDNN", production_physical, test_case.output);
-      functional::require_padding_unchanged(
-          "acDNN", reference_physical, reference_output);
+      functional::require_padding_unchanged("FlagDNN", production_physical,
+                                            test_case.output);
+      functional::require_padding_unchanged("acDNN", reference_physical,
+                                            reference_output);
       compare(functional::gather(production_physical, test_case.output),
               functional::gather(reference_physical, reference_output),
               test_case);
       ++executed;
-      std::cout << test_case.name
-                << ": FlagDNN Graph vs acDNN Layout PASS\n";
+      std::cout << test_case.name << ": FlagDNN Graph vs acDNN Layout PASS\n";
     }
     if (selected == 0 || selected != executed + skipped) {
       throw std::runtime_error("THead Layout case accounting mismatch");
     }
     std::cout << suite_name << ": PASS cases=" << selected
-              << " executed=" << executed << " skipped=" << skipped
-              << '\n';
+              << " executed=" << executed << " skipped=" << skipped << '\n';
     return 0;
   } catch (const std::exception &error) {
     std::cerr << suite_name << ": FAIL reason=" << error.what() << '\n';

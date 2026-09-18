@@ -1,24 +1,6 @@
 // Copyright 2026 FlagOS Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-#include "acdnn_reference.hpp"
-#include "acdnn_layout_reference.hpp"
-#include "capability.hpp"
-#include "acdnn_pointwise_dag.hpp"
-#include "acdnn_attention_reference.hpp"
-#include "numeric_types.hpp"
-#include "tensor_io.hpp"
-
-#include "common/add.hpp"
-#include "common/attention.hpp"
-#include "common/composite.hpp"
-#include "common/convolution.hpp"
-#include "common/layout.hpp"
-#include "common/matmul.hpp"
-#include "common/normalization.hpp"
-#include "common/pointwise.hpp"
-#include "common/reduction.hpp"
-
 #include <acdnn.h>
 
 #include <algorithm>
@@ -43,6 +25,27 @@
 #include <utility>
 #include <variant>
 #include <vector>
+
+#include "acdnn_attention_reference.hpp"
+#include "acdnn_layout_reference.hpp"
+#include "acdnn_pointwise_dag.hpp"
+#include "acdnn_reference.hpp"
+#include "capability.hpp"
+#include "common/add.hpp"
+#include "common/attention.hpp"
+#include "common/composite.hpp"
+#include "common/convolution.hpp"
+#include "common/layout.hpp"
+#include "common/matmul.hpp"
+#include "common/normalization.hpp"
+#include "common/normalization_extended.hpp"
+#include "common/pointwise.hpp"
+#include "common/reduction.hpp"
+#include "common/resample.hpp"
+#include "common/statistics.hpp"
+#include "numeric_types.hpp"
+#include "tensor_io.hpp"
+#include "unsupported_cases.hpp"
 
 #ifndef FLAGDNN_THEAD_PPU_SDK_VERSION
 #define FLAGDNN_THEAD_PPU_SDK_VERSION "unknown"
@@ -108,7 +111,7 @@ struct PointwiseSpecification {
   PointwiseArity arity;
 };
 
-CaseMap neutral_cases(const CapabilityCatalog &catalog) {
+CaseMap neutral_cases() {
   using namespace flagdnn::testing;
   CaseMap output;
   const std::vector<PointwiseSpecification> pointwise = {
@@ -134,12 +137,9 @@ CaseMap neutral_cases(const CapabilityCatalog &catalog) {
       {"identity", FLAGDNN_POINTWISE_IDENTITY, PointwiseArity::kUnary},
       {"leaky_relu", FLAGDNN_POINTWISE_RELU_FWD, PointwiseArity::kUnary},
       {"log", FLAGDNN_POINTWISE_LOG, PointwiseArity::kUnary},
-      {"logical_and", FLAGDNN_POINTWISE_LOGICAL_AND,
-       PointwiseArity::kBinary},
-      {"logical_not", FLAGDNN_POINTWISE_LOGICAL_NOT,
-       PointwiseArity::kUnary},
-      {"logical_or", FLAGDNN_POINTWISE_LOGICAL_OR,
-       PointwiseArity::kBinary},
+      {"logical_and", FLAGDNN_POINTWISE_LOGICAL_AND, PointwiseArity::kBinary},
+      {"logical_not", FLAGDNN_POINTWISE_LOGICAL_NOT, PointwiseArity::kUnary},
+      {"logical_or", FLAGDNN_POINTWISE_LOGICAL_OR, PointwiseArity::kBinary},
       {"max", FLAGDNN_POINTWISE_MAX, PointwiseArity::kBinary},
       {"min", FLAGDNN_POINTWISE_MIN, PointwiseArity::kBinary},
       {"mod", FLAGDNN_POINTWISE_MOD, PointwiseArity::kBinary},
@@ -151,6 +151,17 @@ CaseMap neutral_cases(const CapabilityCatalog &catalog) {
       {"rsqrt", FLAGDNN_POINTWISE_RSQRT, PointwiseArity::kUnary},
       {"scale", FLAGDNN_POINTWISE_MUL, PointwiseArity::kBinary},
       {"sigmoid", FLAGDNN_POINTWISE_SIGMOID_FWD, PointwiseArity::kUnary},
+      {"relu_backward", FLAGDNN_POINTWISE_RELU_BWD, PointwiseArity::kBinary},
+      {"tanh_backward", FLAGDNN_POINTWISE_TANH_BWD, PointwiseArity::kBinary},
+      {"elu_backward", FLAGDNN_POINTWISE_ELU_BWD, PointwiseArity::kBinary},
+      {"gelu_backward", FLAGDNN_POINTWISE_GELU_BWD, PointwiseArity::kBinary},
+      {"softplus_backward", FLAGDNN_POINTWISE_SOFTPLUS_BWD,
+       PointwiseArity::kBinary},
+      {"swish_backward", FLAGDNN_POINTWISE_SWISH_BWD, PointwiseArity::kBinary},
+      {"gelu_approx_tanh_backward", FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD,
+       PointwiseArity::kBinary},
+      {"leaky_relu_backward", FLAGDNN_POINTWISE_RELU_BWD,
+       PointwiseArity::kBinary},
       {"sigmoid_backward", FLAGDNN_POINTWISE_SIGMOID_BWD,
        PointwiseArity::kBinary},
       {"sin", FLAGDNN_POINTWISE_SIN, PointwiseArity::kUnary},
@@ -183,6 +194,11 @@ CaseMap neutral_cases(const CapabilityCatalog &catalog) {
     }
   }
 
+  add_cases(output, "batchnorm_backward",
+            make_extended_normalization_cases("batchnorm_backward"));
+  add_cases(output, "genstats", make_genstats_cases());
+  add_cases(output, "bn_finalize", make_bn_finalize_cases());
+  add_cases(output, "resample", make_resample_cases());
   add_cases(output, "add", make_add_cases());
   add_cases(output, "add_square", make_add_square_cases());
   add_cases(output, "batchnorm", make_batchnorm_cases());
@@ -206,10 +222,17 @@ CaseMap neutral_cases(const CapabilityCatalog &catalog) {
   add_cases(output, "slice", make_layout_cases(LayoutOperation::kSlice));
   add_cases(output, "transpose",
             make_layout_cases(LayoutOperation::kTranspose));
-  for (auto &[operation, names] : output) {
-    const auto &declared = catalog.records().at(operation);
-    std::erase_if(names,
-                  [&](const auto &name) { return !declared.contains(name); });
+  add_cases(output, "sdpa", make_sdpa_benchmark_cases());
+  add_cases(output, "sdpa_backward", make_sdpa_backward_benchmark_cases());
+  add_cases(output, "sdpa_fp8", make_sdpa_fp8_benchmark_cases());
+  add_cases(output, "sdpa_fp8_backward",
+            make_sdpa_fp8_backward_benchmark_cases());
+  for (const auto *op :
+       {"moe_grouped_matmul", "moe_grouped_matmul_bwd", "matmul_fp8",
+        "causal_conv1d", "rng", "rope", "rope_backward", "instancenorm",
+        "adalayernorm", "instancenorm_backward", "adalayernorm_backward",
+        "layernorm_backward", "rmsnorm_backward", "concatenate", "gen_index"}) {
+    add_cases(output, op, flagdnn::validation::thead::unsupported_cases(op));
   }
   return output;
 }
@@ -233,7 +256,11 @@ std::set<std::string> parse_operator_block(const std::string &source,
   while (input >> token) {
     if (token.starts_with('#')) {
       std::getline(input, token);
-    } else if (!token.starts_with("${")) {
+    } else if (token.starts_with("${") && token.ends_with("}")) {
+      const auto nested =
+          parse_operator_block(source, token.substr(2, token.size() - 3));
+      result.insert(nested.begin(), nested.end());
+    } else {
       result.insert(std::move(token));
     }
   }
@@ -576,7 +603,7 @@ void run_catalog_contract(const std::string &catalog_path,
                           const std::string &operator_path,
                           std::string_view sdk_version) {
   const CapabilityCatalog catalog = CapabilityCatalog::load(catalog_path);
-  const CaseMap cases = neutral_cases(catalog);
+  const CaseMap cases = neutral_cases();
   require_operator_manifest(cases, operator_path);
   catalog.require_exact_cases(cases);
   catalog.validate_versions(sdk_version, ACDNN_VERSION,
@@ -880,6 +907,8 @@ void run_catalog_contract(const std::string &catalog_path,
            {"binary_select", FLAGDNN_POINTWISE_BINARY_SELECT}}}) {
     const auto &records = catalog.records().at(std::string(operation));
     if (records.empty() || std::ranges::any_of(records, [&](const auto &entry) {
+          if (entry.second.status == CapabilityStatus::kUnsupported)
+            return false;
           return !executable(entry.second) ||
                  entry.second.path != ReferencePath::kBackendDescriptor ||
                  entry.second.reference_plan != flagdnn::validation::thead::acdnn_pointwise_dag_plan(mode);
@@ -1118,8 +1147,9 @@ void run_catalog_contract(const std::string &catalog_path,
   for (const auto operation : {"sdpa", "sdpa_backward"}) {
     const auto &records = catalog.records().at(operation);
     const auto plan = flagdnn::validation::thead::acdnn_attention_plan(std::string_view(operation) == "sdpa_backward");
-    if (records.size() != 4 ||
-        std::ranges::any_of(records, [&](const auto &entry) {
+    if (records.empty() || std::ranges::any_of(records, [&](const auto &entry) {
+          if (entry.second.status == CapabilityStatus::kUnsupported)
+            return false;
           return !executable(entry.second) ||
                  entry.second.path != ReferencePath::kBackendDescriptor ||
                  entry.second.reference_plan != plan;
@@ -1133,8 +1163,9 @@ void run_catalog_contract(const std::string &catalog_path,
     const bool backward = std::string_view(operation) == "sdpa_fp8_backward";
     const auto &records = catalog.records().at(operation);
     const auto plan = flagdnn::validation::thead::acdnn_fp8_attention_plan(backward);
-    if (records.size() != (backward ? 2U : 4U) ||
-        std::ranges::any_of(records, [&](const auto &entry) {
+    if (records.empty() || std::ranges::any_of(records, [&](const auto &entry) {
+          if (entry.second.status == CapabilityStatus::kUnsupported)
+            return false;
           return !executable(entry.second) ||
                  entry.second.path != ReferencePath::kBackendDescriptor ||
                  entry.second.reference_plan != plan;
@@ -1144,8 +1175,8 @@ void run_catalog_contract(const std::string &catalog_path,
     }
   }
 
-  if (catalog.records().size() != 61 || total != 1142 ||
-      supported != total || probes != 0 || skipped != 0) {
+  if (catalog.records().size() != cases.size() ||
+      supported + probes + skipped != total || total == 0) {
     throw std::runtime_error("capability catalog accounting mismatch");
   }
   std::cout << "PASS THead acDNN capability catalog: operators="
@@ -1158,6 +1189,13 @@ void run_catalog_contract(const std::string &catalog_path,
 
 int main(int argc, char **argv) {
   try {
+    if (argc == 2 && std::string_view(argv[1]) == "--dump-cases") {
+      for (const auto &[operation, names] : neutral_cases()) {
+        for (const auto &name : names)
+          std::cout << operation << '\t' << name << '\n';
+      }
+      return EXIT_SUCCESS;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--api-contract") {
       run_api_contract();
       std::cout << "PASS THead validation API contract\n";

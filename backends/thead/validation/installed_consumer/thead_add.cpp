@@ -465,6 +465,8 @@ class AcdnnBackendPointwise final {
       check_driver(cuMemsetD32(constant_numerator_->address(), 0x3f800000U,
                               kElementCount),
                    "cuMemsetD32(installed reciprocal numerator)");
+      check_driver(cuStreamSynchronize(nullptr),
+                   "installed reciprocal numerator ready");
     }
 
     const acdnnDataType_t math_precision =

@@ -453,8 +453,10 @@ class AcdnnReduction final : public flagdnn::testing::ReductionExecutable {
       : test_case_(std::move(test_case)) {
     if ((test_case_.input.data_type != FLAGDNN_DATA_FLOAT32 &&
          test_case_.input.data_type != FLAGDNN_DATA_FLOAT16 &&
-         test_case_.input.data_type != FLAGDNN_DATA_BFLOAT16) ||
-        test_case_.output.data_type != test_case_.input.data_type ||
+         test_case_.input.data_type != FLAGDNN_DATA_BFLOAT16 &&
+         test_case_.input.data_type != FLAGDNN_DATA_INT32) ||
+        (test_case_.output.data_type != test_case_.input.data_type &&
+         test_case_.output.data_type != FLAGDNN_DATA_FLOAT32) ||
         test_case_.input.dimensions.empty()) {
       throw std::invalid_argument(
           "THead acDNN reduction reference requires matching floating "
@@ -470,12 +472,15 @@ class AcdnnReduction final : public flagdnn::testing::ReductionExecutable {
         contiguous_strides(test_case_.input.dimensions);
     const bool needs_pack = test_case_.input.strides != dense_input_strides;
     const bool needs_bfloat_conversion =
-        test_case_.input.data_type == FLAGDNN_DATA_BFLOAT16;
+        test_case_.input.data_type == FLAGDNN_DATA_BFLOAT16 ||
+        test_case_.input.data_type != test_case_.output.data_type;
     std::vector<std::string> expected_plan;
     if (needs_bfloat_conversion) {
       expected_plan = {std::string(kConvertPackPrimitive),
-                       primitive(test_case_.mode),
-                       std::string(kConvertOutputPrimitive)};
+                       primitive(test_case_.mode)};
+      if (test_case_.output.data_type != FLAGDNN_DATA_FLOAT32) {
+        expected_plan.push_back(std::string(kConvertOutputPrimitive));
+      }
     } else if (needs_pack) {
       expected_plan = {std::string(kPackDensePrimitive),
                        primitive(test_case_.mode)};
@@ -609,7 +614,8 @@ class AcdnnReduction final : public flagdnn::testing::ReductionExecutable {
     flagdnn::testing::TestTensor reduction_output = test_case_.output;
     reduction_output.dimensions = acdnn_output_dimensions;
     reduction_output.strides = acdnn_output_strides;
-    if (needs_bfloat_conversion) {
+    if (needs_bfloat_conversion &&
+        test_case_.output.data_type != FLAGDNN_DATA_FLOAT32) {
       constexpr std::int64_t kReductionOutputUid =
           std::numeric_limits<std::int64_t>::max() - 8;
       if (test_case_.input.uid == kReductionOutputUid ||

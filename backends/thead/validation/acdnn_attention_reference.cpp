@@ -335,8 +335,20 @@ class AttentionDag final : public TestExecutable {
     }
     return result;
   }
+  TestTensor attention_operand(const TestTensor &input,
+                               flagdnnDataType_t dtype) {
+    if (dtype == FLAGDNN_DATA_FLOAT32) return input;
+    // The public low-precision attention kernels round P and dS to the
+    // activation dtype before the gradient MatMuls. SDK 1400 otherwise
+    // silently uses FP16 operands even for the BF16 qualification cases.
+    auto rounded = tensor(input.dimensions, dtype);
+    pointwise(ACDNN_POINTWISE_IDENTITY_FWD, {input}, rounded);
+    return convert(rounded);
+  }
   TestTensor constant(const std::vector<std::int64_t> &shape,float value) {
-    auto result=tensor(shape);check_driver(cuMemsetD32(buffers_.at(result.uid).address(),std::bit_cast<unsigned int>(value),count(result)),"acDNN attention constant");return result;
+    auto result=tensor(shape);check_driver(cuMemsetD32(buffers_.at(result.uid).address(),std::bit_cast<unsigned int>(value),count(result)),"acDNN attention constant");
+    check_driver(cuStreamSynchronize(nullptr), "acDNN attention constant ready");
+    return result;
   }
   TestTensor binary(acdnnPointwiseMode_t mode,const TestTensor &a,const TestTensor &b) {
     auto result=tensor(a.dimensions);pointwise(mode,{a,b},result);return result;
@@ -350,8 +362,19 @@ class AttentionDag final : public TestExecutable {
   }
   TestTensor matmul(const TestTensor &a,const TestTensor &b) {
     auto result=tensor({1,a.dimensions[1],b.dimensions[2]});
-    auto capability=capability_;capability.reference_plan={"acdnnBackendExecute(MATMUL)"};
-    append(make_acdnn_matmul_reference({.name="acDNN attention matrix product",.a=a,.b=b,.output=result},capability),{a.uid,b.uid,result.uid});
+    auto capability = capability_;
+    capability.reference_plan =
+        accurate_matmul_
+            ? acdnn_ieee_matmul_plan()
+            : std::vector<std::string>{"acdnnBackendExecute(MATMUL)"};
+    append(make_acdnn_matmul_reference(
+               {.name = "acDNN attention matrix product",
+                .a = a,
+                .b = b,
+                .output = result,
+                .input_precision = accurate_matmul_ ? 1 : 2},
+               capability),
+           {a.uid, b.uid, result.uid});
     return result;
   }
   TestTensor softmax(const TestTensor &input,bool logarithmic=false) {
@@ -419,16 +442,18 @@ class AttentionDag final : public TestExecutable {
       values[static_cast<std::size_t>(row*columns+column)]=column>row?-std::numeric_limits<float>::infinity():0;
     }
     check_driver(cuMemcpyHtoD(buffers_.at(mask.uid).address(),values.data(),values.size()*sizeof(float)),"acDNN FP8 attention geometric mask");
+    check_driver(cuStreamSynchronize(nullptr), "acDNN FP8 attention geometric mask ready");
     return binary(ACDNN_POINTWISE_ADD,input,mask);
   }
   template<class Case> void require_fp8_geometry(const Case &test_case) {
     const auto &q=test_case.q,&k=test_case.k,&v=test_case.v;
-    if (q.dimensions[0]!=1 || q.dimensions[3]!=128 || v.dimensions[3]!=128 ||
-        q.dimensions[1]>4 || q.dimensions[2]>64 || k.dimensions[2]>64 ||
-        k.dimensions[1]!=v.dimensions[1] ||
+    if (q.dimensions[3] != 128 || v.dimensions[3] != 128 ||
+        k.dimensions[1] != v.dimensions[1] ||
         test_case.options.diagonal_band_left_bound ||
-        (test_case.options.diagonal_band_right_bound && *test_case.options.diagonal_band_right_bound!=0) ||
-        test_case.options.diagonal_alignment!=flagdnn::testing::AttentionDiagonalAlignment::kTopLeft) {
+        (test_case.options.diagonal_band_right_bound &&
+         *test_case.options.diagonal_band_right_bound != 0) ||
+        test_case.options.diagonal_alignment !=
+            flagdnn::testing::AttentionDiagonalAlignment::kTopLeft) {
       throw std::invalid_argument("acDNN FP8 attention geometry is not qualified");
     }
   }
@@ -501,6 +526,7 @@ class AttentionDag final : public TestExecutable {
   }
   void build(const SdpaTestCase &test_case,const SdpaBackwardTestCase *backward) {
     const auto &q=test_case.q,&k=test_case.k,&v=test_case.v;
+    accurate_matmul_ = q.data_type == FLAGDNN_DATA_FLOAT32;
     if (q.dimensions.size()!=4 || k.dimensions.size()!=4 || v.dimensions.size()!=4 ||
         q.dimensions[0]!=k.dimensions[0] || q.dimensions[0]!=v.dimensions[0] ||
         q.dimensions[1]%k.dimensions[1] || k.dimensions[1]!=v.dimensions[1] ||
@@ -534,10 +560,11 @@ class AttentionDag final : public TestExecutable {
           values[static_cast<std::size_t>(row*k.dimensions[2]+column)]=column>row ? -std::numeric_limits<float>::infinity() : 0;
         }
         check_driver(cuMemcpyHtoD(buffers_.at(mask.uid).address(),values.data(),values.size()*sizeof(float)),"acDNN attention geometric mask");
+    check_driver(cuStreamSynchronize(nullptr), "acDNN attention geometric mask ready");
         logits=binary(ACDNN_POINTWISE_ADD,logits,mask);
       }
-      auto probabilities=softmax(logits);
       if (!backward) {
+        auto probabilities = softmax(logits);
         auto result=matmul(probabilities,v_head);
         pointwise(ACDNN_POINTWISE_IDENTITY_FWD,{result},head(test_case.output,b,h));
         if(test_case.stats) {
@@ -548,12 +575,29 @@ class AttentionDag final : public TestExecutable {
         }
       } else {
         auto doutput=convert(head(backward->doutput,b,h));
+        // Backward consumes the caller's saved O and log-sum-exp statistics.
+        // Recomputing softmax here changes the derivative for rounded primals.
+        auto probabilities = unary(
+            ACDNN_POINTWISE_EXP,
+            binary(ACDNN_POINTWISE_SUB, logits,
+                   expand(head(backward->stats, b, h), logits.dimensions)));
+        auto output = convert(head(backward->output, b, h));
         auto dp=matmul(doutput,transpose(v_head));
-        auto ds=softmax_backward(probabilities,dp);
-        auto dq_head=scale(matmul(ds,k_head),attention_scale);
+        auto delta = reduce(ACDNN_REDUCE_TENSOR_ADD,
+                            binary(ACDNN_POINTWISE_MUL, output, doutput), true);
+        auto ds = binary(
+            ACDNN_POINTWISE_MUL, probabilities,
+            binary(ACDNN_POINTWISE_SUB, dp, expand(delta, dp.dimensions)));
+        auto gradient_operand = attention_operand(ds, q.data_type);
+        auto probability_operand =
+            attention_operand(probabilities, q.data_type);
+        auto dq_head = scale(matmul(gradient_operand, k_head), attention_scale);
         pointwise(ACDNN_POINTWISE_IDENTITY_FWD,{dq_head},head(backward->dq,b,h));
-        accumulate(dk,{b,h/groups},scale(matmul(transpose(ds),q_head),attention_scale));
-        accumulate(dv,{b,h/groups},matmul(transpose(probabilities),doutput));
+        accumulate(dk, {b, h / groups},
+                   scale(matmul(transpose(gradient_operand), q_head),
+                         attention_scale));
+        accumulate(dv, {b, h / groups},
+                   matmul(transpose(probability_operand), doutput));
         if(backward->dbias) accumulate(dbias,bias_key,ds);
       }
     }
@@ -567,6 +611,7 @@ class AttentionDag final : public TestExecutable {
   struct Step {std::unique_ptr<TestExecutable> executable;std::vector<std::int64_t> uids;};
   CapabilityRecord capability_;
   bool allow_fp8_=false;
+  bool accurate_matmul_ = false;
   flagdnnDataType_t fp8_type_=FLAGDNN_DATA_FP8_E4M3;
   std::set<std::int64_t> external_;
   std::map<std::int64_t,DeviceBuffer> buffers_;
@@ -590,15 +635,22 @@ std::vector<std::string> acdnn_fp8_attention_plan(bool backward) {
   return plan;
 }
 std::vector<std::string> acdnn_attention_plan(bool backward) {
-  std::vector<std::string> result={
+  std::vector<std::string> result = {
       "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
       "acdnnBackendExecute(MATMUL,attention-heads)",
-      "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
-      "acdnnSoftmaxForward(ACCURATE,CHANNEL)"};
+      "acdnnBackendExecute(IDENTITY,SUB,ADD,FP32-matmul-residual-if-needed)",
+      "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)"};
   if(backward) {
-    result.push_back("acdnnSoftmaxBackward(ACCURATE,CHANNEL)");
+    result.push_back(
+        "acdnnBackendExecute(POINTWISE_EXP,MUL,SUB,attention-saved-primal-"
+        "gradient)");
+    result.push_back(
+        "acdnnBackendExecute(IDENTITY,attention-gradient-operand-dtype)");
+    result.push_back("acdnnOpTensor(ADD,attention-row-broadcast)");
+    result.push_back("acdnnReduceTensor(ADD,attention-output-gradient-dot)");
     result.push_back("acdnnBackendExecute(MATMUL,POINTWISE_ADD,attention-gradients)");
   } else {
+    result.push_back("acdnnSoftmaxForward(ACCURATE,CHANNEL)");
     result.push_back("acdnnSoftmaxForward(LOG,CHANNEL)");
     result.push_back("acdnnBackendExecute(POINTWISE_SUB,attention-statistics)");
     result.push_back("acdnnTransformTensor(attention-statistics-column)");

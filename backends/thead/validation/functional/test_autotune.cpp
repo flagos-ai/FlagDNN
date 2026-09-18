@@ -810,8 +810,10 @@ void test_device_autotune_contract(int argc, char **argv) {
         const std::string_view expected_kernel =
             std::string_view(operation.name) == "add_square"
                 ? "add_square_contiguous_kernel"
-                : operation.unary ? "unary_pointwise_contiguous_kernel"
-                                  : "binary_contiguous_kernel";
+            : std::string_view(operation.name) == "sigmoid_backward"
+                ? "activation_backward_contiguous_kernel"
+            : operation.unary ? "unary_pointwise_contiguous_kernel"
+                              : "binary_contiguous_kernel";
         require(metadata.kernel_name == expected_kernel,
                 "THead autotune launched an unexpected Triton kernel");
         require(metadata.stream != nullptr,

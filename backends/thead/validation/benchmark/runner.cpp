@@ -3,28 +3,20 @@
 
 #include "common/runner.hpp"
 
-#include "benchmark/acdnn_provider.hpp"
-#include "capability.hpp"
-#include "common/flagdnn_provider.hpp"
-#include "numeric_types.hpp"
-#include "ppu_driver.hpp"
-#include "tensor_io.hpp"
-
 #include <acdnn.h>
 #include <cuda.h>
-#include <flagdnn/flagdnn.hpp>
-
-#include <unistd.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 #include <algorithm>
-#include <cerrno>
 #include <cctype>
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <flagdnn/flagdnn.hpp>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -38,6 +30,14 @@
 #include <system_error>
 #include <utility>
 #include <vector>
+
+#include "benchmark/acdnn_provider.hpp"
+#include "benchmark_mode.hpp"
+#include "capability.hpp"
+#include "common/flagdnn_provider.hpp"
+#include "numeric_types.hpp"
+#include "ppu_driver.hpp"
+#include "tensor_io.hpp"
 
 #ifndef FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG
 #define FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG "capability.json"
@@ -389,7 +389,10 @@ PreparedBuffers prepare_buffers(const BenchmarkCase &specification,
       specification.pointwise_mode == FLAGDNN_POINTWISE_MOD;
   const bool is_sigmoid_backward =
       specification.operation == Operation::kPointwise &&
-      specification.pointwise_mode == FLAGDNN_POINTWISE_SIGMOID_BWD;
+      (specification.pointwise_mode == FLAGDNN_POINTWISE_SIGMOID_BWD ||
+       (specification.pointwise_mode >= FLAGDNN_POINTWISE_RELU_BWD &&
+        specification.pointwise_mode <=
+            FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD));
   const bool is_reciprocal =
       specification.operation == Operation::kPointwise &&
       specification.pointwise_mode == FLAGDNN_POINTWISE_RECIPROCAL;
@@ -910,6 +913,8 @@ void run_case(const BenchmarkCase &specification,
   std::cout << specification.name
             << ": FlagDNN Graph vs acDNN correctness PASS\n";
 
+  if (tv::benchmark_validation_only(specification.name)) return;
+
   warmup(*production, production_buffers.bindings, production_workspace,
          stream, config.warmup_iterations);
   warmup(*reference, reference_buffers.bindings, reference_workspace, stream,
@@ -979,7 +984,16 @@ int run_benchmark_suite(int argc, char **argv,
                         std::span<const BenchmarkCase> cases,
                         std::string_view suite_name) {
   try {
-    if (argc != 3) {
+    if (argc == 2 && std::string_view(argv[1]) == "--dump-cases") {
+      for (const auto &test_case : cases) {
+        std::cout << operation_from_suite(suite_name) << '\t' << test_case.name
+                  << '\n';
+      }
+      return 0;
+    }
+    const bool probe =
+        argc == 2 && std::string_view(argv[1]) == "--probe-reference";
+    if (!probe && argc != 3) {
       throw std::invalid_argument(
           "THead benchmark requires COMPILER_EXECUTABLE COMPILER_ENTRY");
     }
@@ -990,7 +1004,7 @@ int run_benchmark_suite(int argc, char **argv,
         FLAGDNN_THEAD_PPU_SDK_VERSION, ACDNN_VERSION,
         static_cast<std::int64_t>(acdnnGetVersion()));
     const bool qualify_probes =
-        std::getenv("FLAGDNN_THEAD_QUALIFY_PROBES") != nullptr;
+        probe || std::getenv("FLAGDNN_THEAD_QUALIFY_PROBES") != nullptr;
     const std::string operation = operation_from_suite(suite_name);
     tvb::AcdnnProvider acdnn_provider(FLAGDNN_THEAD_BENCHMARK_CATALOG,
                                      operation, qualify_probes);
@@ -1000,7 +1014,7 @@ int run_benchmark_suite(int argc, char **argv,
     const char *filter = std::getenv("FLAGDNN_BENCHMARK_CASE");
     const bool backward_convolution =
         operation == "conv_dgrad" || operation == "conv_wgrad";
-    if (backward_convolution &&
+    if (!probe && backward_convolution &&
         (filter == nullptr || filter[0] == '\0') &&
         std::getenv(kIsolatedBackwardChild) == nullptr) {
       return run_isolated_backward_suite(argv, cases, suite_name,
@@ -1020,7 +1034,7 @@ int run_benchmark_suite(int argc, char **argv,
     tv::DeviceStream stream;
     BenchmarkCache cache;
     flagdnn::Handle handle("thead", 0);
-    handle.set_compiler(argv[1], argv[2], cache.path().string());
+    if (!probe) handle.set_compiler(argv[1], argv[2], cache.path().string());
     FlagdnnProvider flagdnn_provider(handle);
     flagdnn_provider.set_autotune(false);
     const std::string target(handle.target_fingerprint());
@@ -1042,9 +1056,27 @@ int run_benchmark_suite(int argc, char **argv,
         ++reference_skipped;
         continue;
       }
+      if (probe) {
+        try {
+          auto reference = acdnn_provider.build(specification);
+          auto buffers = prepare_buffers(specification, stream);
+          tv::DeviceBuffer workspace(reference->workspace_size());
+          reference->prepare(buffers.bindings, stream.opaque());
+          execute(*reference, buffers.bindings, workspace, stream);
+          tv::check_driver(cuStreamSynchronize(stream.get()),
+                           "reference probe synchronize");
+          std::cout << "PROBE\t" << operation << '\t' << specification.name
+                    << "\tsupported\n";
+        } catch (const std::exception &error) {
+          std::cout << "PROBE\t" << operation << '\t' << specification.name
+                    << "\trejected\t" << error.what() << '\n';
+        }
+        continue;
+      }
       run_case(specification, flagdnn_provider, acdnn_provider, stream);
       ++comparable_executed;
     }
+    if (probe) return 0;
     if (matched == 0) {
       throw std::invalid_argument(
           "FLAGDNN_BENCHMARK_CASE did not match any case");

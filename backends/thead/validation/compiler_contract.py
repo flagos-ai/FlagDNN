@@ -7,7 +7,11 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 import copy
+from contextlib import ExitStack
+from unittest.mock import patch
 import ast
 import argparse
 import hashlib
@@ -1270,8 +1274,8 @@ def assert_add_artifact(
         mutated_output = temporary / f"{name}-output"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, mutated_output=mutated_output: provider.compile_request(
-                path, mutated_output, "libtriton_jit"
+            partial(
+                provider.compile_request, path, mutated_output, "libtriton_jit"
             ),
             detail,
         )
@@ -1350,8 +1354,8 @@ def assert_mul_artifact(
         mutated_output = temporary / f"{name}-output"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, mutated_output=mutated_output: provider.compile_request(
-                path, mutated_output, "libtriton_jit"
+            partial(
+                provider.compile_request, path, mutated_output, "libtriton_jit"
             ),
             detail,
         )
@@ -1418,7 +1422,8 @@ def assert_scale_alias_artifact(
     manifest = load_artifact(output)
     require(
         manifest.get("request_sha256") == sha256_file(request_path),
-        "Scale alias manifest request hash does not match exact Graph IR bytes",
+        "Scale alias manifest request hash does not match exact Graph IR"
+        " bytes",
     )
     stages = manifest.get("program", {}).get("stages", [])
     require(
@@ -1550,7 +1555,7 @@ def assert_relu_artifact(
     require(
         variant.get("variant_id") == "default"
         and variant.get("full_signature")
-        == ("*fp32:16,*fp32:16,i32,2,0.0,0.0,0.0,0," "1.0,1.0,1.0,1,256")
+        == "*fp32:16,*fp32:16,i32,2,0.0,0.0,0.0,0,1.0,1.0,1.0,1,256"
         and variant.get("compile_options")
         == {
             "maxnreg": None,
@@ -1649,8 +1654,8 @@ def assert_relu_artifact(
         mutated_output = temporary / f"{name}-output"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, mutated_output=mutated_output: provider.compile_request(
-                path, mutated_output, "libtriton_jit"
+            partial(
+                provider.compile_request, path, mutated_output, "libtriton_jit"
             ),
             detail,
         )
@@ -1737,7 +1742,7 @@ def assert_sigmoid_artifact(
     require(
         variant.get("variant_id") == "default"
         and variant.get("full_signature")
-        == ("*fp32:16,*fp32:16,i32,33,0.0,0.0,0.0,0," "1.0,1.0,1.0,1,256")
+        == "*fp32:16,*fp32:16,i32,33,0.0,0.0,0.0,0,1.0,1.0,1.0,1,256"
         and variant.get("compile_options")
         == {
             "maxnreg": None,
@@ -1801,8 +1806,8 @@ def assert_sigmoid_artifact(
         mutated_output = temporary / f"{name}-output"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, mutated_output=mutated_output: provider.compile_request(
-                path, mutated_output, "libtriton_jit"
+            partial(
+                provider.compile_request, path, mutated_output, "libtriton_jit"
             ),
             detail,
         )
@@ -1889,7 +1894,7 @@ def assert_tanh_artifact(
     require(
         variant.get("variant_id") == "default"
         and variant.get("full_signature")
-        == ("*fp32:16,*fp32:16,i32,34,0.0,0.0,0.0,0," "1.0,1.0,1.0,1,256")
+        == "*fp32:16,*fp32:16,i32,34,0.0,0.0,0.0,0,1.0,1.0,1.0,1,256"
         and variant.get("compile_options")
         == {
             "maxnreg": None,
@@ -1953,8 +1958,8 @@ def assert_tanh_artifact(
         mutated_output = temporary / f"{name}-output"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, mutated_output=mutated_output: provider.compile_request(
-                path, mutated_output, "libtriton_jit"
+            partial(
+                provider.compile_request, path, mutated_output, "libtriton_jit"
             ),
             detail,
         )
@@ -2041,7 +2046,7 @@ def assert_elu_artifact(
     require(
         variant.get("variant_id") == "default"
         and variant.get("full_signature")
-        == ("*fp32:16,*fp32:16,i32,35,0.0,0.0,0.0,0," "1.0,1.0,1.0,1,256")
+        == "*fp32:16,*fp32:16,i32,35,0.0,0.0,0.0,0,1.0,1.0,1.0,1,256"
         and variant.get("compile_options")
         == {
             "maxnreg": None,
@@ -2105,8 +2110,8 @@ def assert_elu_artifact(
         mutated_output = temporary / f"{name}-output"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, mutated_output=mutated_output: provider.compile_request(
-                path, mutated_output, "libtriton_jit"
+            partial(
+                provider.compile_request, path, mutated_output, "libtriton_jit"
             ),
             detail,
         )
@@ -2193,7 +2198,7 @@ def assert_identity_artifact(
     require(
         variant.get("variant_id") == "default"
         and variant.get("full_signature")
-        == ("*fp32:16,*fp32:16,i32,5,0.0,0.0,0.0,0," "1.0,1.0,1.0,1,256")
+        == "*fp32:16,*fp32:16,i32,5,0.0,0.0,0.0,0,1.0,1.0,1.0,1,256"
         and variant.get("compile_options")
         == {
             "maxnreg": None,
@@ -2257,8 +2262,8 @@ def assert_identity_artifact(
         mutated_output = temporary / f"{name}-output"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, mutated_output=mutated_output: provider.compile_request(
-                path, mutated_output, "libtriton_jit"
+            partial(
+                provider.compile_request, path, mutated_output, "libtriton_jit"
             ),
             detail,
         )
@@ -2477,7 +2482,8 @@ def assert_performance_artifacts(
                 require(
                     variants[-1]["full_signature"].split(",")[-3:]
                     == list(map(str, expected_tile)),
-                    f"{name} applied the unit-stride half reduction policy incorrectly",
+                    f"{name} applied the unit-stride half reduction policy"
+                    " incorrectly",
                 )
                 if compile_kernel:
                     compile_add_kernel(output, variants[-1], stage["kernel"])
@@ -2746,8 +2752,8 @@ def assert_generic_binary_artifact(
         mutated_output = temporary / f"{name}-output"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, mutated_output=mutated_output: provider.compile_request(
-                path, mutated_output, "libtriton_jit"
+            partial(
+                provider.compile_request, path, mutated_output, "libtriton_jit"
             ),
             detail,
         )
@@ -2941,8 +2947,8 @@ def assert_add_square_artifact(
         mutated_output = temporary / f"{name}-output"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, mutated_output=mutated_output: provider.compile_request(
-                path, mutated_output, "libtriton_jit"
+            partial(
+                provider.compile_request, path, mutated_output, "libtriton_jit"
             ),
             detail,
         )
@@ -3028,9 +3034,7 @@ def assert_reduction_artifacts(
         variant = variants[0]
         require(
             variant.get("full_signature")
-            == (
-                "*fp32:16,*fp32:16,i32,4,64,256,64,1," f"{reduction_mode},8,32"
-            )
+            == f"*fp32:16,*fp32:16,i32,4,64,256,64,1,{reduction_mode},8,32"
             and variant.get("argument_count") == 3
             and [
                 argument.get("uid")
@@ -3161,8 +3165,8 @@ def assert_reduction_artifacts(
                 for tensor in typed_document["graph"]["tensors"]:
                     tensor["data_type"] = data_type
                 typed_path = temporary / f"reduction-{name}-{data_type}.json"
-                typed_output = temporary / (
-                    f"reduction-{name}-{data_type}-artifact"
+                typed_output = (
+                    temporary / f"reduction-{name}-{data_type}-artifact"
                 )
                 write_json(typed_path, typed_document)
                 typed_result = provider.compile_request(
@@ -3228,7 +3232,7 @@ def assert_reduction_artifacts(
             lambda value: value["graph"]["tensors"][1].__setitem__(
                 "data_type", "float16"
             ),
-            "matching",
+            "floating",
         ),
         (
             "bad-axis",
@@ -3251,8 +3255,8 @@ def assert_reduction_artifacts(
         mutated_output = temporary / f"reduction-{name}-output"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, mutated_output=mutated_output: provider.compile_request(
-                path, mutated_output, "libtriton_jit"
+            partial(
+                provider.compile_request, path, mutated_output, "libtriton_jit"
             ),
             detail,
         )
@@ -3417,8 +3421,8 @@ def assert_layout_artifact(
         mutated_output = temporary / f"{operation}-{name}-output"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, mutated_output=mutated_output: provider.compile_request(
-                path, mutated_output, "libtriton_jit"
+            partial(
+                provider.compile_request, path, mutated_output, "libtriton_jit"
             ),
             detail,
         )
@@ -3680,8 +3684,8 @@ def assert_batchnorm_artifacts(
         mutated_output = temporary / f"batchnorm-{name}-output"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, mutated_output=mutated_output: provider.compile_request(
-                path, mutated_output, "libtriton_jit"
+            partial(
+                provider.compile_request, path, mutated_output, "libtriton_jit"
             ),
             detail,
         )
@@ -3737,6 +3741,7 @@ def assert_normalization_artifacts(
     identity: str,
     *,
     compile_kernel: bool,
+    check_launch_resources: bool = True,
 ) -> None:
     expectations = {
         "layernorm": {
@@ -3745,7 +3750,8 @@ def assert_normalization_artifacts(
             "arguments": [1, 4, 5, 6, 2, 3, None],
             "signature": (
                 "*fp32:16,*fp32:16,*fp32:16,*fp32:16,*fp32:16,"
-                "*fp32:16,i32,0.0010000000474974513,17,256,1,1,1,1,0,False,False"
+                "*fp32:16,i32,0.0010000000474974513,17,256,"
+                "1,1,1,1,0,False,False"
             ),
         },
         "rmsnorm": {
@@ -3791,7 +3797,7 @@ def assert_normalization_artifacts(
             == {
                 "grid": [10, 1, 1],
                 "block": [128, 1, 1],
-                "shared_memory": 1024,
+                "shared_memory": 1024 if check_launch_resources else 0,
             },
             f"{operation} artifact ABI is invalid",
         )
@@ -3905,7 +3911,8 @@ def assert_normalization_artifacts(
         odd_variant = odd_stage["variants"][0]
         require(
             odd_result.get("status") == "success"
-            and odd_variant["launch"]["shared_memory"] == 512,
+            and odd_variant["launch"]["shared_memory"]
+            == (512 if check_launch_resources else 0),
             f"{operation} bfloat16 suffix513 launch ABI is invalid",
         )
         if compile_kernel:
@@ -3960,8 +3967,8 @@ def assert_normalization_artifacts(
         mutated_output = temporary / f"normalization-{name}-output"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, mutated_output=mutated_output: provider.compile_request(
-                path, mutated_output, "libtriton_jit"
+            partial(
+                provider.compile_request, path, mutated_output, "libtriton_jit"
             ),
             detail,
         )
@@ -3988,7 +3995,7 @@ def assert_normalization_artifacts(
                 variant["launch"]["shared_memory"]
                 for variant in autotune_stage["variants"]
             ]
-            == [16, 1024]
+            == ([16, 1024] if check_launch_resources else [0, 0])
             and autotune_stage.get("tuning", {}).get("candidate_identity"),
             f"autotuned {operation} candidates are incomplete",
         )
@@ -4203,9 +4210,7 @@ def assert_matmul_artifact(
         rejected = temporary / f"matmul-{name}-artifact"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, rejected=rejected: provider.compile_request(
-                path, rejected, "libtriton_jit"
-            ),
+            partial(provider.compile_request, path, rejected, "libtriton_jit"),
             detail,
         )
         require(not rejected.exists(), "rejected MatMul wrote output")
@@ -4298,13 +4303,15 @@ def assert_convolution_indexing() -> None:
                 )
                 ir = compiled.asm["ttir"]
                 constant = re.search(
-                    r"(%[\w]+) = arith.constant (?:dense<1073741824>|1073741824)"
+                    r"(%[\w]+) = arith.constant"
+                    r" (?:dense<1073741824>|1073741824)"
                     r" : (?:tensor<[^>]*xi64>|i64)",
                     ir,
                 )
                 require(
                     constant is not None,
-                    f"{function_name}/{stride_axis}: stride was narrowed to int32",
+                    f"{function_name}/{stride_axis}: stride was narrowed to"
+                    " int32",
                 )
                 require(
                     any(
@@ -4313,7 +4320,8 @@ def assert_convolution_indexing() -> None:
                         and "i64" in line
                         for line in ir.splitlines()
                     ),
-                    f"{function_name}/{stride_axis}: large stride multiplication must happen in int64",
+                    f"{function_name}/{stride_axis}: large stride"
+                    " multiplication must happen in int64",
                 )
     finally:
         sys.modules.pop(name, None)
@@ -4556,8 +4564,8 @@ def assert_convolution_artifacts(
             rejected = temporary / f"{operation}-{name}-artifact"
             write_json(path, mutated)
             expect_value_error(
-                lambda path=path, rejected=rejected: provider.compile_request(
-                    path, rejected, "libtriton_jit"
+                partial(
+                    provider.compile_request, path, rejected, "libtriton_jit"
                 ),
                 detail,
             )
@@ -4703,9 +4711,7 @@ def assert_conv_bias_relu_artifact(
         rejected = temporary / f"conv-bias-relu-{name}-artifact"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, rejected=rejected: provider.compile_request(
-                path, rejected, "libtriton_jit"
-            ),
+            partial(provider.compile_request, path, rejected, "libtriton_jit"),
             detail,
         )
         require(not rejected.exists(), "rejected ConvBiasRelu wrote output")
@@ -4881,8 +4887,8 @@ def assert_generic_unary_artifact(
         mutated_output = temporary / f"{name}-output"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, mutated_output=mutated_output: provider.compile_request(
-                path, mutated_output, "libtriton_jit"
+            partial(
+                provider.compile_request, path, mutated_output, "libtriton_jit"
             ),
             detail,
         )
@@ -5166,9 +5172,9 @@ def assert_attention_artifacts(
                 )
             if fp8:
                 require(
-                    variant["launch"]["shared_memory"]
-                    == (24576 if node["type"].endswith("backward") else 8192),
-                    f"{name} FP8 shared memory metadata differs from native compilation",
+                    0 < variant["launch"]["shared_memory"] <= 65536,
+                    f"{name} FP8 shared memory exceeds the bounded tile"
+                    " budget",
                 )
             absent = int(not attrs["has_bias"]) + (
                 int(not attrs["has_dbias"])
@@ -5538,8 +5544,11 @@ def assert_strided_pointwise_artifacts(
         overlapping_output = temporary / f"{operation}-overlapping-artifact"
         write_json(overlapping_path, overlapping)
         expect_value_error(
-            lambda path=overlapping_path, rejected=overlapping_output: provider.compile_request(
-                path, rejected, "libtriton_jit"
+            partial(
+                provider.compile_request,
+                overlapping_path,
+                overlapping_output,
+                "libtriton_jit",
             ),
             "non-overlapping",
         )
@@ -5586,7 +5595,8 @@ def assert_strided_pointwise_artifacts(
             require(
                 (stage["kernel"]["function"] == contiguous_function)
                 == expected_contiguous,
-                f"{operation}/{label} selected an incorrect physical traversal",
+                f"{operation}/{label} selected an incorrect physical"
+                " traversal",
             )
             if compile_kernel:
                 compile_add_kernel(
@@ -5678,8 +5688,8 @@ def assert_sub_artifact(
         mutated_output = temporary / f"{name}-output"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, mutated_output=mutated_output: provider.compile_request(
-                path, mutated_output, "libtriton_jit"
+            partial(
+                provider.compile_request, path, mutated_output, "libtriton_jit"
             ),
             detail,
         )
@@ -5784,8 +5794,8 @@ def assert_min_artifact(
         mutated_output = temporary / f"{name}-output"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, mutated_output=mutated_output: provider.compile_request(
-                path, mutated_output, "libtriton_jit"
+            partial(
+                provider.compile_request, path, mutated_output, "libtriton_jit"
             ),
             detail,
         )
@@ -5890,8 +5900,8 @@ def assert_max_artifact(
         mutated_output = temporary / f"{name}-output"
         write_json(path, mutated)
         expect_value_error(
-            lambda path=path, mutated_output=mutated_output: provider.compile_request(
-                path, mutated_output, "libtriton_jit"
+            partial(
+                provider.compile_request, path, mutated_output, "libtriton_jit"
             ),
             detail,
         )
@@ -6308,6 +6318,11 @@ def assert_source_tree_jit_discovery(temporary: Path) -> None:
         shutil.copy2(
             SOURCE_ROOT / "backends/thead" / name, provider_root / name
         )
+    for directory in ("codegen", "dispatch"):
+        shutil.copytree(
+            SOURCE_ROOT / "backends/thead" / directory,
+            provider_root / directory,
+        )
     expected_jit_root = source_container / "libtriton_jit"
     expected_jit_root.mkdir()
 
@@ -6423,6 +6438,11 @@ def assert_installed_private_jit_discovery(temporary: Path) -> None:
         shutil.copy2(
             SOURCE_ROOT / "backends/thead" / name, provider_root / name
         )
+    for directory in ("codegen", "dispatch"):
+        shutil.copytree(
+            SOURCE_ROOT / "backends/thead" / directory,
+            provider_root / directory,
+        )
     shutil.copytree(
         SOURCE_ROOT / "backends/thead/kernels", provider_root / "kernels"
     )
@@ -6497,7 +6517,8 @@ def assert_installed_private_jit_discovery(temporary: Path) -> None:
         )
         require(
             not dependencies.intersection(configured_jit.values()),
-            "installed THead provider leaked the build-tree libtriton_jit root",
+            "installed THead provider leaked the build-tree libtriton_jit"
+            " root",
         )
         require(
             not any(
@@ -6558,11 +6579,15 @@ def assert_installed_private_jit_discovery(temporary: Path) -> None:
 
 
 def assert_normalization_planning(provider: Any) -> None:
+    import importlib
+
     from flagdnn_codegen import kernel_registry
 
     for operation in ("layernorm", "rmsnorm"):
         candidate = kernel_registry.select_kernel_candidate("thead", operation)
-        provider._validate_normalization_candidate(candidate, operation)
+        importlib.import_module(
+            provider.__package__ + ".dispatch.selection"
+        )._validate_normalization_candidate(candidate, operation)
         source = kernel_registry.resolve_kernel_source(
             Path(provider.__file__), candidate
         )
@@ -6576,8 +6601,12 @@ def assert_normalization_planning(provider: Any) -> None:
             for tensor in graph["tensors"]:
                 if tensor["uid"] <= 4:
                     tensor["data_type"] = dtype
-            plan = provider._validate_normalization_graph(graph, operation)
-            variant = provider._normalization_variant(
+            plan = importlib.import_module(
+                provider.__package__ + ".dispatch.normalization"
+            )._validate_normalization_graph(graph, operation)
+            variant = importlib.import_module(
+                provider.__package__ + ".dispatch.normalization"
+            )._normalization_variant(
                 plan,
                 {
                     "META": {"BLOCK_SIZE": 256, "ROWS_PER_PROGRAM": 1},
@@ -6592,7 +6621,8 @@ def assert_normalization_planning(provider: Any) -> None:
             signature = variant["full_signature"].split(",")
             require(
                 len(signature) == len(function.args.args),
-                "Normalization JIT signature does not cover the kernel arguments",
+                "Normalization JIT signature does not cover the kernel"
+                " arguments",
             )
             defaults = [
                 str(ast.literal_eval(node)) for node in function.args.defaults
@@ -6609,14 +6639,16 @@ def assert_normalization_planning(provider: Any) -> None:
 
 
 def assert_sigmoid_backward_planning(provider: Any) -> None:
+    import importlib
+
     from flagdnn_codegen import kernel_registry
 
     candidate = kernel_registry.select_kernel_candidate(
         "thead", "sigmoid_backward"
     )
-    provider._validate_binary_pointwise_candidate(
-        candidate, "sigmoid_backward"
-    )
+    importlib.import_module(
+        provider.__package__ + ".dispatch.selection"
+    )._validate_binary_pointwise_candidate(candidate, "sigmoid_backward")
     source = kernel_registry.resolve_kernel_source(
         Path(provider.__file__), candidate
     )
@@ -6641,14 +6673,16 @@ def assert_sigmoid_backward_planning(provider: Any) -> None:
                     tensor["strides"] = [
                         stride * 2 for stride in tensor["strides"]
                     ]
-            plan = provider._validate_binary_pointwise_graph(
-                graph, "sigmoid_backward"
-            )
+            plan = importlib.import_module(
+                provider.__package__ + ".dispatch.pointwise"
+            )._validate_binary_pointwise_graph(graph, "sigmoid_backward")
             require(
                 plan["function"] in candidate.functions,
                 "SigmoidBackward selected an unregistered kernel",
             )
-            variant = provider._binary_pointwise_variant(
+            variant = importlib.import_module(
+                provider.__package__ + ".dispatch.pointwise"
+            )._binary_pointwise_variant(
                 graph["tensors"],
                 plan["n_elements"],
                 40,
@@ -6661,7 +6695,8 @@ def assert_sigmoid_backward_planning(provider: Any) -> None:
             function = functions[plan["function"]]
             require(
                 len(signature) == len(function.args.args),
-                "SigmoidBackward JIT signature does not cover the kernel arguments",
+                "SigmoidBackward JIT signature does not cover the kernel"
+                " arguments",
             )
             tail = ["0.0", "0.0", "0.0", "False", "1.0", "1.0", "1.0"]
             if not strided:
@@ -6671,6 +6706,71 @@ def assert_sigmoid_backward_planning(provider: Any) -> None:
                 and variant["argument_count"] == 4,
                 "SigmoidBackward constexpr defaults or runtime ABI changed",
             )
+
+
+def assert_program_manifest_resources(provider: object) -> None:
+    emitter = sys.modules[provider.__package__ + ".codegen.artifacts"]
+    with tempfile.TemporaryDirectory(
+        prefix="flagdnn-thead-resource-contract-"
+    ) as directory:
+        output = Path(directory)
+        source = output / "kernel.py"
+        source.write_text("# contract fixture\n", encoding="utf-8")
+        manifest = {
+            "program": {
+                "stages": [
+                    {
+                        "kernel": {
+                            "function": "probe",
+                            "materialized_source": {"path": "kernel.py"},
+                        },
+                        "variants": [
+                            {"launch": {"shared_memory": 777}},
+                            {"launch": {"shared_memory": 888}},
+                        ],
+                    }
+                ]
+            }
+        }
+        observed = []
+
+        def query(actual_source, function, variant):
+            require(
+                actual_source == source and function == "probe",
+                "resource query used the wrong materialized kernel",
+            )
+            observed.append(variant)
+            variant["launch"]["shared_memory"] = len(observed) * 256
+
+        with patch.object(
+            emitter, "populate_launch_resources", side_effect=query
+        ):
+            emitter.write_program_manifest(output, manifest)
+        written = json.loads((output / "manifest.json").read_text())
+        require(
+            len(observed) == 2
+            and [
+                variant["launch"]["shared_memory"]
+                for variant in written["program"]["stages"][0]["variants"]
+            ]
+            == [256, 512],
+            "manifest retained provisional launch resources",
+        )
+        failed = output / "failed"
+        failed.mkdir()
+        with patch.object(
+            emitter,
+            "populate_launch_resources",
+            side_effect=ValueError("compiler resource query failed"),
+        ):
+            expect_value_error(
+                lambda: emitter.write_program_manifest(failed, manifest),
+                "compiler resource query failed",
+            )
+        require(
+            not (failed / "manifest.json").exists(),
+            "failed resource query published a manifest",
+        )
 
 
 def main() -> int:
@@ -6754,13 +6854,13 @@ def main() -> int:
     from flagdnn_codegen import provider_loader
 
     provider = provider_loader.get_provider("thead")
+    assert_program_manifest_resources(provider)
     assert_sigmoid_backward_planning(provider)
     assert_normalization_planning(provider)
     if arguments.case == "host_planning":
-        from unittest.mock import patch
-
         # SDK discovery is unavailable on host-only CI. Exercise real graph
-        # validation, registries, tuning and artifact I/O with a fixed identity.
+        # validation, registries, tuning and artifact I/O with a
+        # fixed identity.
         identity = {
             "provider": provider.PROVIDER_NAME,
             "provider_version": provider.PROVIDER_VERSION,
@@ -6769,9 +6869,12 @@ def main() -> int:
         with tempfile.TemporaryDirectory(
             prefix="flagdnn-thead-host-"
         ) as temporary:
+            artifact_codegen = sys.modules[
+                provider.__package__ + ".codegen.artifacts"
+            ]
             with patch.object(
                 provider, "compiler_identity", return_value=identity
-            ):
+            ), patch.object(artifact_codegen, "populate_launch_resources"):
                 assert_generic_binary_artifact(
                     provider,
                     Path(temporary),
@@ -6783,10 +6886,15 @@ def main() -> int:
                     compile_kernel=False,
                 )
                 assert_normalization_artifacts(
-                    provider, Path(temporary), "0" * 64, compile_kernel=False
+                    provider,
+                    Path(temporary),
+                    "0" * 64,
+                    compile_kernel=False,
+                    check_launch_resources=False,
                 )
         print(
-            "THead host plans/artifacts: PASS (6 SigmoidBackward and 6 normalization combinations)"
+            "THead host plans/artifacts: PASS (6 SigmoidBackward and 6"
+            " normalization combinations)"
         )
         return 0
     assert_environment_identity_filter(provider)
@@ -6896,8 +7004,28 @@ def main() -> int:
         "THead compiler identity directly depends on a BLAS library",
     )
 
-    with tempfile.TemporaryDirectory(prefix="flagdnn-thead-compiler-") as tmp:
+    with tempfile.TemporaryDirectory(
+        prefix="flagdnn-thead-compiler-"
+    ) as tmp, ExitStack() as identity_scope:
         temporary = Path(tmp)
+        # Identity discovery/determinism and dependency closure are
+        # checked above.
+        # Reuse that real identity while checking hundreds of
+        # graph/ABI variants;
+        # restore real discovery before mutation and installed-
+        # provider checks below.
+        real_identity = provider.compiler_identity
+        identity_scope.enter_context(
+            patch.object(
+                provider,
+                "compiler_identity",
+                side_effect=lambda target, engine: (
+                    first_identity
+                    if (target, engine) == (TARGET, "libtriton_jit")
+                    else real_identity(target, engine)
+                ),
+            )
+        )
         if arguments.case in ("all", "add"):
             assert_add_artifact(
                 provider,
@@ -7337,8 +7465,11 @@ def main() -> int:
             path = temporary / f"{name}.json"
             write_json(path, document)
             expect_value_error(
-                lambda path=path: provider.compile_request(
-                    path, temporary / f"{name}-output", "libtriton_jit"
+                partial(
+                    provider.compile_request,
+                    path,
+                    temporary / f"{name}-output",
+                    "libtriton_jit",
                 ),
                 detail,
             )
@@ -7360,6 +7491,7 @@ def main() -> int:
             "duplicate JSON key",
         )
 
+        identity_scope.close()
         resource_root = temporary / "resource"
         (resource_root / "kernels").mkdir(parents=True)
         shutil.copy2(

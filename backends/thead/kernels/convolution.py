@@ -65,9 +65,9 @@ def conv_fprop_nd_kernel(
     """N-D cross-correlation over explicit logical tensor strides."""
 
     wide_coordinates: tl.constexpr = (
-        OD * STRIDE_D + KD * DIL_D + PAD_FRONT > 2147483647 or
-        OH * STRIDE_H + KH * DIL_H + PAD_TOP > 2147483647 or
-        OW * STRIDE_W + KW * DIL_W + PAD_LEFT > 2147483647
+        OD * STRIDE_D + KD * DIL_D + PAD_FRONT > 2147483647
+        or OH * STRIDE_H + KH * DIL_H + PAD_TOP > 2147483647
+        or OW * STRIDE_W + KW * DIL_W + PAD_LEFT > 2147483647
     )
     tile = tl.program_id(0)
     group = tl.program_id(1).to(tl.int64)
@@ -106,14 +106,10 @@ def conv_fprop_nd_kernel(
             + kernel_d[None, :] * DIL_D
         )
         input_h = (
-            output_h[:, None] * STRIDE_H
-            - PAD_TOP
-            + kernel_h[None, :] * DIL_H
+            output_h[:, None] * STRIDE_H - PAD_TOP + kernel_h[None, :] * DIL_H
         )
         input_w = (
-            output_w[:, None] * STRIDE_W
-            - PAD_LEFT
-            + kernel_w[None, :] * DIL_W
+            output_w[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
         )
         reduction_active = reduction < reduction_extent
         inputs = tl.load(
@@ -135,8 +131,7 @@ def conv_fprop_nd_kernel(
         )
         weights = tl.load(
             w_ptr
-            + (group * COUT_PER_GROUP + output_channels[:, None])
-            * W_STRIDE_K
+            + (group * COUT_PER_GROUP + output_channels[:, None]) * W_STRIDE_K
             + _stride_offset(input_channel[None, :], W_STRIDE_C, CIN_PER_GROUP)
             + _stride_offset(kernel_d[None, :], W_STRIDE_D, KD)
             + _stride_offset(kernel_h[None, :], W_STRIDE_H, KH)
@@ -145,7 +140,11 @@ def conv_fprop_nd_kernel(
             & reduction_active[None, :],
             other=0.0,
         )
-        accumulator += tl.dot(inputs, tl.trans(weights), input_precision="ieee")
+        accumulator += tl.dot(
+            inputs,
+            tl.trans(weights),
+            input_precision="tf32" if INPUT_PRECISION == 2 else "ieee",
+        )
 
     tl.store(
         y_ptr
@@ -155,9 +154,10 @@ def conv_fprop_nd_kernel(
         + _stride_offset(output_h[:, None], Y_STRIDE_H, OH)
         + _stride_offset(output_w[:, None], Y_STRIDE_W, OW),
         accumulator.to(y_ptr.dtype.element_ty),
-        mask=(rows[:, None] < M)
-        & (output_channels[None, :] < COUT_PER_GROUP),
+        mask=(rows[:, None] < M) & (output_channels[None, :] < COUT_PER_GROUP),
     )
+
+
 @triton.jit
 def conv2d_bias_relu_kernel(
     x_ptr,
@@ -198,8 +198,8 @@ def conv2d_bias_relu_kernel(
     INPUT_PRECISION: tl.constexpr,
 ):
     wide_coordinates: tl.constexpr = (
-        OH * STRIDE_H + KH * DIL_H + PAD_TOP > 2147483647 or
-        OW * STRIDE_W + KW * DIL_W + PAD_LEFT > 2147483647
+        OH * STRIDE_H + KH * DIL_H + PAD_TOP > 2147483647
+        or OW * STRIDE_W + KW * DIL_W + PAD_LEFT > 2147483647
     )
     tile = tl.program_id(0)
     batch_group = tl.program_id(1).to(tl.int64)
@@ -227,14 +227,10 @@ def conv2d_bias_relu_kernel(
         kernel_h = kernel_hw // KW
         kernel_w = kernel_hw % KW
         input_h = (
-            output_h[:, None] * STRIDE_H
-            - PAD_TOP
-            + kernel_h[None, :] * DIL_H
+            output_h[:, None] * STRIDE_H - PAD_TOP + kernel_h[None, :] * DIL_H
         )
         input_w = (
-            output_w[:, None] * STRIDE_W
-            - PAD_LEFT
-            + kernel_w[None, :] * DIL_W
+            output_w[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
         )
         input_values = tl.load(
             x_ptr
@@ -252,8 +248,7 @@ def conv2d_bias_relu_kernel(
         )
         weights = tl.load(
             w_ptr
-            + (group * COUT_PER_GROUP + output_channels[:, None])
-            * W_STRIDE_K
+            + (group * COUT_PER_GROUP + output_channels[:, None]) * W_STRIDE_K
             + _stride_offset(input_channel[None, :], W_STRIDE_C, CIN_PER_GROUP)
             + _stride_offset(kernel_h[None, :], W_STRIDE_R, KH)
             + _stride_offset(kernel_w[None, :], W_STRIDE_S, KW),
@@ -264,7 +259,7 @@ def conv2d_bias_relu_kernel(
         accumulator += tl.dot(
             input_values,
             tl.trans(weights),
-            input_precision="ieee",
+            input_precision="tf32" if INPUT_PRECISION == 2 else "ieee",
         )
 
     global_channels = group * COUT_PER_GROUP + output_channels
@@ -334,9 +329,9 @@ def conv_wgrad_nd_kernel(
     BLOCK_M: tl.constexpr,
 ):
     wide_coordinates: tl.constexpr = (
-        OD * STRIDE_D + KD * DIL_D + PAD_FRONT > 2147483647 or
-        OH * STRIDE_H + KH * DIL_H + PAD_TOP > 2147483647 or
-        OW * STRIDE_W + KW * DIL_W + PAD_LEFT > 2147483647
+        OD * STRIDE_D + KD * DIL_D + PAD_FRONT > 2147483647
+        or OH * STRIDE_H + KH * DIL_H + PAD_TOP > 2147483647
+        or OW * STRIDE_W + KW * DIL_W + PAD_LEFT > 2147483647
     )
     # One weight per CTA avoids mostly masked matrix tiles for small CIN.
     # Each CTA owns its result; no atomics or cross-launch initialization.
@@ -364,23 +359,46 @@ def conv_wgrad_nd_kernel(
             xd = od * STRIDE_D - PAD_FRONT + effective_d * DIL_D
             xh = oh * STRIDE_H - PAD_TOP + effective_h * DIL_H
             xw = ow * STRIDE_W - PAD_LEFT + effective_w * DIL_W
-            active = ((rows < M) & (xd >= 0) & (xd < XD)
-                      & (xh >= 0) & (xh < XH) & (xw >= 0) & (xw < XW))
+            active = (
+                (rows < M)
+                & (xd >= 0)
+                & (xd < XD)
+                & (xh >= 0)
+                & (xh < XH)
+                & (xw >= 0)
+                & (xw < XW)
+            )
             losses = tl.load(
-                dy_ptr + _stride_offset(batch, DY_STRIDE_N, M // (OD * OH * OW))
+                dy_ptr
+                + _stride_offset(batch, DY_STRIDE_N, M // (OD * OH * OW))
                 + (group * COUT_PER_GROUP + output_channel) * DY_STRIDE_C
-                + _stride_offset(od, DY_STRIDE_D, OD) + _stride_offset(oh, DY_STRIDE_H, OH) + _stride_offset(ow, DY_STRIDE_W, OW),
-                active, 0).to(tl.float32)
+                + _stride_offset(od, DY_STRIDE_D, OD)
+                + _stride_offset(oh, DY_STRIDE_H, OH)
+                + _stride_offset(ow, DY_STRIDE_W, OW),
+                active,
+                0,
+            ).to(tl.float32)
             inputs = tl.load(
-                x_ptr + _stride_offset(batch, X_STRIDE_N, M // (OD * OH * OW))
+                x_ptr
+                + _stride_offset(batch, X_STRIDE_N, M // (OD * OH * OW))
                 + (group * CIN_PER_GROUP + input_channel) * X_STRIDE_C
-                + _stride_offset(xd, X_STRIDE_D, XD) + _stride_offset(xh, X_STRIDE_H, XH) + _stride_offset(xw, X_STRIDE_W, XW),
-                active, 0).to(tl.float32)
+                + _stride_offset(xd, X_STRIDE_D, XD)
+                + _stride_offset(xh, X_STRIDE_H, XH)
+                + _stride_offset(xw, X_STRIDE_W, XW),
+                active,
+                0,
+            ).to(tl.float32)
             accumulator += losses * inputs
         value = tl.sum(accumulator, 0)
-        tl.store(dw_ptr + (group * COUT_PER_GROUP + output_channel) * W_STRIDE_K
-                 + _stride_offset(input_channel, W_STRIDE_C, CIN_PER_GROUP) + _stride_offset(kernel_d, W_STRIDE_D, KD)
-                 + _stride_offset(kernel_h, W_STRIDE_H, KH) + _stride_offset(kernel_w, W_STRIDE_W, KW), value)
+        tl.store(
+            dw_ptr
+            + (group * COUT_PER_GROUP + output_channel) * W_STRIDE_K
+            + _stride_offset(input_channel, W_STRIDE_C, CIN_PER_GROUP)
+            + _stride_offset(kernel_d, W_STRIDE_D, KD)
+            + _stride_offset(kernel_h, W_STRIDE_H, KH)
+            + _stride_offset(kernel_w, W_STRIDE_W, KW),
+            value,
+        )
     else:
         tile = tl.program_id(0)
         filter_spatial = tl.program_id(1).to(tl.int64)
@@ -424,8 +442,11 @@ def conv_wgrad_nd_kernel(
             )
             losses = tl.load(
                 dy_ptr
-                + (group * COUT_PER_GROUP + output_channels[:, None]) * DY_STRIDE_C
-                + _stride_offset(batch[None, :], DY_STRIDE_N, M // (OD * OH * OW))
+                + (group * COUT_PER_GROUP + output_channels[:, None])
+                * DY_STRIDE_C
+                + _stride_offset(
+                    batch[None, :], DY_STRIDE_N, M // (OD * OH * OW)
+                )
                 + _stride_offset(output_d[None, :], DY_STRIDE_D, OD)
                 + _stride_offset(output_h[None, :], DY_STRIDE_H, OH)
                 + _stride_offset(output_w[None, :], DY_STRIDE_W, OW),
@@ -435,8 +456,11 @@ def conv_wgrad_nd_kernel(
             )
             inputs = tl.load(
                 x_ptr
-                + _stride_offset(batch[:, None], X_STRIDE_N, M // (OD * OH * OW))
-                + (group * CIN_PER_GROUP + input_channels[None, :]) * X_STRIDE_C
+                + _stride_offset(
+                    batch[:, None], X_STRIDE_N, M // (OD * OH * OW)
+                )
+                + (group * CIN_PER_GROUP + input_channels[None, :])
+                * X_STRIDE_C
                 + _stride_offset(input_d[:, None], X_STRIDE_D, XD)
                 + _stride_offset(input_h[:, None], X_STRIDE_H, XH)
                 + _stride_offset(input_w[:, None], X_STRIDE_W, XW),
@@ -444,12 +468,18 @@ def conv_wgrad_nd_kernel(
                 & (input_channels[None, :] < CIN_PER_GROUP),
                 other=0.0,
             )
-            accumulator += tl.dot(losses, inputs, input_precision="ieee")
+            accumulator += tl.dot(
+                losses,
+                inputs,
+                input_precision="tf32" if INPUT_PRECISION == 2 else "ieee",
+            )
 
         tl.store(
             dw_ptr
             + (group * COUT_PER_GROUP + output_channels[:, None]) * W_STRIDE_K
-            + _stride_offset(input_channels[None, :], W_STRIDE_C, CIN_PER_GROUP)
+            + _stride_offset(
+                input_channels[None, :], W_STRIDE_C, CIN_PER_GROUP
+            )
             + _stride_offset(kernel_d, W_STRIDE_D, KD)
             + _stride_offset(kernel_h, W_STRIDE_H, KH)
             + _stride_offset(kernel_w, W_STRIDE_W, KW),
@@ -508,9 +538,9 @@ def conv_dgrad_nd_kernel(
     GROUP_M: tl.constexpr,
 ):
     wide_coordinates: tl.constexpr = (
-        XD + PAD_FRONT + KD * DIL_D > 2147483647 or
-        XH + PAD_TOP + KH * DIL_H > 2147483647 or
-        XW + PAD_LEFT + KW * DIL_W > 2147483647
+        XD + PAD_FRONT + KD * DIL_D > 2147483647
+        or XH + PAD_TOP + KH * DIL_H > 2147483647
+        or XW + PAD_LEFT + KW * DIL_W > 2147483647
     )
     # Four spatial parity groups omit invalid stride-two filter terms.
     # Small CIN uses only real channels instead of mostly masked matrix tiles.
@@ -566,33 +596,63 @@ def conv_dgrad_nd_kernel(
             ed = KD - 1 - kd if FLIP_FILTER else kd
             eh = KH - 1 - kh if FLIP_FILTER else kh
             ew = KW - 1 - kw if FLIP_FILTER else kw
-            if ((phase // 2 + PAD_TOP - eh * DIL_H) % 2 == 0
-                    and (phase % 2 + PAD_LEFT - ew * DIL_W) % 2 == 0):
+            if (phase // 2 + PAD_TOP - eh * DIL_H) % 2 == 0 and (
+                phase % 2 + PAD_LEFT - ew * DIL_W
+            ) % 2 == 0:
                 od_num = xd + PAD_FRONT - ed * DIL_D
                 oh_num = xh + PAD_TOP - eh * DIL_H
                 ow_num = xw + PAD_LEFT - ew * DIL_W
                 od = od_num // STRIDE_D
                 oh = oh_num // STRIDE_H
                 ow = ow_num // STRIDE_W
-                active = ((rows < M) & (od_num % STRIDE_D == 0)
-                          & (oh_num % STRIDE_H == 0) & (ow_num % STRIDE_W == 0)
-                          & (od >= 0) & (od < OD) & (oh >= 0) & (oh < OH)
-                          & (ow >= 0) & (ow < OW))
+                active = (
+                    (rows < M)
+                    & (od_num % STRIDE_D == 0)
+                    & (oh_num % STRIDE_H == 0)
+                    & (ow_num % STRIDE_W == 0)
+                    & (od >= 0)
+                    & (od < OD)
+                    & (oh >= 0)
+                    & (oh < OH)
+                    & (ow >= 0)
+                    & (ow < OW)
+                )
                 for start in range(0, COUT_PER_GROUP, BLOCK_K):
                     co = start + co_offsets
-                    loss = tl.load(dy_ptr + _stride_offset(batch[None, :], DY_STRIDE_N, M // (XD * XH * XW))
-                                   + (group * COUT_PER_GROUP + co[:, None]) * DY_STRIDE_C
-                                   + _stride_offset(od[None, :], DY_STRIDE_D, OD) + _stride_offset(oh[None, :], DY_STRIDE_H, OH)
-                                   + _stride_offset(ow[None, :], DY_STRIDE_W, OW),
-                                   (co[:, None] < COUT_PER_GROUP) & active[None, :], 0).to(tl.float32)
-                    weight = tl.load(w_ptr + (group * COUT_PER_GROUP + co) * W_STRIDE_K
-                                     + _stride_offset(ci, W_STRIDE_C, CIN_PER_GROUP) + _stride_offset(kd, W_STRIDE_D, KD)
-                                     + _stride_offset(kh, W_STRIDE_H, KH) + _stride_offset(kw, W_STRIDE_W, KW),
-                                     co < COUT_PER_GROUP, 0).to(tl.float32)
+                    loss = tl.load(
+                        dy_ptr
+                        + _stride_offset(
+                            batch[None, :], DY_STRIDE_N, M // (XD * XH * XW)
+                        )
+                        + (group * COUT_PER_GROUP + co[:, None]) * DY_STRIDE_C
+                        + _stride_offset(od[None, :], DY_STRIDE_D, OD)
+                        + _stride_offset(oh[None, :], DY_STRIDE_H, OH)
+                        + _stride_offset(ow[None, :], DY_STRIDE_W, OW),
+                        (co[:, None] < COUT_PER_GROUP) & active[None, :],
+                        0,
+                    ).to(tl.float32)
+                    weight = tl.load(
+                        w_ptr
+                        + (group * COUT_PER_GROUP + co) * W_STRIDE_K
+                        + _stride_offset(ci, W_STRIDE_C, CIN_PER_GROUP)
+                        + _stride_offset(kd, W_STRIDE_D, KD)
+                        + _stride_offset(kh, W_STRIDE_H, KH)
+                        + _stride_offset(kw, W_STRIDE_W, KW),
+                        co < COUT_PER_GROUP,
+                        0,
+                    ).to(tl.float32)
                     acc += loss * weight[:, None]
         result = tl.sum(acc, 0)
-        tl.store(dx_ptr + _stride_offset(batch, X_STRIDE_N, M // (XD * XH * XW)) + (group * CIN_PER_GROUP + ci) * X_STRIDE_C
-                 + _stride_offset(xd, X_STRIDE_D, XD) + _stride_offset(xh, X_STRIDE_H, XH) + _stride_offset(xw, X_STRIDE_W, XW), result, rows < M)
+        tl.store(
+            dx_ptr
+            + _stride_offset(batch, X_STRIDE_N, M // (XD * XH * XW))
+            + (group * CIN_PER_GROUP + ci) * X_STRIDE_C
+            + _stride_offset(xd, X_STRIDE_D, XD)
+            + _stride_offset(xh, X_STRIDE_H, XH)
+            + _stride_offset(xw, X_STRIDE_W, XW),
+            result,
+            rows < M,
+        )
     else:
         tile = tl.program_id(0)
         group = tl.program_id(1).to(tl.int64)
@@ -625,9 +685,15 @@ def conv_dgrad_nd_kernel(
             kernel_hw = kernel_spatial % (KH * KW)
             kernel_h = kernel_hw // KW
             kernel_w = kernel_hw % KW
-            numerator_d = input_d[:, None] + PAD_FRONT - kernel_d[None, :] * DIL_D
-            numerator_h = input_h[:, None] + PAD_TOP - kernel_h[None, :] * DIL_H
-            numerator_w = input_w[:, None] + PAD_LEFT - kernel_w[None, :] * DIL_W
+            numerator_d = (
+                input_d[:, None] + PAD_FRONT - kernel_d[None, :] * DIL_D
+            )
+            numerator_h = (
+                input_h[:, None] + PAD_TOP - kernel_h[None, :] * DIL_H
+            )
+            numerator_w = (
+                input_w[:, None] + PAD_LEFT - kernel_w[None, :] * DIL_W
+            )
             output_d = numerator_d // STRIDE_D
             output_h = numerator_h // STRIDE_H
             output_w = numerator_w // STRIDE_W
@@ -646,8 +712,11 @@ def conv_dgrad_nd_kernel(
             )
             losses = tl.load(
                 dy_ptr
-                + _stride_offset(batch[:, None], DY_STRIDE_N, M // (XD * XH * XW))
-                + (group * COUT_PER_GROUP + output_channel[None, :]) * DY_STRIDE_C
+                + _stride_offset(
+                    batch[:, None], DY_STRIDE_N, M // (XD * XH * XW)
+                )
+                + (group * COUT_PER_GROUP + output_channel[None, :])
+                * DY_STRIDE_C
                 + _stride_offset(output_d, DY_STRIDE_D, OD)
                 + _stride_offset(output_h, DY_STRIDE_H, OH)
                 + _stride_offset(output_w, DY_STRIDE_W, OW),
@@ -659,8 +728,11 @@ def conv_dgrad_nd_kernel(
             weight_w = KW - 1 - kernel_w if FLIP_FILTER else kernel_w
             weights = tl.load(
                 w_ptr
-                + (group * COUT_PER_GROUP + output_channel[:, None]) * W_STRIDE_K
-                + _stride_offset(input_channels[None, :], W_STRIDE_C, CIN_PER_GROUP)
+                + (group * COUT_PER_GROUP + output_channel[:, None])
+                * W_STRIDE_K
+                + _stride_offset(
+                    input_channels[None, :], W_STRIDE_C, CIN_PER_GROUP
+                )
                 + _stride_offset(weight_d[:, None], W_STRIDE_D, KD)
                 + _stride_offset(weight_h[:, None], W_STRIDE_H, KH)
                 + _stride_offset(weight_w[:, None], W_STRIDE_W, KW),
@@ -668,7 +740,11 @@ def conv_dgrad_nd_kernel(
                 & (input_channels[None, :] < CIN_PER_GROUP),
                 other=0.0,
             )
-            accumulator += tl.dot(losses, weights, input_precision="ieee")
+            accumulator += tl.dot(
+                losses,
+                weights,
+                input_precision="tf32" if INPUT_PRECISION == 2 else "ieee",
+            )
 
         tl.store(
             dx_ptr
@@ -678,5 +754,6 @@ def conv_dgrad_nd_kernel(
             + _stride_offset(input_h[:, None], X_STRIDE_H, XH)
             + _stride_offset(input_w[:, None], X_STRIDE_W, XW),
             accumulator.to(dx_ptr.dtype.element_ty),
-            mask=(rows[:, None] < M) & (input_channels[None, :] < CIN_PER_GROUP),
+            mask=(rows[:, None] < M)
+            & (input_channels[None, :] < CIN_PER_GROUP),
         )

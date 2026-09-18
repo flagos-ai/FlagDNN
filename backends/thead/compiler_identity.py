@@ -162,16 +162,17 @@ def _normalize_jit_environment(capability: int) -> None:
         "TRITON_PTXAS_PATH": sdk_root / "CUDA_SDK/bin/ptxas",
         "TRITON_IR_FORMATTER_PATH": sdk_root / "bin/llvm-irformatter",
     }
-    if ppu_codegen_backend(
-        Path(__import__("triton").__file__).resolve().parent.parent
-    ) == "ppu":
+    if (
+        ppu_codegen_backend(
+            Path(__import__("triton").__file__).resolve().parent.parent
+        )
+        == "ppu"
+    ):
         expected_tools["TRITON_PPU_LLC_PATH"] = sdk_root / "bin/ppu-llc"
     for name, expected in expected_tools.items():
         configured = os.environ.get(name, "")
         if configured:
-            actual = _required_file(
-                Path(configured), name, executable=True
-            )
+            actual = _required_file(Path(configured), name, executable=True)
             if actual != expected.resolve(strict=True):
                 raise ValueError(
                     f"{name} conflicts with the selected THead PPU SDK"
@@ -181,13 +182,13 @@ def _normalize_jit_environment(capability: int) -> None:
     imported_triton_root = (
         Path(__import__("triton").__file__).resolve(strict=True).parent.parent
     )
-    configured_triton_root = os.environ.get(
-        "FLAGDNN_THEAD_TRITON_ROOT", ""
-    )
+    configured_triton_root = os.environ.get("FLAGDNN_THEAD_TRITON_ROOT", "")
     triton_root = _required_directory(
-        Path(configured_triton_root)
-        if configured_triton_root
-        else imported_triton_root,
+        (
+            Path(configured_triton_root)
+            if configured_triton_root
+            else imported_triton_root
+        ),
         "THead Triton root",
     )
     try:
@@ -211,8 +212,13 @@ def _selected_sdk_root() -> Path:
             raise RuntimeError(f"{name} does not match selected PPU SDK root")
     cuda_root = root / "CUDA_SDK"
     cuda_path = os.environ.get("CUDA_PATH", "")
-    if cuda_path and _required_directory(Path(cuda_path), "CUDA_PATH") != cuda_root:
-        raise RuntimeError("CUDA_PATH does not match the selected PPU CUDA SDK")
+    if (
+        cuda_path
+        and _required_directory(Path(cuda_path), "CUDA_PATH") != cuda_root
+    ):
+        raise RuntimeError(
+            "CUDA_PATH does not match the selected PPU CUDA SDK"
+        )
     return root
 
 
@@ -268,9 +274,12 @@ def _sdk_paths() -> dict[str, Path]:
             root=root,
         ),
     }
-    if ppu_codegen_backend(
-        Path(__import__("triton").__file__).resolve().parent.parent
-    ) == "ppu":
+    if (
+        ppu_codegen_backend(
+            Path(__import__("triton").__file__).resolve().parent.parent
+        )
+        == "ppu"
+    ):
         paths["ppu_llc"] = _selected_tool(
             "TRITON_PPU_LLC_PATH", root / "bin/ppu-llc", "PPU LLVM compiler"
         )
@@ -311,7 +320,9 @@ def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for name, value in pairs:
         if name in result:
-            raise ValueError(f"duplicate JSON key in compiler environment: {name}")
+            raise ValueError(
+                f"duplicate JSON key in compiler environment: {name}"
+            )
         result[name] = value
     return result
 
@@ -351,7 +362,8 @@ def _installed_jit_layout() -> tuple[Path, dict[str, Path]] | None:
         )
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError(
-            f"cannot read THead compiler environment {environment_path}: {error}"
+            f"cannot read THead compiler environment {environment_path}:"
+            f" {error}"
         ) from error
     required_fields = {
         "schema_version",
@@ -411,9 +423,7 @@ def _installed_jit_layout() -> tuple[Path, dict[str, Path]] | None:
             f"{environment_path}: provider is not in an installed SDK layout"
         )
     sdk_root = provider_directory.parents[3].resolve()
-    expected_provider = (
-        sdk_root / "share/flagdnn/backends/thead"
-    ).resolve()
+    expected_provider = (sdk_root / "share/flagdnn/backends/thead").resolve()
     if provider_directory.resolve() != expected_provider:
         raise ValueError(
             f"{environment_path}: provider is not in the canonical SDK layout"
@@ -510,7 +520,9 @@ def _jit_paths() -> dict[str, Path]:
             root=root,
         ),
         "gen_ssig": _required_file(
-            scripts / "gen_ssig.py", "libtriton_jit signature generator", root=root
+            scripts / "gen_ssig.py",
+            "libtriton_jit signature generator",
+            root=root,
         ),
     }
     for header in _JIT_HEADERS:
@@ -586,7 +598,8 @@ def _provider_paths() -> tuple[Path, ...]:
     paths = tuple(
         sorted(
             _required_file(path, "THead compiler module", root=directory)
-            for path in directory.glob("*.py")
+            for relative in (".", "codegen", "dispatch")
+            for path in (directory / relative).glob("*.py")
         )
     )
     if not paths:
@@ -618,7 +631,9 @@ def _git_metadata_paths(root: Path) -> tuple[Path, ...]:
         text = head.read_text(encoding="utf-8", errors="replace").strip()
         if text.startswith("ref: "):
             candidates.append(git_directory / text.removeprefix("ref: "))
-    return tuple(sorted(path.resolve() for path in candidates if path.is_file()))
+    return tuple(
+        sorted(path.resolve() for path in candidates if path.is_file())
+    )
 
 
 def compiler_identity_dependency_paths(
@@ -649,7 +664,9 @@ def compiler_identity_dependency_paths(
     result = tuple(sorted(path.resolve() for path in paths))
     for path in result:
         if not path.is_file():
-            raise RuntimeError(f"compiler identity dependency is missing: {path}")
+            raise RuntimeError(
+                f"compiler identity dependency is missing: {path}"
+            )
     return result
 
 
@@ -692,7 +709,14 @@ def _repository_identity(root: Path) -> dict[str, Any]:
         stderr=subprocess.DEVNULL,
     )
     status = subprocess.run(
-        ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+        [
+            "git",
+            "-C",
+            str(root),
+            "status",
+            "--porcelain",
+            "--untracked-files=no",
+        ],
         check=False,
         text=True,
         stdout=subprocess.PIPE,
@@ -740,7 +764,7 @@ def build_compiler_identity(
 ) -> dict[str, Any]:
     capability = _validate_target(target, execution_engine)
     sdk = _sdk_paths()
-    jit = _jit_paths()
+    _jit_paths()
     dependencies = compiler_identity_dependency_paths(target, execution_engine)
     triton_root = Path(
         os.environ.get("FLAGDNN_THEAD_TRITON_ROOT", "")

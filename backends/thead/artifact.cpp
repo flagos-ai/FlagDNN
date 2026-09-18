@@ -202,14 +202,14 @@ std::filesystem::path safe_relative_path(
 }
 
 std::size_t data_type_size(std::string_view data_type) {
-  if (data_type == "float32") {
+  if (data_type == "float32" || data_type == "int32") {
     return 4;
   }
   if (data_type == "float16" || data_type == "bfloat16") {
     return 2;
   }
   if (data_type == "boolean" || data_type == "fp8_e4m3" ||
-      data_type == "fp8_e5m2") {
+      data_type == "fp8_e5m2" || data_type == "fp8_e8m0") {
     return 1;
   }
   artifact_error("tensor data_type is unsupported: " + std::string(data_type));
@@ -439,7 +439,8 @@ std::string tensor_pointer_signature(const GraphTensor& tensor,
   std::string scalar;
   if (fp8_storage_bytes) {
     require_artifact(tensor.data_type == "fp8_e4m3" ||
-                         tensor.data_type == "fp8_e5m2",
+                         tensor.data_type == "fp8_e5m2" ||
+                         tensor.data_type == "fp8_e8m0",
                      "FP8 byte view requires an FP8 tensor");
     scalar = "i8";
   } else if (tensor.data_type == "float32") {
@@ -448,7 +449,9 @@ std::string tensor_pointer_signature(const GraphTensor& tensor,
     scalar = "fp16";
   } else if (tensor.data_type == "bfloat16") {
     scalar = "bf16";
-  } else if (tensor.data_type == "boolean") {
+  } else if (tensor.data_type == "int32") {
+    scalar = "i32";
+  } else if (tensor.data_type == "boolean" || tensor.data_type == "fp8_e8m0") {
     scalar = "i8";
   } else if (tensor.data_type == "fp8_e4m3") {
     scalar = "fp8e4nv";
@@ -533,7 +536,8 @@ KernelArgument parse_argument(
     if (object.contains("storage_view")) {
       require_artifact(object.at("storage_view").as_string() == "fp8_bytes" &&
                            (tensor.data_type == "fp8_e4m3" ||
-                            tensor.data_type == "fp8_e5m2"),
+                            tensor.data_type == "fp8_e5m2" ||
+                            tensor.data_type == "fp8_e8m0"),
                        "storage_view requires an explicit FP8 byte view");
       result.fp8_storage_bytes = true;
     }

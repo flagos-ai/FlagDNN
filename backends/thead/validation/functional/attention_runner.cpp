@@ -1,18 +1,22 @@
 // Copyright 2026 FlagOS Contributors
 // SPDX-License-Identifier: Apache-2.0
-#include "acdnn_attention_reference.hpp"
-#include "acdnn_fp8_codec.hpp"
-#include <array>
-#include <cstdint>
-#include "acdnn_reference.hpp"
-#include "pointwise_runner_support.hpp"
-#include <flagdnn/flagdnn.hpp>
+#include "common/attention_runner.hpp"
+
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
+#include <flagdnn/flagdnn.hpp>
 #include <iostream>
 #include <stdexcept>
 #include <type_traits>
+
+#include "acdnn_attention_reference.hpp"
+#include "acdnn_fp8_codec.hpp"
+#include "acdnn_reference.hpp"
+#include "functional/paired.hpp"
+#include "pointwise_runner_support.hpp"
 
 namespace flagdnn::testing {
 namespace {
@@ -82,8 +86,20 @@ void compare(const functional::BoundTensor &actual,const functional::BoundTensor
     const double error=std::abs(double(left[i])-double(right[i]));
     if(!std::isfinite(left[i]) || !std::isfinite(right[i]) ||
         (error>absolute && error>relative*std::max(std::abs(left[i]),std::abs(right[i])))) {
+      std::string storage_detail;
+      if (is_fp8(actual.specification.data_type)) {
+        std::array<std::uint8_t, 1> actual_byte{}, reference_byte{};
+        tv::copy_from_device_async<std::uint8_t>(
+            actual_byte, *actual.buffer, i, stream.get());
+        tv::copy_from_device_async<std::uint8_t>(
+            reference_byte, *reference.buffer, i, stream.get());
+        tv::check_driver(cuStreamSynchronize(stream.get()),
+                         "FP8 mismatch storage synchronize");
+        storage_detail = " raw_flagdnn=" + std::to_string(actual_byte[0]) +
+                         " raw_acdnn=" + std::to_string(reference_byte[0]);
+      }
       throw std::runtime_error(std::string(name)+" differs at element "+std::to_string(i)+
-          ": FlagDNN="+std::to_string(left[i])+" acDNN="+std::to_string(right[i]));
+          ": FlagDNN="+std::to_string(left[i])+" acDNN="+std::to_string(right[i]) + storage_detail);
     }
   }
 }
@@ -110,8 +126,9 @@ void execute_production(TestExecutable &executable,std::span<const flagdnnBindin
   }
 }
 
-void forward_case(const SdpaTestCase &test_case,flagdnn::Handle &handle,
-                  tv::DeviceStream &stream,const tv::CapabilityRecord &record) {
+void forward_case(const SdpaTestCase &test_case, flagdnn::Handle &handle,
+                  tv::DeviceStream &stream, const tv::CapabilityRecord &record,
+                  bool benchmark = false) {
   auto production=build_flagdnn_sdpa(handle,test_case);
   auto reference=tv::make_acdnn_attention_reference(test_case,record);
   std::vector<functional::BoundTensor> inputs;
@@ -129,10 +146,16 @@ void forward_case(const SdpaTestCase &test_case,flagdnn::Handle &handle,
   functional::execute(*reference,functional::bindings(inputs,expected),reference_workspace,stream);
   compare(actual[0],expected[0],test_case.output_absolute_tolerance,test_case.output_relative_tolerance,stream,test_case.name+" output");
   if(test_case.stats)compare(actual[1],expected[1],test_case.stats_absolute_tolerance,test_case.stats_relative_tolerance,stream,test_case.name+" stats");
+  if (benchmark)
+    functional::measure_pair(test_case.name, *production, *reference,
+                             functional::bindings(inputs, actual),
+                             functional::bindings(inputs, expected),
+                             production_workspace, reference_workspace, stream);
 }
 
-void backward_case(const SdpaBackwardTestCase &test_case,flagdnn::Handle &handle,
-                   tv::DeviceStream &stream,const tv::CapabilityRecord &record) {
+void backward_case(const SdpaBackwardTestCase &test_case,
+                   flagdnn::Handle &handle, tv::DeviceStream &stream,
+                   const tv::CapabilityRecord &record, bool benchmark = false) {
   SdpaTestCase forward;
   forward.name=test_case.name+"_forward_inputs";forward.q=test_case.q;forward.k=test_case.k;forward.v=test_case.v;
   forward.bias=test_case.bias;forward.output=test_case.output;forward.stats=test_case.stats;forward.options=test_case.options;
@@ -176,13 +199,20 @@ void backward_case(const SdpaBackwardTestCase &test_case,flagdnn::Handle &handle
   execute_production(*production,production_bindings,workspace,stream);
   functional::execute(*reference,reference_bindings,reference_workspace,stream);
   for(std::size_t index=0;index<actual.size();++index)compare(actual[index],expected[index],test_case.absolute_tolerance,test_case.relative_tolerance,stream,test_case.name+" gradient "+std::to_string(index));
+  if (benchmark)
+    functional::measure_pair(test_case.name, *production, *reference,
+                             production_bindings, reference_bindings, workspace,
+                             reference_workspace, stream);
 }
 
 struct Fp8ForwardOutputs {
   std::vector<functional::BoundTensor> actual,expected;
 };
-Fp8ForwardOutputs execute_fp8_forward(const SdpaFp8TestCase &test_case,flagdnn::Handle &handle,
-                                      tv::DeviceStream &stream,const tv::CapabilityRecord &record) {
+Fp8ForwardOutputs execute_fp8_forward(const SdpaFp8TestCase &test_case,
+                                      flagdnn::Handle &handle,
+                                      tv::DeviceStream &stream,
+                                      const tv::CapabilityRecord &record,
+                                      bool benchmark = false) {
   auto production=build_flagdnn_sdpa_fp8(handle,test_case);
   auto reference=tv::make_acdnn_attention_reference(test_case,record);
   std::vector<functional::BoundTensor> inputs;
@@ -206,14 +236,21 @@ Fp8ForwardOutputs execute_fp8_forward(const SdpaFp8TestCase &test_case,flagdnn::
     const auto relative=index==0?test_case.output_relative_tolerance:stats?test_case.stats_relative_tolerance:test_case.amax_relative_tolerance;
     compare(outputs.actual[index],outputs.expected[index],absolute,relative,stream,test_case.name+" output "+std::to_string(index));
   }
+  if (benchmark)
+    functional::measure_pair(test_case.name, *production, *reference,
+                             functional::bindings(inputs, outputs.actual),
+                             functional::bindings(inputs, outputs.expected),
+                             workspace, reference_workspace, stream);
   return outputs;
 }
-void forward_case(const SdpaFp8TestCase &test_case,flagdnn::Handle &handle,
-                  tv::DeviceStream &stream,const tv::CapabilityRecord &record) {
-  (void)execute_fp8_forward(test_case,handle,stream,record);
+void forward_case(const SdpaFp8TestCase &test_case, flagdnn::Handle &handle,
+                  tv::DeviceStream &stream, const tv::CapabilityRecord &record,
+                  bool benchmark = false) {
+  (void)execute_fp8_forward(test_case, handle, stream, record, benchmark);
 }
-void backward_case(const SdpaFp8BackwardTestCase &test_case,flagdnn::Handle &handle,
-                   tv::DeviceStream &stream,const tv::CapabilityRecord &record) {
+void backward_case(const SdpaFp8BackwardTestCase &test_case,
+                   flagdnn::Handle &handle, tv::DeviceStream &stream,
+                   const tv::CapabilityRecord &record, bool benchmark = false) {
   SdpaFp8TestCase forward;
   forward.name=test_case.name+"_forward_inputs";forward.q=test_case.q;forward.k=test_case.k;forward.v=test_case.v;
   forward.descale_q=test_case.descale_q;forward.descale_k=test_case.descale_k;forward.descale_v=test_case.descale_v;
@@ -256,11 +293,22 @@ void backward_case(const SdpaFp8BackwardTestCase &test_case,flagdnn::Handle &han
     compare(actual[index],expected[index],index<3?test_case.gradient_absolute_tolerance:test_case.amax_absolute_tolerance,
             index<3?test_case.gradient_relative_tolerance:test_case.amax_relative_tolerance,stream,test_case.name+" output "+std::to_string(index));
   }
+  if (benchmark)
+    functional::measure_pair(test_case.name, *production, *reference,
+                             production_bindings, reference_bindings, workspace,
+                             reference_workspace, stream);
 }
 
-template<class Case> int run(int argc,char **argv,std::span<const Case> cases,
-                             std::string_view operation,std::string_view suite,const char *filter_name) {
+template <class Case>
+int run(int argc, char **argv, std::span<const Case> cases,
+        std::string_view operation, std::string_view suite,
+        const char *filter_name, bool benchmark = false) {
   try {
+    if (argc == 2 && std::string_view(argv[1]) == "--dump-cases") {
+      for (const auto &t : cases)
+        std::cout << operation << '\t' << t.name << '\n';
+      return 0;
+    }
     if(argc!=3 || cases.empty())throw std::invalid_argument("THEAD attention requires compiler arguments and cases");
     const auto catalog=tv::CapabilityCatalog::load(FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG);
     const auto selected_cases = catalog.select_cases(operation, cases);
@@ -285,11 +333,20 @@ template<class Case> int run(int argc,char **argv,std::span<const Case> cases,
                  <<" layout=contiguous shape="<<functional::shape_name(test_case.q)<<'\n';++skipped;continue;
       }
       if(record.status==tv::CapabilityStatus::kProbeRequired && !std::getenv("FLAGDNN_THEAD_QUALIFY_PROBES"))throw std::runtime_error("unqualified acDNN attention reference");
-      if constexpr(std::is_same_v<Case,SdpaTestCase> || std::is_same_v<Case,SdpaFp8TestCase>)forward_case(test_case,handle,stream,record);else backward_case(test_case,handle,stream,record);
+      if constexpr (std::is_same_v<Case, SdpaTestCase> ||
+                    std::is_same_v<Case, SdpaFp8TestCase>)
+        forward_case(test_case, handle, stream, record, benchmark);
+      else
+        backward_case(test_case, handle, stream, record, benchmark);
       ++executed;std::cout<<test_case.name<<": FlagDNN Graph/capture/replay vs acDNN PASS\n";
     }
     if(!selected || selected!=executed+skipped)throw std::runtime_error("THEAD attention case accounting mismatch");
-    std::cout<<suite<<": "<<(executed?"PASS":"SKIP")<<" cases="<<selected<<" executed="<<executed<<" skipped="<<skipped<<'\n';return executed?0:77;
+    std::cout << suite << ": " << (executed ? "PASS" : "SKIP")
+              << " cases=" << selected
+              << (benchmark ? " comparable_executed=" : " executed=")
+              << executed << (benchmark ? " reference_skipped=" : " skipped=")
+              << skipped << '\n';
+    return executed ? 0 : 77;
   }catch(const std::exception &error){std::cerr<<suite<<": FAIL reason="<<error.what()<<'\n';return 1;}
 }
 }  // namespace
@@ -320,5 +377,29 @@ std::unique_ptr<AttentionExecutable> build_sdpa_fp8_backward_reference(const Sdp
 }
 int run_sdpa_fp8_backward_functional_test(int argc,char **argv,std::span<const SdpaFp8BackwardTestCase> cases) {
   return run(argc,argv,cases,"sdpa_fp8_backward","FLAGDNN_SDPA_FP8_BACKWARD_FUNCTIONAL","FLAGDNN_SDPA_FP8_BACKWARD_CASE");
+}
+int run_attention_benchmark_test(int argc, char **argv,
+                                 AttentionBenchmarkOperation operation) {
+  switch (operation) {
+    case AttentionBenchmarkOperation::kForward:
+      return run<SdpaTestCase>(argc, argv, make_sdpa_benchmark_cases(), "sdpa",
+                               "FLAGDNN_SDPA_BENCHMARK", "FLAGDNN_SDPA_CASE",
+                               true);
+    case AttentionBenchmarkOperation::kBackward:
+      return run<SdpaBackwardTestCase>(
+          argc, argv, make_sdpa_backward_benchmark_cases(), "sdpa_backward",
+          "FLAGDNN_SDPA_BACKWARD_BENCHMARK", "FLAGDNN_SDPA_BACKWARD_CASE",
+          true);
+    case AttentionBenchmarkOperation::kFp8Forward:
+      return run<SdpaFp8TestCase>(argc, argv, make_sdpa_fp8_benchmark_cases(),
+                                  "sdpa_fp8", "FLAGDNN_SDPA_FP8_BENCHMARK",
+                                  "FLAGDNN_SDPA_FP8_CASE", true);
+    case AttentionBenchmarkOperation::kFp8Backward:
+      return run<SdpaFp8BackwardTestCase>(
+          argc, argv, make_sdpa_fp8_backward_benchmark_cases(),
+          "sdpa_fp8_backward", "FLAGDNN_SDPA_FP8_BACKWARD_BENCHMARK",
+          "FLAGDNN_SDPA_FP8_BACKWARD_CASE", true);
+  }
+  throw std::invalid_argument("invalid attention benchmark operation");
 }
 }  // namespace flagdnn::testing

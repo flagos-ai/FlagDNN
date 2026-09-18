@@ -8,8 +8,7 @@ foreach(_required IN ITEMS SOURCE_ROOT BUILD_ROOT CTEST_COMMAND)
 endforeach()
 
 include("${SOURCE_ROOT}/cmake/Operators.cmake")
-set(_benchmark_expected ${FLAGDNN_BENCHMARK_OPERATORS})
-list(REMOVE_ITEM _benchmark_expected ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS})
+set(_benchmark_expected ${FLAGDNN_FUNCTIONAL_OPERATORS})
 
 execute_process(
   COMMAND "${CTEST_COMMAND}" --test-dir "${BUILD_ROOT}"

@@ -161,17 +161,22 @@ class PointwiseDag final : public TestExecutable {
     if (plan.empty() || !std::holds_alternative<ReferencePlan>(selection) ||
         capability.path != ReferencePath::kBackendDescriptor ||
         capability.reference_plan != plan || specification.alpha != 1.0 ||
-        specification.attributes.flags != 0) {
+        (specification.attributes.flags != 0 &&
+         specification.mode != FLAGDNN_POINTWISE_RELU_BWD)) {
       throw std::invalid_argument("acDNN pointwise DAG reference plan mismatch");
     }
     const bool logical = specification.mode == FLAGDNN_POINTWISE_LOGICAL_NOT ||
                          specification.mode == FLAGDNN_POINTWISE_LOGICAL_AND ||
                          specification.mode == FLAGDNN_POINTWISE_LOGICAL_OR;
     const bool select = specification.mode == FLAGDNN_POINTWISE_BINARY_SELECT;
-    const std::size_t arity = select ? 3 :
-        (specification.mode == FLAGDNN_POINTWISE_MOD ||
-         specification.mode == FLAGDNN_POINTWISE_LOGICAL_AND ||
-         specification.mode == FLAGDNN_POINTWISE_LOGICAL_OR) ? 2 : 1;
+    const std::size_t arity =
+        select ? 3
+        : (specification.mode == FLAGDNN_POINTWISE_RELU_BWD ||
+           specification.mode == FLAGDNN_POINTWISE_MOD ||
+           specification.mode == FLAGDNN_POINTWISE_LOGICAL_AND ||
+           specification.mode == FLAGDNN_POINTWISE_LOGICAL_OR)
+            ? 2
+            : 1;
     if (specification.inputs.size() != arity || output_.dimensions.empty() ||
         output_.dimensions.size() > 8 ||
         (logical ? output_.data_type != FLAGDNN_DATA_BOOLEAN :
@@ -233,6 +238,32 @@ class PointwiseDag final : public TestExecutable {
       auto inverse = node(ACDNN_POINTWISE_SUB, {constant(1), inputs[2]});
       auto other = node(ACDNN_POINTWISE_MUL, {inverse, inputs[1]});
       result = node(ACDNN_POINTWISE_ADD, {selected, other});
+    } else if (specification.mode == FLAGDNN_POINTWISE_RELU_BWD) {
+      const auto &attributes = specification.attributes;
+      const float lower = static_cast<float>(attributes.relu_lower_clip);
+      const float slope = static_cast<float>(attributes.relu_lower_clip_slope);
+      auto mask = temporary();
+      mask.data_type = FLAGDNN_DATA_BOOLEAN;
+      add_node(ACDNN_POINTWISE_CMP_GT, {inputs[1], constant(lower)}, mask);
+      auto positive = node(ACDNN_POINTWISE_IDENTITY_FWD, {mask});
+      auto gradient =
+          node(ACDNN_POINTWISE_MUL, {positive, constant(1 - slope)});
+      gradient = node(ACDNN_POINTWISE_ADD, {gradient, constant(slope)});
+      if ((attributes.flags & FLAGDNN_POINTWISE_ATTRIBUTE_RELU_UPPER_CLIP) !=
+          0) {
+        auto shifted = node(ACDNN_POINTWISE_SUB, {inputs[1], constant(lower)});
+        auto forward = node(ACDNN_POINTWISE_MUL, {shifted, gradient});
+        forward = node(ACDNN_POINTWISE_ADD, {forward, constant(lower)});
+        auto below_clip = temporary();
+        below_clip.data_type = FLAGDNN_DATA_BOOLEAN;
+        add_node(
+            ACDNN_POINTWISE_CMP_LT,
+            {forward, constant(static_cast<float>(attributes.relu_upper_clip))},
+            below_clip);
+        auto unclipped = node(ACDNN_POINTWISE_IDENTITY_FWD, {below_clip});
+        gradient = node(ACDNN_POINTWISE_MUL, {gradient, unclipped});
+      }
+      result = node(ACDNN_POINTWISE_MUL, {inputs[0], gradient});
     } else if (specification.mode == FLAGDNN_POINTWISE_MOD) {
       auto quotient = node(ACDNN_POINTWISE_DIV, {inputs[0], inputs[1]});
       auto floor = node(ACDNN_POINTWISE_FLOOR, {quotient});
@@ -407,6 +438,11 @@ std::vector<std::string> acdnn_pointwise_dag_plan(flagdnnPointwiseMode_t mode) {
   const std::string cast = "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)";
   const std::string output = "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)";
   switch (mode) {
+    case FLAGDNN_POINTWISE_RELU_BWD:
+      return {cast,
+              "acdnnBackendExecute(POINTWISE_CMP_GT,CMP_LT,MUL,ADD,SUB,relu-"
+              "gradient-DAG)",
+              output};
     case FLAGDNN_POINTWISE_LOGICAL_NOT:
       return {cast, "acdnnBackendExecute(POINTWISE_SUB,1-x)", output};
     case FLAGDNN_POINTWISE_LOGICAL_AND:

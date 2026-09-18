@@ -54,8 +54,9 @@ CONVOLUTION_CASE_PATTERN = re.compile(
 
 # The runner applies this budget to the entire serial preflight as well as
 # each operator. PPU codegen/Graph/JIT/autotune and installed-consumer checks
-# exceed 30 minutes with a cold FlagTree cache; CTest still bounds each test.
-DEFAULT_TIMEOUT = 7200
+# may compile hundreds of shapes with a cold FlagTree cache. Allow the full
+# reduction and precision matrices to finish; CTest still bounds each test.
+DEFAULT_TIMEOUT = 21600
 REPORT_DEVICE = "cuda"
 PREFLIGHT_BY_DEFAULT = True
 SUPPORTS_MIN_SPEEDUP = True
@@ -84,21 +85,31 @@ def _ctest_line(raw_line: str) -> str:
 def select_operator_manifests(
     manifests: dict[str, list[str]],
 ) -> dict[str, list[str]]:
-    root = Path(__file__).resolve().parent
-    catalogs = {
-        "functional": root / "capability.json",
-        "benchmark": COMPARABLE_CASE_CATALOG,
-    }
-    supported = {
-        suite: set(json.loads(path.read_text())["operators"])
-        for suite, path in catalogs.items()
-    }
+    functional = list(manifests["functional"])
     return {
-        suite: [
-            operator for operator in operators if operator in supported[suite]
-        ]
-        for suite, operators in manifests.items()
+        "functional": functional,
+        "benchmark": list(dict.fromkeys(manifests["benchmark"] + functional)),
     }
+
+
+def dtype_categories(operator: str) -> tuple[str, ...]:
+    if operator in {"logical_and", "logical_or", "logical_not"}:
+        return ("boolean",)
+    if operator in {"identity", "reshape", "transpose", "slice"}:
+        return ("copy",)
+    if operator in {"matmul", "conv_fprop", "conv_dgrad", "conv_wgrad"}:
+        return ("ieee", "tf32")
+    if operator == "reduction":
+        return ("fp32_output",)
+    return ()
+
+
+def test_expression(suite: str, operator: str) -> str | None:
+    categories = dtype_categories(operator) if suite == "benchmark" else ()
+    if not categories:
+        return None
+    choices = "|".join(categories)
+    return rf"^benchmark\.thead\.{re.escape(operator)}(\.({choices}))?$"
 
 
 def configure_environment(
@@ -123,6 +134,7 @@ def preflight_tests(_suites: list[str] | tuple[str, ...]) -> set[str]:
         "integration.thead.acdnn_gap_contract",
         "integration.thead.acdnn_fp8_codec_contract",
         "integration.thead.catalog_closure_contract",
+        "integration.thead.factory_coverage_contract",
         "integration.thead.cmake_configuration_contract",
         "integration.thead.dependency_boundary",
         "integration.thead.reference_dependency_boundary",
@@ -213,6 +225,11 @@ def benchmark_case_operator(
     case: str, manifest_operators: list[str]
 ) -> str | None:
     """Resolve a case using manifest prefixes and dimensional conv aliases."""
+    if (
+        case.startswith("matmul_mxfp8_")
+        or re.match(r"^matmul_ae[45]m[23]_", case)
+    ) and "matmul_fp8" in manifest_operators:
+        return "matmul_fp8"
     unique_operators = list(dict.fromkeys(manifest_operators))
     matches = [
         candidate
@@ -674,55 +691,59 @@ def validate_thead_case_accounting(
         if match is not None:
             marker_records.append((match.group(1), match.group(2)))
     expected_marker = f"FLAGDNN_{operator.upper()}_{suite.upper()}"
-    if len(marker_records) != 1:
-        found_markers = [record[0] for record in marker_records]
-        return None, [
-            f"THead {suite} suite for op={operator} must emit exactly one "
-            f"{expected_marker} case accounting record; found "
-            f"{len(marker_records)} markers={found_markers}"
-        ]
-
-    marker, payload = marker_records[0]
-    errors: list[str] = []
-    if marker != expected_marker:
-        errors.append(
-            f"THead suite accounting marker={marker}; expected "
-            f"{expected_marker}"
+    allowed_markers = {expected_marker}
+    if suite == "benchmark":
+        allowed_markers.update(
+            f"FLAGDNN_{operator.upper()}_{category.upper()}_BENCHMARK"
+            for category in dtype_categories(operator)
         )
+    markers = [marker for marker, _ in marker_records]
+    if not markers or len(markers) != len(set(markers)):
+        return None, [
+            "THead suite must emit one accounting record per unique test"
+        ]
+    errors: list[str] = []
     pattern = (
         FUNCTIONAL_ACCOUNTING_PATTERN
         if suite == "functional"
         else BENCHMARK_ACCOUNTING_PATTERN
     )
-    match = pattern.fullmatch(payload)
-    if match is None:
-        errors.append(
-            f"THead suite accounting payload for marker={marker} is malformed"
-        )
-        return None, errors
-
-    reported = match.group(1)
-    cases = int(match.group(2))
-    executed = int(match.group(3))
-    skipped = int(match.group(4))
+    cases = executed = skipped = 0
+    statuses = []
+    for marker, payload in marker_records:
+        if marker not in allowed_markers:
+            errors.append(f"unexpected THead accounting marker: {marker}")
+        match = pattern.fullmatch(payload)
+        if match is None:
+            errors.append(
+                f"THead suite accounting payload for marker={marker} is"
+                " malformed"
+            )
+            continue
+        status, count, ran, omitted = match.groups()
+        count, ran, omitted = int(count), int(ran), int(omitted)
+        if (
+            count <= 0
+            or count != ran + omitted
+            or (status == "PASS") != (ran > 0)
+        ):
+            errors.append(f"THead suite accounting is inconsistent: {marker}")
+        statuses.append(status)
+        cases += count
+        executed += ran
+        skipped += omitted
+    reported = "PASS" if executed else "SKIP"
     accounting: dict[str, Any] = {"status": reported, "cases": cases}
     if suite == "functional":
         accounting.update({"executed": executed, "skipped": skipped})
     else:
         accounting.update(
-            {
-                "comparable_executed": executed,
-                "reference_skipped": skipped,
-            }
+            {"comparable_executed": executed, "reference_skipped": skipped}
         )
-
-    expected_reported = (
-        "SKIP" if ctest_reported_status == "skipped" else "PASS"
-    )
-    if reported != expected_reported:
+    expected_ctest = "skipped" if "SKIP" in statuses else "passed"
+    if ctest_reported_status != expected_ctest:
         errors.append(
-            f"THead suite accounting status={reported}; CTest status "
-            f"requires {expected_reported}"
+            f"THead accounting requires CTest status={expected_ctest}"
         )
     if cases <= 0:
         errors.append("THead suite accounting cases must be positive")
@@ -789,7 +810,11 @@ def postprocess_result(
         if skip_errors:
             result["skip_record_errors"] = skip_errors
             result["status"] = "failed"
-    if suite == "benchmark" and result["status"] == "passed":
+    if (
+        suite == "benchmark"
+        and ctest_reported_status in {"passed", "skipped"}
+        and (ctest_reported_status == "passed" or records)
+    ):
         pair_errors = validate_thead_benchmark_pairs(
             records, operator, manifest_operators
         )
@@ -810,6 +835,27 @@ def postprocess_result(
         if accounting_errors:
             result["case_accounting_errors"] = accounting_errors
             result["status"] = "failed"
+        elif accounting is not None and accounting["status"] == "PASS":
+            # The shared runner treats any skipped CTest category as an
+            # entirely skipped operator and rejects its timing records.
+            # Remove only that false positive after validating all pairs,
+            # structured skips, and aggregate execution counts above.
+            if (
+                suite == "benchmark"
+                and ctest_reported_status == "skipped"
+                and records
+                and not result.get("skip_record_errors")
+            ):
+                errors = result.get("record_errors", [])
+                if errors and all(
+                    error
+                    == "skipped benchmark emitted timing provider records"
+                    for error in errors
+                ):
+                    result.pop("record_errors")
+                    result["status"] = "passed"
+            if result["status"] == "skipped":
+                result["status"] = "passed"
 
 
 def result_diagnostics(result: dict[str, Any]) -> list[tuple[str, str]]:

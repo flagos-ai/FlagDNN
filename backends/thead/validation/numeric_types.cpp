@@ -144,14 +144,12 @@ std::uint32_t read_u32(std::span<const std::byte> bytes,
 std::size_t element_size(flagdnnDataType_t data_type) {
   switch (data_type) {
     case FLAGDNN_DATA_INT32:
-    case FLAGDNN_DATA_FP8_E8M0:
-      throw std::invalid_argument(
-          "THead validation does not support INT32 or E8M0 here");
     case FLAGDNN_DATA_FLOAT32:
       return sizeof(float);
     case FLAGDNN_DATA_FLOAT16:
     case FLAGDNN_DATA_BFLOAT16:
       return sizeof(std::uint16_t);
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_BOOLEAN:
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
@@ -198,7 +196,9 @@ std::vector<float>
 decode_floating(flagdnnDataType_t data_type,
                 std::span<const std::byte> bytes) {
   const std::size_t width = element_size(data_type);
-  if (data_type == FLAGDNN_DATA_BOOLEAN || bytes.size() % width != 0) {
+  if ((data_type != FLAGDNN_DATA_FLOAT32 && data_type != FLAGDNN_DATA_FLOAT16 &&
+       data_type != FLAGDNN_DATA_BFLOAT16) ||
+      bytes.size() % width != 0) {
     throw std::invalid_argument(
         "THead floating validation bytes do not match the data type");
   }

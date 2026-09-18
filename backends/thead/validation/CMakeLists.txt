@@ -47,6 +47,7 @@ if(FLAGDNN_BUILD_TESTS OR FLAGDNN_BUILD_BENCHMARKS)
   endif()
 
   add_library(flagdnn_validation_thead_reference STATIC
+    acdnn_extended_reference.cpp
     acdnn_convolution_reference.cpp
     acdnn_attention_reference.cpp
     acdnn_fp8_codec.cpp
@@ -54,6 +55,7 @@ if(FLAGDNN_BUILD_TESTS OR FLAGDNN_BUILD_BENCHMARKS)
     acdnn_pointwise_dag.cpp
     acdnn_layout_reference.cpp
     acdnn_matmul_reference.cpp
+    acdnn_ieee_matmul_reference.cpp
     acdnn_normalization_reference.cpp
     acdnn_reduction_reference.cpp
     acdnn_reference.cpp
@@ -79,6 +81,61 @@ if(FLAGDNN_BUILD_TESTS OR FLAGDNN_BUILD_BENCHMARKS)
     FlagDNN::THeadCudaDriver)
   flagdnn_enable_warnings(flagdnn_validation_thead_reference)
 endif()
+
+include("${PROJECT_SOURCE_DIR}/cmake/Operators.cmake")
+if(TARGET flagdnn_test_common_objects)
+  set(_flagdnn_thead_common_sources $<TARGET_OBJECTS:flagdnn_test_common_objects>)
+else()
+  set(_flagdnn_thead_common_sources
+    "${PROJECT_SOURCE_DIR}/tests/common/add.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/attention.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/composite.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/convolution.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/layout.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/matmul.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/normalization.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/pointwise.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/pointwise_runner.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/reduction.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/statistics.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/normalization_extended.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/resample.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/index.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/position_embedding.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/random.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/causal_convolution.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/fp8_matmul.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/moe_matmul.cpp")
+endif()
+add_library(flagdnn_test_thead_adapter STATIC
+  ${_flagdnn_thead_common_sources}
+  functional/extended_runner.cpp
+  functional/attention_runner.cpp
+  functional/acdnn_add.cpp
+  functional/add_runner.cpp
+  functional/composite_runner.cpp
+  functional/convolution_runner.cpp
+  functional/layout_runner.cpp
+  functional/matmul_runner.cpp
+  functional/normalization_runner.cpp
+  functional/pointwise_runner.cpp
+  functional/reduction_runner.cpp)
+target_compile_features(flagdnn_test_thead_adapter PUBLIC cxx_std_20)
+target_compile_definitions(flagdnn_test_thead_adapter PRIVATE
+  FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG="${CMAKE_CURRENT_SOURCE_DIR}/capability.json"
+  FLAGDNN_THEAD_PPU_SDK_VERSION="${_FLAGDNN_THEAD_PPU_SDK_VERSION}")
+target_include_directories(flagdnn_test_thead_adapter PUBLIC
+  "${CMAKE_CURRENT_SOURCE_DIR}"
+  "${PROJECT_SOURCE_DIR}/tests"
+  "${PROJECT_SOURCE_DIR}/benchmark")
+target_link_libraries(flagdnn_test_thead_adapter PUBLIC
+  FlagDNN::flagdnn
+  flagdnn_validation_thead_reference)
+flagdnn_enable_warnings(flagdnn_test_thead_adapter)
+
+set(_flagdnn_thead_extended_supported batchnorm_backward genstats bn_finalize resample)
+set(_flagdnn_thead_unsupported ${FLAGDNN_EXTENDED_OPERATORS})
+list(REMOVE_ITEM _flagdnn_thead_unsupported ${_flagdnn_thead_extended_supported})
 
 add_executable(flagdnn_test_thead_catalog_selection
   catalog_selection_contract.cpp numeric_types.cpp)
@@ -291,8 +348,8 @@ if(FLAGDNN_BUILD_TESTS)
     ENVIRONMENT
       "${_flagdnn_thead_codegen_environment}"
     RUN_SERIAL TRUE
-    # Includes all attention profiles and malformed Graph/ABI cases.
-    TIMEOUT 600)
+    # Includes real PPU compilation for attention launch-resource metadata.
+    TIMEOUT 1800)
 
   add_executable(flagdnn_test_thead_jit
     functional/test_jit.cpp)
@@ -872,35 +929,9 @@ if(FLAGDNN_BUILD_TESTS)
   unset(_flagdnn_thead_extended_unary_operations)
   unset(_flagdnn_thead_operation)
 
-  add_library(flagdnn_test_thead_adapter STATIC
-    $<TARGET_OBJECTS:flagdnn_test_common_objects>
-    functional/attention_runner.cpp
-    functional/acdnn_add.cpp
-    functional/add_runner.cpp
-    functional/composite_runner.cpp
-    functional/convolution_runner.cpp
-    functional/layout_runner.cpp
-    functional/matmul_runner.cpp
-    functional/normalization_runner.cpp
-    functional/pointwise_runner.cpp
-    functional/reduction_runner.cpp)
-  target_compile_features(flagdnn_test_thead_adapter PUBLIC cxx_std_20)
-  target_compile_definitions(flagdnn_test_thead_adapter PRIVATE
-    FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG="${CMAKE_CURRENT_SOURCE_DIR}/capability.json"
-    FLAGDNN_THEAD_PPU_SDK_VERSION="${_FLAGDNN_THEAD_PPU_SDK_VERSION}")
-  target_include_directories(flagdnn_test_thead_adapter PUBLIC
-    "${CMAKE_CURRENT_SOURCE_DIR}"
-    "${PROJECT_SOURCE_DIR}/tests")
-  target_link_libraries(flagdnn_test_thead_adapter PUBLIC
-    FlagDNN::flagdnn
-    flagdnn_validation_thead_reference)
-  flagdnn_enable_warnings(flagdnn_test_thead_adapter)
-
-  include("${PROJECT_SOURCE_DIR}/cmake/Operators.cmake")
   flagdnn_register_functional_suite(
     PLATFORM thead
-    UNSUPPORTED_OPERATORS
-      ${FLAGDNN_EXTENDED_OPERATORS} ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS}
+    UNSUPPORTED_OPERATORS ${_flagdnn_thead_unsupported}
     ADAPTER_TARGET flagdnn_test_thead_adapter
     BACKEND_TARGET flagdnn_backend_thead
     COMMAND_ARGS
@@ -909,24 +940,28 @@ if(FLAGDNN_BUILD_TESTS)
     ENVIRONMENT
       "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_thead>;FLAGDNN_THEAD_QUALIFY_PROBES=1;${_flagdnn_thead_codegen_environment}"
     LABELS "acdnn;ppu"
-    TIMEOUT 900
+    TIMEOUT 21600
     BUILD_RPATH
       "${_FLAGDNN_THEAD_PPU_SDK_ROOT}/lib;${_FLAGDNN_THEAD_PPU_SDK_ROOT}/CUDA_SDK/lib64")
+  foreach(_operator IN LISTS _flagdnn_thead_unsupported)
+    set_property(TARGET "flagdnn_test_thead_${_operator}" PROPERTY SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/unsupported.cpp")
+    target_compile_definitions("flagdnn_test_thead_${_operator}" PRIVATE
+      FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG="${CMAKE_CURRENT_SOURCE_DIR}/capability.json"
+      FLAGDNN_THEAD_PPU_SDK_VERSION="${_FLAGDNN_THEAD_PPU_SDK_VERSION}")
+    set_tests_properties("functional.thead.${_operator}" PROPERTIES
+      LABELS "functional;correctness;thead;${_operator};capability")
+  endforeach()
   foreach(_flagdnn_thead_operator IN LISTS FLAGDNN_FUNCTIONAL_OPERATORS)
     set_tests_properties(
       "functional.thead.${_flagdnn_thead_operator}" PROPERTIES
       SKIP_RETURN_CODE 77)
   endforeach()
   unset(_flagdnn_thead_operator)
-  # Gradient cases build multiple graphs. Their complete cold-cache catalogs
-  # can exceed 15 minutes with the current FlagTree/Torch dependency closure.
-  set_tests_properties(
-    functional.thead.conv_dgrad functional.thead.conv_wgrad
-    PROPERTIES TIMEOUT 1800)
 endif()
 
 if(FLAGDNN_BUILD_BENCHMARKS)
   add_library(flagdnn_benchmark_thead_adapter STATIC
+    benchmark/native_runner.cpp
     benchmark/acdnn_provider.cpp
     benchmark/pointwise.cpp
     benchmark/runner.cpp)
@@ -938,19 +973,21 @@ if(FLAGDNN_BUILD_BENCHMARKS)
   target_include_directories(flagdnn_benchmark_thead_adapter PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${PROJECT_SOURCE_DIR}/benchmark"
+    "${PROJECT_SOURCE_DIR}/tests"
     PRIVATE
     "${PROJECT_SOURCE_DIR}/src"
     "${PROJECT_SOURCE_DIR}")
   target_link_libraries(flagdnn_benchmark_thead_adapter PUBLIC
     FlagDNN::flagdnn
     flagdnn_benchmark_cases
+    flagdnn_test_thead_adapter
     flagdnn_validation_thead_reference)
   flagdnn_enable_warnings(flagdnn_benchmark_thead_adapter)
 
   include("${PROJECT_SOURCE_DIR}/cmake/Operators.cmake")
-  set(_flagdnn_thead_benchmark_operators ${FLAGDNN_BENCHMARK_OPERATORS})
-  list(REMOVE_ITEM _flagdnn_thead_benchmark_operators
-    ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS})
+  set(_flagdnn_thead_benchmark_operators ${FLAGDNN_BENCHMARK_OPERATORS}
+    batchnorm_backward genstats bn_finalize resample
+    sdpa sdpa_backward sdpa_fp8 sdpa_fp8_backward)
   flagdnn_register_benchmark_suite(
     PLATFORM thead
     OPERATORS ${_flagdnn_thead_benchmark_operators}
@@ -962,7 +999,7 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     ENVIRONMENT
       "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_thead>;FLAGDNN_THEAD_QUALIFY_PROBES=1;${_flagdnn_thead_codegen_environment}"
     LABELS "acdnn;paired;ppu"
-    TIMEOUT 1800
+    TIMEOUT 21600
     BUILD_RPATH
       "${_FLAGDNN_THEAD_PPU_SDK_ROOT}/lib;${_FLAGDNN_THEAD_PPU_SDK_ROOT}/CUDA_SDK/lib64")
   foreach(_flagdnn_thead_operator IN LISTS _flagdnn_thead_benchmark_operators)
@@ -972,3 +1009,58 @@ if(FLAGDNN_BUILD_BENCHMARKS)
   endforeach()
   unset(_flagdnn_thead_operator)
 endif()
+
+if(FLAGDNN_BUILD_BENCHMARKS)
+  foreach(_operator IN LISTS _flagdnn_thead_unsupported)
+    add_executable("flagdnn_benchmark_thead_${_operator}" unsupported.cpp)
+    target_link_libraries("flagdnn_benchmark_thead_${_operator}" PRIVATE flagdnn_test_thead_adapter)
+    target_compile_definitions("flagdnn_benchmark_thead_${_operator}" PRIVATE
+      FLAGDNN_CAPABILITY_OPERATOR="${_operator}" FLAGDNN_CAPABILITY_SUITE="benchmark"
+      FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG="${CMAKE_CURRENT_SOURCE_DIR}/capability.json"
+      FLAGDNN_THEAD_PPU_SDK_VERSION="${_FLAGDNN_THEAD_PPU_SDK_VERSION}")
+    add_test(NAME "benchmark.thead.${_operator}" COMMAND "flagdnn_benchmark_thead_${_operator}")
+    set_tests_properties("benchmark.thead.${_operator}" PROPERTIES SKIP_RETURN_CODE 77
+      LABELS "benchmark;performance;thead;${_operator};capability" RUN_SERIAL TRUE)
+  endforeach()
+endif()
+
+if(FLAGDNN_BUILD_BENCHMARKS)
+  target_sources(flagdnn_benchmark_thead_adapter PRIVATE benchmark/native_dtype.cpp)
+  add_executable(flagdnn_benchmark_thead_dtype benchmark/dtype_main.cpp)
+  target_link_libraries(flagdnn_benchmark_thead_dtype PRIVATE flagdnn_benchmark_thead_adapter)
+  flagdnn_enable_warnings(flagdnn_benchmark_thead_dtype)
+  foreach(_category IN ITEMS boolean copy ieee tf32 fp32_output)
+    if(_category STREQUAL "boolean")
+      set(_operators logical_and logical_or logical_not)
+    elseif(_category STREQUAL "copy")
+      set(_operators identity reshape transpose slice)
+    elseif(_category STREQUAL "fp32_output")
+      set(_operators reduction)
+    else()
+      set(_operators matmul conv_fprop conv_dgrad conv_wgrad)
+    endif()
+    set(_runner_category "${_category}")
+    set(_environment "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_thead>;FLAGDNN_THEAD_QUALIFY_PROBES=1;${_flagdnn_thead_codegen_environment}")
+    if(_category STREQUAL "ieee")
+      set(_runner_category precision)
+      list(APPEND _environment "FLAGDNN_INPUT_PRECISION=1")
+    elseif(_category STREQUAL "tf32")
+      set(_runner_category precision)
+      list(APPEND _environment "FLAGDNN_INPUT_PRECISION=2")
+    endif()
+    foreach(_operator IN LISTS _operators)
+      add_test(NAME "benchmark.thead.${_operator}.${_category}"
+        COMMAND flagdnn_benchmark_thead_dtype "${FLAGDNN_CODEGEN_PYTHON}" "${FLAGDNN_CODEGEN_COMPILER}" "${_operator}" "${_runner_category}")
+      set_tests_properties("benchmark.thead.${_operator}.${_category}" PROPERTIES
+        LABELS "benchmark;performance;thead;${_operator};${_category};acdnn;paired"
+        RUN_SERIAL TRUE SKIP_RETURN_CODE 77 TIMEOUT 21600 ENVIRONMENT "${_environment}")
+    endforeach()
+  endforeach()
+endif()
+
+add_test(NAME integration.thead.factory_coverage_contract
+  COMMAND "${FLAGDNN_CODEGEN_PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/catalog_coverage_contract.py"
+    --build-dir "${PROJECT_BINARY_DIR}")
+set_tests_properties(integration.thead.factory_coverage_contract PROPERTIES
+  LABELS "integration;thead;catalog;host;contract" TIMEOUT 120
+  ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")

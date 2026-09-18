@@ -122,7 +122,7 @@ def main() -> int:
     adapter = runner.load_platform_adapter("thead")
     require(adapter is not None, "THead run_tests adapter was not loaded")
     require(
-        adapter.DEFAULT_TIMEOUT == 7200
+        adapter.DEFAULT_TIMEOUT == 21600
         and adapter.PREFLIGHT_BY_DEFAULT is True
         and adapter.SUPPORTS_MIN_SPEEDUP is True
         and adapter.FILTER_REGISTERED_TESTS is False
@@ -132,11 +132,33 @@ def main() -> int:
 
     selected = adapter.select_operator_manifests(runner.operator_manifests())
     require(
-        len(selected["functional"]) == 61
-        and len(selected["benchmark"]) == 57
-        and "relu_backward" not in selected["benchmark"]
-        and "rng" not in selected["functional"],
-        "THead selected operators without a declared reference catalog",
+        set(selected["functional"])
+        == set(runner.operator_manifests()["functional"])
+        and set(selected["benchmark"]) == set(selected["functional"])
+        and "relu_backward" in selected["benchmark"]
+        and "rng" in selected["functional"],
+        "THead must retain every public operator, including explicit"
+        " capability gates",
+    )
+    validation_only = {"status": "passed"}
+    adapter.postprocess_result(
+        result=validation_only,
+        ctest_reported_status="passed",
+        output=(
+            "add_perf_fp32_contract: FlagDNN Graph vs acDNN correctness"
+            " PASS\nVALIDATION_ONLY case=add_perf_fp32_contract"
+            " timing=not_collected\nFLAGDNN_ADD_BENCHMARK: PASS cases=1"
+            " comparable_executed=1 reference_skipped=0\n"
+        ),
+        operator="add",
+        suite="benchmark",
+        records={},
+        manifest_operators=["add"],
+    )
+    require(
+        validation_only["status"] == "failed"
+        and validation_only.get("record_errors"),
+        "THead accepted validation-only output as a measured benchmark",
     )
     original_process = runner.run_process_group
     runner.run_process_group = lambda *_args: (
@@ -171,7 +193,7 @@ def main() -> int:
         and actual["case_counts"]["total"] == 2,
         "THead execution accounting was lost in the legacy summary",
     )
-    manifests = runner.operator_manifests()
+    manifests = adapter.select_operator_manifests(runner.operator_manifests())
     manifest_operators = list(
         dict.fromkeys(
             operator
@@ -271,7 +293,8 @@ def main() -> int:
             "integration.thead.autotune_exp",
         }.issubset(required_preflight)
         and extended_preflight.issubset(required_preflight),
-        "THead adapter/installed-consumer contracts are not required preflight",
+        "THead adapter/installed-consumer contracts are not required"
+        " preflight",
     )
     require(
         "integration.thead.jit_artifact_alias" not in required_preflight,
@@ -441,6 +464,116 @@ def main() -> int:
         duplicate_marker["status"] == "failed",
         "duplicate accounting marker was accepted",
     )
+
+    # Multiple CTest dtype categories form one public operator result. A
+    # skipped
+    # category must retain its accounting while other categories still
+    # time pairs.
+    identity_case = "identity_perf_fp32_1x1x1024"
+    identity_skip = "identity_int32_1x1x16"
+    aggregate_output = (
+        skip_line(identity_skip, operator="identity")
+        + "\nFLAGDNN_IDENTITY_BENCHMARK: PASS cases=1 comparable_executed=1"
+        " reference_skipped=0"
+        + "\nFLAGDNN_IDENTITY_COPY_BENCHMARK: SKIP cases=1"
+        " comparable_executed=0 reference_skipped=1"
+    )
+    aggregate_result = {"status": "skipped"}
+    adapter.postprocess_result(
+        result=aggregate_result,
+        ctest_reported_status="skipped",
+        output=aggregate_output,
+        operator="identity",
+        suite="benchmark",
+        records={identity_case: pair(identity_case)},
+        manifest_operators=["identity"],
+    )
+    require(
+        aggregate_result["status"] == "passed"
+        and aggregate_result["case_accounting"]["cases"] == 2
+        and aggregate_result["case_accounting"]["reference_skipped"] == 1,
+        "mixed CTest dtype categories did not preserve timing and skip"
+        " accounting",
+    )
+    # Exercise the shared runner too: it adds a generic record error before
+    # the backend hook sees mixed passed/skipped CTest categories.
+    mixed_ctest_output = (
+        aggregate_output
+        + "\n"
+        + timing(identity_case, "flagdnn")
+        + "\n"
+        + timing(identity_case, "acdnn")
+        + "\n2/2 Test #2: benchmark.thead.identity.copy ...***Skipped\n"
+        + "100% tests passed, 0 tests failed out of 2\n"
+    )
+
+    def run_mixed_ctest(output: str, exit_code: int = 0) -> dict[str, Any]:
+        previous_process = runner.run_process_group
+        runner.run_process_group = lambda *_args: (
+            output,
+            "",
+            exit_code,
+            False,
+        )
+        try:
+            with contextlib.redirect_stdout(
+                io.StringIO()
+            ), contextlib.redirect_stderr(io.StringIO()):
+                return runner.run_one(
+                    Path("."),
+                    "identity",
+                    "benchmark",
+                    "thead",
+                    {},
+                    30,
+                    False,
+                    ["identity"],
+                    adapter=adapter,
+                )
+        finally:
+            runner.run_process_group = previous_process
+
+    measured_mixed = run_mixed_ctest(mixed_ctest_output)
+    require(
+        measured_mixed["status"] == "passed"
+        and not measured_mixed.get("record_errors")
+        and measured_mixed["case_accounting"]["comparable_executed"] == 1
+        and measured_mixed["case_accounting"]["reference_skipped"] == 1,
+        "shared runner rejected valid measured mixed CTest categories",
+    )
+    for invalid_output, exit_code in (
+        (mixed_ctest_output + timing(identity_case, "flagdnn"), 0),
+        (mixed_ctest_output.replace(timing(identity_case, "acdnn"), ""), 0),
+        (
+            mixed_ctest_output.replace(
+                "comparable_executed=1", "comparable_executed=2"
+            ),
+            0,
+        ),
+        (mixed_ctest_output.replace("op=identity", "op=add"), 0),
+        (mixed_ctest_output, 1),
+    ):
+        require(
+            run_mixed_ctest(invalid_output, exit_code)["status"] == "failed",
+            "mixed category normalization hid a real benchmark failure",
+        )
+
+    for invalid in (
+        aggregate_output + "\nFLAGDNN_IDENTITY_COPY_BENCHMARK: SKIP cases=1"
+        " comparable_executed=0 reference_skipped=1",
+        aggregate_output.replace(
+            "IDENTITY_COPY_BENCHMARK", "IDENTITY_TF32_BENCHMARK"
+        ),
+    ):
+        _, errors = adapter.validate_thead_case_accounting(
+            invalid,
+            "identity",
+            "benchmark",
+            "skipped",
+            {identity_case: pair(identity_case)},
+            adapter.acdnn_skip_records(invalid),
+        )
+        require(errors, "invalid dtype category accounting was accepted")
 
     catalog = adapter.load_thead_comparable_case_catalog(
         manifests["benchmark"]
@@ -745,10 +878,11 @@ def main() -> int:
             for operation in ("conv_fprop", "conv_dgrad", "conv_wgrad")
         )
         and set(conv_bias_relu_required)
-        >= {"conv_bias_relu_perf_fp32_x2x8x16x16_" "w16x8x3x3_s1x1_p1x1_d1x1"}
+        >= {"conv_bias_relu_perf_fp32_x2x8x16x16_w16x8x3x3_s1x1_p1x1_d1x1"}
         and catalog["schema_version"] == 2
-        and catalog["declared_operator_count"] == 57,
-        "THead comparable catalog lacks required pointwise/activation coverage",
+        and catalog["declared_operator_count"] == len(selected["benchmark"]),
+        "THead comparable catalog lacks required pointwise/activation"
+        " coverage",
     )
 
     with tempfile.TemporaryDirectory(

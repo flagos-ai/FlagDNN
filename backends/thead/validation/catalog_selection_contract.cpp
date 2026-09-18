@@ -17,12 +17,12 @@ int main() {
       std::string name;
     };
     const std::array<Case, 3> shared{{{"existing"}, {"new"}, {"unsupported"}}};
-    const std::map<std::string, int, std::less<>> catalog{{"existing", 1},
-                                                          {"unsupported", 0}};
+    const std::map<std::string, int, std::less<>> catalog{
+        {"existing", 1}, {"new", 1}, {"unsupported", 0}};
     const auto selected =
         tv::select_catalog_cases(std::span<const Case>(shared), catalog);
-    if (selected.size() != 2 || selected[0].name != "existing" ||
-        selected[1].name != "unsupported") {
+    if (selected.size() != 3 || selected[0].name != "existing" ||
+        selected[1].name != "new" || selected[2].name != "unsupported") {
       throw std::runtime_error("backend case selection changed its catalog");
     }
     const auto require_rejected = [](auto&& operation) {
@@ -35,7 +35,7 @@ int main() {
     };
     require_rejected([&] {
       (void)tv::select_catalog_cases(
-          std::span<const Case>(shared).subspan(1, 1), catalog);
+          std::span<const Case>(std::array<Case, 1>{{{"missing"}}}), catalog);
     });
     require_rejected([&] {
       const std::array<Case, 2> duplicates{{{"existing"}, {"existing"}}};
@@ -53,7 +53,8 @@ int main() {
       }
     }
     for (const auto type : {FLAGDNN_DATA_INT32, FLAGDNN_DATA_FP8_E8M0}) {
-      require_rejected([&] { (void)tv::element_size(type); });
+      if (tv::element_size(type) != (type == FLAGDNN_DATA_INT32 ? 4U : 1U))
+        throw std::runtime_error("raw copy dtype width is incorrect");
       require_rejected([&] { (void)tv::encode_floating(type, values); });
       require_rejected([&] { (void)tv::decode_floating(type, {}); });
     }

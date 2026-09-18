@@ -763,6 +763,17 @@ class AcdnnConvolution final
                      test_case_.mode == ConvolutionMode::kConvolution
                          ? ACDNN_CONVOLUTION
                          : ACDNN_CROSS_CORRELATION);
+    if (test_case_.input_precision == 1) {
+      // The default SDK algorithm may round FP32 operands to FP16. FMA
+      // explicitly preserves IEEE operands on every qualified geometry.
+      check_acdnn(
+          acdnnSetConvolutionMathType(convolution_.get(), ACDNN_FMA_MATH),
+          "acdnnSetConvolutionMathType(FMA)");
+    } else if (test_case_.input_precision == 2) {
+      check_acdnn(
+          acdnnSetConvolutionMathType(convolution_.get(), ACDNN_TENSOR_OP_MATH),
+          "acdnnSetConvolutionMathType(TF32)");
+    }
     query_workspace();
   }
 

@@ -1,11 +1,6 @@
 // Copyright 2026 FlagOS Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-#include "acdnn_reduction_reference.hpp"
-#include "capability.hpp"
-#include "common/reduction.hpp"
-#include "pointwise_runner_support.hpp"
-
 #include <acdnn.h>
 
 #include <algorithm>
@@ -18,6 +13,12 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include "acdnn_reduction_reference.hpp"
+#include "capability.hpp"
+#include "common/reduction.hpp"
+#include "functional/paired.hpp"
+#include "pointwise_runner_support.hpp"
 
 #ifndef FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG
 #define FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG "capability.json"
@@ -135,11 +136,8 @@ int run_reduction_functional_test(
       auto production = build_flagdnn_reduction(handle, test_case);
       auto reference = tv::make_acdnn_reduction_reference(test_case, record);
       std::vector<functional::BoundTensor> inputs;
-      inputs.push_back(functional::make_input_buffer(
-          test_case.input, 0, stream.get(),
-          test_case.mode == FLAGDNN_REDUCTION_MUL
-              ? PointwiseInputDomain::kTan
-              : PointwiseInputDomain::kReal));
+      inputs.push_back(functional::paired_input(
+          test_case.input, reduction_host_input(test_case), stream.get()));
       std::vector<functional::BoundTensor> production_outputs;
       production_outputs.push_back(
           functional::make_output_buffer(test_case.output, stream.get()));

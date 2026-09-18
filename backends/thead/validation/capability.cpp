@@ -34,7 +34,8 @@ const std::set<std::string, std::less<>> kStableReasons = {
 };
 
 const std::set<std::string, std::less<>> kDataTypes = {
-    "bf16", "bool", "fp16", "fp32", "fp8_e4m3", "fp8_e5m2", "int32"};
+    "bf16",     "bool",     "fp16",     "fp32",
+    "fp8_e4m3", "fp8_e5m2", "fp8_e8m0", "int32"};
 const std::set<std::string, std::less<>> kLayouts = {
     "contiguous", "explicit_strided", "nchw", "nhwc"};
 const std::set<std::string, std::less<>> kStridePolicies = {

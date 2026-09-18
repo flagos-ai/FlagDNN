@@ -102,6 +102,15 @@ flagdnnPointwiseMode_t pointwise_mode(std::string_view operation) {
   if (operation == "div") return FLAGDNN_POINTWISE_DIV;
   if (operation == "pow") return FLAGDNN_POINTWISE_POW;
   if (operation == "mod") return FLAGDNN_POINTWISE_MOD;
+  if (operation == "relu_backward") return FLAGDNN_POINTWISE_RELU_BWD;
+  if (operation == "leaky_relu_backward") return FLAGDNN_POINTWISE_RELU_BWD;
+  if (operation == "tanh_backward") return FLAGDNN_POINTWISE_TANH_BWD;
+  if (operation == "elu_backward") return FLAGDNN_POINTWISE_ELU_BWD;
+  if (operation == "gelu_backward") return FLAGDNN_POINTWISE_GELU_BWD;
+  if (operation == "softplus_backward") return FLAGDNN_POINTWISE_SOFTPLUS_BWD;
+  if (operation == "swish_backward") return FLAGDNN_POINTWISE_SWISH_BWD;
+  if (operation == "gelu_approx_tanh_backward")
+    return FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD;
   if (operation == "sigmoid_backward") {
     return FLAGDNN_POINTWISE_SIGMOID_BWD;
   }
@@ -378,13 +387,16 @@ CapabilityRecord reduction_capability(
       dense_stride *= dimension;
     }
   }
-  if (test_case.input.data_type == FLAGDNN_DATA_BFLOAT16) {
+  if (test_case.input.data_type == FLAGDNN_DATA_BFLOAT16 ||
+      test_case.input.data_type != test_case.output.data_type) {
     result.path = ReferencePath::kBackendDescriptor;
     result.reference_plan.insert(
         result.reference_plan.begin(),
         "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-pack-fp32)");
-    result.reference_plan.push_back(
-        "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-bfloat16)");
+    if (test_case.output.data_type != FLAGDNN_DATA_FLOAT32) {
+      result.reference_plan.push_back(
+          "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-bfloat16)");
+    }
   } else if (!dense_input) {
     result.path = ReferencePath::kBackendDescriptor;
     result.reference_plan.insert(
@@ -614,12 +626,11 @@ CapabilityRecord layout_capability(std::string_view operation,
                       ? CapabilityStatus::kProbeRequired
                       : CapabilityStatus::kSupported;
   const bool transpose = operation == "transpose";
-  if (transpose && !legacy_acdnn_transpose_descriptor_compatible(
-                       test_case.input.dimensions,
-                       test_case.permutation)) {
-    throw std::invalid_argument(
-        "THead Transpose benchmark has no certified acDNN descriptor map");
-  }
+  const std::string transpose_primitive =
+      transpose && !legacy_acdnn_transpose_descriptor_compatible(
+                       test_case.input.dimensions, test_case.permutation)
+          ? "acdnnTransformTensor(transpose-segments,alpha=1,beta=0)"
+          : "acdnnTransformTensor(permuted-stride,alpha=1,beta=0)";
   const bool converted_bfloat16_transpose =
       test_case.input.data_type == FLAGDNN_DATA_BFLOAT16 &&
       transpose;
@@ -631,7 +642,7 @@ CapabilityRecord layout_capability(std::string_view operation,
   if (converted_bfloat16_transpose) {
     result.reference_plan = {
         "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-input0-fp32)",
-        "acdnnTransformTensor(permuted-stride,alpha=1,beta=0)",
+        transpose_primitive,
         "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output-bfloat16)"};
     result.constraints = CapabilityConstraints{};
     return result;
@@ -646,8 +657,7 @@ CapabilityRecord layout_capability(std::string_view operation,
     result.reference_plan = {
         "acdnnTransformTensor(flattened,alpha=1,beta=0)"};
   } else if (operation == "transpose") {
-    result.reference_plan = {
-        "acdnnTransformTensor(permuted-stride,alpha=1,beta=0)"};
+    result.reference_plan = {transpose_primitive};
   } else {
     result.reference_plan = {
         "acdnnTransformTensor(slice-segments,alpha=1,beta=0)"};
@@ -853,22 +863,16 @@ AcdnnProvider::AcdnnProvider(const std::string &catalog_path,
     throw std::runtime_error("THead comparable-case catalog identity mismatch");
   }
   const JsonObject &operators = root.at("operators").as_object();
-  require_keys(operators,
-               {"add", "sub", "mul", "min", "max", "scale", "relu",
-                "leaky_relu", "sigmoid", "tanh", "elu", "identity", "gelu",
-                "sqrt",
-                "neg", "abs", "ceil", "floor", "exp", "log", "cos",
-                "rsqrt", "sin", "tan", "softplus", "swish",
-                "gelu_approx_tanh", "div", "pow", "mod",
-                "sigmoid_backward", "reciprocal", "add_square",
-                "cmp_eq", "cmp_neq", "cmp_gt", "cmp_ge", "cmp_lt",
-                "cmp_le", "reshape", "transpose", "slice",
-                "reduction", "batchnorm", "batchnorm_inference",
-                "layernorm", "rmsnorm",
-                "matmul", "conv_fprop", "conv_dgrad", "conv_wgrad",
-                "conv_bias_relu", "erf", "binary_select",
-                "logical_not", "logical_and", "logical_or"},
-               "comparable catalog operators");
+  const auto functional_catalog =
+      CapabilityCatalog::load(FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG);
+  if (operators.size() != functional_catalog.records().size()) {
+    throw std::runtime_error("THead benchmark operator catalog is incomplete");
+  }
+  for (const auto &[name, records] : functional_catalog.records()) {
+    (void)records;
+    if (!operators.contains(name))
+      throw std::runtime_error("THead benchmark operator is missing: " + name);
+  }
   const JsonObject &cases = operators.at(operation_).as_object();
   if (cases.empty()) {
     throw std::runtime_error(
@@ -1063,9 +1067,8 @@ AcdnnProvider::build(
 
 void AcdnnProvider::require_exact_cases(
     std::span<const flagdnn::benchmarking::BenchmarkCase> cases) const {
-  if (records_.size() != cases.size()) {
-    throw std::runtime_error("THead benchmark capability case count mismatch");
-  }
+  // The catalog includes the separate dtype suites. The coverage contract
+  // checks their complete union; each runner must still declare all its cases.
   std::set<std::string, std::less<>> expected;
   for (const auto &specification : cases) {
     if (!expected.insert(specification.name).second) {
