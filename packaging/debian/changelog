@@ -1,3 +1,9 @@
+flag-dnn (0.3.0-1) unstable; urgency=medium
+
+  * Align the packaging baseline with the 0.3.0 release line.
+
+ -- FlagOS Contributors <contact@flagos.io>  Fri, 18 Sep 2026 20:32:40 +0900
+
 flag-dnn (0.2.0-2) unstable; urgency=medium
 
   * Replace the retired Python package with native runtime packages.
