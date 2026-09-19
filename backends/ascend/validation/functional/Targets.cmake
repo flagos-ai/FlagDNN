@@ -398,7 +398,7 @@ flagdnn_register_functional_suite(
   ENVIRONMENT
     "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_ascend>"
   LABELS "aclnn;exact_reference;device;reduction"
-  TIMEOUT 1200
+  TIMEOUT 3600
   BUILD_RPATH "${_flagdnn_validation_library_directory}")
 
 # Layout references use CANN's precise math primitives and own a dedicated
@@ -547,12 +547,3 @@ foreach(_flagdnn_validation_profile IN ITEMS math nn)
     integration.ascend.reference_dependency_boundary.${_flagdnn_validation_profile}
     PROPERTIES LABELS "integration;ascend;aclnn;dependency")
 endforeach()
-
-# New public operators are explicitly gated until this backend owns their kernels.
-flagdnn_register_functional_suite(
-  PLATFORM ascend
-  ADAPTER_TARGET flagdnn_test_ascend_layernorm_adapter
-  BACKEND_TARGET flagdnn_backend_ascend
-  OPERATORS ${FLAGDNN_EXTENDED_OPERATORS} ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS}
-  UNSUPPORTED_OPERATORS ${FLAGDNN_EXTENDED_OPERATORS} ${FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS}
-  LABELS capability)

@@ -509,16 +509,27 @@ find_path(_flagdnn_ascend_runtime_header_root runtime/runtime/rt.h
 get_filename_component(_flagdnn_ascend_arch_root
   "${_flagdnn_ascend_runtime_header_root}" DIRECTORY)
 
+# Pin all operator source assets just like the persistent kernel sources.
+file(GLOB _ascend_kernel_sources CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/kernels/*.py")
+list(LENGTH _ascend_kernel_sources _ascend_kernel_count)
+set(_ascend_kernel_header "#pragma once\n#include <array>\n#include <string_view>\n#include <utility>\ninline constexpr std::array<std::pair<std::string_view, std::string_view>, ${_ascend_kernel_count}> kAscendKernelSources = {{\n")
+foreach(_source IN LISTS _ascend_kernel_sources)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_source}")
+  file(SHA256 "${_source}" _hash)
+  get_filename_component(_name "${_source}" NAME)
+  string(APPEND _ascend_kernel_header "  {\"${_name}\", \"${_hash}\"},\n")
+endforeach()
+string(APPEND _ascend_kernel_header "}};\n")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/ascend_kernel_sources.hpp" "${_ascend_kernel_header}")
+
 flagdnn_add_backend_plugin(ascend INSTALL ABI_VERSION 3
   SOURCES
     artifact.cpp
+    extended_artifact.cpp
     backend.cpp
     context.cpp
-    engines/engine.cpp
-    engines/embedded_python.cpp
     engines/libtriton_jit.cpp
-    engines/python_stdout_containment.cpp
-    engines/runtime_layout.cpp
     error.cpp
     ${PROJECT_SOURCE_DIR}/src/runtime/json.cpp
     ${PROJECT_SOURCE_DIR}/src/runtime/sha256.cpp
@@ -541,6 +552,7 @@ if(_flagdnn_ascend_torch_compile_options)
   target_compile_options(flagdnn_backend_ascend PRIVATE
     ${_flagdnn_ascend_torch_compile_options})
 endif()
+target_include_directories(flagdnn_backend_ascend PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_include_directories(flagdnn_backend_ascend SYSTEM PRIVATE
   "${_flagdnn_ascend_ltj_include}"
   ${_flagdnn_ascend_torch_include_directories}
@@ -598,6 +610,9 @@ foreach(resource IN ITEMS add_plan.py compiler.py compiler_identity.py
   install(FILES "${resource}"
     DESTINATION "${FLAGDNN_RESOURCE_INSTALL_DIR}/backends/ascend")
 endforeach()
+install(DIRECTORY codegen dispatch
+  DESTINATION "${FLAGDNN_RESOURCE_INSTALL_DIR}/backends/ascend"
+  FILES_MATCHING PATTERN "*.py" PATTERN "__pycache__" EXCLUDE)
 install(DIRECTORY kernels/
   DESTINATION "${FLAGDNN_RESOURCE_INSTALL_DIR}/backends/ascend/kernels"
   FILES_MATCHING

@@ -414,9 +414,8 @@ int run_layout_functional_test(int argc,
                                char** argv,
                                std::span<const LayoutTestCase> cases,
                                std::string_view suite_name) {
-  // This adapter currently validates matching floating input/output storage.
-  // Other shared dtype/output combinations are enabled with their backend
-  // support.
+  // Exact integer and raw storage cases run in functional.ascend.<op>.dtype,
+  // with an independent process and the same public case catalog.
   std::vector<LayoutTestCase> supported_cases(cases.begin(), cases.end());
   std::erase_if(supported_cases, [](const LayoutTestCase& test_case) {
     const auto type = test_case.input.data_type;

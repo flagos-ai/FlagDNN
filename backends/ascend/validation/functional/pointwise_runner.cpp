@@ -922,9 +922,8 @@ int run_pointwise_functional_test(
     char** argv,
     std::span<const PointwiseTestCase> cases,
     std::string_view suite_name) {
-  // This adapter currently validates floating storage (and logical BOOL).
-  // Other shared dtype/output combinations are enabled with their backend
-  // support.
+  // Exact integer and raw storage cases run in functional.ascend.<op>.dtype,
+  // with an independent process and the same public case catalog.
   std::vector<PointwiseTestCase> supported_cases(cases.begin(), cases.end());
   std::erase_if(supported_cases, [](const PointwiseTestCase& test_case) {
     const bool logical = test_case.mode == FLAGDNN_POINTWISE_LOGICAL_NOT ||

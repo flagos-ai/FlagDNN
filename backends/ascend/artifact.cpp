@@ -2,8 +2,10 @@
 
 #include "backends/ascend/artifact.hpp"
 
-#include "backends/ascend/target_policy.hpp"
+#include "backends/ascend/extended_artifact.hpp"
+
 #include "backends/ascend/error.hpp"
+#include "backends/ascend/target_policy.hpp"
 #include "runtime/json.hpp"
 #include "runtime/sha256.hpp"
 
@@ -12,11 +14,11 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
@@ -472,6 +474,20 @@ void require_exact_keys(const Value& value,
                        std::string(key));
     }
   }
+}
+
+void require_default_precision_keys(const Value& attributes,
+                                    std::initializer_list<std::string_view> keys,
+                                    const char* description) {
+  auto normalized = attributes.as_object();
+  const auto precision = normalized.find("input_precision");
+  if (precision != normalized.end()) {
+    if (precision->second.as_int() != 0) {
+      artifact_failure("persistent Ascend plan requires default input precision");
+    }
+    normalized.erase(precision);
+  }
+  require_exact_keys(Value(std::move(normalized)), keys, description);
 }
 
 void require_normalization_attributes(const Value& attributes,
@@ -2186,7 +2202,7 @@ ExpectedGraph parse_expected_graph(const Value& request) {
     double layernorm_epsilon = 0.0;
     std::vector<std::int64_t> expected_dimensions;
     if (convolution_fprop) {
-      require_exact_keys(attributes,
+      require_default_precision_keys(attributes,
                          {"spatial_rank", "groups", "n_outputs",
                           "pre_padding", "post_padding", "stride",
                           "dilation"},
@@ -2294,7 +2310,7 @@ ExpectedGraph parse_expected_graph(const Value& request) {
       }
       expected_dimensions = output.dimensions;
     } else if (matmul) {
-      require_exact_keys(attributes, {"batch", "m", "n", "k"},
+      require_default_precision_keys(attributes, {"batch", "m", "n", "k"},
                          "Graph matmul attributes");
       const ExpectedTensor& a = *input_tensors[0];
       const ExpectedTensor& b = *input_tensors[1];
@@ -5120,8 +5136,6 @@ AscendArtifact parse_ascend_artifact(
         !is_sha256(compiler_identity)) {
       artifact_failure("Ascend build request identity is invalid");
     }
-    const ExpectedGraph expected_graph = parse_expected_graph(request);
-
     const std::filesystem::path artifact_directory(input.artifact_directory);
     const Value manifest = flagdnn::native::json::parse(read_text_file(
         artifact_directory / "manifest.json", kMaximumManifestSize));
@@ -5143,11 +5157,17 @@ AscendArtifact parse_ascend_artifact(
         manifest.at("request_sha256").as_string() != request_hash ||
         manifest.at("compiler").at("identity_sha256").as_string() !=
             compiler_identity ||
-        graph_node_count != expected_graph.node_count ||
+        graph_node_count !=
+            checked_size(request.at("graph").at("node_count").as_int(),
+                         "node_count") ||
         !is_sha256(manifest.at("source_sha256").as_string())) {
       artifact_failure("Ascend artifact target or version differs");
     }
 
+    if (manifest.at("program").at("schema_version").as_int() == 4) {
+      return parse_extended_artifact(request, manifest, artifact_directory);
+    }
+    const ExpectedGraph expected_graph = parse_expected_graph(request);
     AscendArtifact result;
     result.workspace_size = checked_size(
         manifest.at("workspace_size").as_int(), "workspace_size");

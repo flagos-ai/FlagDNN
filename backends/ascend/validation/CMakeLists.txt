@@ -397,3 +397,5 @@ endif()
 if(FLAGDNN_BUILD_BENCHMARKS)
   include("${CMAKE_CURRENT_SOURCE_DIR}/benchmark/Targets.cmake")
 endif()
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/Extended.cmake")

@@ -190,6 +190,9 @@ OutputData verify_provider(std::string_view provider,
 std::optional<std::string> run_case(const ConvolutionTestCase& test_case,
                                     flagdnn::Handle& handle,
                                     acl::Stream& stream) {
+  if (test_case.input_precision == 2)
+    return "Ascend 910B ACLNN exposes HF32, not the CUDA TF32 input-precision "
+           "contract";
   validate_convolution_case(test_case);
   const InputData input_data = make_input_data(test_case.x, 0U);
   const InputData filter_data = make_input_data(test_case.w, 1U);

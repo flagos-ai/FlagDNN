@@ -513,12 +513,6 @@ bool is_special_math_mode(flagdnnPointwiseMode_t mode) noexcept {
          mode == FLAGDNN_POINTWISE_ERF;
 }
 
-bool is_logical_mode(flagdnnPointwiseMode_t mode) noexcept {
-  return mode == FLAGDNN_POINTWISE_LOGICAL_NOT ||
-         mode == FLAGDNN_POINTWISE_LOGICAL_AND ||
-         mode == FLAGDNN_POINTWISE_LOGICAL_OR;
-}
-
 bool is_comparison_mode(flagdnnPointwiseMode_t mode) noexcept {
   return mode == FLAGDNN_POINTWISE_CMP_EQ ||
          mode == FLAGDNN_POINTWISE_CMP_NEQ ||

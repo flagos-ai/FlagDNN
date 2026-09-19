@@ -110,7 +110,7 @@ float bfloat16_to_float(std::uint16_t value) {
 }
 
 void require_supported_type(flagdnnDataType_t data_type) {
-  if (data_type != FLAGDNN_DATA_FLOAT32 &&
+  if (data_type != FLAGDNN_DATA_INT32 && data_type != FLAGDNN_DATA_FLOAT32 &&
       data_type != FLAGDNN_DATA_FLOAT16 &&
       data_type != FLAGDNN_DATA_BFLOAT16 &&
       data_type != FLAGDNN_DATA_BOOLEAN) {
@@ -123,7 +123,7 @@ void require_supported_type(flagdnnDataType_t data_type) {
 
 std::size_t data_type_size(flagdnnDataType_t data_type) {
   require_supported_type(data_type);
-  if (data_type == FLAGDNN_DATA_FLOAT32) {
+  if (data_type == FLAGDNN_DATA_FLOAT32 || data_type == FLAGDNN_DATA_INT32) {
     return 4U;
   }
   if (data_type == FLAGDNN_DATA_BOOLEAN) {
@@ -151,6 +151,12 @@ std::vector<std::uint8_t> encode(std::span<const float> values,
         throw std::invalid_argument(
             "BOOLEAN encoding requires canonical 0/1 values");
       }
+    } else if (data_type == FLAGDNN_DATA_INT32) {
+      if (!std::isfinite(values[index]) || double(values[index]) < INT32_MIN ||
+          double(values[index]) > INT32_MAX)
+        throw std::invalid_argument("INT32 conversion is out of range");
+      const auto value = static_cast<std::int32_t>(values[index]);
+      std::memcpy(destination, &value, sizeof(value));
     } else if (data_type == FLAGDNN_DATA_FLOAT32) {
       std::memcpy(destination, &values[index], sizeof(float));
     } else {
@@ -183,6 +189,10 @@ std::vector<float> decode(std::span<const std::uint8_t> bytes,
             "BOOLEAN decoding requires canonical 0/1 bytes");
       }
       result[index] = static_cast<float>(*source);
+    } else if (data_type == FLAGDNN_DATA_INT32) {
+      std::int32_t value = 0;
+      std::memcpy(&value, source, sizeof(value));
+      result[index] = static_cast<float>(value);
     } else if (data_type == FLAGDNN_DATA_FLOAT32) {
       std::memcpy(&result[index], source, sizeof(float));
     } else {

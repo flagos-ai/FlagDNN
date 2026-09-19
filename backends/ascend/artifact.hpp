@@ -74,6 +74,7 @@ struct LtjNpuRawCandidate {
   unsigned int num_warps = 1;
   unsigned int num_stages = 1;
   std::vector<RawArgumentType> argument_types;
+  bool standalone_compilation = false;
 };
 
 struct AscendStageArtifact {

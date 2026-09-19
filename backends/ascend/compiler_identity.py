@@ -529,6 +529,10 @@ def build_compiler_identity(
         ),
         "capabilities": provider_path.with_name("capabilities.json"),
     }
+    for package in ("codegen", "dispatch", "kernels"):
+        for source in sorted((provider_path.parent / package).rglob("*.py")):
+            label = source.relative_to(provider_path.parent).as_posix()
+            identity_inputs[f"provider_module:{label}"] = source
     for registry_path in iter_kernel_registry_sources("ascend"):
         label = registry_path.resolve().relative_to(resource_root).as_posix()
         identity_inputs[f"registry:{label}"] = registry_path

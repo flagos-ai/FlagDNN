@@ -174,6 +174,9 @@ void verify_provider(std::string_view provider,
 std::optional<std::string> run_case(const MatmulTestCase& test_case,
                                     flagdnn::Handle& handle,
                                     acl::Stream& stream) {
+  if (test_case.input_precision == 2)
+    return "Ascend 910B ACLNN exposes HF32, not the CUDA TF32 input-precision "
+           "contract";
   validate_matmul_case(test_case);
   const InputData a_data = make_input_data(test_case.a, 0);
   const InputData b_data = make_input_data(test_case.b, 1);

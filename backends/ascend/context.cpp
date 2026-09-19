@@ -2,9 +2,6 @@
 
 #include "backends/ascend/context.hpp"
 
-#include "backends/ascend/engines/embedded_python.hpp"
-#include "backends/ascend/engines/runtime_layout.hpp"
-
 #include "backends/ascend/error.hpp"
 #include "backends/ascend/target_policy.hpp"
 #include "runtime/sha256.hpp"
@@ -21,8 +18,8 @@
 
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cctype>
+#include <cerrno>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -133,13 +130,202 @@
 #define FLAGDNN_ASCEND_STANDALONE_SHA256 ""
 #endif
 
+#include <stdexcept>
+#include <string>
+
+namespace flagdnn::ascend::detail {
+namespace {
+
+[[nodiscard]] std::string status_message(const PyStatus &status) {
+  std::string result =
+      status.err_msg == nullptr ? "unknown Python error" : status.err_msg;
+  if (status.func != nullptr) {
+    result = std::string(status.func) + ": " + result;
+  }
+  return result;
+}
+
+[[nodiscard]] PyThreadState *&embedded_main_thread_state() noexcept {
+  static PyThreadState *state = nullptr;
+  return state;
+}
+
+[[nodiscard]] bool &owns_embedded_interpreter() noexcept {
+  static bool owns = false;
+  return owns;
+}
+
+void hold_owned_interpreter_gil_at_process_exit() noexcept {
+  if (owns_embedded_interpreter() && embedded_main_thread_state() != nullptr &&
+      Py_IsInitialized() != 0) {
+    /* The pinned extension has process-lifetime C++ static PyObjects. Its
+     * later __cxa_atexit handlers DECREF them, so keep the GIL across only the
+     * remaining process-exit handlers. */
+    (void)PyGILState_Ensure();
+  }
+}
+
+void register_owned_interpreter_exit_guard() {
+  static bool registered = false;
+  if (registered) {
+    return;
+  }
+  if (std::atexit(&hold_owned_interpreter_gil_at_process_exit) != 0) {
+    throw std::runtime_error(
+        "cannot register embedded Python process-exit GIL guard");
+  }
+  registered = true;
+}
+
+} // namespace
+
+void initialize_embedded_python_from_program(const char *program_name) {
+  if (program_name == nullptr || program_name[0] == '\0' ||
+      Py_IsInitialized() != 0) {
+    throw std::invalid_argument(
+        "embedded Python requires a program and a clean runtime");
+  }
+
+  PyConfig config;
+  PyConfig_InitPythonConfig(&config);
+  config.install_signal_handlers = 0;
+  PyStatus status =
+      PyConfig_SetBytesString(&config, &config.program_name, program_name);
+  if (PyStatus_Exception(status)) {
+    const std::string message = status_message(status);
+    PyConfig_Clear(&config);
+    throw std::runtime_error("cannot configure embedded Python program: " +
+                             message);
+  }
+  status = Py_InitializeFromConfig(&config);
+  PyConfig_Clear(&config);
+  if (PyStatus_Exception(status) || Py_IsInitialized() == 0) {
+    throw std::runtime_error("cannot initialize embedded Python: " +
+                             status_message(status));
+  }
+  owns_embedded_interpreter() = true;
+}
+
+void release_embedded_python_gil_for_process_lifetime() {
+  if (!owns_embedded_interpreter() || Py_IsInitialized() == 0 ||
+      embedded_main_thread_state() != nullptr) {
+    throw std::runtime_error(
+        "embedded Python GIL release requires one owned active interpreter");
+  }
+
+  /* Register after extension imports. std::atexit is LIFO, so the guard runs
+   * before the imported extension's static PyObject destructors. */
+  register_owned_interpreter_exit_guard();
+  embedded_main_thread_state() = PyEval_SaveThread();
+  if (embedded_main_thread_state() == nullptr) {
+    throw std::runtime_error(
+        "PyEval_SaveThread returned a null main thread state");
+  }
+}
+
+} // namespace flagdnn::ascend::detail
+
+#ifndef FLAGDNN_ASCEND_PRIVATE_RUNTIME_RELATIVE
+#define FLAGDNN_ASCEND_PRIVATE_RUNTIME_RELATIVE ""
+#endif
+
+namespace flagdnn::ascend::detail {
+namespace {
+
+const int kRuntimeLayoutAnchor = 0;
+
+[[nodiscard]] bool path_is_within(const std::filesystem::path &child,
+                                  const std::filesystem::path &parent) {
+  auto child_iterator = child.begin();
+  for (auto parent_iterator = parent.begin(); parent_iterator != parent.end();
+       ++parent_iterator, ++child_iterator) {
+    if (child_iterator == child.end() || *child_iterator != *parent_iterator) {
+      return false;
+    }
+  }
+  return true;
+}
+
+} // namespace
+
+std::optional<std::filesystem::path>
+private_runtime_path(std::string_view relative) {
+  if (FLAGDNN_ASCEND_PRIVATE_RUNTIME_RELATIVE[0] == '\0' || relative.empty()) {
+    return std::nullopt;
+  }
+  const std::filesystem::path relative_path(relative);
+  if (relative_path.is_absolute() || relative_path.has_root_path()) {
+    throw std::runtime_error("Ascend private runtime path must be relative");
+  }
+
+  Dl_info information{};
+  if (::dladdr(&kRuntimeLayoutAnchor, &information) == 0 ||
+      information.dli_fname == nullptr) {
+    throw std::runtime_error("cannot locate the loaded Ascend plugin");
+  }
+  std::error_code error;
+  const std::filesystem::path plugin =
+      std::filesystem::canonical(information.dli_fname, error);
+  if (error) {
+    throw std::runtime_error("cannot canonicalize the loaded Ascend plugin");
+  }
+  const std::filesystem::path lexical_root =
+      (plugin.parent_path() / FLAGDNN_ASCEND_PRIVATE_RUNTIME_RELATIVE)
+          .lexically_normal();
+  const bool root_exists = std::filesystem::exists(lexical_root, error);
+  if (error) {
+    throw std::runtime_error("cannot inspect the Ascend private runtime root");
+  }
+  if (!root_exists) {
+    return std::nullopt;
+  }
+  const std::filesystem::file_status root_status =
+      std::filesystem::symlink_status(lexical_root, error);
+  if (error || std::filesystem::is_symlink(root_status) ||
+      !std::filesystem::is_directory(root_status)) {
+    throw std::runtime_error(
+        "Ascend private runtime root is not a canonical directory");
+  }
+  const std::filesystem::path root =
+      std::filesystem::canonical(lexical_root, error);
+  if (error || root != lexical_root ||
+      !path_is_within(root, plugin.parent_path())) {
+    throw std::runtime_error(
+        "Ascend private runtime root escapes the plugin directory");
+  }
+  const std::filesystem::path candidate =
+      (root / relative_path).lexically_normal();
+  if (!path_is_within(candidate, root)) {
+    throw std::runtime_error("Ascend private runtime path escapes its root");
+  }
+  const std::filesystem::file_status status =
+      std::filesystem::symlink_status(candidate, error);
+  if (error || !std::filesystem::exists(status)) {
+    throw std::runtime_error("Ascend private runtime entry is missing");
+  }
+  if (std::filesystem::is_symlink(status) ||
+      (!std::filesystem::is_regular_file(status) &&
+       !std::filesystem::is_directory(status))) {
+    throw std::runtime_error(
+        "Ascend private runtime entry has an invalid file type");
+  }
+  const std::filesystem::path canonical =
+      std::filesystem::canonical(candidate, error);
+  if (error || !path_is_within(canonical, root)) {
+    throw std::runtime_error("Ascend private runtime entry is not canonical");
+  }
+  return canonical;
+}
+
+} // namespace flagdnn::ascend::detail
+
 namespace flagdnn::ascend {
 
 namespace detail {
 
 struct ProcessConfigurationSnapshot {
   struct EnvironmentValue {
-    const char* name = nullptr;
+    const char *name = nullptr;
     bool is_set = false;
     std::string value;
   };
@@ -158,15 +344,14 @@ struct ProcessConfigurationSnapshot {
       if (root.path.empty()) {
         return;
       }
-      struct stat status {};
-      struct stat link_status {};
+      struct stat status{};
+      struct stat link_status{};
       if (::lstat(root.path.c_str(), &link_status) != 0 ||
           ::stat(root.path.c_str(), &status) != 0 ||
           !S_ISDIR(link_status.st_mode) || !S_ISDIR(status.st_mode) ||
           link_status.st_dev != status.st_dev ||
-          link_status.st_ino != status.st_ino ||
-          status.st_dev != root.device || status.st_ino != root.inode ||
-          status.st_uid != root.owner ||
+          link_status.st_ino != status.st_ino || status.st_dev != root.device ||
+          status.st_ino != root.inode || status.st_uid != root.owner ||
           (status.st_mode & 07777) != S_IRWXU) {
         return;
       }
@@ -182,7 +367,7 @@ struct ProcessConfigurationSnapshot {
   std::shared_ptr<const OwnedDirectories> owned_directories;
 };
 
-}  // namespace detail
+} // namespace detail
 
 namespace {
 
@@ -196,20 +381,20 @@ enum class ContainmentMode {
   kHardened,
 };
 
-[[nodiscard]] constexpr const char* containment_mode_name(
-    ContainmentMode mode) noexcept {
+[[nodiscard]] constexpr const char *
+containment_mode_name(ContainmentMode mode) noexcept {
   switch (mode) {
-    case ContainmentMode::kTrustedLocal:
-      return "trusted-local";
-    case ContainmentMode::kDevelopment:
-      return "development";
-    case ContainmentMode::kHardened:
-      return "hardened";
+  case ContainmentMode::kTrustedLocal:
+    return "trusted-local";
+  case ContainmentMode::kDevelopment:
+    return "development";
+  case ContainmentMode::kHardened:
+    return "hardened";
   }
   return "unknown";
 }
 
-static constexpr const char* kFrozenEnvironmentNames[] = {
+static constexpr const char *kFrozenEnvironmentNames[] = {
     "ASCEND_HOME_PATH",
     "ASCEND_TOOLKIT_HOME",
     "ASCEND_AICPU_PATH",
@@ -266,9 +451,9 @@ struct LoadedObject {
 };
 
 struct PythonModulePin {
-  const char* name;
-  const char* path;
-  const char* sha256;
+  const char *name;
+  const char *path;
+  const char *sha256;
 };
 
 static constexpr PythonModulePin kPythonModules[] = {
@@ -285,16 +470,16 @@ static constexpr PythonModulePin kPythonModules[] = {
      FLAGDNN_ASCEND_YAML_MODULE_SHA256},
 };
 
-[[nodiscard]] std::string environment_value(const char* name) {
-  const char* value = std::getenv(name);
+[[nodiscard]] std::string environment_value(const char *name) {
+  const char *value = std::getenv(name);
   return value == nullptr ? std::string{} : std::string(value);
 }
 
-[[nodiscard]] std::string configuration_identity(
-    const detail::ProcessConfigurationSnapshot& frozen) {
+[[nodiscard]] std::string
+configuration_identity(const detail::ProcessConfigurationSnapshot &frozen) {
   std::ostringstream output;
   output << "containment=" << frozen.containment_mode << '\n';
-  for (const auto& value : frozen.environment) {
+  for (const auto &value : frozen.environment) {
     output << value.name << '=';
     if (!value.is_set) {
       output << "unset";
@@ -304,12 +489,11 @@ static constexpr PythonModulePin kPythonModules[] = {
     output << '\n';
   }
   output << "configured_cann_root=" << FLAGDNN_ASCEND_CANN_ROOT << '\n'
-         << "configured_cann_version=" << FLAGDNN_ASCEND_CANN_VERSION
-         << '\n'
+         << "configured_cann_version=" << FLAGDNN_ASCEND_CANN_VERSION << '\n'
          << "configured_python_module_root="
          << FLAGDNN_ASCEND_PYTHON_MODULE_ROOT << '\n'
-         << "configured_python_program="
-         << FLAGDNN_ASCEND_PYTHON_PROGRAM_PATH << '\n'
+         << "configured_python_program=" << FLAGDNN_ASCEND_PYTHON_PROGRAM_PATH
+         << '\n'
          << "configured_python_program_canonical="
          << FLAGDNN_ASCEND_PYTHON_PROGRAM_CANONICAL_PATH << '\n'
          << "configured_python_program_sha256="
@@ -317,8 +501,8 @@ static constexpr PythonModulePin kPythonModules[] = {
   return output.str();
 }
 
-[[nodiscard]] std::optional<ContainmentMode> containment_mode(
-    std::string* error) {
+[[nodiscard]] std::optional<ContainmentMode>
+containment_mode(std::string *error) {
   const std::string configured =
       environment_value("FLAGDNN_ASCEND_RESOURCE_CONTAINMENT");
   if (configured.empty() || configured == "trusted-local") {
@@ -337,10 +521,9 @@ static constexpr PythonModulePin kPythonModules[] = {
   return std::nullopt;
 }
 
-[[nodiscard]] std::optional<fs::path> canonical_existing_path(
-    const std::string& value,
-    bool directory,
-    std::string* error) {
+[[nodiscard]] std::optional<fs::path>
+canonical_existing_path(const std::string &value, bool directory,
+                        std::string *error) {
   if (value.empty()) {
     if (error != nullptr) {
       *error = "required path is not configured";
@@ -355,9 +538,8 @@ static constexpr PythonModulePin kPythonModules[] = {
     return std::nullopt;
   }
   std::error_code status_error;
-  const bool correct_type =
-      directory ? fs::is_directory(path, status_error)
-                : fs::is_regular_file(path, status_error);
+  const bool correct_type = directory ? fs::is_directory(path, status_error)
+                                      : fs::is_regular_file(path, status_error);
   if (status_error || !correct_type) {
     if (error != nullptr) {
       *error = std::string(directory ? "directory" : "file") +
@@ -376,8 +558,8 @@ static constexpr PythonModulePin kPythonModules[] = {
   return canonical;
 }
 
-[[nodiscard]] bool path_is_within(const fs::path& child,
-                                  const fs::path& parent) {
+[[nodiscard]] bool path_is_within(const fs::path &child,
+                                  const fs::path &parent) {
   auto child_it = child.begin();
   for (auto parent_it = parent.begin(); parent_it != parent.end();
        ++parent_it, ++child_it) {
@@ -404,8 +586,7 @@ enum class FrozenConfigurationStatus {
   kTemporaryRootChanged,
 };
 
-[[nodiscard]] fs::path require_canonical_private_directory(
-    const char* name) {
+[[nodiscard]] fs::path require_canonical_private_directory(const char *name) {
   const std::string value = environment_value(name);
   std::string path_error;
   const std::optional<fs::path> canonical =
@@ -415,19 +596,17 @@ enum class FrozenConfigurationStatus {
                       std::string("invalid ") + name + ": " + path_error);
   }
   if (canonical->string() != value) {
-    throw AscendError(
-        FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
-        std::string(name) + " must contain its canonical absolute path");
+    throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
+                      std::string(name) +
+                          " must contain its canonical absolute path");
   }
 
-  struct stat status {};
-  struct stat link_status {};
+  struct stat status{};
+  struct stat link_status{};
   if (::lstat(value.c_str(), &link_status) != 0 ||
-      ::stat(value.c_str(), &status) != 0 ||
-      !S_ISDIR(link_status.st_mode) || !S_ISDIR(status.st_mode) ||
-      link_status.st_dev != status.st_dev ||
-      link_status.st_ino != status.st_ino ||
-      status.st_uid != ::geteuid() ||
+      ::stat(value.c_str(), &status) != 0 || !S_ISDIR(link_status.st_mode) ||
+      !S_ISDIR(status.st_mode) || link_status.st_dev != status.st_dev ||
+      link_status.st_ino != status.st_ino || status.st_uid != ::geteuid() ||
       (status.st_mode & 07777) != S_IRWXU ||
       ::access(value.c_str(), R_OK | W_OK | X_OK) != 0) {
     throw AscendError(
@@ -439,21 +618,21 @@ enum class FrozenConfigurationStatus {
   return *canonical;
 }
 
-[[nodiscard]] fs::path require_configured_directory(const char* value,
-                                                    const char* description) {
+[[nodiscard]] fs::path require_configured_directory(const char *value,
+                                                    const char *description) {
   std::string path_error;
   const std::optional<fs::path> canonical =
       canonical_existing_path(value == nullptr ? "" : value, true, &path_error);
   if (!canonical.has_value()) {
     throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
-                      std::string("invalid configured ") + description +
-                          ": " + path_error);
+                      std::string("invalid configured ") + description + ": " +
+                          path_error);
   }
   return *canonical;
 }
 
-void freeze_exact_environment(const char* name, std::string_view expected) {
-  const char* current = std::getenv(name);
+void freeze_exact_environment(const char *name, std::string_view expected) {
+  const char *current = std::getenv(name);
   if (current != nullptr && std::string_view(current) != expected) {
     throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
                       std::string(name) +
@@ -467,9 +646,9 @@ void freeze_exact_environment(const char* name, std::string_view expected) {
   }
 }
 
-void freeze_canonical_environment_path(const char* name,
-                                       const fs::path& expected) {
-  const char* current = std::getenv(name);
+void freeze_canonical_environment_path(const char *name,
+                                       const fs::path &expected) {
+  const char *current = std::getenv(name);
   if (current != nullptr) {
     std::string path_error;
     const std::optional<fs::path> canonical =
@@ -488,7 +667,7 @@ void freeze_canonical_environment_path(const char* name,
   }
 }
 
-void require_unset_environment(const char* name) {
+void require_unset_environment(const char *name) {
   if (std::getenv(name) != nullptr) {
     throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
                       std::string(name) +
@@ -496,8 +675,7 @@ void require_unset_environment(const char* name) {
   }
 }
 
-void configure_exact_local_environment(ContainmentMode mode,
-                                       const char* name,
+void configure_exact_local_environment(ContainmentMode mode, const char *name,
                                        std::string_view expected) {
   if (mode == ContainmentMode::kDevelopment) {
     freeze_exact_environment(name, expected);
@@ -510,8 +688,7 @@ void configure_exact_local_environment(ContainmentMode mode,
   }
 }
 
-void configure_unset_local_environment(ContainmentMode mode,
-                                       const char* name) {
+void configure_unset_local_environment(ContainmentMode mode, const char *name) {
   if (mode == ContainmentMode::kDevelopment) {
     require_unset_environment(name);
     return;
@@ -524,18 +701,17 @@ void configure_unset_local_environment(ContainmentMode mode,
 }
 
 [[nodiscard]] detail::ProcessConfigurationSnapshot::PrivateDirectory
-freeze_private_directory(const fs::path& path, const char* description) {
+freeze_private_directory(const fs::path &path, const char *description) {
   detail::ProcessConfigurationSnapshot::PrivateDirectory result;
   result.path = path.string();
 
-  struct stat status {};
-  struct stat link_status {};
+  struct stat status{};
+  struct stat link_status{};
   if (::lstat(result.path.c_str(), &link_status) != 0 ||
       ::stat(result.path.c_str(), &status) != 0 ||
       !S_ISDIR(link_status.st_mode) || !S_ISDIR(status.st_mode) ||
       link_status.st_dev != status.st_dev ||
-      link_status.st_ino != status.st_ino ||
-      status.st_uid != ::geteuid() ||
+      link_status.st_ino != status.st_ino || status.st_uid != ::geteuid() ||
       (status.st_mode & 07777) != S_IRWXU ||
       ::access(result.path.c_str(), R_OK | W_OK | X_OK) != 0) {
     throw AscendError(
@@ -565,30 +741,28 @@ freeze_private_directory(const fs::path& path, const char* description) {
           .string();
   std::vector<char> writable(pattern.begin(), pattern.end());
   writable.push_back('\0');
-  char* created = ::mkdtemp(writable.data());
+  char *created = ::mkdtemp(writable.data());
   if (created == nullptr) {
-    throw AscendError(
-        FLAGDNN_BACKEND_RESULT_RUNTIME_ERROR,
-        "cannot create trusted-local Ascend process root: " +
-            std::string(std::strerror(errno)));
+    throw AscendError(FLAGDNN_BACKEND_RESULT_RUNTIME_ERROR,
+                      "cannot create trusted-local Ascend process root: " +
+                          std::string(std::strerror(errno)));
   }
 
   const fs::path root(created);
   try {
-    auto owner =
-        std::make_shared<detail::ProcessConfigurationSnapshot::OwnedDirectories>();
-    owner->root = freeze_private_directory(
-        root, "trusted-local Ascend process root");
+    auto owner = std::make_shared<
+        detail::ProcessConfigurationSnapshot::OwnedDirectories>();
+    owner->root =
+        freeze_private_directory(root, "trusted-local Ascend process root");
     const fs::path cache = root / "cache";
     const fs::path temporary = root / "tmp";
     if (::mkdir(cache.c_str(), 0700) != 0 ||
         ::mkdir(temporary.c_str(), 0700) != 0 ||
         ::chmod(cache.c_str(), 0700) != 0 ||
         ::chmod(temporary.c_str(), 0700) != 0) {
-      throw AscendError(
-          FLAGDNN_BACKEND_RESULT_RUNTIME_ERROR,
-          "cannot create trusted-local Ascend cache/tmp: " +
-              std::string(std::strerror(errno)));
+      throw AscendError(FLAGDNN_BACKEND_RESULT_RUNTIME_ERROR,
+                        "cannot create trusted-local Ascend cache/tmp: " +
+                            std::string(std::strerror(errno)));
     }
 
     LocalEnvironment result;
@@ -605,7 +779,7 @@ freeze_private_directory(const fs::path& path, const char* description) {
   }
 }
 
-void replace_environment_path(const char* name, const fs::path& value) {
+void replace_environment_path(const char *name, const fs::path &value) {
   if (::setenv(name, value.c_str(), 1) != 0) {
     throw AscendError(FLAGDNN_BACKEND_RESULT_RUNTIME_ERROR,
                       std::string("cannot set trusted-local ") + name + ": " +
@@ -613,22 +787,19 @@ void replace_environment_path(const char* name, const fs::path& value) {
   }
 }
 
-[[nodiscard]] LocalEnvironment prepare_local_environment(
-    ContainmentMode mode,
-    const target_policy::Resolution& target) {
+[[nodiscard]] LocalEnvironment
+prepare_local_environment(ContainmentMode mode,
+                          const target_policy::Resolution &target) {
   LocalEnvironment result;
   if (mode == ContainmentMode::kDevelopment) {
-    result.cache_root =
-        require_canonical_private_directory("TRITON_CACHE_DIR");
+    result.cache_root = require_canonical_private_directory("TRITON_CACHE_DIR");
     result.temporary_root = require_canonical_private_directory("TMPDIR");
   } else if (mode == ContainmentMode::kTrustedLocal) {
     result = create_trusted_local_directories();
-    replace_environment_path("TRITON_CACHE_DIR",
-                             result.cache_root);
+    replace_environment_path("TRITON_CACHE_DIR", result.cache_root);
     replace_environment_path("TMPDIR", result.temporary_root);
     if (::setenv("FLAGDNN_ASCEND_RESOURCE_CONTAINMENT",
-                 containment_mode_name(mode),
-                 1) != 0) {
+                 containment_mode_name(mode), 1) != 0) {
       throw AscendError(
           FLAGDNN_BACKEND_RESULT_RUNTIME_ERROR,
           "cannot freeze trusted-local Ascend containment mode: " +
@@ -646,8 +817,8 @@ void replace_environment_path(const char* name, const fs::path& value) {
 
   result.python_module_root = require_configured_directory(
       FLAGDNN_ASCEND_PYTHON_MODULE_ROOT, "Python module root");
-  const fs::path cann_root = require_configured_directory(
-      FLAGDNN_ASCEND_CANN_ROOT, "CANN root");
+  const fs::path cann_root =
+      require_configured_directory(FLAGDNN_ASCEND_CANN_ROOT, "CANN root");
 
   freeze_canonical_environment_path("ASCEND_HOME_PATH", cann_root);
   freeze_canonical_environment_path("ASCEND_TOOLKIT_HOME", cann_root);
@@ -659,18 +830,17 @@ void replace_environment_path(const char* name, const fs::path& value) {
                                       target.codegen_arch);
   }
   configure_exact_local_environment(mode, "TRITON_BACKEND", "torch_npu");
-  configure_exact_local_environment(
-      mode, "TRITON_ALL_BLOCKS_PARALLEL", "false");
-  configure_exact_local_environment(
-      mode, "TORCH_DEVICE_BACKEND_AUTOLOAD", "0");
+  configure_exact_local_environment(mode, "TRITON_ALL_BLOCKS_PARALLEL",
+                                    "false");
+  configure_exact_local_environment(mode, "TORCH_DEVICE_BACKEND_AUTOLOAD", "0");
   configure_exact_local_environment(mode, "PYTHONDONTWRITEBYTECODE", "1");
   configure_exact_local_environment(mode, "PYTHONNOUSERSITE", "1");
   configure_exact_local_environment(mode, "PYTHONHASHSEED", "0");
   configure_exact_local_environment(mode, "PYTHONSAFEPATH", "1");
-  configure_exact_local_environment(
-      mode, "PYTHONPATH", result.python_module_root.string());
+  configure_exact_local_environment(mode, "PYTHONPATH",
+                                    result.python_module_root.string());
 
-  for (const char* name : {
+  for (const char *name : {
            "PYTHONHOME",
            "PYTHONPYCACHEPREFIX",
            "PYTHONUSERBASE",
@@ -689,13 +859,13 @@ void replace_environment_path(const char* name, const fs::path& value) {
 
 [[nodiscard]] std::shared_ptr<const detail::ProcessConfigurationSnapshot>
 freeze_process_configuration(ContainmentMode mode,
-                             const LocalEnvironment& environment) {
+                             const LocalEnvironment &environment) {
   auto result = std::make_shared<detail::ProcessConfigurationSnapshot>();
   result->containment_mode = containment_mode_name(mode);
   result->environment.reserve(sizeof(kFrozenEnvironmentNames) /
                               sizeof(kFrozenEnvironmentNames[0]));
-  for (const char* name : kFrozenEnvironmentNames) {
-    const char* value = std::getenv(name);
+  for (const char *name : kFrozenEnvironmentNames) {
+    const char *value = std::getenv(name);
     detail::ProcessConfigurationSnapshot::EnvironmentValue frozen;
     frozen.name = name;
     frozen.is_set = value != nullptr;
@@ -713,10 +883,10 @@ freeze_process_configuration(ContainmentMode mode,
 }
 
 [[nodiscard]] bool private_directory_matches(
-    const detail::ProcessConfigurationSnapshot::PrivateDirectory& frozen)
-    noexcept {
-  struct stat status {};
-  struct stat link_status {};
+    const detail::ProcessConfigurationSnapshot::PrivateDirectory
+        &frozen) noexcept {
+  struct stat status{};
+  struct stat link_status{};
   return ::geteuid() == frozen.owner &&
          ::lstat(frozen.path.c_str(), &link_status) == 0 &&
          ::stat(frozen.path.c_str(), &status) == 0 &&
@@ -724,21 +894,20 @@ freeze_process_configuration(ContainmentMode mode,
          link_status.st_dev == status.st_dev &&
          link_status.st_ino == status.st_ino &&
          status.st_dev == frozen.device && status.st_ino == frozen.inode &&
-         status.st_uid == frozen.owner &&
-         (status.st_mode & 07777) == S_IRWXU &&
+         status.st_uid == frozen.owner && (status.st_mode & 07777) == S_IRWXU &&
          ::access(frozen.path.c_str(), R_OK | W_OK | X_OK) == 0;
 }
 
 [[nodiscard]] FrozenConfigurationStatus frozen_configuration_status(
-    const detail::ProcessConfigurationSnapshot& frozen) noexcept {
-  const char* mode = std::getenv("FLAGDNN_ASCEND_RESOURCE_CONTAINMENT");
+    const detail::ProcessConfigurationSnapshot &frozen) noexcept {
+  const char *mode = std::getenv("FLAGDNN_ASCEND_RESOURCE_CONTAINMENT");
   if (mode == nullptr ||
       std::strcmp(mode, frozen.containment_mode.c_str()) != 0) {
     return FrozenConfigurationStatus::kContainmentModeChanged;
   }
 
-  for (const auto& expected : frozen.environment) {
-    const char* current = std::getenv(expected.name);
+  for (const auto &expected : frozen.environment) {
+    const char *current = std::getenv(expected.name);
     if ((current != nullptr) != expected.is_set ||
         (current != nullptr &&
          std::strcmp(current, expected.value.c_str()) != 0)) {
@@ -754,18 +923,18 @@ freeze_process_configuration(ContainmentMode mode,
   return FrozenConfigurationStatus::kValid;
 }
 
-[[nodiscard]] const char* frozen_configuration_error(
-    FrozenConfigurationStatus status) noexcept {
+[[nodiscard]] const char *
+frozen_configuration_error(FrozenConfigurationStatus status) noexcept {
   switch (status) {
-    case FrozenConfigurationStatus::kValid:
-      return nullptr;
-    case FrozenConfigurationStatus::kContainmentModeChanged:
-    case FrozenConfigurationStatus::kEnvironmentChanged:
-      return "Ascend process configuration changed after the domain was bound";
-    case FrozenConfigurationStatus::kCacheChanged:
-      return "Ascend Triton cache root changed after domain binding";
-    case FrozenConfigurationStatus::kTemporaryRootChanged:
-      return "Ascend temporary root changed after domain binding";
+  case FrozenConfigurationStatus::kValid:
+    return nullptr;
+  case FrozenConfigurationStatus::kContainmentModeChanged:
+  case FrozenConfigurationStatus::kEnvironmentChanged:
+    return "Ascend process configuration changed after the domain was bound";
+  case FrozenConfigurationStatus::kCacheChanged:
+    return "Ascend Triton cache root changed after domain binding";
+  case FrozenConfigurationStatus::kTemporaryRootChanged:
+    return "Ascend temporary root changed after domain binding";
   }
   return "Ascend process configuration validation returned an unknown state";
 }
@@ -775,29 +944,29 @@ freeze_process_configuration(ContainmentMode mode,
   return (size + kAlignment - 1) & ~(kAlignment - 1);
 }
 
-[[nodiscard]] std::string loaded_build_id(const dl_phdr_info& information) {
+[[nodiscard]] std::string loaded_build_id(const dl_phdr_info &information) {
   for (std::size_t index = 0; index < information.dlpi_phnum; ++index) {
-    const ElfW(Phdr)& header = information.dlpi_phdr[index];
+    const ElfW(Phdr) &header = information.dlpi_phdr[index];
     if (header.p_type != PT_NOTE || header.p_memsz < sizeof(ElfW(Nhdr))) {
       continue;
     }
-    const auto* cursor = reinterpret_cast<const std::byte*>(
+    const auto *cursor = reinterpret_cast<const std::byte *>(
         information.dlpi_addr + header.p_vaddr);
-    const auto* end = cursor + header.p_memsz;
+    const auto *end = cursor + header.p_memsz;
     while (static_cast<std::size_t>(end - cursor) >= sizeof(ElfW(Nhdr))) {
-      const auto* note = reinterpret_cast<const ElfW(Nhdr)*>(cursor);
+      const auto *note = reinterpret_cast<const ElfW(Nhdr) *>(cursor);
       cursor += sizeof(ElfW(Nhdr));
       const std::size_t name_size = align_note(note->n_namesz);
       const std::size_t description_size = align_note(note->n_descsz);
       if (name_size > static_cast<std::size_t>(end - cursor)) {
         break;
       }
-      const auto* name = reinterpret_cast<const char*>(cursor);
+      const auto *name = reinterpret_cast<const char *>(cursor);
       cursor += name_size;
       if (description_size > static_cast<std::size_t>(end - cursor)) {
         break;
       }
-      const auto* description = cursor;
+      const auto *description = cursor;
       cursor += description_size;
       if (note->n_type != NT_GNU_BUILD_ID || note->n_namesz < 3 ||
           std::string_view(name, 3) != "GNU") {
@@ -824,10 +993,9 @@ struct LoadedPythonQuery {
   std::vector<LoadedObject> matches;
 };
 
-int collect_loaded_object(dl_phdr_info* information,
-                          std::size_t,
-                          void* opaque) {
-  auto& query = *static_cast<LoadedObjectQuery*>(opaque);
+int collect_loaded_object(dl_phdr_info *information, std::size_t,
+                          void *opaque) {
+  auto &query = *static_cast<LoadedObjectQuery *>(opaque);
   if (information == nullptr || information->dlpi_name == nullptr ||
       information->dlpi_name[0] == '\0') {
     return 0;
@@ -838,19 +1006,17 @@ int collect_loaded_object(dl_phdr_info* information,
     return 0;
   }
   const auto duplicate = std::find_if(
-      query.matches.begin(), query.matches.end(), [&](const LoadedObject& item) {
-        return item.path == candidate;
-      });
+      query.matches.begin(), query.matches.end(),
+      [&](const LoadedObject &item) { return item.path == candidate; });
   if (duplicate == query.matches.end()) {
     query.matches.push_back({candidate, loaded_build_id(*information)});
   }
   return 0;
 }
 
-int collect_loaded_python_object(dl_phdr_info* information,
-                                 std::size_t,
-                                 void* opaque) {
-  auto& query = *static_cast<LoadedPythonQuery*>(opaque);
+int collect_loaded_python_object(dl_phdr_info *information, std::size_t,
+                                 void *opaque) {
+  auto &query = *static_cast<LoadedPythonQuery *>(opaque);
   if (information == nullptr || information->dlpi_name == nullptr ||
       information->dlpi_name[0] == '\0') {
     return 0;
@@ -866,9 +1032,8 @@ int collect_loaded_python_object(dl_phdr_info* information,
     return 0;
   }
   const auto duplicate = std::find_if(
-      query.matches.begin(), query.matches.end(), [&](const LoadedObject& item) {
-        return item.path == candidate;
-      });
+      query.matches.begin(), query.matches.end(),
+      [&](const LoadedObject &item) { return item.path == candidate; });
   if (duplicate == query.matches.end()) {
     query.matches.push_back({candidate, loaded_build_id(*information)});
   }
@@ -881,8 +1046,8 @@ int collect_loaded_python_object(dl_phdr_info* information,
   return query.matches;
 }
 
-[[nodiscard]] LoadedObject unique_loaded_python_object(
-    const LoadedObject& symbol_object) {
+[[nodiscard]] LoadedObject
+unique_loaded_python_object(const LoadedObject &symbol_object) {
   std::vector<LoadedObject> matches = loaded_python_objects();
   if (matches.size() != 1 || matches.front().path != symbol_object.path) {
     throw AscendError(
@@ -894,26 +1059,25 @@ int collect_loaded_python_object(dl_phdr_info* information,
   return matches.front();
 }
 
-[[nodiscard]] LoadedObject unique_loaded_object(
-    const std::string& basename) {
+[[nodiscard]] LoadedObject unique_loaded_object(const std::string &basename) {
   LoadedObjectQuery query{basename, {}};
   (void)::dl_iterate_phdr(&collect_loaded_object, &query);
   if (query.matches.size() != 1) {
-    throw AscendError(
-        FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
-        "expected exactly one loaded " + basename + ", found " +
-            std::to_string(query.matches.size()));
+    throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
+                      "expected exactly one loaded " + basename + ", found " +
+                          std::to_string(query.matches.size()));
   }
   return query.matches.front();
 }
 
 template <typename Function>
 [[nodiscard]] LoadedObject object_containing(Function function,
-                                              const char* description) {
+                                             const char *description) {
   Dl_info information{};
-  const auto address = reinterpret_cast<void*>(
-      reinterpret_cast<std::uintptr_t>(function));
-  if (::dladdr(address, &information) == 0 || information.dli_fname == nullptr) {
+  const auto address =
+      reinterpret_cast<void *>(reinterpret_cast<std::uintptr_t>(function));
+  if (::dladdr(address, &information) == 0 ||
+      information.dli_fname == nullptr) {
     throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
                       "cannot locate loaded " + std::string(description));
   }
@@ -921,12 +1085,11 @@ template <typename Function>
   const fs::path canonical = fs::canonical(information.dli_fname, error);
   if (error) {
     throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
-                      "cannot canonicalize loaded " +
-                          std::string(description));
+                      "cannot canonicalize loaded " + std::string(description));
   }
   LoadedObjectQuery query{canonical.filename().string(), {}};
   (void)::dl_iterate_phdr(&collect_loaded_object, &query);
-  for (const LoadedObject& object : query.matches) {
+  for (const LoadedObject &object : query.matches) {
     if (object.path == canonical) {
       return object;
     }
@@ -934,10 +1097,8 @@ template <typename Function>
   return {canonical, {}};
 }
 
-void verify_object(const LoadedObject& object,
-                   const char* configured_path,
-                   const char* configured_sha256,
-                   const char* description,
+void verify_object(const LoadedObject &object, const char *configured_path,
+                   const char *configured_sha256, const char *description,
                    std::string_view private_relative = {}) {
   std::error_code error;
   fs::path expected;
@@ -948,11 +1109,10 @@ void verify_object(const LoadedObject& object,
       if (private_path.has_value()) {
         expected = *private_path;
       }
-    } catch (const std::exception& exception) {
-      throw AscendError(
-          FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
-          std::string("invalid private ") + description + ": " +
-              exception.what());
+    } catch (const std::exception &exception) {
+      throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
+                        std::string("invalid private ") + description + ": " +
+                            exception.what());
     }
   }
   if (expected.empty()) {
@@ -974,9 +1134,9 @@ void verify_object(const LoadedObject& object,
   }
 }
 
-[[nodiscard]] std::string loaded_object_identity(
-    const LoadedObject& object,
-    const char* configured_sha256) {
+[[nodiscard]] std::string
+loaded_object_identity(const LoadedObject &object,
+                       const char *configured_sha256) {
   if (!object.build_id.empty()) {
     return "build-id:" + object.build_id;
   }
@@ -986,11 +1146,10 @@ void verify_object(const LoadedObject& object,
   return "sha256:" + std::string(configured_sha256);
 }
 
-[[nodiscard]] fs::path verify_configured_file(const char* configured_path,
-                                              const char* configured_sha256,
-                                              const char* description,
-                                              std::string_view
-                                                  private_relative = {}) {
+[[nodiscard]] fs::path
+verify_configured_file(const char *configured_path,
+                       const char *configured_sha256, const char *description,
+                       std::string_view private_relative = {}) {
   if (!private_relative.empty()) {
     try {
       const std::optional<fs::path> private_path =
@@ -998,29 +1157,25 @@ void verify_object(const LoadedObject& object,
       if (private_path.has_value()) {
         std::error_code error;
         if (!fs::is_regular_file(*private_path, error) || error) {
-          throw AscendError(
-              FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
-              std::string("plugin-private ") + description +
-                  " is not a regular file");
+          throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
+                            std::string("plugin-private ") + description +
+                                " is not a regular file");
         }
-        const std::string digest =
-            flagdnn::native::sha256_file(*private_path);
+        const std::string digest = flagdnn::native::sha256_file(*private_path);
         if (configured_sha256 == nullptr || configured_sha256[0] == '\0' ||
             digest != configured_sha256) {
-          throw AscendError(
-              FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
-              std::string("plugin-private ") + description +
-                  " content hash differs from configure time");
+          throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
+                            std::string("plugin-private ") + description +
+                                " content hash differs from configure time");
         }
         return *private_path;
       }
-    } catch (const AscendError&) {
+    } catch (const AscendError &) {
       throw;
-    } catch (const std::exception& exception) {
-      throw AscendError(
-          FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
-          std::string("invalid plugin-private ") + description + ": " +
-              exception.what());
+    } catch (const std::exception &exception) {
+      throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
+                        std::string("invalid plugin-private ") + description +
+                            ": " + exception.what());
     }
   }
   std::string path_error;
@@ -1028,8 +1183,8 @@ void verify_object(const LoadedObject& object,
       configured_path == nullptr ? "" : configured_path, false, &path_error);
   if (!path.has_value()) {
     throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
-                      std::string("invalid configured ") + description +
-                          ": " + path_error);
+                      std::string("invalid configured ") + description + ": " +
+                          path_error);
   }
   const std::string digest = flagdnn::native::sha256_file(*path);
   if (configured_sha256 == nullptr || configured_sha256[0] == '\0' ||
@@ -1042,29 +1197,29 @@ void verify_object(const LoadedObject& object,
 }
 
 void verify_pinned_python_module_files() {
-  for (const PythonModulePin& module : kPythonModules) {
+  for (const PythonModulePin &module : kPythonModules) {
     const std::string description = std::string(module.name) + " module";
-    (void)verify_configured_file(
-        module.path, module.sha256, description.c_str());
+    (void)verify_configured_file(module.path, module.sha256,
+                                 description.c_str());
   }
 }
 
-[[nodiscard]] void*& process_python_global_handle() noexcept {
-  static void* handle = nullptr;
+[[nodiscard]] void *&process_python_global_handle() noexcept {
+  static void *handle = nullptr;
   return handle;
 }
 
-void promote_loaded_python(const LoadedObject& python) {
+void promote_loaded_python(const LoadedObject &python) {
   if (process_python_global_handle() != nullptr) {
     throw AscendError(FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR,
                       "libpython global promotion ran more than once");
   }
 
   (void)::dlerror();
-  void* handle = ::dlopen(python.path.c_str(),
-                          RTLD_NOW | RTLD_GLOBAL | RTLD_NOLOAD);
+  void *handle =
+      ::dlopen(python.path.c_str(), RTLD_NOW | RTLD_GLOBAL | RTLD_NOLOAD);
   if (handle == nullptr) {
-    const char* error = ::dlerror();
+    const char *error = ::dlerror();
     throw AscendError(
         FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
         "cannot promote the pinned loaded libpython into the global symbol "
@@ -1077,8 +1232,8 @@ void promote_loaded_python(const LoadedObject& python) {
   process_python_global_handle() = handle;
 
   (void)::dlerror();
-  void* symbol = ::dlsym(handle, "Py_IsInitialized");
-  const char* symbol_error = ::dlerror();
+  void *symbol = ::dlsym(handle, "Py_IsInitialized");
+  const char *symbol_error = ::dlerror();
   Dl_info information{};
   std::error_code canonical_error;
   fs::path symbol_object;
@@ -1088,17 +1243,17 @@ void promote_loaded_python(const LoadedObject& python) {
   }
   if (symbol == nullptr || symbol_error != nullptr || canonical_error ||
       symbol_object != python.path) {
-    const std::string diagnostic =
-        symbol_error == nullptr ? "symbol resolved from the wrong object"
-                                : std::string(symbol_error);
-    throw AscendError(
-        FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
-        "pinned libpython global promotion readback failed: " + diagnostic);
+    const std::string diagnostic = symbol_error == nullptr
+                                       ? "symbol resolved from the wrong object"
+                                       : std::string(symbol_error);
+    throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
+                      "pinned libpython global promotion readback failed: " +
+                          diagnostic);
   }
 
   (void)::dlerror();
-  void* global_symbol = ::dlsym(RTLD_DEFAULT, "PyTuple_Type");
-  const char* global_error = ::dlerror();
+  void *global_symbol = ::dlsym(RTLD_DEFAULT, "PyTuple_Type");
+  const char *global_error = ::dlerror();
   Dl_info global_information{};
   std::error_code global_canonical_error;
   fs::path global_object;
@@ -1125,7 +1280,7 @@ void promote_loaded_python(const LoadedObject& python) {
 }
 
 struct PyObjectDeleter {
-  void operator()(PyObject* object) const noexcept { Py_XDECREF(object); }
+  void operator()(PyObject *object) const noexcept { Py_XDECREF(object); }
 };
 
 using OwnedPyObject = std::unique_ptr<PyObject, PyObjectDeleter>;
@@ -1134,16 +1289,16 @@ using OwnedPyObject = std::unique_ptr<PyObject, PyObjectDeleter>;
   if (PyErr_Occurred() == nullptr) {
     return "unknown Python error";
   }
-  PyObject* type_raw = nullptr;
-  PyObject* value_raw = nullptr;
-  PyObject* traceback_raw = nullptr;
+  PyObject *type_raw = nullptr;
+  PyObject *value_raw = nullptr;
+  PyObject *traceback_raw = nullptr;
   PyErr_Fetch(&type_raw, &value_raw, &traceback_raw);
   PyErr_NormalizeException(&type_raw, &value_raw, &traceback_raw);
   OwnedPyObject type(type_raw);
   OwnedPyObject value(value_raw);
   OwnedPyObject traceback(traceback_raw);
 
-  PyObject* source = value != nullptr ? value.get() : type.get();
+  PyObject *source = value != nullptr ? value.get() : type.get();
   if (source == nullptr) {
     PyErr_Clear();
     return "unknown Python exception";
@@ -1153,7 +1308,7 @@ using OwnedPyObject = std::unique_ptr<PyObject, PyObjectDeleter>;
     PyErr_Clear();
     return "unprintable Python exception";
   }
-  const char* text = PyUnicode_AsUTF8(rendered.get());
+  const char *text = PyUnicode_AsUTF8(rendered.get());
   if (text == nullptr) {
     PyErr_Clear();
     return "non-UTF-8 Python exception";
@@ -1163,14 +1318,14 @@ using OwnedPyObject = std::unique_ptr<PyObject, PyObjectDeleter>;
   return result;
 }
 
-[[nodiscard]] std::string python_utf8(PyObject* object,
-                                      const char* description) {
+[[nodiscard]] std::string python_utf8(PyObject *object,
+                                      const char *description) {
   if (object == nullptr) {
     throw std::runtime_error(std::string("missing ") + description + ": " +
                              consume_python_error());
   }
   OwnedPyObject rendered;
-  PyObject* text_object = object;
+  PyObject *text_object = object;
   if (!PyUnicode_Check(object)) {
     rendered.reset(PyObject_Str(object));
     if (rendered == nullptr) {
@@ -1179,7 +1334,7 @@ using OwnedPyObject = std::unique_ptr<PyObject, PyObjectDeleter>;
     }
     text_object = rendered.get();
   }
-  const char* text = PyUnicode_AsUTF8(text_object);
+  const char *text = PyUnicode_AsUTF8(text_object);
   if (text == nullptr) {
     throw std::runtime_error(std::string("cannot decode ") + description +
                              ": " + consume_python_error());
@@ -1187,19 +1342,19 @@ using OwnedPyObject = std::unique_ptr<PyObject, PyObjectDeleter>;
   return text;
 }
 
-[[nodiscard]] fs::path python_import_root(const fs::path& module_file) {
-  PyObject* sys_path = PySys_GetObject("path");  // Borrowed reference.
+[[nodiscard]] fs::path python_import_root(const fs::path &module_file) {
+  PyObject *sys_path = PySys_GetObject("path"); // Borrowed reference.
   if (sys_path == nullptr || !PyList_Check(sys_path)) {
     throw std::runtime_error("embedded Python sys.path is unavailable");
   }
   fs::path best;
   const Py_ssize_t count = PyList_Size(sys_path);
   for (Py_ssize_t index = 0; index < count; ++index) {
-    PyObject* entry = PyList_GetItem(sys_path, index);  // Borrowed reference.
+    PyObject *entry = PyList_GetItem(sys_path, index); // Borrowed reference.
     if (entry == nullptr || !PyUnicode_Check(entry)) {
       continue;
     }
-    const char* value = PyUnicode_AsUTF8(entry);
+    const char *value = PyUnicode_AsUTF8(entry);
     if (value == nullptr) {
       throw std::runtime_error("cannot decode embedded Python sys.path: " +
                                consume_python_error());
@@ -1223,9 +1378,9 @@ using OwnedPyObject = std::unique_ptr<PyObject, PyObjectDeleter>;
   return best;
 }
 
-[[nodiscard]] std::string read_python_module(const char* name,
-                                             const char* configured_path,
-                                             const char* configured_sha256) {
+[[nodiscard]] std::string read_python_module(const char *name,
+                                             const char *configured_path,
+                                             const char *configured_sha256) {
   OwnedPyObject module(PyImport_ImportModule(name));
   if (module == nullptr) {
     throw std::runtime_error(std::string("cannot import ") + name + ": " +
@@ -1256,12 +1411,12 @@ using OwnedPyObject = std::unique_ptr<PyObject, PyObjectDeleter>;
   std::ostringstream identity;
   identity << name << "_root=" << import_root.string() << ';' << name
            << "_path=" << canonical_file.string() << ';' << name
-           << "_sha256=" << configured_sha256 << ';'
-           << name << "_version=" << version_value;
+           << "_sha256=" << configured_sha256 << ';' << name
+           << "_version=" << version_value;
   return identity.str();
 }
 
-void verify_python_module_root(const fs::path& module_root) {
+void verify_python_module_root(const fs::path &module_root) {
   OwnedPyObject sysconfig(PyImport_ImportModule("sysconfig"));
   if (sysconfig == nullptr) {
     throw std::runtime_error("cannot import sysconfig: " +
@@ -1276,9 +1431,8 @@ void verify_python_module_root(const fs::path& module_root) {
     throw std::runtime_error("sysconfig.get_paths failed: " +
                              consume_python_error());
   }
-  PyObject* purelib = PyDict_GetItemString(paths.get(), "purelib");
-  const std::string purelib_value =
-      python_utf8(purelib, "sysconfig purelib");
+  PyObject *purelib = PyDict_GetItemString(paths.get(), "purelib");
+  const std::string purelib_value = python_utf8(purelib, "sysconfig purelib");
   std::error_code error;
   const fs::path canonical_purelib = fs::canonical(purelib_value, error);
   if (error || canonical_purelib != module_root) {
@@ -1287,18 +1441,18 @@ void verify_python_module_root(const fs::path& module_root) {
         "root");
   }
 
-  PyObject* sys_path = PySys_GetObject("path");  // Borrowed reference.
+  PyObject *sys_path = PySys_GetObject("path"); // Borrowed reference.
   if (sys_path == nullptr || !PyList_Check(sys_path)) {
     throw std::runtime_error("embedded Python sys.path is unavailable");
   }
   bool found = false;
   const Py_ssize_t count = PyList_Size(sys_path);
   for (Py_ssize_t index = 0; index < count; ++index) {
-    PyObject* entry = PyList_GetItem(sys_path, index);  // Borrowed reference.
+    PyObject *entry = PyList_GetItem(sys_path, index); // Borrowed reference.
     if (entry == nullptr || !PyUnicode_Check(entry)) {
       continue;
     }
-    const char* value = PyUnicode_AsUTF8(entry);
+    const char *value = PyUnicode_AsUTF8(entry);
     if (value == nullptr) {
       throw std::runtime_error("cannot decode embedded Python sys.path: " +
                                consume_python_error());
@@ -1315,12 +1469,12 @@ void verify_python_module_root(const fs::path& module_root) {
   }
 }
 
-[[nodiscard]] std::string readback_python_environment(
-    const fs::path& module_root) {
+[[nodiscard]] std::string
+readback_python_environment(const fs::path &module_root) {
   verify_python_module_root(module_root);
   std::ostringstream identity;
   bool first = true;
-  for (const PythonModulePin& module : kPythonModules) {
+  for (const PythonModulePin &module : kPythonModules) {
     if (!first) {
       identity << ';';
     }
@@ -1330,9 +1484,9 @@ void verify_python_module_root(const fs::path& module_root) {
   return identity.str();
 }
 
-[[nodiscard]] std::string initialize_embedded_python(
-    const fs::path& module_root,
-    const char* program_name) {
+[[nodiscard]] std::string
+initialize_embedded_python(const fs::path &module_root,
+                           const char *program_name) {
   if (Py_IsInitialized() != 0) {
     throw AscendError(
         FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
@@ -1341,7 +1495,7 @@ void verify_python_module_root(const fs::path& module_root) {
 
   try {
     detail::initialize_embedded_python_from_program(program_name);
-  } catch (const std::exception& error) {
+  } catch (const std::exception &error) {
     throw AscendError(FLAGDNN_BACKEND_RESULT_RUNTIME_ERROR,
                       "embedded Python initialization failed: " +
                           std::string(error.what()));
@@ -1355,7 +1509,7 @@ void verify_python_module_root(const fs::path& module_root) {
       failure = "embedded Python left an exception pending: " +
                 consume_python_error();
     }
-  } catch (const std::exception& error) {
+  } catch (const std::exception &error) {
     failure = error.what();
     if (PyErr_Occurred() != nullptr) {
       PyErr_Clear();
@@ -1371,7 +1525,7 @@ void verify_python_module_root(const fs::path& module_root) {
    * once and the saved main thread state remains process-lifetime state. */
   try {
     detail::release_embedded_python_gil_for_process_lifetime();
-  } catch (const std::exception& error) {
+  } catch (const std::exception &error) {
     throw AscendError(FLAGDNN_BACKEND_RESULT_RUNTIME_ERROR,
                       "cannot release embedded Python GIL: " +
                           std::string(error.what()));
@@ -1384,13 +1538,13 @@ void verify_python_module_root(const fs::path& module_root) {
   return identity;
 }
 
-[[nodiscard]] std::string sanitize_fingerprint_component(
-    std::string_view value) {
+[[nodiscard]] std::string
+sanitize_fingerprint_component(std::string_view value) {
   std::string result;
   result.reserve(value.size());
   for (unsigned char character : value) {
-    if (std::isalnum(character) != 0 || character == '.' ||
-        character == '_' || character == '-') {
+    if (std::isalnum(character) != 0 || character == '.' || character == '_' ||
+        character == '-') {
       result.push_back(static_cast<char>(character));
     } else {
       throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
@@ -1404,16 +1558,15 @@ void verify_python_module_root(const fs::path& module_root) {
   return result;
 }
 
-[[nodiscard]] std::string acl_failure(const char* operation,
-                                      aclError result) {
+[[nodiscard]] std::string acl_failure(const char *operation, aclError result) {
   std::ostringstream output;
   output << operation << " failed (aclError " << result << ')';
   return output.str();
 }
 
-[[nodiscard]] detail::DomainInitialization initialize_domain_impl(
-    std::int32_t device_ordinal,
-    const detail::AclRuntimeApi& api) {
+[[nodiscard]] detail::DomainInitialization
+initialize_domain_impl(std::int32_t device_ordinal,
+                       const detail::AclRuntimeApi &api) {
   std::string mode_error;
   const std::optional<ContainmentMode> mode = containment_mode(&mode_error);
   if (!mode.has_value()) {
@@ -1437,8 +1590,7 @@ void verify_python_module_root(const fs::path& module_root) {
 
   if (api.get_current_context == nullptr || api.get_device == nullptr ||
       api.get_ai_core_count == nullptr || api.get_soc_name == nullptr ||
-      api.get_version_string == nullptr ||
-      api.get_version_number == nullptr) {
+      api.get_version_string == nullptr || api.get_version_number == nullptr) {
     return detail::DomainInitialization::terminal(
         FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR,
         "Ascend runtime probe API is incomplete");
@@ -1474,14 +1626,14 @@ void verify_python_module_root(const fs::path& module_root) {
 
   std::uint32_t ai_core_count = 0;
   try {
-    const char* soc_name = api.get_soc_name();
+    const char *soc_name = api.get_soc_name();
     if (soc_name == nullptr || soc_name[0] == '\0') {
       throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
                         "aclrtGetSocName did not return a SoC identity");
     }
     const std::string soc = sanitize_fingerprint_component(soc_name);
-    const std::string compatibility_setting = environment_value(
-        target_policy::kCompatibilityEnvironment);
+    const std::string compatibility_setting =
+        environment_value(target_policy::kCompatibilityEnvironment);
     const target_policy::Resolution target =
         target_policy::resolve_codegen_arch(soc, compatibility_setting);
     if (target.status != target_policy::ResolutionStatus::kSupported) {
@@ -1500,8 +1652,7 @@ void verify_python_module_root(const fs::path& module_root) {
                         std::move(message));
     }
     const std::string codegen_arch(target.codegen_arch);
-    const std::int32_t ai_core_result =
-        api.get_ai_core_count(&ai_core_count);
+    const std::int32_t ai_core_result = api.get_ai_core_count(&ai_core_count);
     if (ai_core_result != RT_ERROR_NONE) {
       std::ostringstream message;
       message << "rtGetAiCoreCount failed (rtError " << ai_core_result << ')';
@@ -1514,8 +1665,8 @@ void verify_python_module_root(const fs::path& module_root) {
           "rtGetAiCoreCount returned a value outside the Ascend capability "
           "envelope");
     }
-    configure_exact_local_environment(
-        *mode, "TRITON_ALL_BLOCKS_PARALLEL", "false");
+    configure_exact_local_environment(*mode, "TRITON_ALL_BLOCKS_PARALLEL",
+                                      "false");
     if (Py_IsInitialized() != 0) {
       throw AscendError(
           FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
@@ -1524,39 +1675,33 @@ void verify_python_module_root(const fs::path& module_root) {
 
     std::array<char, ACL_PKG_VERSION_MAX_SIZE> package_version{};
     std::array<char, 8> package_name = {'r', 'u', 'n', 't', 'i', 'm', 'e', 0};
-    check_acl(api.get_version_string(package_name.data(),
-                                     package_version.data()),
-              "aclsysGetVersionStr(runtime)");
+    check_acl(
+        api.get_version_string(package_name.data(), package_version.data()),
+        "aclsysGetVersionStr(runtime)");
     std::int32_t package_version_number = 0;
-    check_acl(api.get_version_number(package_name.data(),
-                                     &package_version_number),
-              "aclsysGetVersionNum(runtime)");
+    check_acl(
+        api.get_version_number(package_name.data(), &package_version_number),
+        "aclsysGetVersionNum(runtime)");
     if (std::string_view(package_version.data()) !=
         FLAGDNN_ASCEND_CANN_VERSION) {
-      throw AscendError(
-          FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
-          "loaded CANN runtime version '" +
-              std::string(package_version.data()) +
-              "' differs from configured version '" +
-              std::string(FLAGDNN_ASCEND_CANN_VERSION) + "'");
+      throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
+                        "loaded CANN runtime version '" +
+                            std::string(package_version.data()) +
+                            "' differs from configured version '" +
+                            std::string(FLAGDNN_ASCEND_CANN_VERSION) + "'");
     }
 
-    const LoadedObject ascendcl = object_containing(
-        api.get_current_context, "libascendcl.so");
+    const LoadedObject ascendcl =
+        object_containing(api.get_current_context, "libascendcl.so");
     const LoadedObject runtime = unique_loaded_object(
         fs::path(FLAGDNN_ASCEND_RUNTIME_PATH).filename().string());
-    verify_object(ascendcl,
-                  FLAGDNN_ASCEND_ASCENDCL_PATH,
-                  FLAGDNN_ASCEND_ASCENDCL_SHA256,
-                  "libascendcl.so");
-    verify_object(runtime,
-                  FLAGDNN_ASCEND_RUNTIME_PATH,
-                  FLAGDNN_ASCEND_RUNTIME_SHA256,
-                  "libruntime.so");
+    verify_object(ascendcl, FLAGDNN_ASCEND_ASCENDCL_PATH,
+                  FLAGDNN_ASCEND_ASCENDCL_SHA256, "libascendcl.so");
+    verify_object(runtime, FLAGDNN_ASCEND_RUNTIME_PATH,
+                  FLAGDNN_ASCEND_RUNTIME_SHA256, "libruntime.so");
 
     const LoadedObject triton_jit_symbol = object_containing(
-        &triton_jit::load_npu_metadata,
-        "libtriton_jit public metadata loader");
+        &triton_jit::load_npu_metadata, "libtriton_jit public metadata loader");
     const LoadedObject triton_jit = unique_loaded_object(
         fs::path(FLAGDNN_ASCEND_LIBTRITON_JIT_PATH).filename().string());
     if (triton_jit_symbol.path != triton_jit.path) {
@@ -1564,30 +1709,23 @@ void verify_python_module_root(const fs::path& module_root) {
           FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
           "libtriton_jit public metadata loader resolves from another DSO");
     }
-    verify_object(triton_jit,
-                  FLAGDNN_ASCEND_LIBTRITON_JIT_PATH,
-                  FLAGDNN_ASCEND_LIBTRITON_JIT_SHA256,
-                  "libtriton_jit.so",
+    verify_object(triton_jit, FLAGDNN_ASCEND_LIBTRITON_JIT_PATH,
+                  FLAGDNN_ASCEND_LIBTRITON_JIT_SHA256, "libtriton_jit.so",
                   "libtriton_jit.so");
-    const LoadedObject python_symbol = object_containing(
-        &Py_IsInitialized, "libpython");
+    const LoadedObject python_symbol =
+        object_containing(&Py_IsInitialized, "libpython");
     const LoadedObject python = unique_loaded_python_object(python_symbol);
-    verify_object(python,
-                  FLAGDNN_ASCEND_PYTHON_LIBRARY_PATH,
-                  FLAGDNN_ASCEND_PYTHON_LIBRARY_SHA256,
-                  "libpython");
+    verify_object(python, FLAGDNN_ASCEND_PYTHON_LIBRARY_PATH,
+                  FLAGDNN_ASCEND_PYTHON_LIBRARY_SHA256, "libpython");
     const fs::path standalone = verify_configured_file(
-        FLAGDNN_ASCEND_STANDALONE_PATH,
-        FLAGDNN_ASCEND_STANDALONE_SHA256,
-        "standalone_compile.py",
-        "standalone_compile.py");
+        FLAGDNN_ASCEND_STANDALONE_PATH, FLAGDNN_ASCEND_STANDALONE_SHA256,
+        "standalone_compile.py", "standalone_compile.py");
     const fs::path python_program = verify_configured_file(
         FLAGDNN_ASCEND_PYTHON_PROGRAM_CANONICAL_PATH,
-        FLAGDNN_ASCEND_PYTHON_PROGRAM_SHA256,
-        "Python program");
+        FLAGDNN_ASCEND_PYTHON_PROGRAM_SHA256, "Python program");
     std::error_code python_program_error;
-    const fs::path resolved_python_program = fs::canonical(
-        FLAGDNN_ASCEND_PYTHON_PROGRAM_PATH, python_program_error);
+    const fs::path resolved_python_program =
+        fs::canonical(FLAGDNN_ASCEND_PYTHON_PROGRAM_PATH, python_program_error);
     if (python_program_error || resolved_python_program != python_program) {
       throw AscendError(
           FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
@@ -1642,8 +1780,7 @@ void verify_python_module_root(const fs::path& module_root) {
     binding.ai_core_count = ai_core_count;
     binding.codegen_arch = codegen_arch;
     binding.target_fingerprint = "ascend_" + soc + "_cann_" + version +
-                                 "_aic_" +
-                                 std::to_string(ai_core_count);
+                                 "_aic_" + std::to_string(ai_core_count);
     if (binding.target_fingerprint.size() + 1 >
         FLAGDNN_BACKEND_MAX_TARGET_FINGERPRINT) {
       throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
@@ -1651,46 +1788,38 @@ void verify_python_module_root(const fs::path& module_root) {
                         "limit");
     }
     std::ostringstream identity;
-    identity << "runtime_soc=" << soc
-             << ";codegen_arch=" << codegen_arch
-             << ";codegen_compatibility_alias="
-             << (target.uses_compatibility_alias ? "enabled" : "disabled")
-             << ";codegen_arch_source="
-             << (target.detects_codegen_arch_from_runtime
-                     ? "runtime_detection"
-                     : "environment")
-             << ";ai_core_count=" << ai_core_count
-             << ";cann_version=" << package_version.data()
-             << ";cann_version_num=" << package_version_number
-             << ";cann_inner_version=" << FLAGDNN_ASCEND_CANN_INNER_VERSION
-             << ";ascendcl_path=" << ascendcl.path.string()
-             << ";ascendcl_object_id="
-             << loaded_object_identity(ascendcl,
-                                       FLAGDNN_ASCEND_ASCENDCL_SHA256)
-             << ";ascendcl_sha256=" << FLAGDNN_ASCEND_ASCENDCL_SHA256
-             << ";runtime_path=" << runtime.path.string()
-             << ";runtime_object_id="
-             << loaded_object_identity(runtime,
-                                       FLAGDNN_ASCEND_RUNTIME_SHA256)
-             << ";runtime_sha256=" << FLAGDNN_ASCEND_RUNTIME_SHA256
-             << ";triton_jit_path=" << triton_jit.path.string()
-             << ";triton_jit_object_id="
-             << loaded_object_identity(
-                    triton_jit, FLAGDNN_ASCEND_LIBTRITON_JIT_SHA256)
-             << ";triton_jit_sha256="
-             << FLAGDNN_ASCEND_LIBTRITON_JIT_SHA256
-             << ";python_library_path=" << python.path.string()
-             << ";python_library_object_id="
-             << loaded_object_identity(
-                    python, FLAGDNN_ASCEND_PYTHON_LIBRARY_SHA256)
-             << ";python_library_sha256="
-             << FLAGDNN_ASCEND_PYTHON_LIBRARY_SHA256
-             << ";python_global_scope=promoted"
-             << ";python_module_root="
-             << local_environment.python_module_root.string()
-             << ";standalone_path=" << standalone.string()
-             << ";standalone_sha256=" << FLAGDNN_ASCEND_STANDALONE_SHA256
-             << ';' << python_identity;
+    identity
+        << "runtime_soc=" << soc << ";codegen_arch=" << codegen_arch
+        << ";codegen_compatibility_alias="
+        << (target.uses_compatibility_alias ? "enabled" : "disabled")
+        << ";codegen_arch_source="
+        << (target.detects_codegen_arch_from_runtime ? "runtime_detection"
+                                                     : "environment")
+        << ";ai_core_count=" << ai_core_count
+        << ";cann_version=" << package_version.data()
+        << ";cann_version_num=" << package_version_number
+        << ";cann_inner_version=" << FLAGDNN_ASCEND_CANN_INNER_VERSION
+        << ";ascendcl_path=" << ascendcl.path.string() << ";ascendcl_object_id="
+        << loaded_object_identity(ascendcl, FLAGDNN_ASCEND_ASCENDCL_SHA256)
+        << ";ascendcl_sha256=" << FLAGDNN_ASCEND_ASCENDCL_SHA256
+        << ";runtime_path=" << runtime.path.string() << ";runtime_object_id="
+        << loaded_object_identity(runtime, FLAGDNN_ASCEND_RUNTIME_SHA256)
+        << ";runtime_sha256=" << FLAGDNN_ASCEND_RUNTIME_SHA256
+        << ";triton_jit_path=" << triton_jit.path.string()
+        << ";triton_jit_object_id="
+        << loaded_object_identity(triton_jit,
+                                  FLAGDNN_ASCEND_LIBTRITON_JIT_SHA256)
+        << ";triton_jit_sha256=" << FLAGDNN_ASCEND_LIBTRITON_JIT_SHA256
+        << ";python_library_path=" << python.path.string()
+        << ";python_library_object_id="
+        << loaded_object_identity(python, FLAGDNN_ASCEND_PYTHON_LIBRARY_SHA256)
+        << ";python_library_sha256=" << FLAGDNN_ASCEND_PYTHON_LIBRARY_SHA256
+        << ";python_global_scope=promoted"
+        << ";python_module_root="
+        << local_environment.python_module_root.string()
+        << ";standalone_path=" << standalone.string()
+        << ";standalone_sha256=" << FLAGDNN_ASCEND_STANDALONE_SHA256 << ';'
+        << python_identity;
     binding.runtime_identity = identity.str();
     binding.cache_root = local_environment.cache_root.string();
     binding.configuration_identity = frozen_configuration;
@@ -1701,9 +1830,9 @@ void verify_python_module_root(const fs::path& module_root) {
           "Ascend process domain became terminal during initialization");
     }
     return detail::DomainInitialization::bound(std::move(binding));
-  } catch (const AscendError& error) {
+  } catch (const AscendError &error) {
     return detail::DomainInitialization::terminal(error.result(), error.what());
-  } catch (const std::exception& error) {
+  } catch (const std::exception &error) {
     return detail::DomainInitialization::terminal(
         FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR, error.what());
   } catch (...) {
@@ -1713,13 +1842,13 @@ void verify_python_module_root(const fs::path& module_root) {
   }
 }
 
-[[nodiscard]] detail::DomainInitialization initialize_real_domain(
-    std::int32_t device_ordinal) {
+[[nodiscard]] detail::DomainInitialization
+initialize_real_domain(std::int32_t device_ordinal) {
   return initialize_domain_impl(device_ordinal,
                                 detail::production_acl_runtime_api());
 }
 
-}  // namespace
+} // namespace
 
 namespace detail {
 
@@ -1731,9 +1860,9 @@ DomainInitialization DomainInitialization::bound(DomainBinding binding) {
   return result;
 }
 
-DomainInitialization DomainInitialization::retryable(
-    flagdnnBackendResult_t result,
-    std::string message) {
+DomainInitialization
+DomainInitialization::retryable(flagdnnBackendResult_t result,
+                                std::string message) {
   DomainInitialization initialization;
   initialization.disposition = InitializationDisposition::kRetryableFailure;
   initialization.result = result;
@@ -1741,9 +1870,9 @@ DomainInitialization DomainInitialization::retryable(
   return initialization;
 }
 
-DomainInitialization DomainInitialization::terminal(
-    flagdnnBackendResult_t result,
-    std::string message) {
+DomainInitialization
+DomainInitialization::terminal(flagdnnBackendResult_t result,
+                               std::string message) {
   DomainInitialization initialization;
   initialization.disposition = InitializationDisposition::kTerminalFailure;
   initialization.result = result;
@@ -1751,12 +1880,11 @@ DomainInitialization DomainInitialization::terminal(
   return initialization;
 }
 
-std::shared_ptr<const DomainBinding> DomainCoordinator::acquire(
-    std::int32_t device_ordinal,
-    const Initializer& initializer) {
+std::shared_ptr<const DomainBinding>
+DomainCoordinator::acquire(std::int32_t device_ordinal,
+                           const Initializer &initializer) {
   require(device_ordinal >= 0, "device ordinal must be nonnegative");
-  require(static_cast<bool>(initializer),
-          "Ascend domain initializer is empty",
+  require(static_cast<bool>(initializer), "Ascend domain initializer is empty",
           FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
 
   for (;;) {
@@ -1796,21 +1924,20 @@ std::shared_ptr<const DomainBinding> DomainCoordinator::acquire(
     DomainInitialization initialization;
     try {
       initialization = initializer(device_ordinal);
-    } catch (const AscendError& error) {
+    } catch (const AscendError &error) {
       mark_terminal(error.result(), error.what());
       ensure_healthy();
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc &) {
       mark_terminal(
           FLAGDNN_BACKEND_RESULT_ALLOC_FAILED,
           "host memory allocation failed during Ascend domain initialization");
       ensure_healthy();
-    } catch (const std::exception& error) {
+    } catch (const std::exception &error) {
       mark_terminal(FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR, error.what());
       ensure_healthy();
     } catch (...) {
-      mark_terminal(
-          FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR,
-          "unknown Ascend domain initialization failure");
+      mark_terminal(FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR,
+                    "unknown Ascend domain initialization failure");
       ensure_healthy();
     }
 
@@ -1830,7 +1957,7 @@ std::shared_ptr<const DomainBinding> DomainCoordinator::acquire(
       try {
         pending_binding = std::make_shared<const DomainBinding>(
             std::move(initialization.binding));
-      } catch (const std::bad_alloc&) {
+      } catch (const std::bad_alloc &) {
         mark_terminal(FLAGDNN_BACKEND_RESULT_ALLOC_FAILED,
                       "cannot allocate the Ascend domain binding");
         ensure_healthy();
@@ -1858,8 +1985,7 @@ std::shared_ptr<const DomainBinding> DomainCoordinator::acquire(
         phase_ = DomainPhase::kFailed;
         failure_result_ = FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR;
         try {
-          failure_message_ =
-              "Ascend domain initialization ownership changed";
+          failure_message_ = "Ascend domain initialization ownership changed";
         } catch (...) {
           failure_message_.clear();
         }
@@ -1868,35 +1994,34 @@ std::shared_ptr<const DomainBinding> DomainCoordinator::acquire(
       }
 
       switch (initialization.disposition) {
-        case InitializationDisposition::kBound:
-          if (terminal_failure_latch_.load(std::memory_order_acquire)) {
-            phase_ = DomainPhase::kFailed;
-          } else {
-            binding_ = std::move(pending_binding);
-            committed = binding_;
-            phase_ = DomainPhase::kBound;
-            requested_device_ = -1;
-          }
-          break;
-        case InitializationDisposition::kRetryableFailure:
-          phase_ = DomainPhase::kUnbound;
-          requested_device_ = -1;
-          break;
-        case InitializationDisposition::kTerminalFailure:
+      case InitializationDisposition::kBound:
+        if (terminal_failure_latch_.load(std::memory_order_acquire)) {
           phase_ = DomainPhase::kFailed;
-          failure_result_ =
-              error_result == FLAGDNN_BACKEND_RESULT_SUCCESS
-                  ? FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR
-                  : error_result;
-          try {
-            failure_message_ = error_message.empty()
-                                   ? "Ascend process domain initialization "
-                                     "failed terminally"
-                                   : error_message;
-          } catch (...) {
-            failure_message_.clear();
-          }
-          break;
+        } else {
+          binding_ = std::move(pending_binding);
+          committed = binding_;
+          phase_ = DomainPhase::kBound;
+          requested_device_ = -1;
+        }
+        break;
+      case InitializationDisposition::kRetryableFailure:
+        phase_ = DomainPhase::kUnbound;
+        requested_device_ = -1;
+        break;
+      case InitializationDisposition::kTerminalFailure:
+        phase_ = DomainPhase::kFailed;
+        failure_result_ = error_result == FLAGDNN_BACKEND_RESULT_SUCCESS
+                              ? FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR
+                              : error_result;
+        try {
+          failure_message_ = error_message.empty()
+                                 ? "Ascend process domain initialization "
+                                   "failed terminally"
+                                 : error_message;
+        } catch (...) {
+          failure_message_.clear();
+        }
+        break;
       }
       condition_.notify_all();
       if (phase_ == DomainPhase::kFailed) {
@@ -1941,9 +2066,8 @@ void DomainCoordinator::mark_terminal(flagdnnBackendResult_t result,
                           ? FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR
                           : result;
     try {
-      failure_message_ = message.empty()
-                             ? "Ascend process domain is terminal"
-                             : std::move(message);
+      failure_message_ = message.empty() ? "Ascend process domain is terminal"
+                                         : std::move(message);
     } catch (...) {
       failure_message_.clear();
     }
@@ -1957,14 +2081,12 @@ bool DomainCoordinator::terminal_failure_latched() const noexcept {
 
 DomainSnapshot DomainCoordinator::snapshot() const {
   std::lock_guard<std::mutex> lock(mutex_);
-  return {phase_,
-          requested_device_,
-          initializer_id_,
+  return {phase_, requested_device_, initializer_id_,
           terminal_failure_latch_.load(std::memory_order_acquire)};
 }
 
-std::int32_t DomainCoordinator::bound_device_ordinal(
-    aclrtContext expected_context) const {
+std::int32_t
+DomainCoordinator::bound_device_ordinal(aclrtContext expected_context) const {
   std::lock_guard<std::mutex> lock(mutex_);
   if (terminal_failure_latch_.load(std::memory_order_acquire) ||
       phase_ == DomainPhase::kFailed) {
@@ -1979,32 +2101,27 @@ std::int32_t DomainCoordinator::bound_device_ordinal(
 }
 
 void DomainCoordinator::throw_failure_locked() const {
-  throw AscendError(
-      failure_result_,
-      failure_message_.empty() ? "Ascend process domain is terminal"
-                               : failure_message_);
+  throw AscendError(failure_result_, failure_message_.empty()
+                                         ? "Ascend process domain is terminal"
+                                         : failure_message_);
 }
 
-const AclRuntimeApi& production_acl_runtime_api() noexcept {
+const AclRuntimeApi &production_acl_runtime_api() noexcept {
   static const AclRuntimeApi api = {
-      &aclrtGetCurrentContext,
-      &aclrtSetCurrentContext,
-      &aclrtGetDevice,
-      &rtGetAiCoreCount,
-      &aclrtGetSocName,
-      &aclsysGetVersionStr,
+      &aclrtGetCurrentContext, &aclrtSetCurrentContext, &aclrtGetDevice,
+      &rtGetAiCoreCount,       &aclrtGetSocName,        &aclsysGetVersionStr,
       &aclsysGetVersionNum,
   };
   return api;
 }
 
-DomainCoordinator& process_domain() noexcept {
+DomainCoordinator &process_domain() noexcept {
   static DomainCoordinator domain;
   return domain;
 }
 
 DomainInitialization initialize_domain_with_api(std::int32_t device_ordinal,
-                                                const AclRuntimeApi& api) {
+                                                const AclRuntimeApi &api) {
   return initialize_domain_impl(device_ordinal, api);
 }
 
@@ -2016,24 +2133,21 @@ void verify_pinned_python_files_for_test() {
   verify_pinned_python_module_files();
 }
 
-}  // namespace detail
+} // namespace detail
 
 ContextGuard::ContextGuard(aclrtContext expected_context)
-    : ContextGuard(expected_context,
-                   detail::process_domain().bound_device_ordinal(
-                       expected_context),
-                   detail::process_domain(),
-                   detail::production_acl_runtime_api()) {}
+    : ContextGuard(
+          expected_context,
+          detail::process_domain().bound_device_ordinal(expected_context),
+          detail::process_domain(), detail::production_acl_runtime_api()) {}
 
 ContextGuard::ContextGuard(aclrtContext expected_context,
                            std::int32_t expected_device,
-                           detail::DomainCoordinator& domain,
-                           const detail::AclRuntimeApi& api) {
-  require(expected_context != nullptr,
-          "expected Ascend context is null",
+                           detail::DomainCoordinator &domain,
+                           const detail::AclRuntimeApi &api) {
+  require(expected_context != nullptr, "expected Ascend context is null",
           FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
-  require(expected_device >= 0,
-          "expected Ascend device is invalid",
+  require(expected_device >= 0, "expected Ascend device is invalid",
           FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
   require(api.get_current_context != nullptr &&
               api.set_current_context != nullptr && api.get_device != nullptr,
@@ -2043,12 +2157,10 @@ ContextGuard::ContextGuard(aclrtContext expected_context,
 
   aclrtContext current = nullptr;
   aclError result = api.get_current_context(&current);
-  const bool context_is_empty =
-      result == ACL_ERROR_RT_CONTEXT_NULL ||
-      (result == ACL_SUCCESS && current == nullptr);
+  const bool context_is_empty = result == ACL_ERROR_RT_CONTEXT_NULL ||
+                                (result == ACL_SUCCESS && current == nullptr);
   if (result != ACL_SUCCESS && result != ACL_ERROR_RT_CONTEXT_NULL) {
-    const std::string message =
-        acl_failure("aclrtGetCurrentContext", result);
+    const std::string message = acl_failure("aclrtGetCurrentContext", result);
     domain.mark_terminal(FLAGDNN_BACKEND_RESULT_RUNTIME_ERROR, message);
     throw AscendError(FLAGDNN_BACKEND_RESULT_RUNTIME_ERROR, message);
   }
@@ -2094,22 +2206,22 @@ ContextGuard::ContextGuard(aclrtContext expected_context,
 }
 
 AscendContext::AscendContext(std::int32_t device_ordinal) {
-  binding_ = detail::process_domain().acquire(device_ordinal,
-                                               &initialize_real_domain);
+  binding_ =
+      detail::process_domain().acquire(device_ordinal, &initialize_real_domain);
   const FrozenConfigurationStatus status =
       binding_->configuration_snapshot == nullptr
           ? FrozenConfigurationStatus::kEnvironmentChanged
           : frozen_configuration_status(*binding_->configuration_snapshot);
   if (status != FrozenConfigurationStatus::kValid) {
-    const char* message = frozen_configuration_error(status);
-    detail::process_domain().mark_terminal(
-        FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED, message);
+    const char *message = frozen_configuration_error(status);
+    detail::process_domain().mark_terminal(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED,
+                                           message);
     throw AscendError(FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED, message);
   }
   ContextGuard guard(binding_->default_context);
 }
 
-const std::string& AscendContext::target_fingerprint() const noexcept {
+const std::string &AscendContext::target_fingerprint() const noexcept {
   return binding_->target_fingerprint;
 }
 
@@ -2126,16 +2238,14 @@ EngineBuildContext AscendContext::engine_build_context() const {
           binding_->configuration_snapshot};
 }
 
-std::mutex& process_ltj_mutex() noexcept {
+std::mutex &process_ltj_mutex() noexcept {
   static std::mutex mutex;
   return mutex;
 }
 
-void ensure_process_healthy() {
-  detail::process_domain().ensure_healthy();
-}
+void ensure_process_healthy() { detail::process_domain().ensure_healthy(); }
 
-void ensure_process_configuration(const EngineBuildContext& context) {
+void ensure_process_configuration(const EngineBuildContext &context) {
   ensure_process_healthy();
   try {
     require(!context.cache_root.empty() &&
@@ -2153,19 +2263,18 @@ void ensure_process_configuration(const EngineBuildContext& context) {
     require(status == FrozenConfigurationStatus::kValid,
             frozen_configuration_error(status),
             FLAGDNN_BACKEND_RESULT_NOT_SUPPORTED);
-  } catch (const AscendError& error) {
+  } catch (const AscendError &error) {
     detail::process_domain().mark_terminal(error.result(), error.what());
     throw;
-  } catch (const std::exception& error) {
-    detail::process_domain().mark_terminal(FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR,
-                                           error.what());
+  } catch (const std::exception &error) {
+    detail::process_domain().mark_terminal(
+        FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR, error.what());
     throw AscendError(FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR, error.what());
   }
   ensure_process_healthy();
 }
 
-bool process_configuration_matches(
-    const EngineBuildContext& context) noexcept {
+bool process_configuration_matches(const EngineBuildContext &context) noexcept {
   return !context.cache_root.empty() &&
          !context.configuration_identity.empty() &&
          context.configuration_snapshot != nullptr &&
@@ -2185,4 +2294,4 @@ void mark_process_terminal(flagdnnBackendResult_t result,
   detail::process_domain().mark_terminal(result, std::move(message));
 }
 
-}  // namespace flagdnn::ascend
+} // namespace flagdnn::ascend

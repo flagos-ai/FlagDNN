@@ -220,3 +220,45 @@
 | genstats | fp32、fp16、bf16 → fp32 | acDNN 创建对应描述符时返回 NOT_SUPPORTED。 |
 | rng | fp32、fp16、bf16；uniform、normal、Bernoulli | 当前 acDNN 没有匹配这些公共随机数算子的独立接口。 |
 | rope、rope_backward | fp32、fp16、bf16 | 当前 acDNN 没有对应的独立旋转位置编码接口。 |
+
+# Ascend
+
+## 已支持算子
+
+| 算子 | 输入与输出类型 |
+| --- | --- |
+| identity、reshape、transpose、slice、concatenate | fp32、fp16、bf16、int32、bool；保持原始位模式 |
+| gen_index | 输出 int32 或 fp32 |
+| add、sub、mul、pow、max、min | fp32、fp16、bf16、int32 |
+| div、mod、add_square、scale | fp32、fp16、bf16 |
+| cmp_eq、cmp_neq、cmp_gt、cmp_ge、cmp_lt、cmp_le | fp32、fp16、bf16、int32 → bool |
+| logical_and、logical_or、logical_not | bool |
+| binary_select | bool 条件与 fp32、fp16、bf16、int32 数值 |
+| abs、neg | fp32、fp16、bf16、int32 |
+| sqrt、rsqrt、reciprocal、ceil、floor、exp、log、erf、sin、cos、tan | fp32、fp16、bf16 |
+| relu、leaky_relu、elu、gelu、gelu_approx_tanh、sigmoid、swish、tanh、softplus 及对应 backward | fp32、fp16、bf16；relu 前向另支持 int32 |
+| conv_fprop、conv_dgrad、conv_wgrad | fp32（默认及显式 IEEE）、fp16、bf16 |
+| matmul | fp32（默认及显式 IEEE）、fp16、bf16 |
+| conv_bias_relu、causal_conv1d | fp32、fp16、bf16 |
+| moe_grouped_matmul、moe_grouped_matmul_bwd | fp16、bf16；输出 fp32、fp16、bf16 |
+| reduction | sum、avg、mul；fp32、fp16、bf16 → 同类型或 fp32；int32 → fp32 |
+| resample | fp32、fp16、bf16；AvgPool、MaxPool、双线性插值 |
+| batchnorm、batchnorm_backward、batchnorm_inference、layernorm、layernorm_backward、rmsnorm、rmsnorm_backward、instancenorm、instancenorm_backward、adalayernorm、adalayernorm_backward | 数据 fp32、fp16、bf16；统计量 fp32，仿射参数梯度默认 fp32 |
+| bn_finalize | fp32 统计量与参数 → fp32 |
+| genstats | fp32、fp16、bf16 → fp32 |
+| rope、rope_backward | fp32、fp16、bf16 |
+| sdpa、sdpa_backward | fp32、fp16、bf16 |
+
+## 不完全支持算子
+
+| 算子 | 输入与输出类型 | 不完全支持的原因（Ascend 910B4-1、CANN 9.0.0） |
+| --- | --- | --- |
+| identity、reshape、transpose、slice、concatenate | FP8 E4M3/E5M2/E8M0；保持原始位模式 | 当前 ACLNN 不支持所需 FP8 存储类型，相关类型用例跳过。 |
+| div、mod | int32 | 当前 ACLNN 整数除法和余数路径无法同时满足公共用例的大整数与零除数语义，相关类型用例跳过。 |
+| matmul、conv_fprop、conv_dgrad、conv_wgrad | tf32 | 910B 的 HF32 不满足公共 TF32 输入舍入契约，相关精度用例跳过。 |
+| matmul、moe_grouped_matmul、moe_grouped_matmul_bwd | FP8 E4M3/E5M2；输出 fp32、fp16、bf16 | 当前 ACLNN 不支持所需 FP8 类型及缩放矩阵乘契约，相关类型用例跳过。 |
+| matmul_fp8 | FP8 E4M3/E5M2 或 MXFP8；输出 fp32、fp16、bf16 | 当前 ACLNN 不支持所需 FP8/MXFP8 类型及缩放矩阵乘契约，相关用例全部跳过。 |
+| resample | fp32、fp16、bf16 | ACLNN AvgPool 接口要求对称 padding；非对称 AvgPool padding 用例跳过，当前公共目录中的 AvgPool 用例均为对称 padding。 |
+| resample | MaxPool 的 int32 索引输出 | 窗口内索引与 ACLNN 空间索引的转换参考尚未实现；当前公共目录不含该配置，该限制不记作原生能力跳过。 |
+| rng | fp32、fp16、bf16；uniform、normal、Bernoulli | 当前 ACLNN 随机接口不提供公共用例所需的逐元素 Philox counter 与随机数转换契约，无法建立相同 seed/offset 的原生对照，相关用例全部跳过。 |
+| sdpa_fp8、sdpa_fp8_backward | FP8 E4M3/E5M2 | 当前 ACLNN 不支持所需 FP8 类型及缩放 Attention 契约，相关用例全部跳过。 |

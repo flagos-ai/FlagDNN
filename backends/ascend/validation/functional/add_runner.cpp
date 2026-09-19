@@ -459,7 +459,8 @@ AddTestCase make_default_stream_extension() {
 int run_add_functional_test(int argc,
                             char** argv,
                             std::span<const AddTestCase> cases) {
-  // This backend's reference adapter currently accepts floating storage.
+  // Exact integer and raw storage cases run in functional.ascend.<op>.dtype,
+  // with an independent process and the same public case catalog.
   std::vector<AddTestCase> supported_cases(cases.begin(), cases.end());
   std::erase_if(supported_cases, [](const AddTestCase& test_case) {
     const auto type = test_case.left.data_type;
