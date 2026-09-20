@@ -55,6 +55,13 @@ Integer and raw-storage supplements run in separate CTest processes and compare
 logical bytes exactly. Floating comparisons preserve the shared tolerances and
 check output padding and repeated execution.
 
+INT32 `div` and `mod` functional cases use the existing `reference/cpu`
+integer oracle when the ACLNN reference rejects their full-range integer
+contract. Inputs and expected outputs retain exact INT32 bytes, including
+broadcast and padded layouts. These cases report `FlagDNN vs CPU PASS`;
+unsupported native performance comparisons remain skipped. Other pointwise
+cases continue to use their existing references.
+
 `validation/functional/aclnn_plan.hpp` owns native descriptors, repeatable
 executors and scratch storage. Where ACLNN has no matching fused primitive,
 references compose ACLNN operations (for example attention, normalization

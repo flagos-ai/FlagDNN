@@ -229,8 +229,8 @@
 | --- | --- |
 | identity、reshape、transpose、slice、concatenate | fp32、fp16、bf16、int32、bool；保持原始位模式 |
 | gen_index | 输出 int32 或 fp32 |
-| add、sub、mul、pow、max、min | fp32、fp16、bf16、int32 |
-| div、mod、add_square、scale | fp32、fp16、bf16 |
+| add、sub、mul、div、mod、pow、max、min | fp32、fp16、bf16、int32 |
+| add_square、scale | fp32、fp16、bf16 |
 | cmp_eq、cmp_neq、cmp_gt、cmp_ge、cmp_lt、cmp_le | fp32、fp16、bf16、int32 → bool |
 | logical_and、logical_or、logical_not | bool |
 | binary_select | bool 条件与 fp32、fp16、bf16、int32 数值 |
@@ -254,7 +254,7 @@
 | 算子 | 输入与输出类型 | 不完全支持的原因（Ascend 910B4-1、CANN 9.0.0） |
 | --- | --- | --- |
 | identity、reshape、transpose、slice、concatenate | FP8 E4M3/E5M2/E8M0；保持原始位模式 | 当前 ACLNN 不支持所需 FP8 存储类型，相关类型用例跳过。 |
-| div、mod | int32 | 当前 ACLNN 整数除法和余数路径无法同时满足公共用例的大整数与零除数语义，相关类型用例跳过。 |
+| div、mod | int32 | 当前 ACLNN 整数除法和余数路径无法同时满足公共用例的大整数与零除数语义；功能测试使用 reference/cpu 精确整数对照，原生库不支持的性能用例跳过。 |
 | matmul、conv_fprop、conv_dgrad、conv_wgrad | tf32 | 910B 的 HF32 不满足公共 TF32 输入舍入契约，相关精度用例跳过。 |
 | matmul、moe_grouped_matmul、moe_grouped_matmul_bwd | FP8 E4M3/E5M2；输出 fp32、fp16、bf16 | 当前 ACLNN 不支持所需 FP8 类型及缩放矩阵乘契约，相关类型用例跳过。 |
 | matmul_fp8 | FP8 E4M3/E5M2 或 MXFP8；输出 fp32、fp16、bf16 | 当前 ACLNN 不支持所需 FP8/MXFP8 类型及缩放矩阵乘契约，相关用例全部跳过。 |

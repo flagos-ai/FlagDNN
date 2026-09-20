@@ -8,6 +8,7 @@
 #include <flagdnn/flagdnn.hpp>
 #include <fstream>
 #include <iomanip>
+#include <optional>
 #include <regex>
 #include <sstream>
 
@@ -136,11 +137,12 @@ inline void measure(std::string_view name, std::string_view provider,
 }
 
 template <class Case, class Builder, class Inputs, class Reference,
-          class Tolerance>
+          class Tolerance, class CpuReference = std::nullptr_t>
 int run_paired_cases(int argc, char **argv, std::span<const Case> cases,
                      const char *filter_name, Builder build, Inputs make_inputs,
                      Reference reference, Tolerance tolerance,
-                     bool benchmark = false) {
+                     bool benchmark = false,
+                     CpuReference cpu_reference = nullptr) {
   if (argc != 3)
     return 2;
   try {
@@ -163,7 +165,20 @@ int run_paired_cases(int argc, char **argv, std::span<const Case> cases,
         // layout identical and compare gathered results for both providers.
         for (auto &output : test_case.outputs)
           output.strides = dense_strides(output.dimensions);
-        auto reference_executable = reference(test_case);
+        std::unique_ptr<TestExecutable> reference_executable;
+        std::optional<std::string> native_unavailable;
+        // An optional functional-only oracle returns logical output bytes.
+        // Native capability gaps must still skip performance comparisons.
+        std::optional<std::vector<std::vector<std::uint8_t>>> cpu_expected;
+        try {
+          reference_executable = reference(test_case);
+        } catch (const Unsupported &error) {
+          if constexpr (std::is_same_v<CpuReference, std::nullptr_t>)
+            throw;
+          if (benchmark)
+            throw;
+          native_unavailable = error.what();
+        }
         for (const auto &tensor : original.inputs)
           (void)dtype(tensor.data_type);
         for (const auto &tensor : original.outputs)
@@ -171,6 +186,15 @@ int run_paired_cases(int argc, char **argv, std::span<const Case> cases,
         auto inputs = make_inputs(original);
         if (inputs.size() != original.inputs.size())
           throw std::runtime_error("incorrect input count");
+        if (native_unavailable) {
+          if constexpr (!std::is_same_v<CpuReference, std::nullptr_t>)
+            cpu_expected = cpu_reference(original, inputs);
+          if (!cpu_expected)
+            throw Unsupported(*native_unavailable);
+          std::cout << "CPU_REFERENCE case=" << original.name
+                    << " reason=" << *native_unavailable << std::endl;
+        }
+        const char *reference_name = cpu_expected ? "CPU" : "ACLNN";
         std::vector<std::unique_ptr<acl::DeviceBuffer>> buffers,
             reference_buffers;
         std::vector<flagdnnBinding_t> bindings, reference_bindings;
@@ -206,7 +230,7 @@ int run_paired_cases(int argc, char **argv, std::span<const Case> cases,
         }
         reference_bindings = bindings;
         for (std::size_t i = 0; i < original.outputs.size(); ++i) {
-          for (int ref = 0; ref < 2; ++ref) {
+          for (int ref = 0; ref < (cpu_expected ? 1 : 2); ++ref) {
             const auto &t = ref ? test_case.outputs[i] : original.outputs[i];
             auto bytes =
                 io::encode(std::vector<float>(io::storage_element_count(t),
@@ -222,13 +246,15 @@ int run_paired_cases(int argc, char **argv, std::span<const Case> cases,
             (ref ? reference_buffers : buffers).push_back(std::move(b));
           }
         }
-        reference_executable->prepare(reference_bindings, stream.opaque());
-        reference_workspace = std::make_unique<acl::DeviceBuffer>(
-            reference_executable->workspace_size());
-        reference_executable->execute(
-            reference_bindings, reference_workspace->opaque(),
-            reference_executable->workspace_size(), stream.opaque());
-        stream.synchronize();
+        if (reference_executable) {
+          reference_executable->prepare(reference_bindings, stream.opaque());
+          reference_workspace = std::make_unique<acl::DeviceBuffer>(
+              reference_executable->workspace_size());
+          reference_executable->execute(
+              reference_bindings, reference_workspace->opaque(),
+              reference_executable->workspace_size(), stream.opaque());
+          stream.synchronize();
+        }
         std::ostringstream tuning_trace;
         {
           // Capture the runtime's selected candidate, then replay diagnostics.
@@ -248,8 +274,23 @@ int run_paired_cases(int argc, char **argv, std::span<const Case> cases,
             std::make_unique<acl::DeviceBuffer>(executable->workspace_size());
         std::vector<std::vector<float>> expected;
         std::vector<std::vector<std::uint8_t>> expected_bytes;
+        if (cpu_expected && cpu_expected->size() != test_case.outputs.size())
+          throw std::runtime_error("incorrect CPU reference output count");
         for (std::size_t i = 0; i < test_case.outputs.size(); ++i) {
           const auto &t = test_case.outputs[i];
+          if (cpu_expected) {
+            auto &bytes = (*cpu_expected)[i];
+            if (bytes.size() !=
+                io::element_count(t) * io::data_type_size(t.data_type))
+              throw std::runtime_error("incorrect CPU reference output size");
+            expected.emplace_back();
+            if (t.data_type != FLAGDNN_DATA_INT32 &&
+                t.data_type != FLAGDNN_DATA_BOOLEAN)
+              expected.back() =
+                  io::decode(bytes, t.data_type, io::element_count(t));
+            expected_bytes.push_back(std::move(bytes));
+            continue;
+          }
           std::vector<std::uint8_t> bytes(io::encoded_byte_count(t));
           reference_buffers[i]->copy_to_host_at(
               bytes.data(), bytes.size(), t.binding_byte_offset, stream.get());
@@ -286,7 +327,7 @@ int run_paired_cases(int argc, char **argv, std::span<const Case> cases,
                 throw std::runtime_error(
                     original.name + " exact output index=" +
                     std::to_string(pos) + " actual=" + std::to_string(av) +
-                    " ACLNN=" + std::to_string(ev));
+                    " " + reference_name + "=" + std::to_string(ev));
               }
               continue;
             }
@@ -316,7 +357,8 @@ int run_paired_cases(int argc, char **argv, std::span<const Case> cases,
                   development.graph_cache(), tuning_trace.str());
         }
         ++passed;
-        std::cout << original.name << ": FlagDNN vs ACLNN PASS" << std::endl;
+        std::cout << original.name << ": FlagDNN vs " << reference_name
+                  << " PASS" << std::endl;
       } catch (const Unsupported &error) {
         ++skipped;
         std::string reason = error.what();

@@ -12,6 +12,10 @@ set(_ascend_extended_operators
   moe_grouped_matmul moe_grouped_matmul_bwd causal_conv1d rope rope_backward resample concatenate gen_index genstats bn_finalize instancenorm adalayernorm
   instancenorm_backward adalayernorm_backward layernorm_backward rmsnorm_backward batchnorm_backward)
 # Ascend owns the adapters; workloads stay in the shared test catalog.
+if(NOT TARGET flagdnn_validation_cpu_reference)
+  add_subdirectory("${PROJECT_SOURCE_DIR}/reference/cpu"
+    "${CMAKE_CURRENT_BINARY_DIR}/cpu-reference")
+endif()
 add_library(flagdnn_validation_ascend_extended STATIC
   ${_ascend_native_case_sources}
   functional/attention_runner.cpp
@@ -49,6 +53,7 @@ target_include_directories(flagdnn_validation_ascend_extended PUBLIC
   "${PROJECT_SOURCE_DIR}/tests" "${PROJECT_SOURCE_DIR}/benchmark"
   "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/backends/ascend")
 target_link_libraries(flagdnn_validation_ascend_extended PUBLIC FlagDNN::flagdnn
+  flagdnn_validation_cpu_reference
   flagdnn_validation_ascend_platform flagdnn_validation_ascend_tensor_io
   flagdnn_validation_ascend_aclnn_nn "${_ascend_validation_opapi_cv}")
 target_compile_definitions(flagdnn_validation_ascend_extended PRIVATE

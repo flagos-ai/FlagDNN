@@ -1,5 +1,6 @@
 /* Copyright (c) 2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 #include "validation/functional/dtype_runner.hpp"
+#include "reference/cpu/pointwise.hpp"
 #include "validation/functional/paired.hpp"
 #include <aclnnop/aclnn_abs.h>
 #include <aclnnop/aclnn_add.h>
@@ -46,6 +47,45 @@ bool pointwise_supplement(const PointwiseTestCase &c) {
     return !floating(t.data_type) && (t.data_type != FLAGDNN_DATA_BOOLEAN ||
                                       c.mode == FLAGDNN_POINTWISE_IDENTITY);
   });
+}
+std::optional<std::vector<std::vector<std::uint8_t>>>
+cpu_integer_divmod_reference(
+    const PointwiseTestCase &c,
+    const std::vector<std::vector<std::uint8_t>> &inputs) {
+  if ((c.mode != FLAGDNN_POINTWISE_DIV && c.mode != FLAGDNN_POINTWISE_MOD) ||
+      c.output.data_type != FLAGDNN_DATA_INT32 ||
+      std::any_of(c.inputs.begin(), c.inputs.end(), [](const auto &t) {
+        return t.data_type != FLAGDNN_DATA_INT32;
+      }))
+    return std::nullopt;
+  validate_pointwise_case(c);
+  for (std::size_t k = 0; k < c.inputs.size(); ++k)
+    if (inputs[k].size() != io::encoded_byte_count(c.inputs[k]))
+      throw std::runtime_error("incorrect CPU reference input size");
+  const auto value_at = [&](std::size_t k, std::size_t index) {
+    const auto &t = c.inputs[k];
+    const auto leading = c.output.dimensions.size() - t.dimensions.size();
+    std::size_t offset = 0;
+    for (std::size_t axis = c.output.dimensions.size(); axis != 0; --axis) {
+      const auto coordinate = index % c.output.dimensions[axis - 1];
+      index /= c.output.dimensions[axis - 1];
+      if (axis - 1 >= leading && t.dimensions[axis - 1 - leading] != 1)
+        offset += coordinate * t.strides[axis - 1 - leading];
+    }
+    std::int32_t value;
+    std::memcpy(&value, inputs[k].data() + offset * sizeof(value),
+                sizeof(value));
+    return value;
+  };
+  const auto count = io::element_count(c.output);
+  std::vector<std::uint8_t> output(count * sizeof(std::int32_t));
+  for (std::size_t i = 0; i < count; ++i) {
+    // Keep the full INT32 bit pattern, including values beyond FP32 precision.
+    const auto value = reference::cpu::pointwise_integer_reference(
+        c.mode, value_at(0, i), value_at(1, i), false, 1);
+    std::memcpy(output.data() + i * sizeof(value), &value, sizeof(value));
+  }
+  return std::vector<std::vector<std::uint8_t>>{std::move(output)};
 }
 std::unique_ptr<TestExecutable>
 reference_pointwise(const PointwiseTestCase &c) {
@@ -287,7 +327,7 @@ int run_ascend_pointwise_dtype_cases(int argc, char **argv,
       [](const PointwiseCase &, std::size_t) {
         return ascend::PairedTolerance{0, 0};
       },
-      benchmark);
+      benchmark, cpu_integer_divmod_reference);
 }
 int run_ascend_add_dtype_cases(int argc, char **argv,
                                std::span<const AddTestCase> cases) {
