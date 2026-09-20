@@ -92,6 +92,13 @@ CPU 输入与 GPU 使用相同的 dtype 量化值，并按逻辑布局处理广�
 cuDNN 错误仍然失败。其他算子的对照策略和性能测试的跳过策略保持不变，
 不将 CPU reference 用作性能基线。
 
+MThreads 的 `pow` INT32 功能 case 在 muDNN 不支持而原本跳过时，改用
+`reference/cpu` 的整数语义 oracle 校验 FlagDNN GPU 输出，包括带 padding 的
+广播 case。CPU 对照读取与 GPU 相同的编码输入，遵循 tensor strides 和广播规则，
+以 INT32 原始字节精确比较，保留整数溢出和负指数语义。只有这些原本跳过的
+accuracy case 使用 CPU；其余 case 继续与 muDNN 对照。benchmark（包括复用
+功能程序的 native benchmark）保留原有 muDNN 对照与跳过策略，不使用 CPU 性能基线。
+
 ## 4. CMake 装配顺序
 
 根 `CMakeLists.txt` 的顺序固定为：

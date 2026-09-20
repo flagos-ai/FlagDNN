@@ -192,6 +192,14 @@ else()
   endforeach()
 endif()
 
+# Native benchmarks also link the functional adapter, even when the root
+# build does not load reference/ because functional tests are disabled.
+if(NOT TARGET flagdnn_validation_cpu_reference)
+  add_subdirectory(
+    "${PROJECT_SOURCE_DIR}/reference/cpu"
+    "${CMAKE_CURRENT_BINARY_DIR}/cpu-reference")
+endif()
+
 add_library(
   flagdnn_test_mthreads_adapter STATIC
   ${_mthreads_matrix_case_sources}
@@ -240,7 +248,8 @@ target_link_libraries(
   flagdnn_test_mthreads_adapter
   PUBLIC
     FlagDNN::flagdnn
-    flagdnn_validation_mthreads_support)
+    flagdnn_validation_mthreads_support
+    flagdnn_validation_cpu_reference)
 flagdnn_enable_warnings(flagdnn_test_mthreads_adapter)
 
 set(_mthreads_matrix_environment
