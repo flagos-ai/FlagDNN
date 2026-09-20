@@ -113,6 +113,7 @@ add_library(flagdnn_test_thead_adapter STATIC
   functional/attention_runner.cpp
   functional/acdnn_add.cpp
   functional/add_runner.cpp
+  functional/cpu_pointwise.cpp
   functional/composite_runner.cpp
   functional/convolution_runner.cpp
   functional/layout_runner.cpp
@@ -131,6 +132,18 @@ target_include_directories(flagdnn_test_thead_adapter PUBLIC
 target_link_libraries(flagdnn_test_thead_adapter PUBLIC
   FlagDNN::flagdnn
   flagdnn_validation_thead_reference)
+# The shared adapter also supplies benchmark reference builders. Its CPU
+# oracle dependency is used only by functional runners, never for timing.
+if(TARGET flagdnn_validation_cpu_reference)
+  target_link_libraries(flagdnn_test_thead_adapter PRIVATE
+    flagdnn_validation_cpu_reference)
+else()
+  # Benchmark-only builds still assemble this adapter for reference builders.
+  target_sources(flagdnn_test_thead_adapter PRIVATE
+    "${PROJECT_SOURCE_DIR}/reference/cpu/pointwise.cpp")
+  target_include_directories(flagdnn_test_thead_adapter PRIVATE
+    "${PROJECT_SOURCE_DIR}")
+endif()
 flagdnn_enable_warnings(flagdnn_test_thead_adapter)
 
 set(_flagdnn_thead_extended_supported batchnorm_backward genstats bn_finalize resample)
@@ -146,6 +159,13 @@ add_test(NAME integration.thead.catalog_selection_contract
   COMMAND flagdnn_test_thead_catalog_selection)
 set_tests_properties(integration.thead.catalog_selection_contract PROPERTIES
   LABELS "integration;thead;catalog;host;contract")
+
+add_test(NAME integration.thead.integer_pointwise_contract
+  COMMAND "${FLAGDNN_CODEGEN_PYTHON}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/integer_pointwise_contract.py")
+set_tests_properties(integration.thead.integer_pointwise_contract PROPERTIES
+  LABELS "integration;thead;compiler;pointwise;host;contract"
+  ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
 
 add_test(NAME integration.thead.compiler_plan_contract
   COMMAND "${FLAGDNN_CODEGEN_PYTHON}"
@@ -257,6 +277,21 @@ if(FLAGDNN_BUILD_TESTS)
     LABELS "integration;thead;install;consumer;acdnn;libtriton_jit;autotune"
     RUN_SERIAL TRUE
     TIMEOUT 1800)
+
+  add_executable(flagdnn_test_thead_cpu_pointwise_fallback
+    cpu_pointwise_fallback_contract.cpp)
+  target_link_libraries(flagdnn_test_thead_cpu_pointwise_fallback PRIVATE
+    flagdnn_test_thead_adapter)
+  flagdnn_enable_warnings(flagdnn_test_thead_cpu_pointwise_fallback)
+  add_test(NAME integration.thead.cpu_pointwise_fallback_contract
+    COMMAND flagdnn_test_thead_cpu_pointwise_fallback
+      "${FLAGDNN_CODEGEN_PYTHON}" "${FLAGDNN_CODEGEN_COMPILER}")
+  set_tests_properties(integration.thead.cpu_pointwise_fallback_contract
+    PROPERTIES
+      LABELS "integration;thead;cpu-reference;pointwise;contract"
+      ENVIRONMENT
+        "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_thead>;${_flagdnn_thead_codegen_environment}"
+      RUN_SERIAL TRUE TIMEOUT 600)
 
   add_executable(flagdnn_test_thead_validation_contract
     validation_contract.cpp
@@ -957,6 +992,10 @@ if(FLAGDNN_BUILD_TESTS)
       SKIP_RETURN_CODE 77)
   endforeach()
   unset(_flagdnn_thead_operator)
+  foreach(_operator IN ITEMS add sub mul div pow max min mod add_square cmp_eq)
+    set_property(TEST "functional.thead.${_operator}" APPEND PROPERTY
+      LABELS "cpu-reference-fallback")
+  endforeach()
 endif()
 
 if(FLAGDNN_BUILD_BENCHMARKS)

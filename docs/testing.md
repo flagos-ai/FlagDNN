@@ -99,6 +99,16 @@ MThreads 的 `pow` INT32 功能 case 在 muDNN 不支持而原本跳过时，改
 accuracy case 使用 CPU；其余 case 继续与 muDNN 对照。benchmark（包括复用
 功能程序的 native benchmark）保留原有 muDNN 对照与跳过策略，不使用 CPU 性能基线。
 
+THead 默认批量算子 `add`、`sub`、`mul`、`div`、`pow`、`max`、`min`、`mod`、
+`add_square`、`cmp_eq` 的功能测试优先使用 acDNN；能力表明确不支持，或 acDNN
+返回 `ACDNN_STATUS_NOT_SUPPORTED` 时，使用 `reference/cpu` 校验实际 FlagDNN
+Graph 输出。上述算子的 THead 生产路径支持精确 INT32 运算，二元运算支持右对齐
+广播和显式步长；整数比较和 CPU 对照均不经过浮点转换。成功日志记录
+`FlagDNN Graph vs CPU reference PASS fallback_reason=<reason>`，并计入
+`executed`；只有实际完成且通过的 CPU 对照才能补足 accuracy 覆盖。数值不匹配
+和执行错误仍判失败，未执行的 SKIP 仍计为跳过。性能测试保持 acDNN 对照策略，
+不支持的 case 继续结构化 SKIP，不生成 CPU 性能基线。
+
 ## 4. CMake 装配顺序
 
 根 `CMakeLists.txt` 的顺序固定为：

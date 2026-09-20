@@ -23,6 +23,23 @@ namespace flagdnn::reference::cpu {
     std::span<const std::int64_t> right_dimensions,
     std::span<const std::int64_t> output_dimensions);
 
+// Keep the original entry point above unchanged for existing callers.
+// Alpha scales the right operand of ADD/SUB only.
+[[nodiscard]] std::vector<float> evaluate_binary_pointwise_with_alpha(
+    flagdnnPointwiseMode_t mode, std::span<const float> left,
+    std::span<const std::int64_t> left_dimensions, std::span<const float> right,
+    std::span<const std::int64_t> right_dimensions,
+    std::span<const std::int64_t> output_dimensions, double alpha);
+
+// Integer values stay exact; arithmetic follows pointwise_integer_reference.
+// CMP_EQ returns 0 or 1, which the caller can encode as Boolean output.
+[[nodiscard]] std::vector<std::int32_t> evaluate_binary_pointwise_int32(
+    flagdnnPointwiseMode_t mode, std::span<const std::int32_t> left,
+    std::span<const std::int64_t> left_dimensions,
+    std::span<const std::int32_t> right,
+    std::span<const std::int64_t> right_dimensions,
+    std::span<const std::int64_t> output_dimensions, std::int32_t alpha = 1);
+
 [[nodiscard]] std::int32_t pointwise_integer_reference(
     flagdnnPointwiseMode_t mode, std::int32_t left, std::int32_t right,
     bool predicate, std::int32_t alpha);

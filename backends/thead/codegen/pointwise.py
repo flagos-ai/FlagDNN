@@ -270,7 +270,7 @@ def _compile_binary_pointwise(
     tensors_by_uid = {int(tensor["uid"]): tensor for tensor in plan["tensors"]}
     argument_tensors = [tensors_by_uid[uid] for uid in plan["ordered_uids"]]
     n_elements = int(plan["n_elements"])
-    alpha = float(plan["alpha"])
+    alpha = plan["alpha"]
     function = str(plan["function"])
     stride_constants = plan["stride_constants"]
     default_configuration = {

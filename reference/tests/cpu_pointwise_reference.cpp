@@ -502,8 +502,8 @@ void verify_cpu_contracts(std::span<const flagdnnPointwiseMode_t> modes) {
                                " is missing from the CPU support contract");
     }
   }
-  if (cpu::supports_binary_pointwise(FLAGDNN_POINTWISE_ADD)) {
-    throw std::runtime_error("unsupported ADD mode was reported as supported");
+  if (cpu::supports_binary_pointwise(FLAGDNN_POINTWISE_NOT_SET)) {
+    throw std::runtime_error("unset mode was reported as supported");
   }
 
   const auto expect_invalid = [](std::string_view name, auto&& operation) {
@@ -552,7 +552,7 @@ void verify_cpu_contracts(std::span<const flagdnnPointwiseMode_t> modes) {
 
   expect_invalid("unsupported mode", [&] {
     (void)cpu::evaluate_binary_pointwise(
-        FLAGDNN_POINTWISE_ADD, one_value, one_dimension, one_value,
+        FLAGDNN_POINTWISE_NOT_SET, one_value, one_dimension, one_value,
         one_dimension, one_dimension);
   });
   expect_invalid("empty output shape", [&] {

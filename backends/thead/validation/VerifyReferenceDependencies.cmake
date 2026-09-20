@@ -197,6 +197,8 @@ if(DEFINED REFERENCE_EXECUTABLE AND
     "${SOURCE_ROOT}/backends/thead/validation/functional/test_graph.cpp"
     "${SOURCE_ROOT}/backends/thead/validation/functional/*runner*.cpp"
     "${SOURCE_ROOT}/backends/thead/validation/functional/*runner*.hpp"
+    "${SOURCE_ROOT}/backends/thead/validation/functional/cpu_pointwise.cpp"
+    "${SOURCE_ROOT}/backends/thead/validation/functional/cpu_pointwise.hpp"
     "${SOURCE_ROOT}/backends/thead/validation/benchmark/*.cpp"
     "${SOURCE_ROOT}/backends/thead/validation/benchmark/*.hpp")
   list(APPEND _reference_sources ${_reference_extensions})
@@ -209,12 +211,18 @@ if(DEFINED REFERENCE_EXECUTABLE AND
     file(READ "${_reference_source}" _reference_source_text)
     string(TOLOWER "${_reference_source_text}" _reference_source_lower)
     if(_reference_source_lower MATCHES
-       "(acblas|cublas|cudnn|(^|[^a-z0-9_])blas([^a-z0-9_]|$)|lapack|torch::|at::|c10::|reference_cpu|cpu_reference)")
+       "(acblas|cublas|cudnn|(^|[^a-z0-9_])blas([^a-z0-9_]|$)|lapack|torch::|at::|c10::)")
       message(FATAL_ERROR
         "forbidden numerical reference token found in ${_reference_source}")
+    endif()
+    if(NOT _reference_source MATCHES "/functional/" AND
+       _reference_source_lower MATCHES
+       "(reference_cpu|cpu_reference|reference/cpu/|reference::cpu)")
+      message(FATAL_ERROR
+        "CPU oracle is restricted to functional validation: ${_reference_source}")
     endif()
   endforeach()
 endif()
 
 message(STATUS
-  "PASS THead production/acDNN-only reference dependency boundary")
+  "PASS THead production/reference dependency boundary")

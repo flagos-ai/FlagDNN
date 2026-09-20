@@ -114,6 +114,164 @@ def invoke_main(runner: Any, arguments: list[str]) -> tuple[int, str, str]:
     return exit_code, stdout.getvalue(), stderr.getvalue()
 
 
+def run_native_output(
+    runner: Any,
+    adapter: Any,
+    output: str,
+    *,
+    operator: str = "add",
+    suite: str = "functional",
+    exit_code: int = 0,
+) -> dict[str, Any]:
+    original_process = runner.run_process_group
+    runner.run_process_group = lambda *_args: (output, "", exit_code, False)
+    try:
+        return runner.run_one(
+            Path("."),
+            operator,
+            suite,
+            "thead",
+            {},
+            30,
+            False,
+            [operator],
+            adapter=adapter,
+            capture_output=True,
+        )
+    finally:
+        runner.run_process_group = original_process
+
+
+def check_cpu_reference_accounting(runner: Any, adapter: Any) -> None:
+    acdnn_pass = (
+        "1: add_acdnn_fp32: FlagDNN Graph vs acDNN PASS max_abs=0 max_rel=0\n"
+    )
+    cpu_pass = (
+        "1: add_cpu_int32: FlagDNN Graph vs CPU reference PASS"
+        " fallback_reason=dtype_unsupported\n"
+    )
+    complete_output = (
+        acdnn_pass
+        + cpu_pass
+        + "1: FLAGDNN_ADD_FUNCTIONAL: PASS cases=2 executed=2 skipped=0\n"
+        + "100% tests passed, 0 tests failed out of 1\n"
+    )
+    with tempfile.TemporaryDirectory(
+        prefix="flagdnn-thead-cpu-reference-contract-"
+    ) as temporary_text:
+        directory = Path(temporary_text)
+        complete = run_native_output(runner, adapter, complete_output)
+        batch = runner.batch_suite_result(
+            "add", "functional", complete, directory
+        )
+        require(
+            complete["status"] == "passed"
+            and complete["case_counts"]["passed"] == 2
+            and complete["case_counts"]["skipped"] == 0
+            and batch["status"] == "Passed"
+            and batch["total"] == 2
+            and batch["passed"] == 2
+            and batch["skipped"] == 0,
+            "mixed acDNN/CPU reference accuracy did not pass batch accounting",
+        )
+        accuracy = json.loads(
+            (directory / "add/accuracy_result.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        require(
+            len(accuracy) == 2
+            and {
+                record["params"].get("case"): record["result"]
+                for record in accuracy.values()
+            }
+            == {"add_acdnn_fp32": "passed", "add_cpu_int32": "passed"},
+            "CPU reference case identity was lost in accuracy_result.json",
+        )
+
+        cpu_only = run_native_output(
+            runner,
+            adapter,
+            "1: mod_cpu_fp32: FlagDNN Graph vs CPU reference PASS"
+            " fallback_reason=shape_unsupported\n"
+            "1: FLAGDNN_MOD_FUNCTIONAL: PASS cases=1 executed=1 skipped=0\n"
+            "100% tests passed, 0 tests failed out of 1\n",
+            operator="mod",
+        )
+        cpu_only_batch = runner.batch_suite_result(
+            "mod", "functional", cpu_only, directory
+        )
+        require(
+            cpu_only_batch["status"] == "Passed"
+            and cpu_only_batch["passed"] == 1
+            and cpu_only_batch["skipped"] == 0,
+            "CPU-only reference accuracy was treated as an acDNN skip",
+        )
+
+        partial = run_native_output(
+            runner,
+            adapter,
+            acdnn_pass
+            + cpu_pass
+            + "1: "
+            + skip_line("add_remaining_fp16")
+            + "\n1: FLAGDNN_ADD_FUNCTIONAL: PASS cases=3 executed=2 skipped=1\n"
+            + "100% tests passed, 0 tests failed out of 1\n",
+        )
+        partial_batch = runner.batch_suite_result(
+            "add", "functional", partial, directory
+        )
+        require(
+            partial_batch["status"] == "Skipped"
+            and partial_batch["passed"] == 2
+            and partial_batch["skipped"] == 1,
+            "CPU reference PASS hid a remaining native accuracy skip",
+        )
+
+        for failed_output, failed_cases in (
+            (
+                acdnn_pass
+                + "1: add_cpu_int32: FlagDNN Graph vs CPU reference FAIL"
+                " max_abs=1\n",
+                1,
+            ),
+            (complete_output, 0),
+        ):
+            failed = run_native_output(
+                runner, adapter, failed_output, exit_code=1
+            )
+            failed_batch = runner.batch_suite_result(
+                "add", "functional", failed, directory
+            )
+            require(
+                failed["status"] == "failed"
+                and failed_batch["status"] == "Failed"
+                and failed_batch["failed"] == failed_cases,
+                "CPU reference accounting hid a numerical or process failure",
+            )
+
+        benchmark = run_native_output(
+            runner,
+            adapter,
+            "1: "
+            + skip_line("add_perf_int32")
+            + "\n1: FLAGDNN_ADD_BENCHMARK: SKIP cases=1"
+            " comparable_executed=0 reference_skipped=1\n"
+            "1/1 Test #1: benchmark.thead.add ...***Skipped\n"
+            "100% tests passed, 0 tests failed out of 1\n",
+            suite="benchmark",
+        )
+        benchmark_batch = runner.batch_suite_result(
+            "add", "benchmark", benchmark, directory
+        )
+        require(
+            benchmark_batch["status"] == "Skipped"
+            and not benchmark_batch["data"]
+            and benchmark["case_accounting"]["reference_skipped"] == 1,
+            "CPU accuracy fallback changed an unsupported benchmark skip",
+        )
+
+
 def main() -> int:
     runner = load_module(
         "flagdnn_thead_run_tests_contract_subject",
@@ -121,6 +279,7 @@ def main() -> int:
     )
     adapter = runner.load_platform_adapter("thead")
     require(adapter is not None, "THead run_tests adapter was not loaded")
+    check_cpu_reference_accounting(runner, adapter)
     require(
         adapter.DEFAULT_TIMEOUT == 21600
         and adapter.PREFLIGHT_BY_DEFAULT is True

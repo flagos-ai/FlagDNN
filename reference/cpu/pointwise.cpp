@@ -2,6 +2,7 @@
 
 #include "reference/cpu/pointwise.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstddef>
@@ -34,7 +35,8 @@ std::size_t checked_element_count(std::span<const std::int64_t> dimensions,
   return count;
 }
 
-void validate_input(std::span<const float> values,
+template <typename T>
+void validate_input(std::span<const T> values,
                     std::span<const std::int64_t> dimensions,
                     std::span<const std::int64_t> output_dimensions,
                     std::string_view role) {
@@ -86,6 +88,11 @@ std::size_t broadcast_index(std::size_t output_index,
 
 bool supports_binary_pointwise(flagdnnPointwiseMode_t mode) noexcept {
   switch (mode) {
+    case FLAGDNN_POINTWISE_ADD:
+    case FLAGDNN_POINTWISE_SUB:
+    case FLAGDNN_POINTWISE_MUL:
+    case FLAGDNN_POINTWISE_MIN:
+    case FLAGDNN_POINTWISE_MAX:
     case FLAGDNN_POINTWISE_DIV:
     case FLAGDNN_POINTWISE_POW:
     case FLAGDNN_POINTWISE_MOD:
@@ -101,6 +108,16 @@ std::vector<float> evaluate_binary_pointwise(
     std::span<const std::int64_t> left_dimensions, std::span<const float> right,
     std::span<const std::int64_t> right_dimensions,
     std::span<const std::int64_t> output_dimensions) {
+  return evaluate_binary_pointwise_with_alpha(
+      mode, left, left_dimensions, right, right_dimensions, output_dimensions,
+      1.0);
+}
+
+std::vector<float> evaluate_binary_pointwise_with_alpha(
+    flagdnnPointwiseMode_t mode, std::span<const float> left,
+    std::span<const std::int64_t> left_dimensions, std::span<const float> right,
+    std::span<const std::int64_t> right_dimensions,
+    std::span<const std::int64_t> output_dimensions, double alpha) {
   if (!supports_binary_pointwise(mode)) {
     throw std::invalid_argument(
         "CPU reference does not support this pointwise mode");
@@ -117,6 +134,22 @@ std::vector<float> evaluate_binary_pointwise(
     const float right_value =
         right[broadcast_index(index, right_dimensions, output_dimensions)];
     switch (mode) {
+      case FLAGDNN_POINTWISE_ADD:
+        output[index] = left_value + static_cast<float>(alpha) * right_value;
+        break;
+      case FLAGDNN_POINTWISE_SUB:
+        output[index] = left_value - static_cast<float>(alpha) * right_value;
+        break;
+      case FLAGDNN_POINTWISE_MUL:
+        output[index] = left_value * right_value;
+        break;
+      case FLAGDNN_POINTWISE_MIN:
+        // Preserve a numeric operand when only its counterpart is NaN.
+        output[index] = std::fmin(left_value, right_value);
+        break;
+      case FLAGDNN_POINTWISE_MAX:
+        output[index] = std::fmax(left_value, right_value);
+        break;
       case FLAGDNN_POINTWISE_DIV:
         output[index] = left_value / right_value;
         break;
@@ -132,6 +165,33 @@ std::vector<float> evaluate_binary_pointwise(
       default:
         throw std::logic_error("validated CPU pointwise mode became invalid");
     }
+  }
+  return output;
+}
+
+std::vector<std::int32_t> evaluate_binary_pointwise_int32(
+    flagdnnPointwiseMode_t mode, std::span<const std::int32_t> left,
+    std::span<const std::int64_t> left_dimensions,
+    std::span<const std::int32_t> right,
+    std::span<const std::int64_t> right_dimensions,
+    std::span<const std::int64_t> output_dimensions, std::int32_t alpha) {
+  if (!supports_binary_pointwise(mode)) {
+    throw std::invalid_argument(
+        "CPU reference does not support this pointwise mode");
+  }
+  const std::size_t output_count =
+      checked_element_count(output_dimensions, "output");
+  validate_input(left, left_dimensions, output_dimensions, "left input");
+  validate_input(right, right_dimensions, output_dimensions, "right input");
+
+  std::vector<std::int32_t> output(output_count);
+  for (std::size_t index = 0; index < output_count; ++index) {
+    const std::int32_t left_value =
+        left[broadcast_index(index, left_dimensions, output_dimensions)];
+    const std::int32_t right_value =
+        right[broadcast_index(index, right_dimensions, output_dimensions)];
+    output[index] = pointwise_integer_reference(
+        mode, left_value, right_value, false, alpha);
   }
   return output;
 }

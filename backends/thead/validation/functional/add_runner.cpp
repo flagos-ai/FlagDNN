@@ -3,6 +3,7 @@
 
 #include "common/add.hpp"
 #include "functional/pointwise_runner_support.hpp"
+#include "functional/cpu_pointwise.hpp"
 
 #include "acdnn_reference.hpp"
 #include "capability.hpp"
@@ -230,23 +231,21 @@ void run_case(const flagdnn::testing::AddTestCase &test_case,
             << " max_rel=" << accuracy.maximum_relative << '\n';
 }
 
-void emit_skip(const flagdnn::testing::AddTestCase &test_case,
-               const CapabilityRecord &record, std::string_view target) {
-  if (record.status != CapabilityStatus::kUnsupported ||
-      record.reason_code.empty()) {
-    throw std::runtime_error("invalid acDNN skip capability");
-  }
-  std::cout << "[SKIP][acdnn]"
-            << " op=add"
-            << " case=" << test_case.name
-            << " reason=" << record.reason_code
-            << " sdk=" << FLAGDNN_THEAD_PPU_SDK_VERSION
-            << " acdnn_header=" << ACDNN_VERSION
-            << " acdnn_runtime=" << acdnnGetVersion()
-            << " target=" << target
-            << " dtype=" << data_type_name(test_case.left.data_type)
-            << " layout=" << layout_name(test_case.left)
-            << " shape=" << shape_name(test_case.output) << '\n';
+void run_cpu_case(const flagdnn::testing::AddTestCase &test_case,
+                  flagdnn::Handle &handle, DeviceStream &stream,
+                  std::string_view reason) {
+  const flagdnn::testing::PointwiseTestCase pointwise{
+      .name = test_case.name,
+      .mode = FLAGDNN_POINTWISE_ADD,
+      .inputs = {test_case.left, test_case.right},
+      .output = test_case.output,
+      .input_domains = {flagdnn::testing::PointwiseInputDomain::kReal,
+                        flagdnn::testing::PointwiseInputDomain::kReal},
+      .alpha = test_case.alpha,
+      .absolute_tolerance = test_case.absolute_tolerance,
+      .relative_tolerance = test_case.relative_tolerance};
+  auto production = flagdnn::testing::build_flagdnn_add(handle, test_case);
+  run_cpu_pointwise_case(pointwise, *production, stream, reason);
 }
 
 }  // namespace
@@ -581,14 +580,12 @@ int run_add_functional_test(int argc, char **argv,
     functional::TemporaryCache cache;
     flagdnn::Handle handle("thead", 0);
     handle.set_compiler(argv[1], argv[2], cache.path().string());
-    const std::string target(handle.target_fingerprint());
 
     const char *filter = std::getenv("FLAGDNN_ADD_CASE");
     const bool qualify_probes =
         std::getenv("FLAGDNN_THEAD_QUALIFY_PROBES") != nullptr;
     std::size_t selected = 0;
     std::size_t executed = 0;
-    std::size_t skipped = 0;
     std::cout << std::setprecision(9);
     for (const AddTestCase &test_case : cases) {
       if (filter != nullptr &&
@@ -600,8 +597,8 @@ int run_add_functional_test(int argc, char **argv,
       const tv::CapabilityRecord &record =
           catalog.lookup("add", test_case.name);
       if (record.status == tv::CapabilityStatus::kUnsupported) {
-        functional::emit_skip(test_case, record, target);
-        ++skipped;
+        functional::run_cpu_case(test_case, handle, stream, record.reason_code);
+        ++executed;
         continue;
       }
       if (record.status == tv::CapabilityStatus::kProbeRequired &&
@@ -610,20 +607,24 @@ int run_add_functional_test(int argc, char **argv,
             "unqualified acDNN capability reached functional run: add/" +
             test_case.name);
       }
-      functional::run_case(test_case, handle, stream);
+      try {
+        functional::run_case(test_case, handle, stream);
+      } catch (const tv::AcdnnStatusError &error) {
+        if (error.status() != ACDNN_STATUS_NOT_SUPPORTED) throw;
+        functional::run_cpu_case(test_case, handle, stream,
+                                 "ACDNN_STATUS_NOT_SUPPORTED");
+      }
       ++executed;
     }
     if (selected == 0) {
       throw std::runtime_error("FLAGDNN_ADD_CASE matched no test cases");
     }
-    if (selected != executed + skipped) {
+    if (selected != executed) {
       throw std::runtime_error("THead Add accounting invariant failed");
     }
-    std::cout << "FLAGDNN_ADD_FUNCTIONAL: "
-              << (executed == 0 ? "SKIP" : "PASS")
-              << " cases=" << selected << " executed=" << executed
-              << " skipped=" << skipped << '\n';
-    return executed == 0 ? 77 : 0;
+    std::cout << "FLAGDNN_ADD_FUNCTIONAL: PASS cases=" << selected
+              << " executed=" << executed << " skipped=0\n";
+    return 0;
   } catch (const std::exception &error) {
     std::cerr << "FLAGDNN_ADD_FUNCTIONAL: FAIL reason=" << error.what()
               << '\n';

@@ -35,6 +35,51 @@ from ..dispatch.tensor import (
 )
 
 
+_INTEGER_POINTWISE_OPERATIONS = {
+    "add", "sub", "mul", "div", "pow", "min", "max", "mod", "cmp_eq"
+}
+
+
+def _integer_pointwise_alpha(alpha: int | float) -> int:
+    if (
+        isinstance(alpha, bool)
+        or not isinstance(alpha, (int, float))
+        or not math.isfinite(alpha)
+        or not -(2**31) <= alpha <= 2**31 - 1
+        or int(alpha) != alpha
+    ):
+        raise ValueError("THead INT32 pointwise alpha must be a signed int32")
+    return int(alpha)
+
+
+def _integer_broadcast_strides(
+    inputs: list[dict[str, Any]], output: dict[str, Any]
+) -> list[list[int]]:
+    """Validate the logical output and lower broadcast axes to zero strides."""
+    rank = max(len(tensor["dimensions"]) for tensor in inputs)
+    if not 1 <= rank <= 8 or len(output["dimensions"]) != rank:
+        raise ValueError("THead INT32 pointwise broadcast output rank is invalid")
+    expected = [1] * rank
+    for tensor in inputs:
+        dimensions = [1] * (rank - len(tensor["dimensions"])) + tensor["dimensions"]
+        for axis, dimension in enumerate(dimensions):
+            if expected[axis] not in (1, dimension) and dimension != 1:
+                raise ValueError("THead INT32 pointwise inputs do not broadcast")
+            expected[axis] = max(expected[axis], dimension)
+    if output["dimensions"] != expected:
+        raise ValueError("THead INT32 pointwise output shape disagrees with broadcast")
+    result = []
+    for tensor in inputs:
+        leading = rank - len(tensor["dimensions"])
+        dimensions = [1] * leading + tensor["dimensions"]
+        strides = [0] * leading + tensor["strides"]
+        result.append([
+            0 if dimension == 1 else stride
+            for dimension, stride in zip(dimensions, strides, strict=True)
+        ])
+    return result
+
+
 def _validate_binary_pointwise_graph(
     graph: dict[str, Any], operation: str
 ) -> dict[str, Any]:
@@ -57,12 +102,6 @@ def _validate_binary_pointwise_graph(
         if operation in _COMPARISON_OPERATIONS | _LOGICAL_OPERATIONS
         else "float32"
     )
-    if node["compute_data_type"] != expected_compute_type:
-        raise ValueError(
-            f"THead {operation_label} compute data type must be "
-            f"{expected_compute_type}"
-        )
-
     input_uids = _named_port_uids(
         node, "inputs", ("left", "right"), operation_label
     )
@@ -77,9 +116,19 @@ def _validate_binary_pointwise_graph(
     tensors_by_uid = {int(tensor["uid"]): tensor for tensor in tensors}
     ordered_tensors = [tensors_by_uid[uid] for uid in ordered_uids]
     tensor_types = [tensor["data_type"] for tensor in ordered_tensors]
+    integer = tensor_types[0] == "int32" and operation in _INTEGER_POINTWISE_OPERATIONS
+    compute_types = {expected_compute_type}
+    if integer and operation not in _COMPARISON_OPERATIONS:
+        compute_types.add("int32")
+    if node["compute_data_type"] not in compute_types:
+        raise ValueError(
+            f"THead {operation_label} compute data type must be "
+            f"{' or '.join(sorted(compute_types))}"
+        )
+    allowed_types = _FLOATING_DATA_TYPES | ({"int32"} if integer else set())
     if operation in _COMPARISON_OPERATIONS:
         if (
-            tensor_types[0] not in _FLOATING_DATA_TYPES
+            tensor_types[0] not in allowed_types
             or tensor_types[1] != tensor_types[0]
             or tensor_types[2] != "boolean"
         ):
@@ -93,7 +142,7 @@ def _validate_binary_pointwise_graph(
             raise ValueError(
                 f"THead {operation_label} slice requires boolean tensors"
             )
-    elif tensor_types[0] not in _FLOATING_DATA_TYPES or any(
+    elif tensor_types[0] not in allowed_types or any(
         data_type != tensor_types[0] for data_type in tensor_types[1:]
     ):
         raise ValueError(
@@ -113,14 +162,20 @@ def _validate_binary_pointwise_graph(
     left_dimensions = ordered_tensors[0]["dimensions"]
     right_dimensions = ordered_tensors[1]["dimensions"]
     output_dimensions = ordered_tensors[2]["dimensions"]
-    if right_dimensions != left_dimensions:
-        raise ValueError(
-            f"THead {operation_label} broadcast is not supported in this slice"
+    if integer:
+        input_strides = _integer_broadcast_strides(
+            ordered_tensors[:2], ordered_tensors[2]
         )
-    if output_dimensions != left_dimensions:
-        raise ValueError(
-            f"THead {operation_label} output shape must match both inputs"
-        )
+    else:
+        if right_dimensions != left_dimensions:
+            raise ValueError(
+                f"THead {operation_label} broadcast is not supported in this slice"
+            )
+        if output_dimensions != left_dimensions:
+            raise ValueError(
+                f"THead {operation_label} output shape must match both inputs"
+            )
+        input_strides = [tensor["strides"] for tensor in ordered_tensors[:2]]
     if any(
         not _has_non_overlapping_strides(
             tensor["dimensions"], tensor["strides"]
@@ -185,11 +240,11 @@ def _validate_binary_pointwise_graph(
         or (operation not in {"add", "sub"} and float(alpha) != 1.0)
     ):
         raise ValueError(f"THead {operation_label} alpha is not qualified")
-    alpha = float(alpha)
+    alpha = _integer_pointwise_alpha(alpha) if integer else float(alpha)
     n_elements = _integer(
         attributes["n_elements"], f"{operation_label} n_elements"
     )
-    expected_elements = math.prod(int(value) for value in left_dimensions)
+    expected_elements = math.prod(int(value) for value in output_dimensions)
     if n_elements != expected_elements or not 1 <= n_elements <= 2**31 - 1:
         raise ValueError(
             f"THead {operation_label} n_elements does not match the output"
@@ -220,11 +275,11 @@ def _validate_binary_pointwise_graph(
         ),
         "stride_constants": (
             [
-                *_padded_pointwise_values(left_dimensions, 1),
+                *_padded_pointwise_values(output_dimensions, 1),
                 *(
                     value
-                    for tensor in ordered_tensors
-                    for value in _padded_pointwise_values(tensor["strides"], 0)
+                    for strides in [*input_strides, ordered_tensors[2]["strides"]]
+                    for value in _padded_pointwise_values(strides, 0)
                 ),
             ]
             if strided
@@ -525,9 +580,6 @@ def _validate_add_square_graph(graph: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("THead AddSquare requires canonical Mul node id 0")
     if add["id"] != 1 or add["type"] != "add":
         raise ValueError("THead AddSquare requires canonical Add node id 1")
-    if any(node["compute_data_type"] != "float32" for node in (multiply, add)):
-        raise ValueError("THead AddSquare compute data type must be float32")
-
     multiply_inputs = _named_port_uids(
         multiply, "inputs", ("left", "right"), "AddSquare Mul"
     )
@@ -556,13 +608,17 @@ def _validate_add_square_graph(graph: dict[str, Any]) -> dict[str, Any]:
         tensors_by_uid[uid]
         for uid in (right_uid, left_uid, square_uid, output_uid)
     ]
-    if role_tensors[0]["data_type"] not in _FLOATING_DATA_TYPES or any(
+    integer = role_tensors[0]["data_type"] == "int32"
+    compute_types = {"float32", "int32"} if integer else {"float32"}
+    if any(node["compute_data_type"] not in compute_types for node in (multiply, add)):
+        raise ValueError("THead AddSquare compute data type is unsupported")
+    if role_tensors[0]["data_type"] not in (_FLOATING_DATA_TYPES | {"int32"}) or any(
         tensor["data_type"] != role_tensors[0]["data_type"]
         for tensor in role_tensors[1:]
     ):
         raise ValueError(
             "THead AddSquare requires matching "
-            "float32/float16/bfloat16 tensors"
+            "float32/float16/bfloat16/int32 tensors"
         )
     if (
         role_tensors[0]["virtual"]
@@ -667,12 +723,15 @@ def _binary_pointwise_variant(
     argument_tensors: list[dict[str, Any]],
     n_elements: int,
     pointwise_mode: int,
-    alpha: float,
+    alpha: int | float,
     stride_constants: list[int] | None,
     configuration: dict[str, Any],
     variant_id: str,
     activation_parameters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    integer = argument_tensors[0]["data_type"] == "int32"
+    if integer:
+        alpha = _integer_pointwise_alpha(alpha)
     activation = {
         **_POINTWISE_ATTRIBUTE_DEFAULTS,
         **(activation_parameters or {}),
@@ -693,7 +752,9 @@ def _binary_pointwise_variant(
     num_warps = int(configuration["num_warps"])
     num_stages = int(configuration["num_stages"])
     shared_memory = (
-        num_warps * 4 if pointwise_mode == 23 and block_size >= 1024 else 0
+        num_warps * 4
+        if pointwise_mode == 23 and block_size >= 1024 and not integer
+        else 0
     )
     if pointwise_mode == 41:
         width = _DATA_TYPE_BYTES[argument_tensors[-1]["data_type"]]

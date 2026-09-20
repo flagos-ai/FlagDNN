@@ -20,7 +20,9 @@
 #include <string_view>
 #include <vector>
 
+#include "acdnn_reference.hpp"
 #include "capability.hpp"
+#include "functional/cpu_pointwise.hpp"
 #include "common/pointwise.hpp"
 #include "functional/paired.hpp"
 #include "functional/pointwise_runner_support.hpp"
@@ -248,6 +250,18 @@ void emit_skip(const PointwiseTestCase &test_case,
             << " shape=" << functional::shape_name(test_case.output) << '\n';
 }
 
+bool has_cpu_reference(std::string_view operation) {
+  return operation == "sub" || operation == "mul" || operation == "div" ||
+         operation == "pow" || operation == "max" || operation == "min" ||
+         operation == "mod" || operation == "cmp_eq";
+}
+
+void run_cpu_case(const PointwiseTestCase &test_case, flagdnn::Handle &handle,
+                  tv::DeviceStream &stream, std::string_view reason) {
+  auto production = build_flagdnn_pointwise(handle, test_case);
+  functional::run_cpu_pointwise_case(test_case, *production, stream, reason);
+}
+
 void run_case(const PointwiseTestCase &test_case, flagdnn::Handle &handle,
               tv::DeviceStream &stream) {
   auto production = build_flagdnn_pointwise(handle, test_case);
@@ -384,9 +398,18 @@ int run_pointwise_functional_test(int argc, char **argv,
       validate_pointwise_case(test_case);
       const tv::CapabilityRecord &record =
           catalog.lookup(operation, test_case.name);
+      if (operation_from_case(test_case) != operation) {
+        throw std::runtime_error(
+            "pointwise suite operation and case mode disagree");
+      }
       if (record.status == tv::CapabilityStatus::kUnsupported) {
-        emit_skip(test_case, record, operation, target);
-        ++skipped;
+        if (has_cpu_reference(operation)) {
+          run_cpu_case(test_case, handle, stream, record.reason_code);
+          ++executed;
+        } else {
+          emit_skip(test_case, record, operation, target);
+          ++skipped;
+        }
         continue;
       }
       if (record.status == tv::CapabilityStatus::kProbeRequired &&
@@ -395,11 +418,13 @@ int run_pointwise_functional_test(int argc, char **argv,
             "unqualified acDNN capability reached pointwise run: " +
             operation + "/" + test_case.name);
       }
-      if (operation_from_case(test_case) != operation) {
-        throw std::runtime_error(
-            "pointwise suite operation and case mode disagree");
+      try {
+        run_case(test_case, handle, stream);
+      } catch (const tv::AcdnnStatusError &error) {
+        if (error.status() != ACDNN_STATUS_NOT_SUPPORTED ||
+            !has_cpu_reference(operation)) throw;
+        run_cpu_case(test_case, handle, stream, "ACDNN_STATUS_NOT_SUPPORTED");
       }
-      run_case(test_case, handle, stream);
       ++executed;
     }
     if (selected == 0) {

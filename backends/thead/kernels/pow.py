@@ -10,19 +10,36 @@ from triton.language.extra import libdevice
 
 @triton.jit
 def _apply_pow(left, right, BLOCK_SIZE: tl.constexpr):
-    x = left.to(tl.float32)
-    y = right.to(tl.float32)
-    if BLOCK_SIZE >= 1024:
-        # Restrict the fast log/exp implementation to a moderate, finite
-        # domain. Negative bases, zeros, non-finite values and large powers
-        # retain libdevice's full exceptional-value handling.
-        regular = (x >= 0.00390625) & (x <= 256.0) & (tl.abs(y) <= 4.0)
-        if tl.min(regular.to(tl.int32), 0):
-            result = libdevice.fast_powf(x, y)
+    if left.dtype == tl.int32:
+        # Multiply modulo 2^32 without losing integer bits through float32.
+        # A nonnegative signed int32 exponent has 31 significant bits.
+        exponent = tl.maximum(right, 0).to(tl.uint32)
+        base = left.to(tl.uint32)
+        value = tl.full(left.shape, 1, tl.uint32)
+        for bit in range(31):
+            value = tl.where((exponent & 1) != 0, value * base, value)
+            base *= base
+            exponent >>= 1
+        negative_power = tl.where(
+            left == 1,
+            1,
+            tl.where(left == -1, tl.where((right & 1) != 0, -1, 1), 0),
+        )
+        result = tl.where(right < 0, negative_power, value.to(tl.int32))
+    else:
+        x = left.to(tl.float32)
+        y = right.to(tl.float32)
+        if BLOCK_SIZE >= 1024:
+            # Restrict the fast log/exp implementation to a moderate, finite
+            # domain. Negative bases, zeros, non-finite values and large powers
+            # retain libdevice's full exceptional-value handling.
+            regular = (x >= 0.00390625) & (x <= 256.0) & (tl.abs(y) <= 4.0)
+            if tl.min(regular.to(tl.int32), 0):
+                result = libdevice.fast_powf(x, y)
+            else:
+                result = libdevice.pow(x, y)
         else:
             result = libdevice.pow(x, y)
-    else:
-        result = libdevice.pow(x, y)
     return result
 
 
