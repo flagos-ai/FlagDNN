@@ -452,11 +452,333 @@ def check_legacy_summary(runner) -> None:
         )
 
 
+def check_batch_runner(runner) -> None:
+    """Exercise concurrent CTest processes and the public archive protocol."""
+    with tempfile.TemporaryDirectory(prefix="flagdnn-batch-contract-") as tmp:
+        root = Path(tmp)
+        build = root / "build"
+        build.mkdir()
+        fixture = root / "case.py"
+        fixture.write_text("""import json, os, sys, time
+op, suite = sys.argv[1:]
+gpu = os.environ['CUDA_VISIBLE_DEVICES']
+print('GPU=' + gpu, flush=True)
+print('fixture stderr ' + op, file=sys.stderr, flush=True)
+if os.environ.get('FLAGDNN_CONTRACT_BLOCK') == op and suite == 'functional':
+    with open(os.environ['FLAGDNN_CONTRACT_READY'], 'w') as stream:
+        stream.write(str(os.getpid()))
+    time.sleep(30)
+time.sleep(0.05)
+if suite == 'functional':
+    print(op + '_fp32: reference PASS', flush=True)
+    print(op + '_fp16: reference PASS', flush=True)
+    print('FLAGDNN_' + op.upper() +
+          '_FUNCTIONAL: PASS cases=2 executed=2 skipped=0')
+else:
+    for provider, latency in [('flagdnn', 2.0), ('cudnn', 6.0)]:
+        print(json.dumps({'schema_version': 1, 'kind': 'steady_state',
+            'provider': provider, 'case': op + '_fp32', 'unit': 'us',
+            'median': latency, 'p90': latency, 'samples': [latency]}))
+""")
+        (build / "CMakeCache.txt").write_text(
+            "FLAGDNN_BACKENDS:STRING=nvidia\n"
+        )
+        tests = []
+        for operator in runner.DEFAULT_OPERATORS:
+            for suite in runner.VALID_SUITES:
+                tests.append(
+                    {
+                        "name": f"{suite}.nvidia.{operator}",
+                        "command": [
+                            sys.executable,
+                            str(fixture),
+                            operator,
+                            suite,
+                        ],
+                        "properties": [
+                            {"name": "WORKING_DIRECTORY", "value": str(root)}
+                        ],
+                    }
+                )
+        # Use a second directory so the fixture exercises inventory discovery
+        # and recreation, not shared CTest logs between the GPU workers.
+        source = root / "source"
+        runner.isolated_ctest_directory(source, tests)
+        shutil.copy(
+            source / "CTestTestfile.cmake", build / "CTestTestfile.cmake"
+        )
+        output = root / "results"
+        command = [
+            sys.executable,
+            str(Path(runner.__file__).resolve()),
+            "--build-dir",
+            str(build),
+            "--output-dir",
+            str(output),
+            "--gpus",
+            "1,2",
+            "--color",
+            "never",
+        ]
+        environment = dict(os.environ)
+        environment.pop("FLAGDNN_BENCHMARK_PLATFORM", None)
+        process = subprocess.run(
+            command + ["--dump-output"],
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=60,
+        )
+        require(
+            process.returncode == 0,
+            "batch run failed: " + process.stdout + process.stderr,
+        )
+        require(
+            "\033[" not in process.stdout,
+            "redirected batch output contains ANSI codes",
+        )
+        document = json.loads((output / "summary.json").read_text())
+        require(
+            set(document) == {"timestamp", "env", "result"},
+            "batch summary envelope differs from FlagBLAS",
+        )
+        require(
+            "flag_dnn" in document["env"]
+            and "flag_gems" not in document["env"],
+            "batch environment uses the wrong implementation key",
+        )
+        require(
+            set(document["result"]) == set(runner.DEFAULT_OPERATORS),
+            "batch defaults changed",
+        )
+        merged = {}
+        for gpu in (1, 2):
+            partition = json.loads((output / f"summary{gpu}.json").read_text())
+            require(bool(partition), "GPU worker did not receive work")
+            require(
+                not (set(merged) & set(partition)),
+                "operator ran on multiple GPUs",
+            )
+            merged.update(partition)
+            for operator, result in partition.items():
+                require(
+                    set(result) == {"customized", "accuracy", "performance"},
+                    "operator summary fields differ from FlagBLAS",
+                )
+                acc, perf = result["accuracy"], result["performance"]
+                require(
+                    set(acc)
+                    == {
+                        "total",
+                        "passed",
+                        "failed",
+                        "skipped",
+                        "details",
+                        "status",
+                        "exit_code",
+                        "duration",
+                        "data_file",
+                    },
+                    "accuracy summary fields differ from FlagBLAS",
+                )
+                require(
+                    acc["total"] == acc["passed"] == 2
+                    and acc["status"] == "Passed",
+                    "native case counts were lost",
+                )
+                require(
+                    set(perf)
+                    == {
+                        "duration",
+                        "exit_code",
+                        "data_file",
+                        "data",
+                        "status",
+                        "test_case",
+                    },
+                    "performance summary fields differ from FlagBLAS",
+                )
+                row = perf["data"]["fp32"]["details"][operator + "_fp32"]
+                require(
+                    row == {"base": 0.006, "gems": 0.002, "speedup": 3.0},
+                    "performance protocol or microsecond conversion changed",
+                )
+                names = {f.name for f in (output / operator).iterdir()}
+                require(
+                    names
+                    == {
+                        "accuracy_result.json",
+                        "performance_result.log",
+                        "accuracy_stdout.log",
+                        "accuracy_stderr.log",
+                        "performance_stdout.log",
+                        "performance_stderr.log",
+                    },
+                    "operator archive file names differ from FlagBLAS",
+                )
+                for flavor in ("accuracy", "performance"):
+                    log = (
+                        output / operator / f"{flavor}_stdout.log"
+                    ).read_text()
+                    require(
+                        "GPU=" + str(gpu) in log,
+                        "worker GPU visibility leaked",
+                    )
+                raw = json.loads((output / acc["data_file"]).read_text())
+                require(
+                    len(raw) == acc["total"]
+                    and all(
+                        item["result"] == "passed" for item in raw.values()
+                    ),
+                    "raw accuracy data contradicts summary",
+                )
+                lines = (output / perf["data_file"]).read_text().splitlines()
+                require(
+                    lines[0] == "[INFO] Benchmark record logger enabled",
+                    "performance preamble changed",
+                )
+                record = json.loads(lines[1][len("[INFO] ") :])
+                require(
+                    record["op_name"] == operator
+                    and record["dtype"] == "torch.float32"
+                    and record["result"][0]["latency"] == row["gems"],
+                    "performance archive contradicts summary",
+                )
+        require(
+            merged == document["result"],
+            "final summary differs from GPU partitions",
+        )
+        require(
+            "functional.nvidia."
+            not in (
+                build / "Testing" / "Temporary" / "LastTest.log"
+            ).read_text(),
+            "workers wrote shared CTest state",
+        )
+        # Reuse the output directory, leaving one idle GPU and removing dump
+        # files from the selected operator. No stale operator may be merged.
+        process = subprocess.run(
+            command + ["--ops", "add"],
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=60,
+        )
+        require(
+            process.returncode == 0,
+            "second batch run failed: " + process.stderr,
+        )
+        document = json.loads((output / "summary.json").read_text())
+        require(
+            set(document["result"]) == {"add"},
+            "stale summary rows survived a rerun",
+        )
+        require(
+            not list((output / "add").glob("*stdout.log")),
+            "dump-output is not optional",
+        )
+        require(
+            sum(
+                bool(json.loads((output / f"summary{gpu}.json").read_text()))
+                for gpu in (1, 2)
+            )
+            == 1,
+            "idle GPU summary is missing or stale",
+        )
+        # An operator timeout must preserve output and allow its benchmark and
+        # subsequent operators to run.
+        ready = root / "ready"
+        blocked_env = {
+            **environment,
+            "FLAGDNN_CONTRACT_BLOCK": "add",
+            "FLAGDNN_CONTRACT_READY": str(ready),
+        }
+        process = subprocess.run(
+            command + ["--ops", "add,sub", "--dump-output", "--timeout", "1"],
+            capture_output=True,
+            text=True,
+            env=blocked_env,
+            timeout=60,
+        )
+        document = json.loads((output / "summary.json").read_text())
+        require(
+            process.returncode == 1
+            and document["result"]["add"]["accuracy"]["status"] == "Timeout",
+            "batch timeout status was lost",
+        )
+        require(
+            document["result"]["add"]["performance"]["status"] == "Passed"
+            and document["result"]["sub"]["accuracy"]["status"] == "Passed",
+            "timeout stopped unrelated work",
+        )
+        require(
+            "GPU=" in (output / "add" / "accuracy_stdout.log").read_text(),
+            "timeout lost partial output",
+        )
+        # Interrupt after a completed operator; retain that result and kill
+        # the blocked native test while preserving its live stdout archive.
+        ready.unlink(missing_ok=True)
+        blocked_env["FLAGDNN_CONTRACT_BLOCK"] = "sub"
+        interrupted = subprocess.Popen(
+            command + ["--gpus", "1", "--ops", "add,sub", "--dump-output"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=blocked_env,
+        )
+        try:
+            deadline = time.monotonic() + 30
+            while not ready.exists() and time.monotonic() < deadline:
+                require(
+                    interrupted.poll() is None, "batch exited before interrupt"
+                )
+                time.sleep(0.05)
+            require(ready.exists(), "native test did not start")
+            child_pid = int(ready.read_text())
+            live_log = output / "sub" / "accuracy_stdout.log"
+            require(
+                live_log.exists() and "GPU=1" in live_log.read_text(),
+                "dump-output is not written while a command is running",
+            )
+            interrupted.terminate()
+            stdout, stderr = interrupted.communicate(timeout=20)
+            require(interrupted.returncode == 143, "batch lost SIGTERM status")
+            document = json.loads((output / "summary.json").read_text())
+            require(
+                set(document["result"]) == {"add"},
+                "interrupt lost completed results or merged stale rows",
+            )
+            identity = runner._linux_process_identity(child_pid)
+            require(
+                identity is None or identity[0] == "Z",
+                "native process survived batch interruption",
+            )
+        finally:
+            if interrupted.poll() is None:
+                interrupted.kill()
+                interrupted.communicate(timeout=20)
+
+        # Invalid GPU lists must fail before launching any test.
+        for value in ("", "1,", "1,1", "-1", "a"):
+            process = subprocess.run(
+                command + ["--gpus", value],
+                capture_output=True,
+                text=True,
+                env=environment,
+                timeout=10,
+            )
+            require(
+                process.returncode == 2,
+                "invalid GPU selection accepted: " + repr(value),
+            )
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         raise RuntimeError("usage: run_tests_contract.py RUN_TESTS_PY")
     runner = load_runner(Path(sys.argv[1]).resolve())
     check_legacy_summary(runner)
+    check_batch_runner(runner)
     hygon = runner.load_platform_adapter("hygon")
     ascend = runner.load_platform_adapter("ascend")
     nvidia = runner.load_platform_adapter("nvidia")

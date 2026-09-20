@@ -160,6 +160,46 @@ reference/tests/run.sh
 
 ## 7. 运行方法
 
+批量执行默认的 `DEFAULT_OPERATORS`，按 GPU 分配算子，每个算子依次执行精度和
+性能测试（同一 GPU 内串行，不同 GPU 并行）：
+
+```bash
+python3 tools/run_tests.py --dump-output \
+  --output-dir logs_result_20260918_flagdnn --gpus 1,2
+```
+
+后端从 `FLAGDNN_BENCHMARK_PLATFORM` 或 CMake 构建信息识别。存在多个后端时
+使用 `--platform nvidia|iluvatar|hygon|thead|ascend|mthreads` 选择；非默认构建目录
+使用 `--build-dir` 或 `FLAGDNN_BUILD_DIR` 指定。测试必须在构建时使用的运行环境中
+执行。批量模式默认运行两个 suite，单个命令超时为 4800 秒，可用 `--timeout`
+调整；只有显式传入 `--preflight` 才执行前置契约测试。
+
+输出目录与 FlagBLAS 批量测试格式一致，项目环境字段改为 `flag_dnn`：
+
+```text
+logs_result_20260918_flagdnn/
+├── add/
+│   ├── accuracy_stdout.log
+│   ├── accuracy_stderr.log
+│   ├── accuracy_result.json
+│   ├── performance_stdout.log
+│   ├── performance_stderr.log
+│   └── performance_result.log
+├── sub/
+├── ...
+├── summary1.json
+├── summary2.json
+└── summary.json
+```
+
+`--dump-output` 控制四个 stdout/stderr 日志，结果文件始终生成。`summary<GPU>.json`
+在每个算子完成后原子更新，即使 GPU 未分配到算子也会生成空汇总；`summary.json`
+合并当前运行的分片。中断时保留已完成算子的汇总并清理测试子进程。精度 JSON
+记录逐用例结果；只有总数的原生输出使用明确标为 `native_accounting` 的匿名索引。
+性能日志使用 `[INFO]` JSON 记录，延迟以毫秒表示，汇总详情字段为
+`base`、`gems`、`speedup`。`--color` 支持 `auto/always/never`，重定向时默认使用
+普通文本进度。原有 `--output <file>` 串行兼容模式仍可用。
+
 结构、API 和依赖 contract：
 
 ```bash

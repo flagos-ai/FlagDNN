@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 
-"""Serial native CTest runner for FlagDNN functional tests and benchmarks."""
+"""Run FlagDNN accuracy and performance tests with per-device workers."""
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import importlib.metadata
 import importlib.util
 import json
 import math
+import multiprocessing as mp
 import os
 import platform
+import queue
 from pathlib import Path
 import re
 import signal
@@ -340,7 +343,10 @@ def probe_environment() -> dict[str, Any]:
     try:
         import triton
 
-        result["triton"] = {"version": str(triton.__version__)}
+        result["triton"] = {
+            "version": str(triton.__version__),
+            "has_config": hasattr(triton, "Config"),
+        }
     except ImportError:
         pass
     return result
@@ -627,6 +633,11 @@ def resolve_build_directory(requested: Path | None, platform: str) -> Path:
         requested = (
             Path(configured) if configured else Path("build") / platform
         )
+        if (
+            not configured
+            and (ROOT / "build" / "CTestTestfile.cmake").is_file()
+        ):
+            requested = ROOT / "build"
     requested = requested.expanduser()
     if not requested.is_absolute():
         requested = ROOT / requested
@@ -1116,52 +1127,73 @@ def run_process_group(
     command: list[str],
     environment: dict[str, str],
     timeout: int,
+    log_paths: tuple[Path, Path] | None = None,
 ) -> tuple[str, str, int | None, bool]:
-    process = subprocess.Popen(
-        command,
-        cwd=ROOT,
-        env=environment,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-    )
+    with contextlib.ExitStack() as stack:
+        streams = (
+            [
+                stack.enter_context(path.open("w", encoding="utf-8"))
+                for path in log_paths
+            ]
+            if log_paths is not None
+            else [subprocess.PIPE, subprocess.PIPE]
+        )
 
-    previous_handlers: dict[signal.Signals, Any] = {}
+        def captured(
+            stdout: str | None, stderr: str | None
+        ) -> tuple[str, str]:
+            if log_paths is None:
+                return stdout or "", stderr or ""
+            return (
+                log_paths[0].read_text(encoding="utf-8", errors="replace"),
+                log_paths[1].read_text(encoding="utf-8", errors="replace"),
+            )
 
-    def handle_termination(signum: int, _frame: Any) -> None:
-        raise _TerminationSignal(signum)
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            env=environment,
+            text=True,
+            stdout=streams[0],
+            stderr=streams[1],
+            start_new_session=True,
+        )
 
-    for signum in (signal.SIGTERM, signal.SIGHUP):
-        previous_handlers[signum] = signal.getsignal(signum)
-        signal.signal(signum, handle_termination)
+        previous_handlers: dict[signal.Signals, Any] = {}
 
-    session_id = process.pid
+        def handle_termination(signum: int, _frame: Any) -> None:
+            raise _TerminationSignal(signum)
 
-    def terminate() -> tuple[str, str]:
-        return _terminate_process_session(process, session_id)
+        for signum in (signal.SIGTERM, signal.SIGHUP):
+            previous_handlers[signum] = signal.getsignal(signum)
+            signal.signal(signum, handle_termination)
 
-    try:
+        session_id = process.pid
+
+        def terminate() -> tuple[str, str]:
+            return _terminate_process_session(process, session_id)
+
         try:
-            stdout, stderr = process.communicate(timeout=timeout)
-            return stdout, stderr, process.returncode, False
-        except subprocess.TimeoutExpired:
-            stdout, stderr = terminate()
-            return stdout, stderr, None, True
-        except BaseException:
             try:
-                terminate()
+                stdout, stderr = process.communicate(timeout=timeout)
+                return *captured(stdout, stderr), process.returncode, False
+            except subprocess.TimeoutExpired:
+                stdout, stderr = terminate()
+                return *captured(stdout, stderr), None, True
             except BaseException:
                 try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait()
-            raise
+                    terminate()
+                except BaseException:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait()
+                raise
 
-    finally:
-        for signum, handler in previous_handlers.items():
-            signal.signal(signum, handler)
+        finally:
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
 
 
 def run_one(
@@ -1175,6 +1207,8 @@ def run_one(
     manifest_operators: list[str],
     configuration: str | None = None,
     adapter: ModuleType | None = None,
+    capture_output: bool = False,
+    log_directory: Path | None = None,
 ) -> dict[str, Any]:
     if adapter is None:
         adapter = load_platform_adapter(platform)
@@ -1187,9 +1221,21 @@ def run_one(
         adapter,
     )
     started = time.monotonic()
-    stdout, stderr, exit_code, timed_out = run_process_group(
-        command, environment, timeout
-    )
+    if log_directory is None:
+        stdout, stderr, exit_code, timed_out = run_process_group(
+            command, environment, timeout
+        )
+    else:
+        log_directory.mkdir(parents=True, exist_ok=True)
+        stdout, stderr, exit_code, timed_out = run_process_group(
+            command,
+            environment,
+            timeout,
+            (
+                log_directory / f"{SUITE_NAMES[suite]}_stdout.log",
+                log_directory / f"{SUITE_NAMES[suite]}_stderr.log",
+            ),
+        )
     if timed_out:
         status = "timeout"
     else:
@@ -1253,6 +1299,9 @@ def run_one(
             counts["total"] = sum(counts[name] for name in COUNT_NAMES)
     else:
         result["test_case"] = f"benchmark/test_{operator}.cpp"
+    if capture_output:
+        result.update(stdout=stdout, stderr=stderr)
+        return result
     if verbose or status != "passed":
         if stdout:
             print(stdout, end="" if stdout.endswith("\n") else "\n")
@@ -1527,12 +1576,690 @@ def publish_summary(output: Path, summary: dict[str, Any]) -> None:
             shutil.rmtree(snapshot)
 
 
+class LiveDisplay:
+    """Manages terminal output with a pinned footer for GPU status lines."""
+
+    def __init__(self, gpu_ids, op_count, op_width=20):
+        self.gpu_ids = gpu_ids
+        self.op_count = op_count
+        self.op_width = op_width
+        self.gpu_index = {gid: i + 1 for i, gid in enumerate(gpu_ids)}
+        # Match the scrolling log width (55 + op_width visible characters).
+        # Progress line: "[Progress] [" (12) + bar + "]  " (3) + nums_str
+        nums_width = len(f"{op_count}/{op_count} ops")
+        self.bar_width = max(20, 55 + op_width - 12 - 3 - nums_width)
+        self.nums_width = nums_width
+        progress_line = self._fmt_progress(0)
+        gpu_lines = [f"{DIM}[GPU {gid:2d}] idle{NC}" for gid in gpu_ids]
+        self.footer = [progress_line] + gpu_lines
+        self.n = len(self.footer)
+        self.footer_drawn = False
+
+    def _fmt_progress(self, tests_done):
+        total_tests = self.op_count * 2
+        color = GREEN if tests_done >= total_tests else CYAN
+        bar = (
+            _progress_bar(tests_done, total_tests, self.bar_width, color=color)
+            if self.op_count
+            else " " * self.bar_width
+        )
+        ops_done = tests_done // 2
+        nums = f"{ops_done}/{self.op_count} ops"
+        return f"[Progress] [{color}{bar}{NC}]  {nums:>{self.nums_width}}"
+
+    def _draw_footer(self):
+        if not IS_TTY:
+            return
+        for line in self.footer:
+            sys.stdout.write(line + "\n")
+        sys.stdout.flush()
+        self.footer_drawn = True
+
+    def _erase_footer(self):
+        if not IS_TTY or not self.footer_drawn:
+            return
+        for _ in range(self.n):
+            sys.stdout.write("\033[A\033[2K")
+
+    def init(self):
+        if IS_TTY:
+            self._draw_footer()
+
+    def log(self, msg):
+        """Print a scrolling log line above the footer."""
+        if IS_TTY:
+            self._erase_footer()
+            sys.stdout.write(msg + "\n")
+            self._draw_footer()
+        else:
+            sys.stdout.write(msg + "\n")
+            sys.stdout.flush()
+
+    def update_gpu(self, gpu_id, status_line):
+        """Update a GPU's footer line."""
+        idx = self.gpu_index.get(gpu_id)
+        if idx is None:
+            return
+        self.footer[idx] = status_line
+        if IS_TTY:
+            self._erase_footer()
+            self._draw_footer()
+
+    def update_progress(self, tests_done):
+        """Update the global progress bar."""
+        self.footer[0] = self._fmt_progress(tests_done)
+        if IS_TTY:
+            self._erase_footer()
+            self._draw_footer()
+        else:
+            sys.stdout.write(self.footer[0] + "\n")
+            sys.stdout.flush()
+
+    def finish(self):
+        """Clear the footer when done."""
+        if IS_TTY:
+            self._erase_footer()
+            sys.stdout.flush()
+
+
+def _progress_bar(done, total, width=40, color=""):
+    if not total:
+        return " " * width
+    frac = done * width / total
+    full = int(frac)
+    has_half = (frac - full) >= 0.5 and full < width
+    empty = width - full - (1 if has_half else 0)
+    bar = "█" * full
+    if has_half:
+        bar += f"{DIM}█{NC}{color}"
+    bar += " " * empty
+    return bar
+
+
+def _format_status(status, dur):
+    STATUS_MAP = {
+        "Passed": (GREEN, "OK"),
+        "Failed": (RED, "FAILED"),
+        "Timeout": (RED, "TIMEOUT"),
+        "Error": (RED, "ERROR"),
+        "NotFound": (YELLOW, "NOTFOUND"),
+        "Skipped": (YELLOW, "SKIPPED"),
+    }
+    color, label = STATUS_MAP.get(status, (YELLOW, status.upper()))
+    return f"{color}[{label:<8} {dur:>6.1f}s]{NC}"
+
+
+# The console and public report protocol match FlagBLAS tools/run_tests.py.
+IS_TTY = sys.stdout.isatty()
+RED = GREEN = YELLOW = CYAN = DIM = NC = ""
+
+
+def configure_colors(mode: str) -> None:
+    global IS_TTY, RED, GREEN, YELLOW, CYAN, DIM, NC
+    IS_TTY = sys.stdout.isatty()
+    if mode == "always" or (mode == "auto" and IS_TTY):
+        RED, GREEN, YELLOW, CYAN, DIM, NC = (
+            "\033[31m",
+            "\033[32m",
+            "\033[93m",
+            "\033[36m",
+            "\033[2m",
+            "\033[0m",
+        )
+    else:
+        RED = GREEN = YELLOW = CYAN = DIM = NC = ""
+
+
+def detect_platform(build_dir: Path | None) -> str:
+    """Prefer configured build metadata over assumptions about CUDA vendors."""
+    explicit = os.environ.get("FLAGDNN_BENCHMARK_PLATFORM")
+    if explicit:
+        return explicit
+    configured = build_dir or os.environ.get("FLAGDNN_BUILD_DIR")
+    candidates = [Path(configured)] if configured else [ROOT / "build"]
+    if configured is None:
+        candidates.extend(sorted((ROOT / "build").glob("*")))
+    found: set[str] = set()
+    for directory in candidates:
+        if not directory.is_absolute():
+            directory = ROOT / directory
+        cache = directory / "CMakeCache.txt"
+        if not cache.is_file():
+            continue
+        values = dict(
+            re.findall(
+                r"^(FLAGDNN_BACKENDS|FLAGDNN_DEFAULT_BACKEND):[^=]+=(.*)$",
+                cache.read_text(),
+                re.M,
+            )
+        )
+        default = values.get("FLAGDNN_DEFAULT_BACKEND", "auto")
+        backends = values.get("FLAGDNN_BACKENDS", "").split(";")
+        if default != "auto":
+            found.add(default)
+        else:
+            found.update(backend for backend in backends if backend)
+    if len(found) > 1:
+        raise ValueError("multiple configured backends; specify --platform")
+    return next(iter(found), "nvidia")
+
+
+def gpu_ids(value: str) -> list[int]:
+    parts = value.split(",")
+    if not parts or any(
+        not re.fullmatch(r"\d+", part.strip()) for part in parts
+    ):
+        raise ValueError(
+            "--gpus must be a comma-separated list of nonnegative GPU IDs"
+        )
+    result = [int(part) for part in parts]
+    if len(set(result)) != len(result):
+        raise ValueError("--gpus must not contain duplicate GPU IDs")
+    return result
+
+
+def accuracy_records(operator: str, task: dict[str, Any]) -> dict[str, Any]:
+    """Translate native cases while retaining CTest sub-suite identities."""
+    records: dict[str, Any] = {}
+    for raw in (
+        task.get("stdout", "") + "\n" + task.get("stderr", "")
+    ).splitlines():
+        prefix = re.match(r"^\s*(\d+):\s?(.*)$", raw)
+        if prefix is None:
+            continue
+        group, line = prefix.groups()
+        if re.search(r"\b(?:PASS|SKIP)\s+cases=", line):
+            continue
+        match = re.match(r"^(\S+): .*\b(PASS|FAIL)\b", line)
+        skip = re.search(
+            r"(?:^SKIP |^\[SKIP\].*?\s)case=(\S+).*?reason=(\S+)", line
+        )
+        if match:
+            case, outcome = match.groups()
+            status = "passed" if outcome == "PASS" else "failed"
+            reason = line if status == "failed" else None
+        elif skip:
+            case, reason = skip.groups()
+            status = "skipped"
+        else:
+            continue
+        key = f"tests/test_{operator}.cpp::ctest_{group}[{case}]"
+        records[key] = {
+            "params": {"case": case},
+            "result": status,
+            "opname": [operator],
+            "skipped_reason": reason if status == "skipped" else None,
+        }
+        if reason is not None:
+            records[key]["reason"] = reason
+    # Some native suites only print aggregate accounting. Expose explicitly
+    # unnamed cases rather than silently losing their reported case counts.
+    counts = task.get("case_counts", {})
+    for status in ("passed", "skipped", "failed"):
+        observed = sum(item["result"] == status for item in records.values())
+        expected = counts.get(status, 0)
+        for index in range(observed, expected):
+            key = (
+                f"tests/test_{operator}.cpp::native_accounting"
+                f"[{status}_{index + 1}]"
+            )
+            records[key] = {
+                "params": {"native_case_index": index + 1},
+                "result": status,
+                "opname": [operator],
+                "skipped_reason": None,
+            }
+    return records
+
+
+def batch_suite_result(
+    operator: str, suite: str, task: dict[str, Any], output: Path
+) -> dict[str, Any]:
+    directory = output / operator
+    directory.mkdir(parents=True, exist_ok=True)
+    status = task["status"]
+    result = {
+        "status": STATUS_NAMES.get(status, "Error"),
+        "exit_code": -100 if status == "timeout" else task.get("exit_code", 1),
+        "duration": task.get("duration_seconds", 0.0),
+    }
+    if suite == "functional":
+        records = accuracy_records(operator, task)
+        counts = {
+            name: sum(item["result"] == name for item in records.values())
+            for name in ("passed", "failed", "skipped")
+        }
+        details: dict[str, Any] = {}
+        outcome = "failed" if counts["failed"] else "skipped"
+        for case, item in records.items():
+            if item["result"] != outcome:
+                continue
+            # Match FlagBLAS parse_accuracy_data's case:parameter identity.
+            parameters = [case.split("[", 1)[0]] + [
+                str(value).replace(" ", "")
+                for value in item["params"].values()
+            ]
+            group = details.setdefault(outcome, {}).setdefault(
+                item.get("reason", "Unknown"), []
+            )
+            identity = ":".join(parameters)
+            if identity not in group:
+                group.append(identity)
+        result.update(total=sum(counts.values()), **counts, details=details)
+        if status == "passed":
+            result["status"] = (
+                "Failed"
+                if counts["failed"]
+                else (
+                    "Skipped"
+                    if counts["skipped"]
+                    else "Passed" if counts["passed"] else "NotFound"
+                )
+            )
+        if status in {"failed", "error"} and not counts["failed"]:
+            # A crashed executable or invalid native accounting is an execution
+            # error, not an invented failed parameter case.
+            result["errors"] = 1
+            result["details"]["error"] = (
+                "; ".join(task.get("record_errors", [])) or status
+            )
+        relative = Path(operator) / "accuracy_result.json"
+        atomic_write_summary(output / relative, records)
+    else:
+        dtype_aliases = {
+            "f8-e4m3fn": "float8_e4m3fn",
+            "f8-e5m2": "float8_e5m2",
+            "fp64": "torch.float64",
+        }
+        data = {
+            dtype_aliases.get(dtype, dtype): entry
+            for dtype, entry in performance_data(task).items()
+        }
+        for entry in data.values():
+            for row in entry["details"].values():
+                row.pop("flag_dnn", None)
+        result["data"] = data
+        relative = Path(operator) / "performance_result.log"
+        dtype_names = {
+            "fp16": "torch.float16",
+            "fp32": "torch.float32",
+            "bf16": "torch.bfloat16",
+            "torch.float64": "torch.float64",
+            "float8_e4m3fn": "torch.float8_e4m3fn",
+            "float8_e5m2": "torch.float8_e5m2",
+            **{
+                name: "torch." + name
+                for name in (
+                    "int8",
+                    "int16",
+                    "int32",
+                    "int64",
+                    "uint8",
+                    "bool",
+                )
+            },
+        }
+        with (output / relative).open("w", encoding="utf-8") as stream:
+            stream.write("[INFO] Benchmark record logger enabled\n")
+            for dtype, entry in data.items():
+                rows = []
+                for case, row in entry["details"].items():
+                    rows.append(
+                        {
+                            "legacy_shape": None,
+                            "shape_detail": case,
+                            "latency_base": row["base"],
+                            "latency": row["gems"],
+                            "gbps_base": None,
+                            "gbps": None,
+                            "speedup": row["speedup"],
+                            "accuracy": None,
+                            "tflops": None,
+                            "utilization": None,
+                            "compared_speedup": None,
+                            "error_msg": None,
+                        }
+                    )
+                stream.write(
+                    "[INFO] "
+                    + json.dumps(
+                        {
+                            "op_name": operator,
+                            "dtype": dtype_names.get(dtype, dtype),
+                            "mode": "kernel",
+                            "level": "core",
+                            "result": rows,
+                        }
+                    )
+                    + "\n"
+                )
+        if data:
+            result["test_case"] = operator
+    if status == "timeout":
+        if suite == "functional":
+            return {
+                "status": "Timeout",
+                "exit_code": -100,
+                "duration": result["duration"],
+                "total": 0,
+                "passed": 0,
+                "failed": 0,
+                "skipped": 0,
+                "errors": 0,
+            }
+        return {
+            "status": "Timeout",
+            "exit_code": -100,
+            "duration": result["duration"],
+            "data": {},
+        }
+    result["data_file"] = relative.as_posix()
+    return result
+
+
+def batch_environment(environment: dict[str, Any]) -> dict[str, Any]:
+    result = dict(environment)
+    result.pop("flag_gems", None)
+    try:
+        release = platform.freedesktop_os_release()
+        result["os_name"] = release.get("ID", result["os_name"])
+        result["os_release"] = release.get("VERSION_ID", result["os_release"])
+    except (OSError, AttributeError):
+        pass
+    return result
+
+
+def write_batch_summary(
+    output: Path, environment: dict[str, Any], gpu_list: list[int]
+) -> None:
+    results = {}
+    for gpu in gpu_list:
+        path = output / f"summary{gpu}.json"
+        if path.exists():
+            results.update(json.loads(path.read_text()))
+    atomic_write_summary(
+        output / "summary.json",
+        {
+            "timestamp": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "env": batch_environment(environment),
+            "result": results,
+        },
+    )
+
+
+def batch_worker(
+    gpu: int, work_queue: Any, events: Any, settings: dict[str, Any]
+) -> None:
+    # Each process runs both phases on its GPU before taking another op.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    result = {}
+    output = settings["output"]
+    adapter = load_platform_adapter(settings["platform"])
+    environment = device_environment(
+        settings["platform"], str(gpu), settings["environment"], adapter
+    )
+    try:
+        with contextlib.ExitStack() as stack:
+            sink = stack.enter_context(open(os.devnull, "w"))
+            stack.enter_context(contextlib.redirect_stdout(sink))
+            stack.enter_context(contextlib.redirect_stderr(sink))
+            while True:
+                operator = work_queue.get()
+                if operator is None:
+                    break
+                public: dict[str, Any] = {"customized": adapter is not None}
+                native = {}
+                for suite in VALID_SUITES:
+                    phase = (
+                        "accuracy" if suite == "functional" else "benchmark"
+                    )
+                    if operator not in settings["suite_operators"].get(
+                        suite, []
+                    ):
+                        task = {"status": "skipped", "exit_code": 0}
+                    else:
+                        events.put(("start", gpu, phase, operator))
+                        try:
+                            task = run_one(
+                                build_dir=settings["build_dir"],
+                                operator=operator,
+                                suite=suite,
+                                platform=settings["platform"],
+                                environment=environment,
+                                timeout=settings["timeout"],
+                                verbose=False,
+                                manifest_operators=settings[
+                                    "manifest_operators"
+                                ],
+                                configuration=settings["configuration"],
+                                adapter=adapter,
+                                capture_output=True,
+                                log_directory=(
+                                    output / operator
+                                    if settings["dump_output"]
+                                    else None
+                                ),
+                            )
+                        except Exception as error:
+                            task = {
+                                "status": "error",
+                                "exit_code": 1,
+                                "stderr": str(error),
+                            }
+                    directory = output / operator
+                    directory.mkdir(parents=True, exist_ok=True)
+                    if settings["dump_output"]:
+                        for channel in ("stdout", "stderr"):
+                            (
+                                directory
+                                / f"{SUITE_NAMES[suite]}_{channel}.log"
+                            ).write_text(
+                                task.get(channel, ""), encoding="utf-8"
+                            )
+                    public[SUITE_NAMES[suite]] = batch_suite_result(
+                        operator, suite, task, output
+                    )
+                    task.pop("stdout", None)
+                    task.pop("stderr", None)
+                    native[suite] = task
+                    events.put(
+                        (
+                            "done",
+                            gpu,
+                            phase,
+                            operator,
+                            public[SUITE_NAMES[suite]]["status"],
+                            task.get("duration_seconds", 0.0),
+                        )
+                    )
+                result[operator] = public
+                atomic_write_summary(output / f"summary{gpu}.json", result)
+                events.put(("result", gpu, operator, native))
+    except BaseException as error:
+        events.put(("error", gpu, str(error)))
+        raise
+    finally:
+        events.put(("exit", gpu))
+
+
+def isolated_ctest_directory(
+    destination: Path, tests: list[dict[str, Any]]
+) -> None:
+    """Keep concurrent CTest runs from sharing Testing/Temporary files."""
+
+    def quote(value: Any) -> str:
+        if isinstance(value, list):
+            value = ";".join(str(item).replace(";", r"\;") for item in value)
+        elif isinstance(value, bool):
+            value = "TRUE" if value else "FALSE"
+        value = str(value)
+        delimiter = "="
+        while "]" + delimiter + "]" in value:
+            delimiter += "="
+        return "[" + delimiter + "[" + value + "]" + delimiter + "]"
+
+    lines = []
+    for test in tests:
+        name = quote(test["name"])
+        command = test.get("command", ["flagdnn-missing-test-executable"])
+        lines.append(
+            f"add_test({name} {' '.join(quote(arg) for arg in command)})"
+        )
+        for prop in test.get("properties", []):
+            lines.append(
+                f"set_tests_properties({name} PROPERTIES "
+                f"{prop['name']} {quote(prop['value'])})"
+            )
+    destination.mkdir(parents=True)
+    (destination / "CTestTestfile.cmake").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
+
+
+def run_batch(
+    settings: dict[str, Any], operators: list[str], gpu_list: list[int]
+) -> tuple[dict[str, Any], bool]:
+    # Inherit backend policies without importing GPU packages in each worker.
+    # Native test processes still get isolated sessions.
+    command = [
+        "ctest",
+        "--test-dir",
+        str(settings["build_dir"]),
+        "--show-only=json-v1",
+    ]
+    if settings["configuration"]:
+        command.extend(["-C", settings["configuration"]])
+    stdout, stderr, code, timed_out = run_process_group(
+        command, settings["environment"], min(settings["timeout"], 60)
+    )
+    if code != 0 or timed_out:
+        raise RuntimeError("Cannot discover CTest inventory: " + stderr)
+    tests = json.loads(stdout)["tests"]
+    temporary = tempfile.TemporaryDirectory(prefix="flagdnn-ctest-workers-")
+    context = mp.get_context("fork")
+    work_queue, events = context.Queue(), context.Queue()
+    for operator in operators:
+        work_queue.put(operator)
+    for _ in gpu_list:
+        work_queue.put(None)
+    workers = []
+    for gpu in gpu_list:
+        directory = Path(temporary.name) / str(gpu)
+        isolated_ctest_directory(directory, tests)
+        workers.append(
+            context.Process(
+                target=batch_worker,
+                args=(
+                    gpu,
+                    work_queue,
+                    events,
+                    {**settings, "build_dir": directory},
+                ),
+            )
+        )
+    display = LiveDisplay(
+        gpu_list, len(operators), op_width=min(max(map(len, operators)), 40)
+    )
+    results: dict[str, Any] = {}
+    exited: set[int] = set()
+    per_gpu_done = dict.fromkeys(gpu_list, 0)
+    tests_done = 0
+    failed = False
+    try:
+        for worker in workers:
+            worker.start()
+        display.init()
+        while len(exited) < len(workers):
+            try:
+                message = events.get(timeout=0.2)
+            except queue.Empty:
+                for gpu, worker in zip(gpu_list, workers):
+                    if worker.exitcode is not None and gpu not in exited:
+                        exited.add(gpu)
+                        failed = failed or worker.exitcode != 0
+                continue
+            kind, gpu, *payload = message
+            if kind == "exit":
+                exited.add(gpu)
+                display.update_gpu(
+                    gpu,
+                    f"{DIM}[GPU {gpu:2d}] done ({per_gpu_done[gpu]} ops){NC}",
+                )
+            elif kind == "error":
+                failed = True
+                display.log(f"{RED}[ERROR]{NC} GPU {gpu}: {payload[0]}")
+            elif kind == "result":
+                operator, native = payload
+                results[operator] = native
+            else:
+                phase, operator, *outcome = payload
+                label = "accuracy " if phase == "accuracy" else "benchmark"
+                op_column = (
+                    operator
+                    if len(operator) <= display.op_width
+                    else operator[: display.op_width - 3] + "..."
+                ).ljust(display.op_width)
+                timestamp = dt.datetime.now().strftime("%H:%M:%S")
+                if kind == "start":
+                    if IS_TTY:
+                        display.update_gpu(
+                            gpu,
+                            f"[GPU {gpu:2d}] ({per_gpu_done[gpu]:>3} done)  "
+                            f"{label} {op_column}",
+                        )
+                    else:
+                        display.log(
+                            f"[INFO] [{timestamp}][GPU {gpu:2d}] "
+                            f"{label} {op_column} ..."
+                        )
+                elif kind == "done":
+                    status, duration = outcome
+                    tests_done += 1
+                    if phase == "benchmark":
+                        per_gpu_done[gpu] += 1
+                    line = (
+                        f"{GREEN}[INFO]{NC} [{timestamp}][GPU {gpu:2d}] "
+                        f"{label} {op_column} "
+                        f"{_format_status(status, duration)}"
+                    )
+                    if not IS_TTY:
+                        done = tests_done // 2
+                        width = len(str(len(operators)))
+                        line += (
+                            f"  ({done * 100 // len(operators):>3}% "
+                            f"{done:>{width}}/{len(operators)} ops)"
+                        )
+                    display.footer[0] = display._fmt_progress(tests_done)
+                    display.log(line)
+        for worker in workers:
+            worker.join()
+            failed = failed or worker.exitcode != 0
+    finally:
+        for worker in workers:
+            if worker.is_alive():
+                worker.terminate()
+        for worker in workers:
+            if worker.pid is not None:
+                worker.join(
+                    timeout=PROCESS_TERMINATION_GRACE_SECONDS
+                    + PROCESS_KILL_GRACE_SECONDS
+                    + 1
+                )
+                if worker.is_alive():
+                    worker.kill()
+                    worker.join()
+        display.finish()
+        work_queue.cancel_join_thread()
+        work_queue.close()
+        events.close()
+        temporary.cleanup()
+    return results, failed or set(results) != set(operators)
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         allow_abbrev=False,
-        description=(
-            "Run FlagDNN native functional tests and benchmarks " "serially"
-        ),
+        description=("Run FlagDNN accuracy and performance tests across GPUs"),
     )
     parser.add_argument(
         "--build-dir",
@@ -1552,8 +2279,11 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--op-list-file", type=Path)
     parser.add_argument(
         "--suites",
-        default="functional",
-        help="functional, benchmark, comma-separated values, or all",
+        default=None,
+        help=(
+            "functional, benchmark, comma-separated values, or all "
+            "(default: all)"
+        ),
     )
     parser.add_argument(
         "--min-speedup",
@@ -1565,8 +2295,8 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument(
         "--platform",
-        default=os.environ.get("FLAGDNN_BENCHMARK_PLATFORM", "nvidia"),
-        help="CTest platform component",
+        default=None,
+        help="CTest backend (default: infer from the configured build)",
     )
     parser.add_argument(
         "--device",
@@ -1580,7 +2310,7 @@ def parse_arguments() -> argparse.Namespace:
         type=int,
         help=(
             "timeout in seconds for each operator/suite "
-            "(default: selected platform policy, or 1800)"
+            "(default: 4800; legacy --output uses platform policy)"
         ),
     )
     parser.add_argument(
@@ -1609,7 +2339,10 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        help="legacy-compatible JSON summary path (also writes <stem>.native.json diagnostics)",
+        help=(
+            "legacy-compatible JSON summary path "
+            "(also writes <stem>.native.json diagnostics)"
+        ),
     )
     parser.add_argument(
         "--list",
@@ -1617,7 +2350,67 @@ def parse_arguments() -> argparse.Namespace:
         help="list every manifest operator and exit",
     )
     parser.add_argument("--verbose", action="store_true")
-    return parser.parse_args()
+    parser.add_argument("--gpus", help="comma-separated GPU IDs (default: 0)")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="test data directory (default: results)",
+    )
+    parser.add_argument(
+        "--dump-output",
+        action="store_true",
+        help="dump stdout/stderr of each test to log files",
+    )
+    parser.add_argument(
+        "--color", choices=("auto", "always", "never"), default="auto"
+    )
+    parser.add_argument("--start", help="the ID of the first default operator")
+    parser.add_argument(
+        "--stages",
+        default="stable",
+        help="operator stages (the native catalog is stable)",
+    )
+    arguments = parser.parse_args()
+    arguments.batch = arguments.output is None
+    if not arguments.batch and (
+        arguments.output_dir is not None
+        or arguments.gpus is not None
+        or arguments.dump_output
+    ):
+        parser.error(
+            "--output cannot be combined with --output-dir, --gpus "
+            "or --dump-output"
+        )
+    if arguments.device is not None and arguments.gpus is not None:
+        parser.error("--device and --gpus are mutually exclusive")
+    try:
+        arguments.platform = arguments.platform or (
+            detect_platform(arguments.build_dir)
+            if arguments.batch
+            else os.environ.get("FLAGDNN_BENCHMARK_PLATFORM", "nvidia")
+        )
+        arguments.gpu_ids = (
+            gpu_ids(
+                arguments.gpus
+                if arguments.gpus is not None
+                else arguments.device or "0"
+            )
+            if arguments.batch
+            else []
+        )
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+    arguments.suites = arguments.suites or (
+        "all" if arguments.batch else "functional"
+    )
+    if arguments.batch:
+        arguments.output_dir = (
+            (arguments.output_dir or Path("results")).expanduser().resolve()
+        )
+        if arguments.timeout is None:
+            arguments.timeout = 4800
+    configure_colors(arguments.color)
+    return arguments
 
 
 def _run_main() -> int:
@@ -1700,6 +2493,19 @@ def _run_main() -> int:
         print(f"error: {message}", file=sys.stderr)
         return finish_early(2, "failed", error=message)
 
+    if arguments.batch and not arguments.list:
+        arguments.output_dir.mkdir(parents=True, exist_ok=True)
+        # Invalidate summaries before running anything; never merge stale GPUs.
+        for stale in arguments.output_dir.glob("summary[0-9]*.json"):
+            stale.unlink()
+        for gpu in arguments.gpu_ids:
+            atomic_write_summary(
+                arguments.output_dir / f"summary{gpu}.json", {}
+            )
+        write_batch_summary(
+            arguments.output_dir, empty_environment(), arguments.gpu_ids
+        )
+
     if PLATFORM_PATTERN.fullmatch(arguments.platform) is None:
         return validation_error("--platform must match [a-z][a-z0-9_]*")
     try:
@@ -1766,7 +2572,7 @@ def _run_main() -> int:
             raise ValueError("--timeout must be positive")
         environment = device_environment(
             arguments.platform,
-            arguments.device,
+            str(arguments.gpu_ids[0]) if arguments.batch else arguments.device,
             adapter=adapter,
         )
         if filter_registered:
@@ -1789,6 +2595,27 @@ def _run_main() -> int:
         return validation_error(str(error))
 
     assert suite_operators is not None
+    if (
+        arguments.start
+        and arguments.ops is None
+        and arguments.op_list_file is None
+    ):
+        suite_operators = {
+            suite: [op for op in selected if op >= arguments.start]
+            for suite, selected in suite_operators.items()
+        }
+    if arguments.stages != "stable":
+        stages = {stage.strip() for stage in arguments.stages.split(",")}
+        if not stages <= {"alpha", "beta", "stable", "all", "removed"}:
+            return validation_error("unsupported --stages value")
+        if (
+            not stages.intersection({"stable", "all"})
+            and arguments.ops is None
+            and arguments.op_list_file is None
+        ):
+            return validation_error(
+                "the native operator catalog only contains stable operators"
+            )
     if arguments.min_speedup is not None and (
         not math.isfinite(arguments.min_speedup)
         or arguments.min_speedup <= 0.0
@@ -1859,7 +2686,9 @@ def _run_main() -> int:
     failed = False
     preflight_result: dict[str, Any] | None = None
     preflight_default = bool(
-        adapter is not None and getattr(adapter, "PREFLIGHT_BY_DEFAULT", False)
+        not arguments.batch
+        and adapter is not None
+        and getattr(adapter, "PREFLIGHT_BY_DEFAULT", False)
     )
     should_run_preflight = (
         preflight_default
@@ -1898,32 +2727,101 @@ def _run_main() -> int:
             lambda status: status == "passed",
         )
     )
-    completed_count = 0
-    if not failed:
-        for suite in suites:
-            for operator in suite_operators[suite]:
-                completed_count += 1
-                print(
-                    f"[{completed_count}/{total}] {suite} {operator}",
-                    flush=True,
+    batch_env = {}
+    if arguments.batch:
+        batch_env = report_environment(
+            ROOT,
+            build_dir,
+            arguments.platform,
+            device_environment(arguments.platform, None, adapter=adapter),
+            getattr(adapter, "REPORT_DEVICE", arguments.platform),
+        )
+        print(
+            f"{GREEN}[INFO]{NC} Testing {len(operators)} operators ...",
+            flush=True,
+        )
+        # Remove this run's old artifacts, including optional logs left by a
+        # previous --dump-output invocation.
+        for operator in operators:
+            directory = arguments.output_dir / operator
+            directory.mkdir(parents=True, exist_ok=True)
+            for name in (
+                "accuracy_result.json",
+                "performance_result.log",
+                "accuracy_stdout.log",
+                "accuracy_stderr.log",
+                "performance_stdout.log",
+                "performance_stderr.log",
+            ):
+                (directory / name).unlink(missing_ok=True)
+        try:
+            if not failed:
+                results, worker_failed = run_batch(
+                    {
+                        "output": arguments.output_dir,
+                        "platform": arguments.platform,
+                        "environment": environment,
+                        "build_dir": build_dir,
+                        "suite_operators": suite_operators,
+                        "timeout": timeout,
+                        "manifest_operators": manifest_operators,
+                        "configuration": build_configuration,
+                        "dump_output": arguments.dump_output,
+                    },
+                    operators,
+                    arguments.gpu_ids,
                 )
-                result = run_one(
-                    build_dir=build_dir,
-                    operator=operator,
-                    suite=suite,
-                    platform=arguments.platform,
-                    environment=environment,
-                    timeout=timeout,
-                    verbose=arguments.verbose,
-                    manifest_operators=manifest_operators,
-                    configuration=build_configuration,
-                    adapter=adapter,
+                failed = worker_failed or any(
+                    not status_is_success(task["status"])
+                    for tasks in results.values()
+                    for suite, task in tasks.items()
+                    if suite in suites
                 )
-                results.setdefault(operator, {})[suite] = result
-                status = result["status"]
-                duration = result["duration_seconds"]
-                print(f"  {status}: {duration:.2f}s", flush=True)
-                failed = failed or not status_is_success(status)
+        except BaseException:
+            finalize = (
+                None if adapter is None else getattr(adapter, "finalize", None)
+            )
+            if finalize is not None:
+                finalize(
+                    results=results,
+                    suite_operators=suite_operators,
+                    suites=suites,
+                    state=platform_state,
+                    min_speedup=arguments.min_speedup,
+                    preflight_passed=False,
+                )
+            raise
+        finally:
+            write_batch_summary(
+                arguments.output_dir, batch_env, arguments.gpu_ids
+            )
+    else:
+        completed_count = 0
+        if not failed:
+            for suite in suites:
+                for operator in suite_operators[suite]:
+                    completed_count += 1
+                    print(
+                        f"[{completed_count}/{total}] {suite} {operator}",
+                        flush=True,
+                    )
+                    result = run_one(
+                        build_dir=build_dir,
+                        operator=operator,
+                        suite=suite,
+                        platform=arguments.platform,
+                        environment=environment,
+                        timeout=timeout,
+                        verbose=arguments.verbose,
+                        manifest_operators=manifest_operators,
+                        configuration=build_configuration,
+                        adapter=adapter,
+                    )
+                    results.setdefault(operator, {})[suite] = result
+                    status = result["status"]
+                    duration = result["duration_seconds"]
+                    print(f"  {status}: {duration:.2f}s", flush=True)
+                    failed = failed or not status_is_success(status)
 
     preflight_passed = (
         preflight_result is None or preflight_result["status"] == "passed"
@@ -2027,6 +2925,8 @@ def _run_main() -> int:
             return 2
         print(f"summary: {output}")
 
+    if arguments.batch:
+        print(f"{GREEN}[INFO]{NC} Test completed.", flush=True)
     return final_exit_code
 
 
@@ -2041,6 +2941,9 @@ def main() -> int:
         signal.signal(signum, handle_termination)
     try:
         return _run_main()
+    except KeyboardInterrupt:
+        print("[WARN] Interrupted. Cleanup done.", file=sys.stderr)
+        return 130
     except _TerminationSignal as termination:
         exit_code = 128 + termination.signum
         requested_output = preliminary_output_argument(sys.argv[1:])

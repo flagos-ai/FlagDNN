@@ -82,15 +82,11 @@ tools/install.sh \
 在与编译时一致的 Python 环境中执行：
 
 ```bash
-set -o pipefail
 python3 tools/run_tests.py \
     --platform nvidia \
-    --device 0 \
-    --suites functional,benchmark \
-    --no-preflight \
-    --verbose \
-    --output build/nvidia/run-tests.json \
-    2>&1 | tee build/nvidia/run-tests.log
+    --gpus 1,2 \
+    --dump-output \
+    --output-dir logs_result_20260918_flagdnn
 ```
 
 测试细节见[功能与性能验证](docs/testing.md)
@@ -157,15 +153,11 @@ tools/install.sh \
 #### 批量测试
 
 ```bash
-set -o pipefail
 python3 tools/run_tests.py \
     --platform hygon \
-    --device 0 \
-    --suites functional,benchmark \
-    --no-preflight \
-    --verbose \
-    --output build/hygon/run-tests.json \
-    2>&1 | tee build/hygon/run-tests.log
+    --gpus 1,2 \
+    --dump-output \
+    --output-dir logs_result_20260918_flagdnn
 ```
 
 ### Iluvatar（天数智芯）
@@ -234,15 +226,11 @@ tools/install.sh \
 #### 批量测试
 
 ```bash
-set -o pipefail
 python3 tools/run_tests.py \
     --platform iluvatar \
-    --device 0 \
-    --suites functional,benchmark \
-    --no-preflight \
-    --verbose \
-    --output build/iluvatar/run-tests.json \
-    2>&1 | tee build/iluvatar/run-tests.log
+    --gpus 1,2 \
+    --dump-output \
+    --output-dir logs_result_20260918_flagdnn
 ```
 
 CoreX cuDNN 不支持的 reference case 会记录结构化 `SKIP`，应结合 JSON 汇总中的
@@ -328,18 +316,16 @@ tools/install.sh \
 在与编译时一致的 Python 环境中执行：
 
 ```bash
-set -o pipefail
 python3 tools/run_tests.py \
     --platform thead \
-    --device 0 \
-    --suites functional,benchmark \
-    --no-preflight \
-    --verbose \
-    --output build/thead/psum-report/summary.json \
-    2>&1 | tee build/thead/run-tests.log
+    --gpus 1,2 \
+    --dump-output \
+    --output-dir logs_result_20260918_flagdnn
 ```
 
-汇总查看数据
+如需使用原有 `psum_text`，改用 `--output build/thead/psum-report/summary.json`
+串行兼容模式（不传 `--gpus`、`--dump-output` 或 `--output-dir`）：
+
 ```bash
 ./tools/psum_text /path/to/FlagDNN/build/thead/psum-report/
 ```
@@ -416,18 +402,16 @@ tools/install.sh \
 #### 批量测试
 
 ```bash
-set -o pipefail
 python3 tools/run_tests.py \
     --platform mthreads \
-    --device 0 \
-    --suites functional,benchmark \
-    --no-preflight \
-    --verbose \
-    --output build/mthreads/psum-report/summary.json \
-    2>&1 | tee build/mthreads/run-tests.log
+    --gpus 1,2 \
+    --dump-output \
+    --output-dir logs_result_20260918_flagdnn
 ```
 
-汇总查看数据
+如需使用原有 `psum_text`，改用 `--output build/mthreads/psum-report/summary.json`
+串行兼容模式（不传 `--gpus`、`--dump-output` 或 `--output-dir`）：
+
 ```bash
 ./tools/psum_text /path/to/FlagDNN/build/mthreads/psum-report/
 ```
@@ -508,15 +492,11 @@ tools/install.sh \
 #### 批量测试
 
 ```bash
-set -o pipefail
 python3 tools/run_tests.py \
     --platform ascend \
-    --device 0 \
-    --suites functional,benchmark \
-    --no-preflight \
-    --verbose \
-    --output build/ascend/run-tests.json \
-    2>&1 | tee build/ascend/run-tests.log
+    --gpus 1,2 \
+    --dump-output \
+    --output-dir logs_result_20260918_flagdnn
 ```
 
 更多测试说明见[功能与性能验证](docs/testing.md)。
