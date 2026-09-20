@@ -5,6 +5,7 @@
 #include "functional/runner_support.hpp"
 #include "reference/cpu/pointwise.hpp"
 #include <cstring>
+#include <stdexcept>
 namespace flagdnn::iluvatar::validation::functional {
 using Bytes = std::vector<std::uint8_t>;
 inline Bytes raw_pattern(const testing::TestTensor &tensor,
@@ -30,6 +31,31 @@ inline std::size_t broadcast_index(std::size_t logical,
     stride *= extent;
   }
   return result;
+}
+inline HostReference binary_cpu_reference(const CasePlan &plan,
+                                          flagdnnPointwiseMode_t mode) {
+  // Keep this policy local: extending the shared CPU library must not change
+  // the reference selected for other Iluvatar operators.
+  switch (mode) {
+  case FLAGDNN_POINTWISE_DIV:
+  case FLAGDNN_POINTWISE_POW:
+  case FLAGDNN_POINTWISE_MOD:
+  case FLAGDNN_POINTWISE_CMP_EQ:
+    break;
+  default:
+    return {};
+  }
+  if (plan.inputs.size() != 2 || plan.outputs.size() != 1)
+    throw std::invalid_argument("CPU pointwise fallback requires two inputs");
+  return [plan, mode](const auto &inputs) {
+    if (inputs.size() != 2)
+      throw std::invalid_argument("CPU pointwise fallback input count mismatch");
+    return std::vector<std::vector<float>>{
+        reference::cpu::evaluate_binary_pointwise(
+            mode, inputs[0], plan.inputs[0].tensor.dimensions,
+            inputs[1], plan.inputs[1].tensor.dimensions,
+            plan.outputs[0].tensor.dimensions)};
+  };
 }
 inline void run_integer_case(FunctionalSuite &suite, const CasePlan &plan,
                              flagdnnPointwiseMode_t mode, std::int32_t alpha,

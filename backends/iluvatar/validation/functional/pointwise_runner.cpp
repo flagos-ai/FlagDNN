@@ -186,7 +186,9 @@ int run_pointwise_functional_test(int argc, char **argv,
         [&suite, &test_case] {
           return build_flagdnn_pointwise(suite.handle(), test_case);
         },
-        [&test_case] { return build_pointwise_reference(test_case); });
+        [&test_case] { return build_pointwise_reference(test_case); },
+        {}, false,
+        functional::binary_cpu_reference(plan, test_case.mode));
   }
   return suite.finish();
 }

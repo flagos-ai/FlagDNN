@@ -670,11 +670,14 @@ void FunctionalSuite::run(const CasePlan &plan,
                           const BuildExecutable &build_production,
                           const BuildExecutable &build_reference,
                           const HostReference &host_reference,
-                          bool probe_reference) {
+                          bool probe_reference,
+                          const HostReference &cpu_fallback) {
   if (finished_ || plan.operation != operation_ || plan.case_name.empty() ||
       plan.outputs.empty()) {
     throw std::invalid_argument("functional case plan is invalid");
   }
+  // CPU fallback is accuracy-only. Benchmark still requires a GPU reference.
+  const bool can_fallback = !benchmark_ && static_cast<bool>(cpu_fallback);
   bool qualified = false, candidate = false, run_reference = false;
   std::string skip_reason;
   if (probe_reference) {
@@ -723,7 +726,8 @@ void FunctionalSuite::run(const CasePlan &plan,
       stream_.synchronize();
 
     } catch (const CorexCudnnStatusError &error) {
-      if (!cudnn_status_is_runtime_capability(error.status()) || qualified) {
+      if (!cudnn_status_is_runtime_capability(error.status()) ||
+          (qualified && !can_fallback)) {
         throw;
       }
       run_reference = false;
@@ -733,7 +737,7 @@ void FunctionalSuite::run(const CasePlan &plan,
       const std::string_view detail(error.what());
       const bool sdk_not_supported =
           detail.find("not presently supported") != std::string_view::npos;
-      if (qualified || !candidate || !sdk_not_supported) {
+      if (!sdk_not_supported || (!can_fallback && (qualified || !candidate))) {
         throw;
       }
       run_reference = false;
@@ -742,14 +746,17 @@ void FunctionalSuite::run(const CasePlan &plan,
     }
   }
 
+  const HostReference &accuracy_reference =
+      can_fallback && !run_reference && !host_reference
+          ? cpu_fallback : host_reference;
   std::vector<std::vector<float>> host_expected;
-  if (host_reference) {
+  if (accuracy_reference) {
     std::vector<std::vector<float>> host_inputs;
     for (const auto &input : inputs) {
       host_inputs.push_back(
           gather(read_physical(input, stream_), input.specification));
     }
-    host_expected = host_reference(host_inputs);
+    host_expected = accuracy_reference(host_inputs);
     if (host_expected.size() != plan.outputs.size()) {
       throw std::runtime_error("CPU reference output count mismatch");
     }
@@ -766,7 +773,7 @@ void FunctionalSuite::run(const CasePlan &plan,
         read_physical(production_outputs[index], stream_);
     require_padding_unchanged("FlagDNN", production_physical,
                               plan.outputs[index].tensor);
-    if (host_reference) {
+    if (accuracy_reference) {
       const auto &specification = plan.outputs[index];
       const auto bytes =
           encode(host_expected[index], specification.tensor.data_type);
@@ -830,7 +837,7 @@ void FunctionalSuite::run(const CasePlan &plan,
       compare(gather(actual, plan.outputs[i].tensor),
               gather(expected, plan.outputs[i].tensor), plan.outputs[i],
               plan.case_name);
-      if (host_reference) {
+      if (accuracy_reference) {
         const auto bytes =
             encode(host_expected[i], plan.outputs[i].tensor.data_type);
         compare(gather(actual, plan.outputs[i].tensor),
@@ -857,13 +864,15 @@ void FunctionalSuite::run(const CasePlan &plan,
       std::cout << "]}" << std::endl;
     }
   }
-  if (host_reference && !benchmark_) {
+  if (accuracy_reference && !benchmark_) {
     if (run_reference)
       std::cout << plan.case_name << ": FlagDNN Graph vs CoreX cuDNN PASS"
                 << std::endl;
     ++reference_executed_;
-    std::cout << plan.case_name << ": FlagDNN Graph vs CPU reference PASS"
-              << std::endl;
+    std::cout << plan.case_name << ": FlagDNN Graph vs CPU reference PASS";
+    if (!host_reference && can_fallback)
+      std::cout << " fallback_reason=" << skip_reason;
+    std::cout << std::endl;
     return;
   }
   if (run_reference) {

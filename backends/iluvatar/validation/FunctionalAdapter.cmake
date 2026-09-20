@@ -119,6 +119,20 @@ target_link_libraries(flagdnn_test_iluvatar_adapter PUBLIC
 flagdnn_enable_warnings(flagdnn_test_iluvatar_adapter)
 
 if(FLAGDNN_BUILD_TESTS)
+  add_executable(flagdnn_test_iluvatar_cpu_fallback
+    functional/test_cpu_fallback.cpp)
+  target_link_libraries(flagdnn_test_iluvatar_cpu_fallback PRIVATE
+    flagdnn_test_iluvatar_adapter)
+  add_dependencies(flagdnn_test_iluvatar_cpu_fallback flagdnn_backend_iluvatar)
+  flagdnn_enable_warnings(flagdnn_test_iluvatar_cpu_fallback)
+  add_test(NAME integration.iluvatar.cpu_fallback
+    COMMAND flagdnn_test_iluvatar_cpu_fallback
+      "${FLAGDNN_CODEGEN_PYTHON}" "${FLAGDNN_CODEGEN_COMPILER}")
+  set_tests_properties(integration.iluvatar.cpu_fallback PROPERTIES
+    ENVIRONMENT
+      "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_iluvatar>"
+    LABELS "integration;iluvatar;correctness;cpu-reference"
+    RUN_SERIAL TRUE TIMEOUT 120)
   get_filename_component(_flagdnn_iluvatar_cudnn_library_directory
     "${FLAGDNN_ILUVATAR_RESOLVED_CUDNN_LIBRARY}" DIRECTORY)
   flagdnn_register_functional_suite(

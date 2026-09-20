@@ -84,6 +84,14 @@ vendor-reference 功能测试标记为 `hipdnn`，对应 benchmark 仍结构化 
 使用 6 组相同形状、标量、右对齐和多轴广播 case 与 cuDNN Graph 对照。该 suite 只
 证明 CPU semantic oracle，不执行 FlagDNN 生产 backend，也不产生性能结论。
 
+Iluvatar 的 `div`、`pow`、`mod`、`cmp_eq` 功能测试在 CoreX cuDNN 能力表
+标记不支持，或执行时返回 `CUDNN_STATUS_NOT_SUPPORTED` 时，使用现有的
+`reference/cpu` 实现校验 FlagDNN GPU 输出；有可用的 cuDNN 对照时仍优先使用它。
+CPU 输入与 GPU 使用相同的 dtype 量化值，并按逻辑布局处理广播。
+回退成功计为功能测试通过，日志保留 `fallback_reason`；数值不匹配及其他
+cuDNN 错误仍然失败。其他算子的对照策略和性能测试的跳过策略保持不变，
+不将 CPU reference 用作性能基线。
+
 ## 4. CMake 装配顺序
 
 根 `CMakeLists.txt` 的顺序固定为：

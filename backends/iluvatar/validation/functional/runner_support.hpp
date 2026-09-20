@@ -146,7 +146,8 @@ public:
   void run(const CasePlan &plan, const BuildExecutable &build_production,
            const BuildExecutable &build_reference,
            const HostReference &host_reference = {},
-           bool probe_reference = false);
+           bool probe_reference = false,
+           const HostReference &cpu_fallback = {});
   void skip_benchmark_case(const CasePlan &plan, std::string_view reason);
   void run_raw(const CasePlan &plan, const BuildExecutable &build_production,
                const std::vector<std::vector<std::uint8_t>> &inputs,

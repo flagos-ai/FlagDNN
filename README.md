@@ -233,8 +233,7 @@ python3 tools/run_tests.py \
     --output-dir logs_result_20260918_flagdnn
 ```
 
-CoreX cuDNN 不支持的 reference case 会记录结构化 `SKIP`，应结合 JSON 汇总中的
-覆盖情况和跳过原因解读结果。更多测试说明见[功能与性能验证](docs/testing.md)。
+更多测试说明见[功能与性能验证](docs/testing.md)。
 
 ### THEAD（阿里平头哥）
 
