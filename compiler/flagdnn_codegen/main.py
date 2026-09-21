@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import importlib
 import json
@@ -11,6 +12,7 @@ import os
 from pathlib import Path
 import stat
 import sys
+import time
 from typing import Any
 
 # The compiler process is ephemeral and artifact caching is handled explicitly
@@ -156,6 +158,23 @@ def _dependency_fingerprint(dependency: str) -> str:
     return digest.hexdigest()
 
 
+def _read_dependency_digest(dependency: str, fingerprint: str) -> str:
+    content = hashlib.sha256()
+    with open(dependency, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            content.update(chunk)
+    if _dependency_fingerprint(dependency) != fingerprint:
+        raise _IdentitySnapshotChanged
+    return content.hexdigest()
+
+
+# A compiler subprocess is short-lived. Reuse content only within this process,
+# with all lstat/link/stat fields in the key, and never cache a racing read.
+_cached_dependency_digest = functools.lru_cache(maxsize=4096)(
+    _read_dependency_digest
+)
+
+
 def _dependency_snapshots(
     dependencies: list[str],
 ) -> list[dict[str, str]]:
@@ -171,11 +190,17 @@ def _dependency_snapshots(
             pass
         else:
             if stat.S_ISREG(status.st_mode):
-                content = hashlib.sha256()
-                with open(dependency, "rb") as source:
-                    for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                        content.update(chunk)
-                snapshot["content_sha256"] = content.hexdigest()
+                # Coarse filesystem timestamps can alias consecutive writes.
+                # Recent/future files must be read again even if their metadata
+                # looks unchanged; installed toolchains normally predate this.
+                stable = time.time_ns() - max(
+                    status.st_mtime_ns, status.st_ctime_ns
+                ) >= 2_000_000_000
+                digest = (_cached_dependency_digest if stable
+                          else _read_dependency_digest)
+                snapshot["content_sha256"] = digest(
+                    dependency, snapshot["fingerprint"]
+                )
         snapshots.append(snapshot)
     return snapshots
 

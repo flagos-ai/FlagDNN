@@ -475,12 +475,13 @@ def main() -> int:
     }
     adapter.configure_environment(environment, "1")
     require(
-        environment.get("HGGC_VISIBLE_DEVICES") == "1"
+        environment.get("CUDA_VISIBLE_DEVICES") == "1"
+        and environment.get("HGGC_VISIBLE_DEVICES") == "1"
         and environment.get("KEEP_ME") == "yes"
         and not any(
             variable in environment
             for variable in adapter.VISIBILITY_VARIABLES
-            if variable != "HGGC_VISIBLE_DEVICES"
+            if variable not in {"CUDA_VISIBLE_DEVICES", "HGGC_VISIBLE_DEVICES"}
         )
         and "FLAGDNN_ADD_CASE" not in environment
         and "FLAGDNN_BENCHMARK_CASE" not in environment,
@@ -488,8 +489,25 @@ def main() -> int:
     )
     metadata = adapter.preflight_metadata(environment)
     require(
-        metadata == {"visibility_masks": {"HGGC_VISIBLE_DEVICES": "1"}},
+        metadata == {"visibility_masks": {
+            "CUDA_VISIBLE_DEVICES": "1", "HGGC_VISIBLE_DEVICES": "1",
+        }},
         "THead preflight visibility metadata is incorrect",
+    )
+
+    # Each worker starts from the coordinator's first-device environment.
+    # Re-selection must replace both aliases rather than inherit GPU 0.
+    coordinator = {"CUDA_VISIBLE_DEVICES": "0", "HGGC_VISIBLE_DEVICES": "0"}
+    for device in ("0", "1"):
+        worker = runner.device_environment("thead", device, coordinator, adapter)
+        require(
+            worker["CUDA_VISIBLE_DEVICES"] == device
+            and worker["HGGC_VISIBLE_DEVICES"] == device,
+            "THead worker retained the coordinator's device mask",
+        )
+    require(
+        coordinator == {"CUDA_VISIBLE_DEVICES": "0", "HGGC_VISIBLE_DEVICES": "0"},
+        "THead worker mutated its shared base environment",
     )
 
     case = "add_perf_fp32_1x1x1024_by_1x1x1024"

@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #if defined(FLAGDNN_HAS_ASCEND_TARGET_POLICY)
@@ -1039,15 +1040,63 @@ reported_dependency_snapshot(const CompilerIdentityResponse &response) {
   return snapshot;
 }
 
+bool dependency_metadata_settled(const std::filesystem::path &path) {
+  struct stat link_status {};
+  struct stat status {};
+  struct timespec now {};
+  if (::lstat(path.c_str(), &link_status) != 0 ||
+      ::stat(path.c_str(), &status) != 0 ||
+      ::clock_gettime(CLOCK_REALTIME, &now) != 0 ||
+      !S_ISREG(status.st_mode)) {
+    return false;
+  }
+  // Filesystems may report sub-second writes with coarse ctime precision.
+  // Hash recent/future files on every query until that collision window has
+  // passed. Both the followed target and a possible symlink must be settled.
+  const auto settled = [&now](const struct timespec &value) {
+    return value.tv_sec < now.tv_sec - 2 ||
+           (value.tv_sec == now.tv_sec - 2 && value.tv_nsec <= now.tv_nsec);
+  };
+#if defined(__APPLE__)
+  return settled(link_status.st_mtimespec) &&
+         settled(link_status.st_ctimespec) && settled(status.st_mtimespec) &&
+         settled(status.st_ctimespec);
+#else
+  return settled(link_status.st_mtim) && settled(link_status.st_ctim) &&
+         settled(status.st_mtim) && settled(status.st_ctim);
+#endif
+}
+
 bool reported_dependency_contents_match(
-    const CompilerIdentityResponse &response) {
+    const CompilerIdentityResponse &response,
+    const CompilerDependencyContents &previous,
+    CompilerDependencyContents &verified) {
   for (const auto &entry : response.snapshots) {
     if (entry.content_sha256.empty()) {
       continue;
     }
     try {
-      if (sha256_file(entry.path) != entry.content_sha256) {
+      const std::string fingerprint_before = dependency_fingerprint(entry.path);
+      if (fingerprint_before != entry.fingerprint) {
         return false;
+      }
+      const bool settled = dependency_metadata_settled(entry.path);
+      const auto cached = previous.find(entry.path);
+      const std::string content =
+          settled && cached != previous.end() &&
+                  cached->second.fingerprint == fingerprint_before
+              ? cached->second.sha256
+              : sha256_file(entry.path);
+      // Never seed the memo from a compiler-reported digest, or from bytes
+      // read while a dependency was changing. A final whole-set snapshot in
+      // query_compiler_identity also covers changes between individual files.
+      if (content != entry.content_sha256 ||
+          dependency_fingerprint(entry.path) != fingerprint_before) {
+        return false;
+      }
+      if (settled) {
+        verified.emplace(entry.path,
+                         CompilerDependencyContent{fingerprint_before, content});
       }
     } catch (const std::exception &) {
       return false;
@@ -1147,8 +1196,10 @@ query_compiler_identity(RuntimeContext &context,
         dependencies_before != reported_dependency_snapshot(response)) {
       continue;
     }
+    CompilerDependencyContents verified_contents;
     if (response.has_snapshots &&
-        !reported_dependency_contents_match(response)) {
+        !reported_dependency_contents_match(
+            response, context.compiler_dependency_contents_, verified_contents)) {
       continue;
     }
     const std::string snapshot_after = compiler_identity_snapshot(context);
@@ -1159,6 +1210,9 @@ query_compiler_identity(RuntimeContext &context,
       continue;
     }
 
+    // Replace rather than accumulate: storage is bounded by the current
+    // response (whose dependency count is validated during parsing).
+    context.compiler_dependency_contents_ = std::move(verified_contents);
     if (response.dependencies_complete && response.has_snapshots) {
       context.compiler_identity_snapshot_ = snapshot_after;
       context.compiler_identity_dependencies_ =

@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -22,6 +23,14 @@
 namespace flagdnn::native {
 
 struct ArtifactPackage;
+
+struct CompilerDependencyContent {
+  std::string fingerprint;
+  std::string sha256;
+};
+
+using CompilerDependencyContents =
+    std::map<std::filesystem::path, CompilerDependencyContent>;
 
 // This exception is deliberately narrower than a generic compiler failure.
 // Only a positive ENOENT result from posix_spawnp is classified as the
@@ -106,6 +115,10 @@ private:
   std::vector<std::filesystem::path> compiler_identity_dependencies_;
   std::string compiler_identity_dependencies_snapshot_;
   std::string compiler_identity_;
+  // Native-computed hashes for only the last accepted dependency set. Full
+  // fingerprints include inode, ctime, and symlink state; entries are never
+  // shared between handles or persisted to disk.
+  CompilerDependencyContents compiler_dependency_contents_;
 };
 
 class Executable {

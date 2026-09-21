@@ -182,6 +182,7 @@ void RuntimeContext::set_compiler(std::string executable, std::string compiler,
   compiler_identity_dependencies_.clear();
   compiler_identity_dependencies_snapshot_.clear();
   compiler_identity_.clear();
+  compiler_dependency_contents_.clear();
 }
 
 std::unique_ptr<BackendExecutable>

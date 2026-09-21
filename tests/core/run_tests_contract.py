@@ -773,12 +773,178 @@ else:
             )
 
 
+def check_batch_cache_environment(runner) -> None:
+    """Check cache and THead device policy through workers and CTest."""
+    with tempfile.TemporaryDirectory(prefix="flagdnn-batch-cache-") as tmp:
+        root = Path(tmp)
+        build = root / "build"
+        build.mkdir()
+        fixture = root / "cache_case.py"
+        fixture.write_text("""import json, os, sys, time
+from pathlib import Path
+print('CACHE_ENV=' + json.dumps(os.environ.get('FLAGDNN_CACHE_PATH')), flush=True)
+cuda_mask = os.environ.get('CUDA_VISIBLE_DEVICES')
+print('DEVICE_ENV=' + json.dumps({
+    'CUDA_VISIBLE_DEVICES': cuda_mask,
+    'HGGC_VISIBLE_DEVICES': os.environ.get('HGGC_VISIBLE_DEVICES'),
+    # Model the PPU driver's CUDA mask for process-local device zero.
+    'simulated_physical_device': (cuda_mask or '0').split(',')[0],
+}), flush=True)
+barrier = os.environ.get('FLAGDNN_CONTRACT_DEVICE_BARRIER')
+if barrier:
+    barrier = Path(barrier)
+    (barrier / sys.argv[1]).touch()
+    deadline = time.monotonic() + 20
+    while not all((barrier / operator).is_file() for operator in ('add', 'sub')):
+        if time.monotonic() >= deadline:
+            raise RuntimeError('both GPU workers must start before either exits')
+        time.sleep(0.01)
+time.sleep(0.05)
+print(sys.argv[1] + '_fp32: reference PASS', flush=True)
+print('FLAGDNN_' + sys.argv[1].upper() +
+      '_FUNCTIONAL: PASS cases=1 executed=1 skipped=0', flush=True)
+""")
+        (build / "CMakeCache.txt").write_text(
+            "FLAGDNN_BACKENDS:STRING=nvidia;thead\n"
+        )
+        tests = [
+            {
+                "name": f"functional.{platform}.{operator}",
+                "command": [sys.executable, str(fixture), operator],
+                "properties": [
+                    {"name": "WORKING_DIRECTORY", "value": str(root)}
+                ],
+            }
+            for platform in ("nvidia", "thead")
+            for operator in ("add", "sub")
+        ]
+        runner.isolated_ctest_directory(root / "inventory", tests)
+        shutil.copy(
+            root / "inventory" / "CTestTestfile.cmake",
+            build / "CTestTestfile.cmake",
+        )
+        environment = dict(os.environ)
+        environment.pop("FLAGDNN_CACHE_PATH", None)
+        default_cache = str(build / "cache" / "run_tests")
+        explicit_cache = str(root / "explicit cache")
+        for label, platform, configured, expected in (
+            ("default", "thead", None, default_cache),
+            ("repeat", "thead", None, default_cache),
+            ("empty", "thead", "", default_cache),
+            ("override", "thead", explicit_cache, explicit_cache),
+            ("other-platform", "nvidia", None, None),
+            ("other-override", "nvidia", explicit_cache, explicit_cache),
+        ):
+            output = root / label
+            worker_environment = dict(environment)
+            if configured is not None:
+                worker_environment["FLAGDNN_CACHE_PATH"] = configured
+            if label == "default":
+                # Force both native subprocesses to coexist: a quick first
+                # task must not consume the queue before worker 1 starts.
+                barrier = root / "device-barrier"
+                barrier.mkdir()
+                worker_environment.update(
+                    {
+                        "CUDA_VISIBLE_DEVICES": "7",
+                        "HGGC_VISIBLE_DEVICES": "6",
+                        "FLAGDNN_CONTRACT_DEVICE_BARRIER": str(barrier),
+                    }
+                )
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(runner.__file__).resolve()),
+                    "--build-dir", str(build),
+                    "--platform", platform,
+                    "--output-dir", str(output),
+                    "--ops", "add,sub",
+                    "--suites", "functional",
+                    "--gpus", "0,1",
+                    "--dump-output",
+                    "--color", "never",
+                ],
+                capture_output=True,
+                text=True,
+                env=worker_environment,
+                timeout=60,
+            )
+            require(
+                process.returncode == 0,
+                f"{label} batch failed: " + process.stdout + process.stderr,
+            )
+            for operator in ("add", "sub"):
+                log = (output / operator / "accuracy_stdout.log").read_text()
+                observed = re.findall(r"CACHE_ENV=(.*)", log)
+                require(
+                    len(observed) == 1 and json.loads(observed[0]) == expected,
+                    f"{label}/{operator} worker cache environment differs: "
+                    f"{observed!r} != {expected!r}",
+                )
+            if label == "default":
+                assigned = set()
+                for gpu in (0, 1):
+                    partition = json.loads(
+                        (output / f"summary{gpu}.json").read_text()
+                    )
+                    require(
+                        len(partition) == 1
+                        and not assigned.intersection(partition),
+                        "THead native tasks did not run on both GPU workers",
+                    )
+                    assigned.update(partition)
+                    operator = next(iter(partition))
+                    log = (
+                        output / operator / "accuracy_stdout.log"
+                    ).read_text()
+                    observed = re.findall(r"DEVICE_ENV=(.*)", log)
+                    expected_device = {
+                        "CUDA_VISIBLE_DEVICES": str(gpu),
+                        "HGGC_VISIBLE_DEVICES": str(gpu),
+                        "simulated_physical_device": str(gpu),
+                    }
+                    require(
+                        len(observed) == 1
+                        and json.loads(observed[0]) == expected_device,
+                        f"THead worker {gpu} native device mapping differs: "
+                        f"{observed!r} != {expected_device!r}",
+                    )
+                require(
+                    assigned == {"add", "sub"},
+                    "THead device-routing regression lost an operator",
+                )
+        # The serial compatibility mode keeps native cache policy unchanged.
+        process = subprocess.run(
+            [
+                sys.executable,
+                str(Path(runner.__file__).resolve()),
+                "--build-dir", str(build),
+                "--platform", "thead",
+                "--output", str(root / "legacy.json"),
+                "--ops", "add",
+                "--suites", "functional",
+                "--no-preflight",
+                "--verbose",
+            ],
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=60,
+        )
+        require(
+            process.returncode == 0 and "CACHE_ENV=null" in process.stdout,
+            "batch cache default leaked into serial mode: "
+            + process.stdout + process.stderr,
+        )
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         raise RuntimeError("usage: run_tests_contract.py RUN_TESTS_PY")
     runner = load_runner(Path(sys.argv[1]).resolve())
     check_legacy_summary(runner)
     check_batch_runner(runner)
+    check_batch_cache_environment(runner)
     hygon = runner.load_platform_adapter("hygon")
     ascend = runner.load_platform_adapter("ascend")
     nvidia = runner.load_platform_adapter("nvidia")

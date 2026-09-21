@@ -5,11 +5,12 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 import importlib.metadata
 from pathlib import Path
 import sys
 import sysconfig
-
+from time import time_ns
 
 
 def configure_triton_path(root: str | Path) -> None:
@@ -45,17 +46,48 @@ def configure_triton_path(root: str | Path) -> None:
     sys.path[:] = paths
 
 
+def _metadata_state(path: Path) -> tuple[int, ...] | None:
+    try:
+        status = path.stat()
+    except (FileNotFoundError, NotADirectoryError, PermissionError):
+        return None
+    return (
+        status.st_dev, status.st_ino, status.st_mode, status.st_size,
+        status.st_mtime_ns, status.st_ctime_ns,
+    )
+
+
+@lru_cache(maxsize=2048)
+def _distribution_name(path: Path, _state: tuple) -> str:
+    # Only cache the name used to select a distribution. The returned public
+    # Distribution still reads version, RECORD, and file existence normally.
+    return importlib.metadata.PathDistribution(path).metadata.get("Name", "").lower()
+
+
+def _current_distribution_name(path: Path) -> str:
+    # Include importlib's PKG-INFO fallback and directory identity. ctime/inode
+    # also catch replacement or same-size writes with the old mtime restored.
+    state = tuple(_metadata_state(item) for item in (
+        path, path / "METADATA", path / "PKG-INFO",
+    ))
+    # Some filesystems update ctime only once per clock tick. Re-read recent
+    # files so a same-size write with restored mtime cannot reuse that tick's
+    # cached name. Installed packages normally have much older timestamps.
+    cutoff = time_ns() - 2_000_000_000
+    if any(item is not None and max(item[-2:]) > cutoff for item in state):
+        return importlib.metadata.PathDistribution(path).metadata.get("Name", "").lower()
+    return _distribution_name(path, state)
+
+
 def ppu_distribution(
     root: Path,
 ) -> tuple[importlib.metadata.Distribution, Path]:
     """Select metadata from the same root as the imported Python package."""
     root = root.resolve(strict=True)
     candidates = [
-        distribution
+        importlib.metadata.PathDistribution(metadata)
         for metadata in sorted(root.glob("*.dist-info"))
-        for distribution in [importlib.metadata.PathDistribution(metadata)]
-        if distribution.metadata.get("Name", "").lower()
-        in {"triton", "flagtree"}
+        if _current_distribution_name(metadata) in {"triton", "flagtree"}
     ]
     if len(candidates) != 1:
         raise RuntimeError(

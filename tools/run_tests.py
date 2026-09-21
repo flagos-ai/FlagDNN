@@ -2575,6 +2575,13 @@ def _run_main() -> int:
             str(arguments.gpu_ids[0]) if arguments.batch else arguments.device,
             adapter=adapter,
         )
+        configure_batch = (
+            None
+            if adapter is None
+            else getattr(adapter, "configure_batch_environment", None)
+        )
+        if arguments.batch and configure_batch is not None:
+            configure_batch(environment, build_dir)
         if filter_registered:
             manifests = registered_manifests(
                 build_dir,

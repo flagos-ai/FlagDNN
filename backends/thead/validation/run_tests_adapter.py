@@ -123,7 +123,19 @@ def configure_environment(
         return
     for variable in VISIBILITY_VARIABLES:
         environment.pop(variable, None)
+    # The PPU CUDA compatibility stack (libalippu/PyTorch) reads the CUDA
+    # mask. Keep the HGGC spelling aligned for tools using the native API.
+    # Native tests and JIT code then consistently select logical device 0.
+    environment["CUDA_VISIBLE_DEVICES"] = device
     environment["HGGC_VISIBLE_DEVICES"] = device
+
+
+def configure_batch_environment(
+    environment: dict[str, str], build_dir: Path
+) -> None:
+    """Reuse native artifacts across suites, GPU workers, and batch runs."""
+    if not environment.get("FLAGDNN_CACHE_PATH"):
+        environment["FLAGDNN_CACHE_PATH"] = str(build_dir / "cache" / "run_tests")
 
 
 def preflight_tests(_suites: list[str] | tuple[str, ...]) -> set[str]:

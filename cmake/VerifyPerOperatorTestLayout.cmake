@@ -194,6 +194,7 @@ file(GLOB_RECURSE python_test_sources
 # Host contracts may inspect Python compiler/tooling code. Operator functional
 # tests and benchmarks remain native C++ entrypoints.
 list(REMOVE_ITEM python_test_sources
+  "${SOURCE_ROOT}/tests/core/compiler_identity_contract.py"
   "${SOURCE_ROOT}/tests/core/run_tests_contract.py"
   "${SOURCE_ROOT}/tests/core/kernel_registry_contract.py")
 if(python_test_sources)

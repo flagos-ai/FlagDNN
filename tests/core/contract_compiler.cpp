@@ -574,7 +574,13 @@ void identify(const Arguments &arguments) {
   metadata += "],\"schema_version\":1,\"snapshot_schema_version\":1,";
   metadata += "\"snapshots\":[";
   if (!dependency.empty()) {
-    metadata += "{\"content_sha256\":" + json_string(content_after) +
+    const char *forged_content =
+        std::getenv("FLAGDNN_CONTRACT_COMPILER_FORGED_CONTENT_SHA256");
+    const std::string reported_content =
+        forged_content != nullptr && forged_content[0] != '\0'
+            ? std::string(64, '0')
+            : content_after;
+    metadata += "{\"content_sha256\":" + json_string(reported_content) +
                 ",\"fingerprint\":" + json_string(fingerprint_after) +
                 ",\"path\":" + json_string(dependency.string()) + "}";
   }

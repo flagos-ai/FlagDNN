@@ -262,6 +262,9 @@ add_test(NAME core.test_architecture
     -P "${PROJECT_SOURCE_DIR}/cmake/VerifyPerOperatorTestLayout.cmake")
 
 if(FLAGDNN_CODEGEN_PYTHON)
+  add_test(NAME core.compiler_identity_contract
+    COMMAND "${FLAGDNN_CODEGEN_PYTHON}" -B
+      "${PROJECT_SOURCE_DIR}/tests/core/compiler_identity_contract.py")
   add_test(NAME core.kernel_registry_contract
     COMMAND "${FLAGDNN_CODEGEN_PYTHON}" -B
       "${PROJECT_SOURCE_DIR}/tests/core/kernel_registry_contract.py")

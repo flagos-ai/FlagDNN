@@ -24,6 +24,13 @@
 #include <thread>
 #include <vector>
 
+#if defined(__linux__)
+#include <sys/inotify.h>
+#include <unistd.h>
+
+#include <cerrno>
+#endif
+
 namespace {
 
 class TemporaryCache {
@@ -291,6 +298,172 @@ void require_legacy_identity_protocol(const char *compiler_executable,
   }
   (void)require_cache_identity_consistent(
       find_single_manifest(protocol_cache.path()));
+}
+
+
+#if defined(__linux__)
+class DependencyReadEvents {
+public:
+  explicit DependencyReadEvents(const std::filesystem::path &path) {
+    descriptor_ = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+    if (descriptor_ < 0) {
+      throw std::runtime_error("cannot observe compiler dependency reads");
+    }
+    // Watching closes as well keeps consecutive opens from coalescing.
+    if (inotify_add_watch(descriptor_, path.c_str(),
+                         IN_OPEN | IN_CLOSE_NOWRITE) < 0) {
+      close(descriptor_);
+      throw std::runtime_error("cannot watch compiler dependency reads");
+    }
+  }
+
+  ~DependencyReadEvents() { close(descriptor_); }
+
+  std::size_t take_open_count() {
+    std::size_t count = 0;
+    alignas(inotify_event) std::array<char, 4096> buffer{};
+    for (;;) {
+      const ssize_t size = read(descriptor_, buffer.data(), buffer.size());
+      if (size < 0 && errno == EINTR) {
+        continue;
+      }
+      if (size < 0 && errno == EAGAIN) {
+        return count;
+      }
+      if (size <= 0) {
+        throw std::runtime_error("cannot read dependency filesystem events");
+      }
+      for (std::size_t offset = 0; offset < static_cast<std::size_t>(size);) {
+        const auto &event =
+            *reinterpret_cast<const inotify_event *>(buffer.data() + offset);
+        if ((event.mask & IN_Q_OVERFLOW) != 0) {
+          throw std::runtime_error("dependency filesystem events overflowed");
+        }
+        if ((event.mask & IN_OPEN) != 0) {
+          ++count;
+        }
+        offset += sizeof(inotify_event) + event.len;
+      }
+    }
+  }
+
+private:
+  int descriptor_ = -1;
+};
+#endif
+
+void require_dependency_content_memo(const char *compiler_executable,
+                                     const char *compiler_entry,
+                                     const flagdnn::Graph &graph) {
+  TemporaryCache memo_cache;
+  const auto dependency = memo_cache.path() / "dependency";
+  const auto counter = memo_cache.path() / "identity-query-count";
+  write_identity_dependency(dependency, "resource-v1");
+  ScopedEnvironment dependency_environment(
+      "FLAGDNN_CONTRACT_COMPILER_IDENTITY_DEPENDENCY", dependency.string());
+  ScopedEnvironment counter_environment(
+      "FLAGDNN_CONTRACT_COMPILER_IDENTITY_COUNTER", counter.string());
+  flagdnn::Handle memo_handle("contract", 0);
+  memo_handle.set_compiler(compiler_executable, compiler_entry,
+                           memo_cache.path().string());
+
+#if defined(__linux__)
+  DependencyReadEvents reads(dependency);
+#endif
+  flagdnn::Executable first(memo_handle, graph);
+#if defined(__linux__)
+  (void)reads.take_open_count();
+#endif
+  {
+    ScopedEnvironment recent_environment("FLAGDNN_CONTRACT_MEMO_PROBE", "recent");
+    flagdnn::Executable recent(memo_handle, graph);
+#if defined(__linux__)
+    if (reads.take_open_count() != 4) {
+      throw std::runtime_error("recent dependency incorrectly reused digest");
+    }
+#endif
+  }
+  // Even nanosecond stat fields can have coarse filesystem precision. Only
+  // settled metadata is eligible for reuse, so immediate writes cannot alias.
+  std::this_thread::sleep_for(std::chrono::milliseconds(2100));
+  {
+    ScopedEnvironment mature_environment("FLAGDNN_CONTRACT_MEMO_PROBE", "mature");
+    flagdnn::Executable mature(memo_handle, graph);
+#if defined(__linux__)
+    (void)reads.take_open_count();
+#endif
+  }
+  {
+    // Changing an inherited environment value forces a new identity query.
+    ScopedEnvironment refresh_environment("FLAGDNN_CONTRACT_MEMO_PROBE", "1");
+    const auto queries_before = read_identity_query_count(counter);
+    flagdnn::Executable refreshed(memo_handle, graph);
+    if (read_identity_query_count(counter) != queries_before + 1) {
+      throw std::runtime_error("content memo suppressed identity refresh");
+    }
+#if defined(__linux__)
+    // The compiler reads the dependency three times: both snapshots and its
+    // identity. The native verifier must reuse its independently hashed value.
+    const auto opens = reads.take_open_count();
+    if (opens != 3) {
+      throw std::runtime_error("unchanged dependency was rehashed by native "
+                               "verifier; file opens=" +
+                               std::to_string(opens));
+    }
+#endif
+  }
+  {
+    ScopedEnvironment forged_content_environment(
+        "FLAGDNN_CONTRACT_COMPILER_FORGED_CONTENT_SHA256", "1");
+    const auto queries_before = read_identity_query_count(counter);
+    require_status(
+        [&] { flagdnn::Executable forged(memo_handle, graph); },
+        FLAGDNN_STATUS_COMPILATION_FAILED, "forged cached dependency digest");
+    if (read_identity_query_count(counter) != queries_before + 3 ||
+        count_manifests(memo_cache.path()) != 1) {
+      throw std::runtime_error("forged dependency digest did not fail closed");
+    }
+  }
+  flagdnn::Executable recovered(memo_handle, graph);
+#if defined(__linux__)
+  (void)reads.take_open_count();
+#endif
+  memo_handle.set_compiler(compiler_executable, compiler_entry,
+                           memo_cache.path().string());
+  flagdnn::Executable reconfigured(memo_handle, graph);
+#if defined(__linux__)
+  if (reads.take_open_count() != 4) {
+    throw std::runtime_error("set_compiler retained dependency content memo");
+  }
+#endif
+
+  const auto original_time = std::filesystem::last_write_time(dependency);
+  const auto replacement = memo_cache.path() / "replacement";
+  write_identity_dependency(replacement, "resource-v2");
+  std::filesystem::last_write_time(replacement, original_time);
+  std::filesystem::rename(replacement, dependency);
+  flagdnn::Executable replaced(memo_handle, graph);
+  if (count_manifests(memo_cache.path()) != 2) {
+    throw std::runtime_error("same-size dependency replacement reused digest");
+  }
+
+  std::filesystem::last_write_time(
+      dependency, std::filesystem::file_time_type::clock::now() +
+                      std::chrono::hours(1));
+  std::this_thread::sleep_for(std::chrono::milliseconds(2100));
+  flagdnn::Executable future_first(memo_handle, graph);
+#if defined(__linux__)
+  DependencyReadEvents future_reads(dependency);
+#endif
+  {
+    ScopedEnvironment future_environment("FLAGDNN_CONTRACT_MEMO_PROBE", "future");
+    flagdnn::Executable future_refreshed(memo_handle, graph);
+#if defined(__linux__)
+    if (future_reads.take_open_count() != 4) {
+      throw std::runtime_error("future-dated dependency incorrectly reused digest");
+    }
+#endif
+  }
 }
 
 } // namespace
@@ -800,6 +973,7 @@ int main(int argc, char **argv) {
 
     require_legacy_identity_protocol(argv[1], argv[2], graph, "digest-only");
     require_legacy_identity_protocol(argv[1], argv[2], graph, "files-only");
+    require_dependency_content_memo(argv[1], argv[2], graph);
 
     const std::size_t manifests_before_identity_failures =
         count_manifests(cache.path());

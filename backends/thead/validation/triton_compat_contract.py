@@ -5,17 +5,21 @@
 """Regression contracts for vendor/FlagTree identity and PPU JIT loading."""
 
 from pathlib import Path
+import importlib.metadata
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest import mock
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from triton_compat import install_cuda_jit_bridge, ppu_codegen_backend
+import triton_compat
+from triton_compat import install_cuda_jit_bridge, ppu_codegen_backend, ppu_distribution
 from TritonIdentityContract import IdentityError, _jit_backend, identify
 from preflight_environment import _probe_triton_jit
 
@@ -26,6 +30,7 @@ class CompatibilityContract(unittest.TestCase):
         info.mkdir()
         (info / "METADATA").write_text(f"Name: {name}\nVersion: {version}\n")
         (info / "RECORD").write_text(f"{info.name}/METADATA,,\n")
+        return info
 
     def test_vendor_and_flagtree_identity(self):
         for name, backend, version in (
@@ -40,6 +45,168 @@ class CompatibilityContract(unittest.TestCase):
                 self.metadata(root, other, version)
                 with self.assertRaisesRegex(RuntimeError, "exactly one"):
                     ppu_codegen_backend(root)
+
+    def test_repeated_selection_reads_unrelated_metadata_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.metadata(root, "flagtree", "0.6.0+ppu")
+            unrelated = self.metadata(root, "tensor", "1.0.0")
+            reads = []
+            original = importlib.metadata.PathDistribution.read_text
+
+            def read_text(distribution, filename):
+                if distribution._path == unrelated and filename == "METADATA":
+                    reads.append(filename)
+                return original(distribution, filename)
+
+            with mock.patch("triton_compat.time_ns", return_value=time.time_ns() + 3_000_000_000), \
+                    mock.patch.object(importlib.metadata.PathDistribution,
+                                      "read_text", read_text):
+                for _ in range(4):
+                    self.assertEqual(ppu_codegen_backend(root), "ppu")
+            self.assertEqual(len(reads), 1)
+
+    def test_metadata_change_with_restored_mtime_detects_duplicate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.metadata(root, "flagtree", "0.6.0+ppu")
+            unrelated = self.metadata(root, "tensor", "1.0.0") / "METADATA"
+            self.assertEqual(ppu_codegen_backend(root), "ppu")
+            previous = unrelated.stat()
+            unrelated.write_text("Name: triton\nVersion: 1.0.0\n")
+            os.utime(unrelated, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+            self.assertEqual(unrelated.stat().st_size, previous.st_size)
+            with self.assertRaisesRegex(RuntimeError, "exactly one"):
+                ppu_codegen_backend(root)
+
+    def test_recent_metadata_changes_are_observed_with_identical_stat(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.metadata(root, "flagtree", "0.6.0+ppu")
+            metadata = self.metadata(root, "tensor", "1.0.0") / "METADATA"
+            original = triton_compat._metadata_state
+            states = {}
+
+            def same_tick(path):
+                if path not in states:
+                    states[path] = original(path)
+                return states[path]
+
+            with mock.patch("triton_compat._metadata_state", side_effect=same_tick), \
+                    mock.patch("triton_compat.time_ns", return_value=time.time_ns()):
+                self.assertEqual(ppu_codegen_backend(root), "ppu")
+                metadata.write_text("Name: triton\nVersion: 1.0.0\n")
+                with self.assertRaisesRegex(RuntimeError, "exactly one"):
+                    ppu_codegen_backend(root)
+
+    def test_metadata_atomic_replacement_and_removal_are_observed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            selected = self.metadata(root, "triton", "3.5.0+ppu")
+            unrelated = self.metadata(root, "tensor", "1.0.0")
+            self.assertEqual(ppu_codegen_backend(root), "nvidia")
+            metadata = unrelated / "METADATA"
+            previous = metadata.stat()
+            replacement = root / "replacement"
+            replacement.write_text("Name: triton\nVersion: 1.0.0\n")
+            os.utime(replacement, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+            replacement.replace(metadata)
+            with self.assertRaisesRegex(RuntimeError, "exactly one"):
+                ppu_codegen_backend(root)
+            shutil.rmtree(unrelated)
+            self.assertEqual(ppu_codegen_backend(root), "nvidia")
+            shutil.rmtree(selected)
+            with self.assertRaisesRegex(RuntimeError, "exactly one"):
+                ppu_codegen_backend(root)
+
+    def test_distribution_names_are_read_after_directory_rename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = self.metadata(root, "flagtree", "0.6.0+ppu")
+            self.assertEqual(ppu_codegen_backend(root), "ppu")
+            renamed = root / "vendor-package.dist-info"
+            original.rename(renamed)
+            (renamed / "RECORD").write_text(f"{renamed.name}/METADATA,,\n")
+            self.assertEqual(ppu_codegen_backend(root), "ppu")
+            duplicate = root / "another-package.dist-info"
+            shutil.copytree(renamed, duplicate)
+            with self.assertRaisesRegex(RuntimeError, "exactly one"):
+                ppu_codegen_backend(root)
+
+    def test_metadata_fallback_addition_and_removal_are_observed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            selected = self.metadata(root, "triton", "3.5.0+ppu")
+            metadata = selected / "METADATA"
+            fallback = selected / "PKG-INFO"
+            fallback.write_text(metadata.read_text())
+            metadata.write_text("")
+            self.assertEqual(ppu_codegen_backend(root), "nvidia")
+            metadata.write_text("Name: tensor\nVersion: 3.5.0+ppu\n")
+            with self.assertRaisesRegex(RuntimeError, "exactly one"):
+                ppu_codegen_backend(root)
+            metadata.unlink()
+            (selected / "RECORD").write_text(f"{selected.name}/METADATA,,\n")
+            with self.assertRaisesRegex(RuntimeError, "metadata is missing"):
+                ppu_codegen_backend(root)
+            metadata.write_text("")
+            self.assertEqual(ppu_codegen_backend(root), "nvidia")
+            fallback.write_text("Name: tensor\nVersion: 3.5.0+ppu\n")
+            with self.assertRaisesRegex(RuntimeError, "exactly one"):
+                ppu_codegen_backend(root)
+
+    def test_root_and_metadata_symlink_retargeting_are_observed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp)
+            first, second = parent / "first", parent / "second"
+            first.mkdir()
+            second.mkdir()
+            self.metadata(first, "triton", "3.5.0+ppu")
+            selected = self.metadata(second, "flagtree", "0.6.0+ppu")
+            alias = parent / "selected"
+            alias.symlink_to(first, target_is_directory=True)
+            self.assertEqual(ppu_codegen_backend(alias), "nvidia")
+            alias.unlink()
+            alias.symlink_to(second, target_is_directory=True)
+            self.assertEqual(ppu_codegen_backend(alias), "ppu")
+            metadata = selected / "METADATA"
+            original = second / "metadata-first"
+            metadata.replace(original)
+            metadata.symlink_to(original)
+            self.assertEqual(ppu_codegen_backend(alias), "ppu")
+            replacement = second / "metadata-second"
+            replacement.write_text("Name: triton\nVersion: 3.5.0+ppu\n")
+            metadata.unlink()
+            metadata.symlink_to(replacement)
+            self.assertEqual(ppu_codegen_backend(alias), "nvidia")
+
+    def test_record_and_version_changes_remain_live(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp)
+            root = parent / "selected"
+            root.mkdir()
+            selected = self.metadata(root, "flagtree", "0.6.0+ppu")
+            distribution, metadata = ppu_distribution(root)
+            self.assertEqual(distribution.version, "0.6.0+ppu")
+            previous = metadata.stat()
+            metadata.write_text("Name: flagtree\nVersion: 0.6.0+cpu\n")
+            os.utime(metadata, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+            self.assertEqual(distribution.version, "0.6.0+cpu")
+            with self.assertRaisesRegex(RuntimeError, "PPU-qualified"):
+                ppu_distribution(root)
+            metadata.write_text("Name: flagtree\nVersion: 0.6.0+ppu\n")
+            record = selected / "RECORD"
+            previous = record.stat()
+            outside = parent / selected.name[3:]
+            outside.mkdir()
+            (outside / "METADATA").write_text(metadata.read_text())
+            record.write_text(f"../{outside.name}/METADATA,,\n")
+            os.utime(record, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+            self.assertEqual(record.stat().st_size, previous.st_size)
+            with self.assertRaisesRegex(RuntimeError, "outside configured root"):
+                ppu_distribution(root)
+            record.write_text(f"{selected.name}/METADATA,,\n")
+            self.assertEqual(ppu_codegen_backend(root), "ppu")
 
     def test_identity_rejects_foreign_package_before_import(self):
         with tempfile.TemporaryDirectory() as tmp:

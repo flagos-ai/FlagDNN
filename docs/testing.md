@@ -199,6 +199,19 @@ python3 tools/run_tests.py --dump-output \
 执行。批量模式默认运行两个 suite，单个命令超时为 4800 秒，可用 `--timeout`
 调整；只有显式传入 `--preflight` 才执行前置契约测试。
 
+THead 的每个 GPU worker 同时设置相同的 `CUDA_VISIBLE_DEVICES` 和
+`HGGC_VISIBLE_DEVICES`。当前 PPU CUDA 兼容驱动实际读取前者；原生测试与 JIT
+内部使用进程可见的逻辑设备 `0`，由掩码映射到 `--gpus` 分配的物理卡。
+控制台的 `[GPU n]` 是调度编号，不能单独作为物理设备使用情况的证据。
+
+THead 批量模式默认将编译 artifact 保存在 `<build-dir>/cache/run_tests`，在功能、
+性能 suite、多 GPU worker 和后续批次之间复用；非空 `FLAGDNN_CACHE_PATH` 可覆盖
+该目录，空值视为未配置。缓存不随结果目录清理，首次运行仍需编译，后续运行可以
+复用与当前编译器身份、设备和请求匹配的 artifact。所有精度 case、数值比较、
+warmup 和性能采样仍正常执行，不复用测试结果或性能数据。需要冷缓存对比时，将
+`FLAGDNN_CACHE_PATH` 指向新的空目录；其他平台和 `--output` 串行兼容模式的缓存
+策略不变。确认没有测试使用该目录后，可删除 `<build-dir>/cache/run_tests` 清理缓存。
+
 输出目录与 FlagBLAS 批量测试格式一致，项目环境字段改为 `flag_dnn`：
 
 ```text
