@@ -1,0 +1,51 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+DEB_HOST_GNU_TYPE ?= $(shell dpkg-architecture -qDEB_HOST_GNU_TYPE)
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
+BUILD_DIR = $(CURDIR)/obj-$(DEB_HOST_GNU_TYPE)
+TORCH_LIBRARY_DIR := $(shell python3 -c "import importlib.util, os; s = importlib.util.find_spec('torch'); print(os.path.join(os.path.dirname(s.origin), 'lib'))")
+CUDA_COMPAT_LIBRARY := $(shell readlink -f /usr/local/cuda/compat/libcuda.so.1 2>/dev/null)
+CUDA_COMPAT_PACKAGE := $(shell test -n "$(CUDA_COMPAT_LIBRARY)" && dpkg-query -S "$(CUDA_COMPAT_LIBRARY)" 2>/dev/null | cut -d: -f1 | head -1)
+DEB_PRIVATE_LIBRARY_DIRS ?= $(TORCH_LIBRARY_DIR):/usr/local/cuda/compat:/usr/local/cuda/lib64/stubs
+DEB_SHLIBDEPS_EXCLUDE_PACKAGES ?= libtriton-jit-nvidia $(CUDA_COMPAT_PACKAGE)
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	cmake -S . -B $(BUILD_DIR) -G Ninja \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_CUDA_FLAGS="-Xcompiler -fPIE" \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib/$(DEB_HOST_MULTIARCH) \
+		-DFLAGDNN_BACKENDS=nvidia \
+		-DFLAGDNN_BUILD_BENCHMARKS=OFF \
+		-DFLAGDNN_BUILD_TESTS=OFF \
+		-DFLAGDNN_CODEGEN_PYTHON=/usr/bin/python3 \
+		-DFLAGDNN_EXECUTION_ENGINE=libtriton_jit
+
+override_dh_auto_build:
+	cmake --build $(BUILD_DIR) --parallel
+
+override_dh_auto_install:
+	DESTDIR=$(CURDIR)/debian/tmp cmake --install $(BUILD_DIR)
+	find debian/tmp/usr/lib -name '*.so*' -type f \
+		-exec patchelf --remove-rpath {} \;
+
+override_dh_auto_test:
+	test -f $(BUILD_DIR)/src/libflagdnn.so
+	test -f $(BUILD_DIR)/backends/nvidia/libflagdnn_backend_nvidia.so
+
+override_dh_shlibdeps:
+	# Scan the backend plugin so its distro-owned dependencies, including the
+	# embedded Python ABI, are retained. Vendor libraries are resolved from the
+	# matching NVIDIA environment; TritonJIT is declared explicitly.
+	dh_shlibdeps -l$(DEB_PRIVATE_LIBRARY_DIRS) -- \
+		--ignore-missing-info \
+		$(addprefix -x,$(DEB_SHLIBDEPS_EXCLUDE_PACKAGES))
+
+override_dh_dwz:
+	@echo "Skipping dwz for CUDA/PyTorch-linked libraries"

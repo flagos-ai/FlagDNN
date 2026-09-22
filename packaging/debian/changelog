@@ -1,0 +1,21 @@
+flag-dnn (0.3.0-1) unstable; urgency=medium
+
+  * Align the packaging baseline with the 0.3.0 release line.
+
+ -- FlagOS Contributors <contact@flagos.io>  Thu, 17 Sep 2026 17:27:48 +0900
+
+flag-dnn (0.2.0-2) unstable; urgency=medium
+
+  * Replace the retired Python package with native runtime packages.
+  * Build the NVIDIA backend against system libtriton-jit-nvidia.
+  * Ship the complete installed SDK resources and CMake package files.
+  * Preserve the backend plugin's distro and Python ABI dependencies.
+  * Follow the upstream 0.2.0 core library ABI.
+
+ -- FlagOS Contributors <contact@flagos.io>  Fri, 07 Aug 2026 12:00:00 +0900
+
+flag-dnn (0.1.0-1) unstable; urgency=medium
+
+  * Initial Debian packaging.
+
+ -- FlagOS Contributors <contact@flagos.io>  Tue, 12 May 2026 12:00:00 +0000
