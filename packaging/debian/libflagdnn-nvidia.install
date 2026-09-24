@@ -1,0 +1,3 @@
+usr/lib/*/libflagdnn.so.[0-9]*
+usr/lib/*/libflagdnn_backend_nvidia.so.2*
+usr/share/flagdnn/

@@ -1,0 +1,4 @@
+usr/include/
+usr/lib/*/libflagdnn.so
+usr/lib/*/libflagdnn_backend_nvidia.so
+usr/lib/*/cmake/FlagDNN/
