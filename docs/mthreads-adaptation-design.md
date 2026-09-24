@@ -374,6 +374,14 @@ torch_musa 作为已记录版本的外部依赖。environment.json 至少包含�
 build-tree plugin 也使用独立的 flagdnn/mthreads 私有 JIT 目录，确保 build 和 install
 测试覆盖相同加载模型。
 
+MThreads 在生成私有 `standalone_compile.py` 时适配 descriptor 签名，以及缺少
+`translate_llvmir_to_mubin` 的 Triton 编译接口。旧接口不可调用时，只有缓存中按
+loader 优先级选中的 `.mubin`、`.o`、`.so` 或 `.llir` 非空且与本次
+`triton.compile()` 返回的 `ccinfo.asm` 内容一致，才跳过额外转换；没有匹配产物则
+明确报错。`.llir` 沿用 MUSA loader 的驱动 JIT 路径。旧接口仍可调用时保留原流程。
+这些适配只写入 FlagDNN 的私有副本，不修改外部 `libtriton_jit` 源码，也不改变其他
+backend 的 helper。
+
 私有复制前必须证明 JIT 的 helper 解析可重定位：library 应相对自身或显式的私有
 resource root 找到 scripts，不能继续硬编码 /usr/local/share 或原构建 prefix。被复制
 JIT 的 DT_RPATH/DT_RUNPATH 也不能含源码树、build tree 或绝对虚拟环境路径；不满足时
