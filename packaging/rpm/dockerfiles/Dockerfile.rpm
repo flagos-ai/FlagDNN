@@ -29,8 +29,9 @@ RUN rpmdev-setuptree
 COPY . /workspace/FlagDNN
 WORKDIR /workspace/FlagDNN
 
-RUN tar czf /root/rpmbuild/SOURCES/flag-dnn-0.2.0.tar.gz \
-        --transform 's,^[.],flag-dnn-0.2.0,' \
+RUN v=$(awk '/^Version:/{print $2}' packaging/rpm/specs/flag-dnn.spec) \
+    && tar czf /root/rpmbuild/SOURCES/flag-dnn-${v}.tar.gz \
+        --transform "s,^[.],flag-dnn-${v}," \
         --exclude='.git' --exclude='build' --exclude='debian-packages' \
         --exclude='rpm-packages' .
 
