@@ -97,6 +97,10 @@ flagdnn_mthreads_resolve_triton_jit(
   MUSA_ROOT "${FLAGDNN_MTHREADS_DEPENDENCIES_MUSA_ROOT_REALPATH}"
   PRIVATE_ROOT "${_flagdnn_mthreads_private_root}")
 
+# Regenerate the private helper and its embedded identity when inputs change.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  ${FLAGDNN_MTHREADS_JIT_INPUT_FILES})
+
 file(READ
   "${FLAGDNN_MTHREADS_DEPENDENCIES_ENVIRONMENT_REPORT}"
   _flagdnn_mthreads_environment_json)

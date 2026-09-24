@@ -646,6 +646,18 @@ set_tests_properties(
     TIMEOUT 120
     ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
 
+add_test(
+  NAME unit.mthreads.standalone_compile_patch
+  COMMAND
+    "${FLAGDNN_CODEGEN_PYTHON}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_standalone_compile_patch.py")
+set_tests_properties(
+  unit.mthreads.standalone_compile_patch
+  PROPERTIES
+    LABELS "unit;mthreads;compiler;contract"
+    TIMEOUT 60
+    ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+
 # Exercise the same neutral shape/dtype matrix in correctness and timing mode.
 # These tests supplement the large workloads in benchmark/common without
 # maintaining a second backend-specific list of tensor shapes.
