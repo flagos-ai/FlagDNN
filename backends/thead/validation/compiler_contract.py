@@ -115,7 +115,7 @@ def request(
 
         return {
             "schema_version": 3,
-            "flagdnn_version": "0.2.0",
+            "flagdnn_version": "0.3.0",
             "backend": "thead",
             "target": TARGET,
             "compiler_identity": identity,
@@ -197,7 +197,7 @@ def request(
         }[operation]
         return {
             "schema_version": 3,
-            "flagdnn_version": "0.2.0",
+            "flagdnn_version": "0.3.0",
             "backend": "thead",
             "target": TARGET,
             "compiler_identity": identity,
@@ -277,7 +277,7 @@ def request(
     }
     return {
         "schema_version": 3,
-        "flagdnn_version": "0.2.0",
+        "flagdnn_version": "0.3.0",
         "backend": "thead",
         "target": TARGET,
         "compiler_identity": identity,
@@ -377,7 +377,7 @@ def layout_request(
     }
     return {
         "schema_version": 3,
-        "flagdnn_version": "0.2.0",
+        "flagdnn_version": "0.3.0",
         "backend": "thead",
         "target": TARGET,
         "compiler_identity": identity,
@@ -434,7 +434,7 @@ def reduction_request(
     }[operation]
     return {
         "schema_version": 3,
-        "flagdnn_version": "0.2.0",
+        "flagdnn_version": "0.3.0",
         "backend": "thead",
         "target": TARGET,
         "compiler_identity": identity,
@@ -569,7 +569,7 @@ def batchnorm_request(
         }
     return {
         "schema_version": 3,
-        "flagdnn_version": "0.2.0",
+        "flagdnn_version": "0.3.0",
         "backend": "thead",
         "target": TARGET,
         "compiler_identity": identity,
@@ -665,7 +665,7 @@ def normalization_request(
     )
     return {
         "schema_version": 3,
-        "flagdnn_version": "0.2.0",
+        "flagdnn_version": "0.3.0",
         "backend": "thead",
         "target": TARGET,
         "compiler_identity": identity,
@@ -709,7 +709,7 @@ def matmul_request(
 ) -> dict[str, Any]:
     return {
         "schema_version": 3,
-        "flagdnn_version": "0.2.0",
+        "flagdnn_version": "0.3.0",
         "backend": "thead",
         "target": TARGET,
         "compiler_identity": identity,
@@ -837,7 +837,7 @@ def convolution_request(
         attributes["convolution_mode"] = 0
     return {
         "schema_version": 3,
-        "flagdnn_version": "0.2.0",
+        "flagdnn_version": "0.3.0",
         "backend": "thead",
         "target": TARGET,
         "compiler_identity": identity,
@@ -911,7 +911,7 @@ def conv_bias_relu_request(
     ]
     return {
         "schema_version": 3,
-        "flagdnn_version": "0.2.0",
+        "flagdnn_version": "0.3.0",
         "backend": "thead",
         "target": TARGET,
         "compiler_identity": identity,
@@ -4787,7 +4787,7 @@ def attention_requests(identity: str) -> list[dict[str, Any]]:
                 sequence_q=sq, value_dimension=dv, value_heads=kv_heads,
             )
             documents.append({
-                "schema_version": 3, "flagdnn_version": "0.2.0", "backend": "thead",
+                "schema_version": 3, "flagdnn_version": "0.3.0", "backend": "thead",
                 "target": TARGET, "compiler_identity": identity,
                 "build_options": {"heuristic_modes": ["A"], "autotune": True},
                 "graph": {"name": f"attention-{index}-{operation}", "tensor_count": len(tensors),
