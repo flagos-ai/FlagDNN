@@ -7,6 +7,19 @@ endif()
 
 include("${SOURCE_ROOT}/backends/hygon/cmake/ResolveTritonJIT.cmake")
 
+# Model the upstream HCU headers independently of the resolver's requirements.
+# In particular, hcu_error.h is a local extension, not an upstream dependency.
+set(_upstream_hcu_headers
+  triton_jit/backend_config.h
+  triton_jit/backend_policy.h
+  triton_jit/backends/hcu_backend.h
+  triton_jit/backends/npu_types.h
+  triton_jit/jit_function_arg.h
+  triton_jit/jit_utils.h
+  triton_jit/kernel_metadata.h
+  triton_jit/triton_jit_function.h
+  triton_jit/triton_kernel.h)
+
 function(_make_build_layout root backend marker)
   file(MAKE_DIRECTORY
     "${root}/build/src"
@@ -17,8 +30,7 @@ function(_make_build_layout root backend marker)
   file(WRITE "${root}/build/src/libtriton_jit.so" "library-${marker}\n")
   file(WRITE "${root}/build/TritonJITTargets.cmake"
     "set_target_properties(jit PROPERTIES IMPORTED_LOCATION_NOCONFIG \"${root}/build/src/libtriton_jit.so\" IMPORTED_SONAME_NOCONFIG \"libtriton_jit.so\")\n")
-  foreach(_header IN LISTS
-      _flagdnn_hygon_triton_jit_provenance_headers)
+  foreach(_header IN LISTS _upstream_hcu_headers)
     get_filename_component(_header_directory
       "${root}/include/${_header}" DIRECTORY)
     file(MAKE_DIRECTORY "${_header_directory}")
@@ -40,8 +52,7 @@ function(_make_install_layout root backend marker)
   file(WRITE "${root}/lib/cmake/TritonJIT/TritonJITTargets-release.cmake"
     "set_target_properties(jit PROPERTIES IMPORTED_LOCATION_RELEASE \"\${_IMPORT_PREFIX}/lib/libtriton_jit.so\" IMPORTED_SONAME_RELEASE \"libtriton_jit.so\")\n")
   file(WRITE "${root}/lib/libtriton_jit.so" "library-${marker}\n")
-  foreach(_header IN LISTS
-      _flagdnn_hygon_triton_jit_provenance_headers)
+  foreach(_header IN LISTS _upstream_hcu_headers)
     get_filename_component(_header_directory
       "${root}/include/${_header}" DIRECTORY)
     file(MAKE_DIRECTORY "${_header_directory}")
@@ -65,8 +76,7 @@ function(_make_install_lib64_layout root backend marker)
     "${root}/lib64/cmake/TritonJIT/TritonJITTargets-release.cmake"
     "set_target_properties(jit PROPERTIES IMPORTED_LOCATION_RELEASE \"\${_IMPORT_PREFIX}/lib64/libtriton_jit.so\" IMPORTED_SONAME_RELEASE \"libtriton_jit.so\")\n")
   file(WRITE "${root}/lib64/libtriton_jit.so" "library-${marker}\n")
-  foreach(_header IN LISTS
-      _flagdnn_hygon_triton_jit_provenance_headers)
+  foreach(_header IN LISTS _upstream_hcu_headers)
     get_filename_component(_header_directory
       "${root}/include/${_header}" DIRECTORY)
     file(MAKE_DIRECTORY "${_header_directory}")
@@ -112,8 +122,6 @@ _make_install_layout("${TEST_ROOT}/installed" HCU installed)
 _make_install_lib64_layout("${TEST_ROOT}/installed64" HCU installed64)
 _make_build_layout("${TEST_ROOT}/versioned" HCU versioned)
 _make_build_layout("${TEST_ROOT}/incomplete" HCU incomplete)
-file(REMOVE
-  "${TEST_ROOT}/incomplete/include/triton_jit/backends/hcu_backend.h")
 file(RENAME
   "${TEST_ROOT}/versioned/build/src/libtriton_jit.so"
   "${TEST_ROOT}/versioned/build/src/libtriton_jit.so.7")
@@ -140,8 +148,7 @@ endif()
 if(NOT _selected_PROVENANCE_SHA256 MATCHES "^[0-9a-f]+$")
   message(FATAL_ERROR "resolver did not produce a provenance fingerprint")
 endif()
-foreach(_required_header IN ITEMS
-    triton_jit/backends/hcu_backend.h triton_jit/jit_utils.h)
+foreach(_required_header IN LISTS _upstream_hcu_headers)
   list(FIND _selected_PROVENANCE_HEADER_FILES
     "${TEST_ROOT}/a/include/${_required_header}" _header_index)
   if(_header_index EQUAL -1)
@@ -241,7 +248,100 @@ _expect_failure(mixed_library "overrides do not belong")
 _expect_failure(mixed_scripts "overrides do not belong")
 _expect_failure(wrong_backend "requires an HCU TritonJITConfig.cmake")
 _expect_failure(root_mismatch "is outside the selected")
-_expect_failure(missing_provenance_header "no complete, coherent")
+# Every upstream public header is required, even though local extensions are not.
+foreach(_required_header IN LISTS _upstream_hcu_headers)
+  set(_header_path "${TEST_ROOT}/incomplete/include/${_required_header}")
+  file(READ "${_header_path}" _header_contents)
+  file(REMOVE "${_header_path}")
+  _expect_failure(missing_provenance_header "no complete, coherent")
+  file(WRITE "${_header_path}" "${_header_contents}")
+endforeach()
+
+# An unmodified upstream build may have CMake's colon padding in RUNPATH.
+# Exercise real ELF staging so source integrity and the loaded bytes are tested.
+include("${SOURCE_ROOT}/backends/hygon/cmake/StageTritonJIT.cmake")
+find_program(_contract_cxx NAMES c++ g++ clang++ REQUIRED)
+find_program(_contract_readelf NAMES readelf llvm-readelf REQUIRED)
+file(WRITE "${TEST_ROOT}/runtime.cpp" "extern \"C\" int contract() { return 0; }\n")
+execute_process(
+  COMMAND "${_contract_cxx}" -shared -fPIC
+    "${TEST_ROOT}/runtime.cpp"
+    "-Wl,-rpath,:$ORIGIN/deps::/existing/runtime/path::"
+    -o "${TEST_ROOT}/upstream.so"
+  RESULT_VARIABLE _compile_result
+  ERROR_VARIABLE _compile_error)
+if(NOT _compile_result EQUAL 0)
+  message(FATAL_ERROR "cannot compile staging contract: ${_compile_error}")
+endif()
+file(SHA256 "${TEST_ROOT}/upstream.so" _upstream_before)
+flagdnn_hygon_stage_triton_jit(
+  "${TEST_ROOT}/upstream.so" "${TEST_ROOT}/private/runtime.so")
+file(SHA256 "${TEST_ROOT}/upstream.so" _upstream_after)
+file(SHA256 "${TEST_ROOT}/private/runtime.so" _staged_sha256)
+if(NOT _upstream_before STREQUAL _upstream_after OR
+   _upstream_before STREQUAL _staged_sha256)
+  message(FATAL_ERROR "private staging did not isolate the upstream library")
+endif()
+execute_process(
+  COMMAND "${_contract_readelf}" -d "${TEST_ROOT}/private/runtime.so"
+  RESULT_VARIABLE _readelf_result
+  OUTPUT_VARIABLE _staged_dynamic)
+string(REGEX MATCH "\\((RPATH|RUNPATH)\\)[^\n]*\\[([^]]*)\\]"
+  _staged_record "${_staged_dynamic}")
+if(NOT _readelf_result EQUAL 0 OR _staged_record STREQUAL "" OR
+   NOT CMAKE_MATCH_2 STREQUAL "$ORIGIN/deps:/existing/runtime/path")
+  message(FATAL_ERROR "private staging did not preserve nonempty runtime paths")
+endif()
+# A library whose runtime path is already clean must retain identical bytes.
+flagdnn_hygon_stage_triton_jit(
+  "${TEST_ROOT}/private/runtime.so" "${TEST_ROOT}/restaged/runtime.so")
+file(SHA256 "${TEST_ROOT}/restaged/runtime.so" _restaged_sha256)
+if(NOT _staged_sha256 STREQUAL _restaged_sha256)
+  message(FATAL_ERROR "private staging changed an already clean library")
+endif()
+
+# Removing an entirely empty search path is valid, as is an ELF without one.
+foreach(_case IN ITEMS all_empty absent)
+  set(_rpath_option)
+  if(_case STREQUAL "all_empty")
+    set(_rpath_option "-Wl,-rpath,::::")
+  endif()
+  set(_source "${TEST_ROOT}/${_case}.so")
+  set(_staged "${TEST_ROOT}/private/${_case}.so")
+  set(_restaged "${TEST_ROOT}/restaged/${_case}.so")
+  execute_process(
+    COMMAND "${_contract_cxx}" -shared -fPIC
+      "${TEST_ROOT}/runtime.cpp" ${_rpath_option} -o "${_source}"
+    RESULT_VARIABLE _compile_result
+    ERROR_VARIABLE _compile_error)
+  if(NOT _compile_result EQUAL 0)
+    message(FATAL_ERROR "cannot compile ${_case} staging contract: ${_compile_error}")
+  endif()
+  file(SHA256 "${_source}" _source_before)
+  flagdnn_hygon_stage_triton_jit("${_source}" "${_staged}")
+  file(SHA256 "${_source}" _source_after)
+  file(SHA256 "${_staged}" _staged_sha256)
+  if(NOT _source_before STREQUAL _source_after)
+    message(FATAL_ERROR "${_case} staging modified the upstream library")
+  endif()
+  if(_case STREQUAL "absent" AND
+     NOT _source_before STREQUAL _staged_sha256)
+    message(FATAL_ERROR "staging changed a library without a runtime path")
+  endif()
+  execute_process(
+    COMMAND "${_contract_readelf}" -d "${_staged}"
+    RESULT_VARIABLE _readelf_result
+    OUTPUT_VARIABLE _staged_dynamic)
+  if(NOT _readelf_result EQUAL 0 OR
+     _staged_dynamic MATCHES "\\((RPATH|RUNPATH)\\)")
+    message(FATAL_ERROR "${_case} staging left an empty runtime search path")
+  endif()
+  flagdnn_hygon_stage_triton_jit("${_staged}" "${_restaged}")
+  file(SHA256 "${_restaged}" _restaged_sha256)
+  if(NOT _staged_sha256 STREQUAL _restaged_sha256)
+    message(FATAL_ERROR "${_case} restaging changed the normalized library")
+  endif()
+endforeach()
 
 file(READ "${SOURCE_ROOT}/backends/hygon/CMakeLists.txt" _hygon_cmake)
 if(NOT _hygon_cmake MATCHES "same-SONAME CUDA/HCU JIT runtimes" OR

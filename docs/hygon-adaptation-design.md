@@ -317,16 +317,22 @@ sdpa_fp8 / sdpa_fp8_backward_dq
 - candidate compile、warmup、依赖回放、HIP event 测量和 winner 固化发生在 executable build 阶段；
 - steady-state `execute` 不得重新编译或重新调优。
 
-autotune 的 candidate 过滤必须基于类型化错误，不能匹配异常字符串。只有
-`HygonError` 明确携带以下 HIP 状态时，才表示“该配置不适用于当前设备”，允许
-丢弃该 candidate 后继续：`hipErrorLaunchOutOfResources`、
+autotune 的 candidate 过滤优先使用 FlagDNN 自身的类型化 `HygonError`。
+只有以下 HIP 状态允许丢弃 candidate 后继续：`hipErrorLaunchOutOfResources`、
 `hipErrorInvalidConfiguration`、`hipErrorInvalidDeviceFunction`、
 `hipErrorInvalidImage`、`hipErrorNoBinaryForGpu`、
-`hipErrorInvalidKernelFile`。通用 `std::exception`、没有 HIP status 的
-`HygonError`、compiler/JIT protocol、source/identity/ABI、timeout 以及其他 HIP
-错误都必须使 executable build 硬失败。缓存 winner 的重新准备也使用同一类型化
-分类：只有上述 device-incompatible 状态可以丢弃缓存并重新选择，不能把真实回归
-吞成另一个 candidate 的成功。
+`hipErrorInvalidKernelFile`。上游 HCU 仅以普通 `std::runtime_error` 暴露部分
+HIP 错误，因此 Hygon 私有适配器还允许精确匹配这些状态的完整
+`hipGetErrorString`，或带固定 `HCU kernel launch failed: ` 前缀的完整消息。
+不得使用子串或宽泛的错误关键词匹配，也不得依赖外部 `HcuError` 扩展。
+派生异常、未知消息、没有 HIP status 的 `HygonError`、compiler/JIT protocol、
+source/identity/ABI、timeout 及其他 HIP 错误均使 executable build 失败。
+缓存 winner 的重新准备使用相同分类。
+
+首次 launch 前，FlagDNN 使用已校验的 standalone helper 和相同编译参数获取
+缓存目录，通过上游公开 metadata API 检查架构与共享内存。架构不匹配直接失败；
+共享内存超限由 FlagDNN 抛出类型化资源错误，在上游分配模块前拒绝候选。
+后续 JIT launch 复用编译缓存。此逻辑仅位于 Hygon 后端，不修改依赖源码或其他平台。
 
 只有 common kernel 无法承载且有可复现收益或语义差异时才新增 Hygon 私有 registry override。一旦登记 Hygon override，编译或加载失败必须直接失败，不允许捕获异常后回退 common。当前 `min/max` 使用 Hygon 私有 `binary_minmax.py`，原因是已验证 DTK hipDNN OpTensor 对 NaN 与 signed-zero 的行为不能用原 common kernel 无条件表达；该 override 不修改 NVIDIA 或 common kernel。
 
@@ -446,7 +452,7 @@ build/hygon/backends/hygon/flagdnn/share/triton_jit/scripts/gen_ssig.py
 build/hygon/backends/hygon/flagdnn/share/triton_jit/scripts/flagdnn_python_environment_identity.py
 ```
 
-安装阶段复制 CMake 实际选择并 canonicalize 后的 library bytes，以 exported SONAME 安装到 Hygon 私有目录，不能重新搜索另一候选；header metadata 与三个 runtime helper 也必须来自同一 provenance。`share/triton_jit/scripts` 是 compiler identity 使用的 canonical SDK 副本；由于 `libtriton_jit::get_script_dir()` 按已映射 library 的相对位置解析，完全相同的三个脚本还必须安装到 `lib/flagdnn/share/triton_jit/scripts`，不能回退到原源码树。
+配置阶段将 CMake 实际选择并 canonicalize 后的 library 复制到 Hygon 私有目录，并仅在私有副本中去除 RPATH/RUNPATH 的空项，保留所有非空路径；外部库不做修改。运行时 image SHA 对应处理后的副本，原始依赖仍参与 provenance。安装阶段以 exported SONAME 复制同一私有副本，不能重新搜索另一候选；header metadata 与三个 runtime helper 也必须来自同一 provenance。`share/triton_jit/scripts` 是 compiler identity 使用的 canonical SDK 副本；由于 `libtriton_jit::get_script_dir()` 按已映射 library 的相对位置解析，完全相同的三个脚本还必须安装到 `lib/flagdnn/share/triton_jit/scripts`，不能回退到原源码树。
 
 构建态与安装态 plugin 的动态加载契约完全相同：`DT_RPATH` 必须精确为
 `$ORIGIN/flagdnn/hygon`，分别只加载各自树中的私有 HCU JIT。RPATH 不得包含空
@@ -1103,7 +1109,7 @@ test ! -e tools/tests
 - HCU JIT 在 build/install tree 中分别位于 plugin 的 `flagdnn/hygon` 私有子目录，两个 plugin 的 RPATH 都精确为 `$ORIGIN/flagdnn/hygon`，JIT 实际 script directory 指向各自树中的私有资源；
 - RPATH 没有空元素、当前工作目录、plugin 根目录或绝对 build/DTK/libtriton_jit 路径；
 - compiler cache 没有把 malformed/nonzero/timeout/tempfail 当作离线命中，只有 spawn 精确 `ENOENT` 进入 typed unavailable 分支；
-- autotune 只按类型化 `HygonError` 与明确的 HIP device-incompatible status 丢弃 candidate，不解析异常字符串；
+- autotune 只接受类型化 `HygonError` 的 HIP 白名单，或上游普通 `std::runtime_error` 对应白名单的完整固定格式；未知异常不得作为 candidate 拒绝处理；
 - embedding 应用在 compiler identity/JIT 初始化和 build 期间不并发修改 process environment、Python `os.environ` 或 `sys.path`；
 - 外部不同 UID binding 不受 Hygon 特有的 pointer-range blanket rejection，仍遵循公共/NVIDIA alias 语义；
 - NVIDIA 与 Hygon 测试按进程隔离，不假设相同 SONAME 的 CUDA/HCU JIT 可以在同一进程共存；

@@ -1,6 +1,7 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
 #include "backends/hygon/engines/engine.hpp"
+#include "backends/hygon/engines/jit_compatibility.hpp"
 #include "backends/hygon/error.hpp"
 #include "runtime/sha256.hpp"
 
@@ -8,7 +9,7 @@
 
 #include <Python.h>
 #include <dlfcn.h>
-#include <triton_jit/backends/hcu_error.h>
+#include <triton_jit/kernel_metadata.h>
 #include <triton_jit/triton_jit_function.h>
 #include <unistd.h>
 
@@ -215,39 +216,7 @@ void verify_triton_jit_backend_compatibility() {
 }
 
 bool is_candidate_compatibility_error(const std::exception &error) noexcept {
-  const auto is_approved_hip_result = [](hipError_t result) noexcept {
-    switch (result) {
-    case hipErrorLaunchOutOfResources:
-    case hipErrorInvalidConfiguration:
-    case hipErrorInvalidDeviceFunction:
-    case hipErrorInvalidImage:
-    case hipErrorNoBinaryForGpu:
-    case hipErrorInvalidKernelFile:
-      return true;
-    default:
-      return false;
-    }
-  };
-
-  const auto *hygon_error = dynamic_cast<const HygonError *>(&error);
-  if (hygon_error != nullptr) {
-    const std::optional<hipError_t> hip_result = hygon_error->hip_result();
-    return hip_result && is_approved_hip_result(*hip_result);
-  }
-
-  const auto *hcu_error =
-      dynamic_cast<const triton_jit::HcuError *>(&error);
-  if (hcu_error == nullptr) {
-    return false;
-  }
-  if (hcu_error->kind() == triton_jit::HcuErrorKind::kSharedMemoryLimit) {
-    return true;
-  }
-  if (hcu_error->kind() != triton_jit::HcuErrorKind::kRuntimeApi ||
-      !hcu_error->has_hip_result()) {
-    return false;
-  }
-  return is_approved_hip_result(hcu_error->hip_result());
+  return detail::is_jit_candidate_compatibility_error(error);
 }
 
 class ScopedEnvironmentVariable {
@@ -1205,6 +1174,77 @@ private:
 
 using JitFunction = triton_jit::TritonJITFunction;
 
+void preflight_jit_candidate(const std::filesystem::path &source,
+                             const std::string &function_name,
+                             const HygonKernelArtifact &kernel, int device) {
+  std::string cache_directory;
+  {
+    struct PythonScope {
+      PyGILState_STATE gil = PyGILState_Ensure();
+      ~PythonScope() {
+        PyErr_Clear();
+        PyGILState_Release(gil);
+      }
+    } python_scope;
+    using PythonObject = std::unique_ptr<PyObject, decltype(&Py_DecRef)>;
+    const auto fail = []() {
+      PyObject *type = nullptr;
+      PyObject *value = nullptr;
+      PyObject *traceback = nullptr;
+      PyErr_Fetch(&type, &value, &traceback);
+      PythonObject error_type(type, Py_DecRef);
+      PythonObject error_value(value, Py_DecRef);
+      PythonObject error_traceback(traceback, Py_DecRef);
+      PythonObject description(value == nullptr ? nullptr : PyObject_Str(value),
+                               Py_DecRef);
+      const char *text = description ? PyUnicode_AsUTF8(description.get())
+                                     : nullptr;
+      throw HygonError(
+          FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
+          "libtriton_jit candidate preflight failed: " +
+              std::string(text == nullptr ? "invalid compiler result" : text));
+    };
+    // Use the same verified helper and arguments as upstream's private
+    // get_kernel(). Compile before loading a module so an oversized candidate
+    // can be rejected before upstream allocates a module for it.
+    PythonObject module(PyImport_ImportModule("standalone_compile"), Py_DecRef);
+    PythonObject compile(module ? PyObject_GetAttrString(module.get(),
+                                                         "compile_a_kernel")
+                                : nullptr,
+                         Py_DecRef);
+    if (!compile) {
+      fail();
+    }
+    PythonObject result(
+        PyObject_CallFunction(compile.get(), "sssiii", source.c_str(),
+                              function_name.c_str(), kernel.full_signature.c_str(),
+                              static_cast<int>(kernel.num_warps),
+                              static_cast<int>(kernel.num_stages), device),
+        Py_DecRef);
+    const char *directory = result && PyUnicode_Check(result.get())
+                                ? PyUnicode_AsUTF8(result.get())
+                                : nullptr;
+    if (directory == nullptr || directory[0] == '\0') {
+      fail();
+    }
+    cache_directory = directory;
+  }
+
+  triton_jit::HcuKernelMetadata metadata;
+  try {
+    metadata = triton_jit::load_hcu_metadata(cache_directory, function_name);
+  } catch (const std::exception &error) {
+    throw HygonError(FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED,
+                     "cannot read HCU kernel metadata: " +
+                         std::string(error.what()));
+  }
+  hipDeviceProp_t properties{};
+  check_hip(hipGetDeviceProperties(&properties, device),
+            "hipGetDeviceProperties(libtriton_jit preflight)");
+  detail::validate_jit_kernel_resources(metadata.arch, metadata.shared,
+                                         properties);
+}
+
 void launch_jit(const JitFunction &function, const HygonKernelArtifact &kernel,
                 hipStream_t stream, RawArguments &arguments) {
   function.launch_with_raw_args(stream, kernel.grid[0], kernel.grid[1],
@@ -1458,7 +1498,7 @@ public:
               "libtriton_jit autotune selected an invalid candidate");
         }
         if (!stage.autotune) {
-          prepare_candidate(function, stage.variants[selected]);
+          prepare_candidate(function, stage, stage.variants[selected]);
         }
         HygonKernelArtifact specification = stage.variants[selected];
         PreparedHygonLaunch prepared =
@@ -1594,7 +1634,7 @@ private:
     if (const auto cached =
             backend::autotune::find_cached_candidate(full_request)) {
       try {
-        prepare_candidate(function, stage.variants[*cached]);
+        prepare_candidate(function, stage, stage.variants[*cached]);
         if (logging_enabled()) {
           std::cerr << "[FlagDNN autotune/JIT] cache hit "
                     << stage.candidate_identity.substr(0, 12) << " -> "
@@ -1626,7 +1666,7 @@ private:
     std::string rejected_candidates;
     for (std::size_t index = 0; index < stage.variants.size(); ++index) {
       try {
-        prepare_candidate(function, stage.variants[index]);
+        prepare_candidate(function, stage, stage.variants[index]);
         runnable_indices.push_back(index);
       } catch (const std::exception &error) {
         if (!is_candidate_compatibility_error(error)) {
@@ -1773,7 +1813,10 @@ private:
   }
 
   void prepare_candidate(const JitFunction &function,
+                         const HygonStageArtifact &stage,
                          const HygonKernelArtifact &kernel) const {
+    preflight_jit_candidate(source_snapshot_paths_.back(), stage.function_name,
+                             kernel, context_.device);
     JitTuningResources resources(kernel, logical_workspace_size_,
                                  workspace_alignment_);
     RawArguments arguments(kernel, resources.allocations(),

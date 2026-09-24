@@ -82,11 +82,7 @@ tools/install.sh \
 在与编译时一致的 Python 环境中执行：
 
 ```bash
-python3 tools/run_tests.py \
-    --platform nvidia \
-    --gpus 1,2 \
-    --dump-output \
-    --output-dir logs_result_20260918_flagdnn
+python3 tools/run_tests.py --dump-output --output-dir logs_result_20260920_flagdnn --gpus 0,1
 ```
 
 测试细节见[功能与性能验证](docs/testing.md)
@@ -153,11 +149,7 @@ tools/install.sh \
 #### 批量测试
 
 ```bash
-python3 tools/run_tests.py \
-    --platform hygon \
-    --gpus 1,2 \
-    --dump-output \
-    --output-dir logs_result_20260918_flagdnn
+python3 tools/run_tests.py --dump-output --output-dir logs_result_20260920_flagdnn --gpus 0,1
 ```
 
 ### Iluvatar（天数智芯）
@@ -226,11 +218,7 @@ tools/install.sh \
 #### 批量测试
 
 ```bash
-python3 tools/run_tests.py \
-    --platform iluvatar \
-    --gpus 1,2 \
-    --dump-output \
-    --output-dir logs_result_20260918_flagdnn
+python3 tools/run_tests.py --dump-output --output-dir logs_result_20260920_flagdnn --gpus 0,1
 ```
 
 更多测试说明见[功能与性能验证](docs/testing.md)。
@@ -315,18 +303,7 @@ tools/install.sh \
 在与编译时一致的 Python 环境中执行：
 
 ```bash
-python3 tools/run_tests.py \
-    --platform thead \
-    --gpus 1,2 \
-    --dump-output \
-    --output-dir logs_result_20260918_flagdnn
-```
-
-如需使用原有 `psum_text`，改用 `--output build/thead/psum-report/summary.json`
-串行兼容模式（不传 `--gpus`、`--dump-output` 或 `--output-dir`）：
-
-```bash
-./tools/psum_text /path/to/FlagDNN/build/thead/psum-report/
+python3 tools/run_tests.py --dump-output --output-dir logs_result_20260920_flagdnn --gpus 0,1
 ```
 
 通用测试说明见
@@ -401,18 +378,7 @@ tools/install.sh \
 #### 批量测试
 
 ```bash
-python3 tools/run_tests.py \
-    --platform mthreads \
-    --gpus 1,2 \
-    --dump-output \
-    --output-dir logs_result_20260918_flagdnn
-```
-
-如需使用原有 `psum_text`，改用 `--output build/mthreads/psum-report/summary.json`
-串行兼容模式（不传 `--gpus`、`--dump-output` 或 `--output-dir`）：
-
-```bash
-./tools/psum_text /path/to/FlagDNN/build/mthreads/psum-report/
+python3 tools/run_tests.py --dump-output --output-dir logs_result_20260920_flagdnn --gpus 0,1
 ```
 
 ### Ascend（昇腾）
@@ -491,11 +457,7 @@ tools/install.sh \
 #### 批量测试
 
 ```bash
-python3 tools/run_tests.py \
-    --platform ascend \
-    --gpus 1,2 \
-    --dump-output \
-    --output-dir logs_result_20260918_flagdnn
+python3 tools/run_tests.py --dump-output --output-dir logs_result_20260920_flagdnn --gpus 0,1
 ```
 
 更多测试说明见[功能与性能验证](docs/testing.md)。

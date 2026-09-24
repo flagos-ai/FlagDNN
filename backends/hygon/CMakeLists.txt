@@ -173,27 +173,25 @@ set(_flagdnn_hygon_triton_jit_build_directory
   "${CMAKE_CURRENT_BINARY_DIR}/flagdnn/hygon")
 set(_flagdnn_hygon_triton_jit_build_library
   "${_flagdnn_hygon_triton_jit_build_directory}/${_flagdnn_hygon_triton_jit_SONAME}")
-# Mirror the installed private-library layout in the build tree. This lets the
-# plugin use one exact RPATH in both locations and avoids CMake's build-RPATH
-# padding, whose trailing empty component would search the process cwd.
-file(MAKE_DIRECTORY "${_flagdnn_hygon_triton_jit_build_directory}")
-configure_file(
+# Mirror the installed private-library layout in the build tree and remove
+# empty runtime-path entries from our copy of an upstream build-tree library.
+# The dependency itself remains unchanged; identity uses the staged bytes.
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageTritonJIT.cmake")
+flagdnn_hygon_stage_triton_jit(
   "${_flagdnn_triton_jit_library}"
-  "${_flagdnn_hygon_triton_jit_build_library}"
-  COPYONLY)
+  "${_flagdnn_hygon_triton_jit_build_library}")
 set_target_properties(flagdnn_hygon_triton_jit PROPERTIES
   IMPORTED_LOCATION "${_flagdnn_hygon_triton_jit_build_library}"
   IMPORTED_SONAME "${_flagdnn_hygon_triton_jit_SONAME}")
 set(_flagdnn_triton_jit_target flagdnn_hygon_triton_jit)
 
-# The selected source is canonicalized, so this always copies bytes rather
-# than installing a potentially broken symlink. Rename to the exported SONAME
-# to guarantee that the plugin's DT_NEEDED entry is present after installation.
+# Install the same staged bytes used for linking and runtime identity. Rename
+# to the exported SONAME so the plugin's DT_NEEDED entry is available.
 set(_flagdnn_hygon_triton_jit_install_directory
   "${CMAKE_INSTALL_LIBDIR}/flagdnn/hygon")
 set(_flagdnn_hygon_triton_jit_private_script_install_directory
   "${CMAKE_INSTALL_LIBDIR}/flagdnn/share/triton_jit/scripts")
-install(FILES "${_flagdnn_triton_jit_library}"
+install(FILES "${_flagdnn_hygon_triton_jit_build_library}"
   DESTINATION "${_flagdnn_hygon_triton_jit_install_directory}"
   RENAME "${_flagdnn_hygon_triton_jit_SONAME}")
 # libtriton_jit computes its script root from its own mapped image. With the
@@ -229,7 +227,7 @@ else()
   set(_flagdnn_hygon_python_path "${FLAGDNN_HYGON_PYTHONPATH}")
 endif()
 
-file(SHA256 "${_flagdnn_triton_jit_library}"
+file(SHA256 "${_flagdnn_hygon_triton_jit_build_library}"
   _flagdnn_triton_jit_library_sha256)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
   "${_flagdnn_triton_jit_library}"
@@ -344,7 +342,7 @@ add_custom_command(TARGET flagdnn_backend_hygon POST_BUILD
   COMMAND "${CMAKE_COMMAND}" -E make_directory
     "$<TARGET_FILE_DIR:flagdnn_backend_hygon>/flagdnn/share/triton_jit/scripts"
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-    "${_flagdnn_triton_jit_library}"
+    "${_flagdnn_hygon_triton_jit_build_library}"
     "$<TARGET_FILE_DIR:flagdnn_backend_hygon>/flagdnn/hygon/${_flagdnn_hygon_triton_jit_SONAME}"
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different
     "${_flagdnn_hygon_prepared_standalone_compile}"

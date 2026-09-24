@@ -4,13 +4,12 @@
 include_guard(GLOBAL)
 
 # Keep the content fingerprint and configure dependencies on one explicit HCU
-# public-header closure. These headers are transitively read when FlagDNN
+# upstream public-header closure. These headers are transitively read when FlagDNN
 # compiles TritonJITFunction with BACKEND_HCU.
 set(_flagdnn_hygon_triton_jit_provenance_headers
   triton_jit/backend_config.h
   triton_jit/backend_policy.h
   triton_jit/backends/hcu_backend.h
-  triton_jit/backends/hcu_error.h
   triton_jit/backends/npu_types.h
   triton_jit/jit_function_arg.h
   triton_jit/jit_utils.h

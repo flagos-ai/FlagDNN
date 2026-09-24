@@ -161,7 +161,9 @@ function(flagdnn_require_elf_rpath_without_empty_component path)
     "\\((RPATH|RUNPATH)\\)[^\n]*\\[([^]]*)\\]"
     rpath_record "${dynamic_section}")
   if(rpath_record STREQUAL "")
-    message(FATAL_ERROR "${path}: ELF has no RPATH/RUNPATH")
+    # No search path has no empty component. The private staging step also
+    # removes the tag when the upstream library contains only colon padding.
+    return()
   endif()
   set(actual "${CMAKE_MATCH_2}")
   if(actual MATCHES "(^|:)(:|$)")

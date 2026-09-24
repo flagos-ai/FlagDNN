@@ -140,21 +140,16 @@ target_link_libraries(flagdnn_validation_hygon_cases PUBLIC
 flagdnn_enable_warnings(flagdnn_validation_hygon_cases)
 
 if(FLAGDNN_BUILD_TESTS)
-  get_target_property(_flagdnn_hygon_jit_include_dir
-    flagdnn_backend_hygon FLAGDNN_HYGON_TRITON_JIT_INCLUDE_DIR)
-  if(NOT _flagdnn_hygon_jit_include_dir OR
-     _flagdnn_hygon_jit_include_dir MATCHES "-NOTFOUND$")
-    message(FATAL_ERROR
-      "Hygon validation cannot locate the selected libtriton_jit headers")
-  endif()
+  add_executable(flagdnn_test_hygon_jit_compatibility
+    functional/test_jit_compatibility.cpp
+    "../error.cpp")
+  target_compile_features(flagdnn_test_hygon_jit_compatibility PRIVATE cxx_std_20)
+  target_include_directories(flagdnn_test_hygon_jit_compatibility PRIVATE
+    "${PROJECT_SOURCE_DIR}" "${PROJECT_SOURCE_DIR}/include")
+  target_link_libraries(flagdnn_test_hygon_jit_compatibility PRIVATE hip::host)
+  flagdnn_enable_warnings(flagdnn_test_hygon_jit_compatibility)
   add_test(NAME integration.hygon.jit_candidate_compatibility_contract
-    COMMAND "${CMAKE_COMMAND}"
-      "-DSOURCE_FILE=${PROJECT_SOURCE_DIR}/backends/hygon/engines/libtriton_jit.cpp"
-      "-DHCU_ERROR_HEADER=${_flagdnn_hygon_jit_include_dir}/triton_jit/backends/hcu_error.h"
-      "-DHCU_BACKEND_HEADER=${_flagdnn_hygon_jit_include_dir}/triton_jit/backends/hcu_backend.h"
-      "-DHCU_JIT_UTILS_HEADER=${_flagdnn_hygon_jit_include_dir}/triton_jit/jit_utils.h"
-      -P
-        "${CMAKE_CURRENT_SOURCE_DIR}/JitCandidateCompatibilityContract.cmake")
+    COMMAND flagdnn_test_hygon_jit_compatibility)
   set_tests_properties(
     integration.hygon.jit_candidate_compatibility_contract PROPERTIES
     LABELS "integration;hygon;libtriton_jit;autotune;contract")
