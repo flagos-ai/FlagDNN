@@ -1,4 +1,4 @@
-flag-dnn (0.3.0-1) unstable; urgency=medium
+flag-dnn (0.3.0~rc2.post2-1) unstable; urgency=medium
 
   * Align the packaging baseline with the 0.3.0 release line.
 
