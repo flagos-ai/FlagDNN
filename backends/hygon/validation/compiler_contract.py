@@ -239,6 +239,176 @@ def _check_hcu_llvm_compatibility() -> None:
     else:
         raise AssertionError("negative clang major version was accepted")
 
+    # Execute the injected import-time patch against both shipped DTK shapes.
+    # These fixtures retain class-method indentation, just like inspect.getsource.
+    import io
+    import re
+    from types import SimpleNamespace
+    from unittest import mock
+
+    vendor_block = """            llir_str = str(src)
+            # Remove memory(...) from function attributes
+            llir_str = re.sub(r'\\s*memory\\([^)]*\\)', '', llir_str)
+"""
+    legacy_write = """            with tempfile.NamedTemporaryFile(mode='w', suffix=".ll", delete=False) as f:
+                llir_file = f.name
+                f.write(llir_str)
+"""
+    direct_write = legacy_write.replace(
+        "f.write(llir_str)", "f.write(str(src))"
+    )
+    method_prefix = """    @staticmethod
+    def make_amdgcn(src, metadata, options):
+        try:
+"""
+    method_suffix = """        finally:
+            pass
+        metadata["unchanged_vendor_step"] = True
+        return "assembly"
+"""
+    legacy_method = method_prefix + vendor_block + legacy_write + method_suffix
+    direct_method = method_prefix + direct_write + method_suffix
+    marker = "_flagdnn_hygon_memory_attribute_compatibility"
+
+    @contextmanager
+    def mocked_compiler(method_source: str, clang_major: int) -> Iterator[Any]:
+        class CapturedIR(io.StringIO):
+            name = "/fixture/kernel.ll"
+
+            def __exit__(self, *args: Any) -> bool:
+                return False
+
+        written_ir = CapturedIR()
+        compiler_module = ModuleType("triton.backends.hcu.compiler_hcu")
+        compiler_module.re = re
+        compiler_module.tempfile = SimpleNamespace(
+            NamedTemporaryFile=mock.Mock(return_value=written_ir)
+        )
+
+        def original_method(*args: Any) -> None:
+            raise AssertionError("unpatched make_amdgcn was called")
+
+        compiler_module.HIPBackend = type(
+            "HIPBackend",
+            (),
+            {
+                "make_amdgcn": staticmethod(original_method),
+                "path_to_rocm_clang": staticmethod(lambda: "/fixture/clang"),
+            },
+        )
+        modules = {
+            name: ModuleType(name)
+            for name in ("triton", "triton.backends", "triton.backends.hcu")
+        }
+        modules["triton.backends.hcu"].compiler_hcu = compiler_module
+        modules["triton.backends.hcu.compiler_hcu"] = compiler_module
+        version_result = SimpleNamespace(
+            stdout=f"clang version {clang_major}.0.0\n", stderr=""
+        )
+        with (
+            mock.patch.dict(sys.modules, modules),
+            mock.patch(
+                "inspect.getsource", return_value=method_source
+            ) as inspect_source,
+            mock.patch(
+                "subprocess.run", return_value=version_result
+            ) as run_clang,
+        ):
+            yield compiler_module, written_ir, inspect_source, run_clang
+
+    for method in (legacy_method, direct_method):
+        for clang_major in (15, 18):
+            with mocked_compiler(method, clang_major) as fixture:
+                compiler_module, written_ir, inspect_source, run_clang = (
+                    fixture
+                )
+                namespace = {"get_backend": lambda: "HCU"}
+                exec(_HCU_PATCH, namespace)
+                backend = compiler_module.HIPBackend
+                metadata: dict[str, Any] = {}
+                assert (
+                    backend.make_amdgcn(source, metadata, None) == "assembly"
+                )
+                assert written_ir.getvalue() == (
+                    source if clang_major >= 17 else compatible
+                )
+                assert metadata == {"unchanged_vendor_step": True}
+                assert getattr(backend, marker) == "clang-memory-attributes-v2"
+                compiler_module.tempfile.NamedTemporaryFile.assert_called_once_with(
+                    mode="w", suffix=".ll", delete=False
+                )
+                patched_method = backend.make_amdgcn
+                exec(_HCU_PATCH, namespace)
+                assert backend.make_amdgcn is patched_method
+                inspect_source.assert_called_once()
+                run_clang.assert_called_once_with(
+                    ["/fixture/clang", "--version"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+
+    for unrecognized in (
+        direct_method.replace("f.write(str(src))", "f.write(src)"),
+        legacy_method.replace(vendor_block, vendor_block * 2),
+        direct_method.replace(direct_write, direct_write * 2),
+        legacy_method.replace(legacy_write, direct_write),
+    ):
+        with mocked_compiler(unrecognized, 18) as fixture:
+            compiler_module, _, _, _ = fixture
+            original_method = compiler_module.HIPBackend.make_amdgcn
+            try:
+                exec(_HCU_PATCH, {"get_backend": lambda: "HCU"})
+            except RuntimeError as error:
+                assert "compatibility" in str(error)
+            else:
+                raise AssertionError(
+                    "unknown or ambiguous HCU compiler was patched"
+                )
+            assert compiler_module.HIPBackend.make_amdgcn is original_method
+            assert not hasattr(compiler_module.HIPBackend, marker)
+            assert not hasattr(
+                compiler_module, "_flagdnn_hygon_compatible_llir"
+            )
+
+    with mocked_compiler(direct_method, 18) as fixture:
+        compiler_module, _, inspect_source, run_clang = fixture
+        setattr(compiler_module.HIPBackend, marker, "conflicting-patch")
+        try:
+            exec(_HCU_PATCH, {"get_backend": lambda: "HCU"})
+        except RuntimeError as error:
+            assert "already active" in str(error)
+        else:
+            raise AssertionError("conflicting HCU compiler patch was accepted")
+        inspect_source.assert_not_called()
+        run_clang.assert_not_called()
+
+    for other_backend in (
+        "CUDA",
+        "MTGPU",
+        "MUSA",
+        "NPU",
+        "MACA",
+        "GCU",
+        "MLU",
+        "IX",
+    ):
+        with mocked_compiler(direct_method, 18) as fixture:
+            compiler_module, _, inspect_source, run_clang = fixture
+            original_globals = dict(compiler_module.__dict__)
+            with mock.patch(
+                "builtins.__import__", wraps=__import__
+            ) as imports:
+                exec(_HCU_PATCH, {"get_backend": lambda: other_backend})
+            assert not any(
+                call.args[0].startswith("triton.backends.hcu")
+                for call in imports.call_args_list
+            )
+            assert compiler_module.__dict__ == original_globals
+            assert not hasattr(compiler_module.HIPBackend, marker)
+            inspect_source.assert_not_called()
+            run_clang.assert_not_called()
+
     upstream_fixture = (
         "prefix\n" + _HCU_PATCH_ANCHOR + "middle\n" + _UPSTREAM + "suffix\n"
     )

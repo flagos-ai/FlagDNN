@@ -334,6 +334,13 @@ source/identity/ABI、timeout 及其他 HIP 错误均使 executable build 失败
 共享内存超限由 FlagDNN 抛出类型化资源错误，在上游分配模块前拒绝候选。
 后续 JIT launch 复用编译缓存。此逻辑仅位于 Hygon 后端，不修改依赖源码或其他平台。
 
+Hygon 私有 standalone helper 在导入时适配两种已验证的 DTK Triton LLVM 写入
+实现：先删除 `memory(...)` 属性再写入，以及直接写入原始 LLVM IR。clang 17+
+保留原 IR，较旧 clang 删除不支持的属性并清理空属性组。两种源码模板必须恰好
+命中一种，未知或重复实现仍明确报错；不能仅按 Triton 版本号判断兼容性。同为
+Triton 3.6.0 的安装也可能包含不同实现。适配仅修改当前进程中的 HCU 编译方法，
+不改写外部 Triton 或 `libtriton_jit` 文件。
+
 只有 common kernel 无法承载且有可复现收益或语义差异时才新增 Hygon 私有 registry override。一旦登记 Hygon override，编译或加载失败必须直接失败，不允许捕获异常后回退 common。当前 `min/max` 使用 Hygon 私有 `binary_minmax.py`，原因是已验证 DTK hipDNN OpTensor 对 NaN 与 signed-zero 的行为不能用原 common kernel 无条件表达；该 override 不修改 NVIDIA 或 common kernel。
 
 ### 4.5 Backend plugin 与 libtriton_jit engine

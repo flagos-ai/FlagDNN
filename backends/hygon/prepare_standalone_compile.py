@@ -12,16 +12,17 @@ cannot infer that property. FlagDNN encodes the proven property as an ``S``
 suffix and this deterministic build step teaches the private helper to restore
 the matching TTIR attribute.
 
-DTK Triton also removes LLVM ``memory(...)`` attributes unconditionally even
-though its bundled clang is new enough to consume them. For an OCML ``pow``
-this leaves an illegal empty attribute group. The prepared helper patches that
+Some DTK Triton builds remove LLVM ``memory(...)`` attributes unconditionally
+even though their bundled clang is new enough to consume them. For an OCML
+``pow`` this leaves an illegal empty attribute group. The prepared helper patches that
 HCU compiler method in process: clang 17 and newer retain the LLVM IR
 unchanged, while an older clang receives the vendor compatibility rewrite plus
-removal of any groups made empty by that rewrite.
+removal of any groups made empty by that rewrite. Builds that write the LLVM
+IR directly use the same version-aware handling.
 
-Both source patterns are intentionally exact so an upstream change fails
-configuration instead of silently dropping an optimization or corrupting a
-compiler helper.
+The supported source patterns are intentionally exact so an unknown upstream
+change fails during helper preparation or import instead of silently dropping
+an optimization or corrupting a compiler helper.
 """
 
 from __future__ import annotations
@@ -179,7 +180,7 @@ def _flagdnn_hygon_patch_hcu_compiler():
     from triton.backends.hcu import compiler_hcu as _flagdnn_compiler_hcu
 
     marker_name = "_flagdnn_hygon_memory_attribute_compatibility"
-    marker_value = "clang-memory-attributes-v1"
+    marker_value = "clang-memory-attributes-v2"
     existing_marker = getattr(
         _flagdnn_compiler_hcu.HIPBackend, marker_name, None
     )
@@ -225,13 +226,32 @@ def _flagdnn_hygon_patch_hcu_compiler():
             str(src), _flagdnn_hygon_clang_major
         )
 """
-    occurrences = method_source.count(vendor_block)
-    if occurrences != 1:
+    # Other HCU builds already preserve the LLVM IR. Match the .ll write
+    # explicitly so this adaptation cannot affect an assembly/binary output.
+    direct_write_block = """        with tempfile.NamedTemporaryFile(mode='w', suffix=".ll", delete=False) as f:
+            llir_file = f.name
+            f.write(str(src))
+"""
+    direct_write_replacement = """        with tempfile.NamedTemporaryFile(mode='w', suffix=".ll", delete=False) as f:
+            llir_file = f.name
+            f.write(_flagdnn_hygon_compatible_llir(
+                str(src), _flagdnn_hygon_clang_major
+            ))
+"""
+    vendor_occurrences = method_source.count(vendor_block)
+    direct_occurrences = method_source.count(direct_write_block)
+    if (vendor_occurrences, direct_occurrences) == (1, 0):
+        method_source = method_source.replace(vendor_block, replacement)
+    elif (vendor_occurrences, direct_occurrences) == (0, 1):
+        method_source = method_source.replace(
+            direct_write_block, direct_write_replacement
+        )
+    else:
         raise RuntimeError(
             "unsupported DTK Triton HCU memory-attribute compatibility "
-            f"block: expected exactly one match, found {occurrences}"
+            "block: expected exactly one recognized implementation, "
+            f"found legacy={vendor_occurrences}, direct={direct_occurrences}"
         )
-    method_source = method_source.replace(vendor_block, replacement)
 
     compiler_globals = _flagdnn_compiler_hcu.__dict__
     helper_name = "_flagdnn_hygon_compatible_llir"
