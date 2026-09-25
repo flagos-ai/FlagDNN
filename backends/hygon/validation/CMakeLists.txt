@@ -140,6 +140,35 @@ target_link_libraries(flagdnn_validation_hygon_cases PUBLIC
 flagdnn_enable_warnings(flagdnn_validation_hygon_cases)
 
 if(FLAGDNN_BUILD_TESTS)
+  # Exercise the production Python ownership/GIL lifecycle in real processes
+  # and a dlopen'ed fixture, without linking HIP, Torch, or libtriton_jit.
+  find_package(Threads REQUIRED)
+  add_library(flagdnn_hygon_python_runtime_fixture SHARED
+    functional/python_runtime_shim.cpp
+    "../engines/python_runtime.cpp")
+  target_compile_features(flagdnn_hygon_python_runtime_fixture PRIVATE cxx_std_20)
+  target_include_directories(flagdnn_hygon_python_runtime_fixture PRIVATE
+    "${PROJECT_SOURCE_DIR}")
+  target_link_libraries(flagdnn_hygon_python_runtime_fixture PRIVATE
+    Python::Python Threads::Threads ${CMAKE_DL_LIBS})
+  set_target_properties(flagdnn_hygon_python_runtime_fixture PROPERTIES
+    CXX_VISIBILITY_PRESET default)
+  flagdnn_enable_warnings(flagdnn_hygon_python_runtime_fixture)
+  add_executable(flagdnn_test_hygon_python_runtime
+    functional/test_python_runtime.cpp)
+  target_compile_features(flagdnn_test_hygon_python_runtime PRIVATE cxx_std_20)
+  target_link_libraries(flagdnn_test_hygon_python_runtime PRIVATE
+    Python::Python Threads::Threads ${CMAKE_DL_LIBS})
+  flagdnn_enable_warnings(flagdnn_test_hygon_python_runtime)
+  add_dependencies(flagdnn_test_hygon_python_runtime
+    flagdnn_hygon_python_runtime_fixture)
+  add_test(NAME integration.hygon.python_runtime_lifecycle_contract
+    COMMAND flagdnn_test_hygon_python_runtime
+      "$<TARGET_FILE:flagdnn_hygon_python_runtime_fixture>")
+  set_tests_properties(integration.hygon.python_runtime_lifecycle_contract
+    PROPERTIES LABELS "integration;hygon;python;contract" TIMEOUT 120
+      ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+
   add_executable(flagdnn_test_hygon_jit_compatibility
     functional/test_jit_compatibility.cpp
     "../error.cpp")

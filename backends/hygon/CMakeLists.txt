@@ -290,6 +290,7 @@ flagdnn_add_backend_plugin(hygon INSTALL
     context.cpp
     engines/engine.cpp
     engines/libtriton_jit.cpp
+    engines/python_runtime.cpp
     error.cpp
     ${PROJECT_SOURCE_DIR}/src/runtime/json.cpp
     ${PROJECT_SOURCE_DIR}/src/runtime/sha256.cpp

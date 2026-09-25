@@ -2060,6 +2060,7 @@ def main() -> int:
         "core.kernel_registry_contract",
         "integration.hygon.jit_candidate_compatibility_contract",
         "integration.hygon.jit_global_state_contract",
+        "integration.hygon.python_runtime_lifecycle_contract",
         "integration.hygon.convolution_validation_static_contract",
         "integration.hygon.normalization_stability",
     ):
@@ -2068,8 +2069,8 @@ def main() -> int:
             f"Hygon preflight omits {required_contract}",
         )
     require(
-        len(hygon_preflight) == 29,
-        "Hygon preflight required-test count is not 29",
+        len(hygon_preflight) == 30,
+        "Hygon preflight required-test count is not 30",
     )
     functional_preflight = runner.required_preflight_tests(
         "hygon", ["functional"]

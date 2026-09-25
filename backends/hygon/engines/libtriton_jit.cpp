@@ -7,6 +7,8 @@
 
 #if defined(FLAGDNN_HAS_LIBTRITON_JIT)
 
+#include "backends/hygon/engines/python_runtime.hpp"
+
 #include <Python.h>
 #include <dlfcn.h>
 #include <triton_jit/kernel_metadata.h>
@@ -505,19 +507,28 @@ void verify_active_python_environment() {
 
 void initialize_verified_jit_python_modules() {
   std::call_once(libtriton_jit_python_modules_once, [] {
-    // Validate the complete active interpreter before importing either of the
-    // libtriton_jit helper modules below.
-    verify_active_python_environment();
-    verify_jit_python_module("torch", FLAGDNN_LIBTRITON_JIT_TORCH_SHA256, true);
-    verify_jit_python_module("torch._C", FLAGDNN_LIBTRITON_JIT_TORCH_C_SHA256,
-                             true);
-    verify_jit_python_module("triton", FLAGDNN_LIBTRITON_JIT_TRITON_SHA256,
-                             true);
-    verify_jit_python_module("yaml", FLAGDNN_LIBTRITON_JIT_YAML_SHA256, true);
-    verify_jit_python_module("gen_ssig", FLAGDNN_LIBTRITON_JIT_GEN_SSIG_SHA256,
-                             true);
-    verify_jit_python_module("standalone_compile",
-                             FLAGDNN_LIBTRITON_JIT_STANDALONE_SHA256, true);
+    try {
+      // Validate the complete active interpreter before importing either of
+      // the libtriton_jit helper modules below.
+      verify_active_python_environment();
+      verify_jit_python_module("torch", FLAGDNN_LIBTRITON_JIT_TORCH_SHA256,
+                               true);
+      verify_jit_python_module("torch._C", FLAGDNN_LIBTRITON_JIT_TORCH_C_SHA256,
+                               true);
+      verify_jit_python_module("triton", FLAGDNN_LIBTRITON_JIT_TRITON_SHA256,
+                               true);
+      verify_jit_python_module("yaml", FLAGDNN_LIBTRITON_JIT_YAML_SHA256, true);
+      verify_jit_python_module("gen_ssig",
+                               FLAGDNN_LIBTRITON_JIT_GEN_SSIG_SHA256, true);
+      verify_jit_python_module("standalone_compile",
+                               FLAGDNN_LIBTRITON_JIT_STANDALONE_SHA256, true);
+    } catch (...) {
+      // A failed helper import can already have loaded native extensions.
+      // Register after those imports so their static destructors see a GIL.
+      detail::guard_python_shutdown_after_imports();
+      throw;
+    }
+    detail::guard_python_shutdown_after_imports();
   });
 }
 
@@ -842,17 +853,7 @@ void configure_python_path() {
   configure_active_python_path(required_paths);
 }
 
-void initialize_python_runtime() {
-  if (Py_IsInitialized()) {
-    return;
-  }
-  Py_InitializeEx(0);
-  require(Py_IsInitialized(), "cannot initialize Python for Hygon JIT",
-          FLAGDNN_BACKEND_RESULT_COMPILATION_FAILED);
-  // Leave the interpreter initialized, but release the bootstrap thread's GIL
-  // so engine builds on other host threads can acquire it.
-  (void)PyEval_SaveThread();
-}
+void initialize_python_runtime() { detail::initialize_embedded_python(); }
 
 struct TuningAllocation {
   std::int64_t uid = 0;

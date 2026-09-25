@@ -101,6 +101,7 @@ def preflight_tests(_suites: list[str] | tuple[str, ...]) -> set[str]:
         "integration.hygon.graph",
         "integration.hygon.jit_candidate_compatibility_contract",
         "integration.hygon.jit_global_state_contract",
+        "integration.hygon.python_runtime_lifecycle_contract",
         "integration.hygon.normalization_stability",
     }
 

@@ -426,6 +426,17 @@ Python `os.environ` 或 `sys.path`；嵌入应用不得在 identity/JIT 初始�
 期间并发修改这些状态。需要另一 Triton backend 或无法满足该同步边界时，应使用
 独立进程，不能依赖未定义的进程全局状态竞争。
 
+Hygon 仅对自己创建的嵌入式 Python 解释器管理退出顺序：运行期间释放初始化线程的
+GIL，允许其他线程构建；导入 native extension 后（包括部分导入失败的路径）注册
+进程退出回调，在这些 extension 的 C++ 静态对象析构前获取并保持 GIL。部分 DTK
+Triton 构建会保留静态 pybind11 类型对象，因此仅保持解释器存活仍不足以安全退出。
+此时 Hygon 同时保留其 plugin DSO 到进程退出，防止最后一个 handle 销毁时提前执行
+回调或卸载其代码。该退出回调不执行 `Py_FinalizeEx`；宿主预先创建的 Python
+解释器仍完全由宿主管理。此处理仅位于 Hygon 后端，不修改外部 `libtriton_jit`、
+Triton 或其他后端。`integration.hygon.python_runtime_lifecycle_contract` 在独立
+子进程中覆盖正常退出、工作线程初始化、导入失败后重试、宿主解释器和 DSO
+卸载/重新加载场景。
+
 安装树必须包含：
 
 ```text
