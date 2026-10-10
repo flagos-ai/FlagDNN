@@ -9,6 +9,12 @@ repos:
       - id: check-yaml
       - id: check-json
       - id: check-added-large-files
+        exclude: '^docs/performance-baseline\.json$'
+      # Keep the measured reference cases together for the JSON reader.
+      - id: check-added-large-files
+        name: check performance baseline size (3 MB)
+        files: '^docs/performance-baseline\.json$'
+        args: [--maxkb=3072]
 
   - repo: https://github.com/psf/black
     rev: 24.8.0

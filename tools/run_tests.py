@@ -24,7 +24,7 @@ import sys
 import tempfile
 import time
 from types import ModuleType
-from typing import Any
+from typing import Any, TextIO
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "cmake" / "Operators.cmake"
@@ -32,16 +32,72 @@ VALID_SUITES = ("functional", "benchmark")
 BUILD_CONFIGURATION_FILE = ".flagdnn-build-config"
 PLATFORM_ADAPTER_FILE = "run_tests_adapter.py"
 DEFAULT_OPERATORS = (
+    "identity",
     "add",
     "sub",
     "mul",
-    "div",
-    "pow",
     "max",
     "min",
-    "mod",
     "add_square",
+    "scale",
+    "abs",
+    "relu",
+    "relu_backward",
+    "elu",
+    "sigmoid",
+    "sigmoid_backward",
+    "swish",
+    "swish_backward",
+    "tanh",
+    "tanh_backward",
+    # "conv_fprop",
+    # "conv_dgrad",
+    # "conv_wgrad",
+    # "conv_bias_relu",
+    "reduction",
+    "batchnorm",
+    # Simple operators with NVIDIA timings in performance-baseline.json that
+    # need equivalent references on some platforms. The JSON fallback is not
+    # integrated yet, so missing native references still cause benchmark skips.
+    "reshape",
+    "transpose",
+    "slice",
+    "concatenate",
+    "gen_index",
+    "div",
+    "pow",
+    "mod",
     "cmp_eq",
+    "cmp_neq",
+    "cmp_gt",
+    "cmp_ge",
+    "cmp_lt",
+    "cmp_le",
+    "logical_and",
+    "logical_or",
+    "logical_not",
+    "binary_select",
+    "neg",
+    "sqrt",
+    "rsqrt",
+    "reciprocal",
+    "ceil",
+    "floor",
+    "exp",
+    "log",
+    "erf",
+    "sin",
+    "cos",
+    "tan",
+    "leaky_relu",
+    "leaky_relu_backward",
+    "elu_backward",
+    "gelu",
+    "gelu_backward",
+    "gelu_approx_tanh",
+    "gelu_approx_tanh_backward",
+    "softplus",
+    "softplus_backward",
 )
 PLATFORM_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 CTEST_SKIPPED_PATTERN = re.compile(
@@ -1130,7 +1186,7 @@ def run_process_group(
     log_paths: tuple[Path, Path] | None = None,
 ) -> tuple[str, str, int | None, bool]:
     with contextlib.ExitStack() as stack:
-        streams = (
+        streams: list[TextIO | int] = (
             [
                 stack.enter_context(path.open("w", encoding="utf-8"))
                 for path in log_paths
@@ -1423,8 +1479,8 @@ def run_preflight(
                 "required preflight tests are missing: "
                 + ", ".join(missing_tests)
             )
-        for error in errors:
-            print(f"preflight error: {error}", file=sys.stderr)
+        for message in errors:
+            print(f"preflight error: {message}", file=sys.stderr)
         return {
             "status": "failed",
             "duration_seconds": 0.0,
