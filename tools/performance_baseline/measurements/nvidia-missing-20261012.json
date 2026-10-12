@@ -1,0 +1,460 @@
+{
+  "schema_version": 1,
+  "measurement_id": "nvidia-missing-20261012",
+  "measured_on": "2026-10-12",
+  "source_revision": "2a1ed82d38b3ba94be570c016fb1893db75cbee8",
+  "source_state": "Working-tree collector extensions; source snapshots and SHA256 list are archived.",
+  "requested_report": "docs/nvidia-performance-missing-cases-20261012.md",
+  "requested_report_sha256_at_collection": "9f5b252a46d85c0a1b2a3ad82cc62c4a1e9f5a7bc639761f5e71f8030c3f2d86",
+  "device": {
+    "name": "NVIDIA H100 80GB HBM3",
+    "ordinal": 0,
+    "uuid": "GPU-1b8f7635-8b3c-b48e-b6b6-229c50627cb0",
+    "pci_bus_id": "00000000:9B:00.0",
+    "power_limit_w": 700,
+    "mig": "Disabled"
+  },
+  "software": {
+    "nvidia_smi_driver": "535.183.06",
+    "cuda_toolkit": "12.9.86",
+    "cuda_driver_api": 12090,
+    "cuda_runtime_api": 12090,
+    "cudnn_package": "9.24.0.43",
+    "cudnn_runtime": 92400,
+    "cudnn_frontend": "1.26.0"
+  },
+  "gpu_activity": {
+    "observation": "GPU utilization was 0% before and after. A resident 536 MiB allocation (PID 3275245, outside the visible process namespace) remained; six preflight pmon samples showed no compute activity. This is not proof of exclusive device ownership.",
+    "collection": "All benchmark subprocesses ran sequentially; one-second power, clock, utilization and memory monitoring is archived.",
+    "monitor": "gpu-monitor.csv"
+  },
+  "counts": {
+    "requested": 371,
+    "passed": 371,
+    "failed": 0,
+    "operators": 22,
+    "core": 291,
+    "aux": 80,
+    "added_validation": {
+      "cpu_full": 335,
+      "bit_exact": 36
+    },
+    "baseline_total_cases": 3264,
+    "baseline_total_operators": 82
+  },
+  "added_case_counts": {
+    "abs": 15,
+    "add": 15,
+    "add_square": 15,
+    "batchnorm": 24,
+    "elu": 15,
+    "identity": 48,
+    "logical_and": 12,
+    "logical_or": 12,
+    "max": 15,
+    "min": 15,
+    "mul": 15,
+    "reduction": 20,
+    "relu": 15,
+    "relu_backward": 15,
+    "scale": 15,
+    "sigmoid": 15,
+    "sigmoid_backward": 15,
+    "sub": 15,
+    "swish": 15,
+    "swish_backward": 15,
+    "tanh": 15,
+    "tanh_backward": 15
+  },
+  "timing": {
+    "method": "CUDA events around one CUDA Graph batch; per-call us = batch us / executions",
+    "statistic": "nearest_rank_p50",
+    "other_percentile": "nearest_rank_p90",
+    "excluded": "build, allocation, uploads/downloads, layout conversion, host oracle and validation",
+    "profiles": {
+      "native": {
+        "warmup_iterations": 10,
+        "sample_count": 20,
+        "iterations_per_sample": 50,
+        "graph_warmup_replays": 1
+      },
+      "batchnorm_training": {
+        "warmup_iterations": 5,
+        "sample_count": 10,
+        "iterations_per_sample": 20,
+        "graph_warmup_replays": 1
+      }
+    }
+  },
+  "validation": {
+    "phases": [
+      "before_timing",
+      "after_timing",
+      "after_reset_replay"
+    ],
+    "full_output_elements_per_phase": 135608956,
+    "phase_records": 1113,
+    "batchnorm_output_checks": 360,
+    "inputs_unchanged": true,
+    "padding_and_guards_intact": true,
+    "raw_audit_assertions": 140080,
+    "raw_audit_negative_controls": 16,
+    "cpu_python_tests": 15,
+    "core_cpu_checker": "PASS",
+    "aux_cpu_checker": "PASS",
+    "identity_main": "12 BF16 main cases use numeric exact comparison at atol=rtol=0; this is not bit_exact.",
+    "identity_aux": "36 BF16/INT32/BOOL auxiliary cases use exact original storage bytes/bits."
+  },
+  "raw_archive": "tools/performance_baseline/measurements/nvidia-missing-20261012.tar.gz",
+  "raw_archive_sha256": "4ea27b7dafd5fa119970562ea8789a2a4bd1d1fa6359453b0738fb82ab268f4b",
+  "raw_archive_bytes": 312246,
+  "archive_files": {
+    "archive_results.py": {
+      "sha256": "c325312202aa531f5de9990ad5474ed581c3ad20b6f6e41e24e8e6eb707d8b50",
+      "bytes": 7010
+    },
+    "aux-cases.txt": {
+      "sha256": "ea3b36e49071b3eb759044177af7a98d821fc0898752b577806fe1b220d832bf",
+      "bytes": 2120
+    },
+    "aux-cpu-check.log": {
+      "sha256": "42cc803f75ea4a1311a45b3b129decc84f387d0e8a9419cc4299ae38827f6b07",
+      "bytes": 109
+    },
+    "baseline-merge-validation.json": {
+      "sha256": "0f3cc69f5dc57b67fb6f71356469653aa1febefcca65f72b6b5e6d8e192e751d",
+      "bytes": 495
+    },
+    "collection.stderr": {
+      "sha256": "5af1a9fc2831d70f7ac084756531da365d91f3894273413f84653945f3523532",
+      "bytes": 20225
+    },
+    "collection.stdout": {
+      "sha256": "b610dab98abff40d25f8270366be24e2ec5e02af74550184757075c6043c28d6",
+      "bytes": 645
+    },
+    "collection/aux.cases": {
+      "sha256": "ea3b36e49071b3eb759044177af7a98d821fc0898752b577806fe1b220d832bf",
+      "bytes": 2120
+    },
+    "collection/aux.catalog.jsonl": {
+      "sha256": "2f0ee7672b54918d7860971550d6db1564135ac443799fcbf0fcffde45e50827",
+      "bytes": 202728
+    },
+    "collection/aux.jsonl": {
+      "sha256": "7fefc6636a37c02aec19bfdbf8b8fbaeab6b38493e106bb9de8e44edf74d5b4c",
+      "bytes": 302261
+    },
+    "collection/aux.logs/shared-001.cases": {
+      "sha256": "ea3b36e49071b3eb759044177af7a98d821fc0898752b577806fe1b220d832bf",
+      "bytes": 2120
+    },
+    "collection/aux.logs/shared-001.stderr": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "collection/collection-manifest.json": {
+      "sha256": "c9306d8f71eb13b3b3288311325b132394fb91b631b582e8525be3e9d54e98c2",
+      "bytes": 686
+    },
+    "collection/core.cases": {
+      "sha256": "7fa9075554066f422032ca4458ed692959396b2ea73cf3b95542bc3d07075f11",
+      "bytes": 11253
+    },
+    "collection/core.catalog.jsonl": {
+      "sha256": "d7ee8df9ef9bed37e59d824effa0a29cf93bff0b3328cbf5a40480568cc746c0",
+      "bytes": 847829
+    },
+    "collection/core.jsonl": {
+      "sha256": "972ac5ada2e60a96e4a603b631ccbc5ef8785db5a3649d4ccbe93d25d79dc208",
+      "bytes": 1504181
+    },
+    "collection/core.logs/shared-001.cases": {
+      "sha256": "7fa9075554066f422032ca4458ed692959396b2ea73cf3b95542bc3d07075f11",
+      "bytes": 11253
+    },
+    "collection/core.logs/shared-001.stderr": {
+      "sha256": "0a53a03b2ffa68cef692c291b571fa99f215cea493a972ae9fe8df55e7623753",
+      "bytes": 13818
+    },
+    "core-cases.txt": {
+      "sha256": "eeeb8420cb60f8c5db2389c991c773230b5bdb02ac1309c1539092d42e939304",
+      "bytes": 11253
+    },
+    "core-cpu-check.log": {
+      "sha256": "9636807c9ed8782a9fa224c0de8b9d35ef7cdb34c5734c2282c4c640de87c969",
+      "bytes": 75
+    },
+    "core-smoke.cases": {
+      "sha256": "4fe3fb3049ad7130f28f82ae63c8f47b1bf3112eac7990553f978523f10fe649",
+      "bytes": 190
+    },
+    "core-smoke.jsonl": {
+      "sha256": "c00acc934f8b2d06c394a03c0c226e35e4114add4297d162944a778714930d95",
+      "bytes": 35359
+    },
+    "core-smoke.stderr": {
+      "sha256": "bc9616c57329bd6bf600286244c965287bab8ba4efaad988c9a59d50bf62d9d8",
+      "bytes": 275
+    },
+    "environment-before.json": {
+      "sha256": "dfaf0febd6d4c2630ea23b14b2fed1988275415211dda6bff841e9bb600e030e",
+      "bytes": 11240
+    },
+    "environment-end.json": {
+      "sha256": "8b8cee04d01d0190c91634e20308f1820a8a54b217824d9d5fea115bf52efb2f",
+      "bytes": 414
+    },
+    "environment-start.json": {
+      "sha256": "c6aef3f97ddb845ad52794cedb4f7c5389be7b8d603b64c3039a8c646e7186f7",
+      "bytes": 408
+    },
+    "gpu-monitor.csv": {
+      "sha256": "c36c12a87ae568f66d61cd47a1864cede3dc6aa30b32615d238bc03274c76bc4",
+      "bytes": 8287
+    },
+    "merge_results.py": {
+      "sha256": "a3c6c1aa4731f1dba11a8051755fc18eeada6e33e13459678c3c121cfc1974d6",
+      "bytes": 8351
+    },
+    "python-tests.log": {
+      "sha256": "5a6e69afb53fdb8669a1f0c049c587df5bd5ce3701c2e692751418dc93ae48b7",
+      "bytes": 2219
+    },
+    "raw-validation.json": {
+      "sha256": "494c6095bf2db5e91a6c6a76fb6e82ba8c88d8fd0dbd7b56641d07f1c1e770d7",
+      "bytes": 1028
+    },
+    "requested-cases.json": {
+      "sha256": "d9e04d9acee2f3c22c9c9aaea710275eaf689254fe6e89f1fb96605f7d68978e",
+      "bytes": 31670
+    },
+    "requested-cases.txt": {
+      "sha256": "6a7546c6d77436564e49bc66d15cb3b71f837a7ea5c074ba87e61ab4e616c6fe",
+      "bytes": 13373
+    },
+    "requested-report-at-collection.md": {
+      "sha256": "9f5b252a46d85c0a1b2a3ad82cc62c4a1e9f5a7bc639761f5e71f8030c3f2d86",
+      "bytes": 38176
+    },
+    "smoke/nv-missing-aux-smoke.jsonl": {
+      "sha256": "f179c2a04dd0001ed1df7254d25c7f8fb2115b765c7fae883577f6eca4fd693d",
+      "bytes": 3544
+    },
+    "smoke/nv-missing-aux-smoke.stderr": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "smoke/nv-missing-aux-smoke2.jsonl": {
+      "sha256": "6915417c96004e78671e83da78debb649752bbcf897fc2df4852eb978144ffcb",
+      "bytes": 18660
+    },
+    "smoke/nv-missing-aux-smoke2.stderr": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "source-sha256.json": {
+      "sha256": "05ff4455b056f5341261a42fc0ed43e8abf3161a12748cd539393e9b227e9851",
+      "bytes": 31018
+    },
+    "sources/backends/hygon/validation/benchmark/native_dtype.cpp": {
+      "sha256": "421152d92c4d7c073bb7d9d414519873326cec042aee4cd4959c062460c561a3",
+      "bytes": 11480
+    },
+    "sources/backends/hygon/validation/benchmark/runner.cpp": {
+      "sha256": "6c04f438d86f8f475917faeaa35a280f27a04efa8b783fe45c8bd434824d5c81",
+      "bytes": 56157
+    },
+    "sources/backends/nvidia/validation/benchmark/graph.cpp": {
+      "sha256": "60c92fd25218a21f75e78f021149f4690b5fdb2023cfb4034cac5b3cec8633fe",
+      "bytes": 7799
+    },
+    "sources/backends/nvidia/validation/benchmark/pointwise.cpp": {
+      "sha256": "a492ee092ee67d6474d82160d79dad5a492e673e4ac63f664d6f26f6740ae3f7",
+      "bytes": 17328
+    },
+    "sources/backends/nvidia/validation/benchmark/runner.cpp": {
+      "sha256": "069f6f837d4f1ba40f7ecdab808b3fc69c40d29dc8930dd2e82f50cffac9c679",
+      "bytes": 26639
+    },
+    "sources/backends/nvidia/validation/functional/cudnn_pointwise.cpp": {
+      "sha256": "03e1992111252731f914611c14640c115edcb6dbd94aa5f1a9471bef0dded08a",
+      "bytes": 16553
+    },
+    "sources/backends/nvidia/validation/tensor_io.cpp": {
+      "sha256": "c2efca2a5ae841e4fabe67e322abcf9ce4f2276a5e2866d363d0868a005e18bf",
+      "bytes": 6851
+    },
+    "sources/benchmark/common/batchnorm_inference_cases.cpp": {
+      "sha256": "4abf5d85baec4130afe384a277783e4d6900c3bb65cca2fbc8959a321c5a5f5e",
+      "bytes": 12645
+    },
+    "sources/benchmark/common/binary_pointwise_cases.cpp": {
+      "sha256": "2b948e3c70eb169e94db8e90000758123267d5bfcf4bc0dd36db1d507ed04b68",
+      "bytes": 15492
+    },
+    "sources/benchmark/common/case.hpp": {
+      "sha256": "2e1d96ae8aa5c270b8491381ae33f6cfe1f8d2cad62501451ab872a77bc5dcc2",
+      "bytes": 5315
+    },
+    "sources/benchmark/common/pointwise_cases.cpp": {
+      "sha256": "724fcb682d31acae0611e191ce621d845bf5b4ae07994bfc60732b1d0230cacf",
+      "bytes": 8068
+    },
+    "sources/benchmark/common/pointwise_graph_cases.cpp": {
+      "sha256": "9e28509fa61b7478d96534395c7882d9abe98ad60d9dab4b44d66feb1bb6829e",
+      "bytes": 5668
+    },
+    "sources/benchmark/test_abs.cpp": {
+      "sha256": "44abafe9875a81b8352acebe1d1253f04325a8b4e4a9c3ce2a0250aa4b3eadfc",
+      "bytes": 518
+    },
+    "sources/benchmark/test_add.cpp": {
+      "sha256": "9aa9f725be16e065fcf9fb9e8aa0504b2419f4a7e8d66d7659c7ebfd886a8c3c",
+      "bytes": 428
+    },
+    "sources/benchmark/test_add_square.cpp": {
+      "sha256": "b882a0bb72952b31c91306b659d74ba2b144e0d6221c0c8b69a5d537af3ceea8",
+      "bytes": 442
+    },
+    "sources/benchmark/test_batchnorm.cpp": {
+      "sha256": "ccd8e403d15bd2700ac439fd6d3e362cbe99a17fde8a5488676a3637976520b5",
+      "bytes": 440
+    },
+    "sources/benchmark/test_elu.cpp": {
+      "sha256": "414b2a353d58877522f8bb67bdb6ed8f308a75e06b7bf18a6fc13cb2404787fd",
+      "bytes": 717
+    },
+    "sources/benchmark/test_identity.cpp": {
+      "sha256": "b29f11b64d79bad91ae0132f0617e8214b47899b769760bccd9962a9ad4bbe51",
+      "bytes": 533
+    },
+    "sources/benchmark/test_max.cpp": {
+      "sha256": "26e40b6f884c0a33c0b8557fc16e31247be1636fe135c83718908f9647097ab3",
+      "bytes": 519
+    },
+    "sources/benchmark/test_min.cpp": {
+      "sha256": "aa95cb1a708c8a31809cb0f95db358aafc9deefacd66d09844f0ad32f2aa5d74",
+      "bytes": 519
+    },
+    "sources/benchmark/test_mul.cpp": {
+      "sha256": "f720fdd76ce9f5c4a08d342b9a7165531236948616590f550d1747c92806ed88",
+      "bytes": 519
+    },
+    "sources/benchmark/test_relu.cpp": {
+      "sha256": "3e9b2abc63979deb264b0f8a7871829a6d33f63f6765132e64509ad48876b4d8",
+      "bytes": 430
+    },
+    "sources/benchmark/test_relu_backward.cpp": {
+      "sha256": "f7f2a676d00112115759990abe6344d223319b3b815a6c3b32e7d4ba6b79653e",
+      "bytes": 538
+    },
+    "sources/benchmark/test_scale.cpp": {
+      "sha256": "85cf917ba6d0098d67767dd7106dfc34e1e7dce4babb38e56dcdaaca954df890",
+      "bytes": 523
+    },
+    "sources/benchmark/test_sigmoid.cpp": {
+      "sha256": "71a5ed8d33e50bdf9823bf22b474e0812f52062ef41d2dd7743aa6cfbff73cb5",
+      "bytes": 546
+    },
+    "sources/benchmark/test_sigmoid_backward.cpp": {
+      "sha256": "5988f9240405617dab740aa44b07a9466e552a7a0f2f1e2c610698c29804b3eb",
+      "bytes": 565
+    },
+    "sources/benchmark/test_sub.cpp": {
+      "sha256": "4c85b61a44153775dd97c5b5c8334652fb5550a3c2a8c75aad4add5720feed3b",
+      "bytes": 519
+    },
+    "sources/benchmark/test_swish.cpp": {
+      "sha256": "df4a3d06225fec022dd308ddfaa26ec68014e9f06a3acfc22b17e5b470831053",
+      "bytes": 748
+    },
+    "sources/benchmark/test_swish_backward.cpp": {
+      "sha256": "415e682c12b548d994372a0f0aae8fccc5c59f48568761b74460e326e2e2de9a",
+      "bytes": 541
+    },
+    "sources/benchmark/test_tanh.cpp": {
+      "sha256": "4f9928cf5bd64151be6ced29c1d928c93471d2ae68dd9acfa3ef22a0d761cd93",
+      "bytes": 537
+    },
+    "sources/benchmark/test_tanh_backward.cpp": {
+      "sha256": "f59a41ab86ca695ddce645f4a3e021b4ad12dc40c2af7364d93bfd556dc6fc62",
+      "bytes": 538
+    },
+    "sources/reference/cpu/benchmark.cpp": {
+      "sha256": "e89ac7c06f9b4e2f413e1287258d483f7bf27211491c2bf47e215e2944bab090",
+      "bytes": 58425
+    },
+    "sources/reference/cpu/matrix.cpp": {
+      "sha256": "4cbff0ca8d8f05e631ef1e0dd110e3f709e1ddedff835f7724dd7eec99d2b930",
+      "bytes": 9209
+    },
+    "sources/tests/common/pointwise.cpp": {
+      "sha256": "9b425c381f45abd695cb2c3181f1d36377b25bbfab7eeceff7c084d072240f53",
+      "bytes": 35826
+    },
+    "sources/tests/common/reduction.cpp": {
+      "sha256": "ead1d09b933ff2f08b615bf3786094b6f875284546be49854231886815d9b999",
+      "bytes": 18737
+    },
+    "sources/tools/performance_baseline/benchmark_nvidia_core_catalog.hpp": {
+      "sha256": "4211c6e84f91835f3e05fe94dbf6c1100739fdacbadc73d43951e5595beadc6e",
+      "bytes": 10521
+    },
+    "sources/tools/performance_baseline/benchmark_nvidia_core_validation.hpp": {
+      "sha256": "eb530985cf79da565ae8421fbd879c4e75b1e0994a1f1eeee0ffef5b4060e951",
+      "bytes": 5411
+    },
+    "sources/tools/performance_baseline/benchmark_nvidia_cudnn.cpp": {
+      "sha256": "889b555ede9e4b6b2b56b9d635e0e217e9cfbe94f72660fc84e22ef12c123f9b",
+      "bytes": 30643
+    },
+    "sources/tools/performance_baseline/benchmark_nvidia_extended.py": {
+      "sha256": "5a54c90804c6b1a07721e37106d8f04885c41d132a99eb0a771c535113a5a7fb",
+      "bytes": 12944
+    },
+    "sources/tools/performance_baseline/benchmark_nvidia_missing_aux.cpp": {
+      "sha256": "d8b438114d759e6ea789ae44e4c4a4a9628d3798289c55d943376bd1c9635228",
+      "bytes": 27066
+    },
+    "sources/tools/performance_baseline/build_benchmark_nvidia_cudnn.sh": {
+      "sha256": "febbc09126ae7eaf5a7b9beac4e3dbf09f6ca5707a0e51a5c6fa7e4a8baacfbf",
+      "bytes": 2398
+    },
+    "sources/tools/performance_baseline/build_benchmark_nvidia_missing_aux.sh": {
+      "sha256": "10ee5d5d341f749e33978a4e782e453ac93ae0bfc15e7805567ea9dacaedf27b",
+      "bytes": 2307
+    },
+    "sources/tools/performance_baseline/check_benchmark_nvidia_core_validation.cpp": {
+      "sha256": "b6cc34f058eeb9d57771b900e89f25921720f038404347a8fb3681846ac57e1c",
+      "bytes": 8683
+    },
+    "sources/tools/performance_baseline/run_benchmark_nvidia_missing.py": {
+      "sha256": "82be1e8c9b403bc9ecdb4b81f3eb1d7af0133374665b1dba66d17a42cedab24f",
+      "bytes": 5151
+    },
+    "validate_raw.py": {
+      "sha256": "e78f48959099c00780ae079603dcbb4c167e676becabfd3a099117f5057a3084",
+      "bytes": 29463
+    },
+    "validator-negative-controls.json": {
+      "sha256": "e2f3e0b954da9152cea9d408282ada16c33588f3117429f0f2a0bb17149f04c0",
+      "bytes": 1795
+    }
+  },
+  "preservation": {
+    "original_case_count": 2893,
+    "added_case_count": 371,
+    "case_count": 3264,
+    "operator_count": 82,
+    "old_cases_unchanged": true,
+    "old_unavailable_cases_unchanged": true,
+    "all_platform_objects_unchanged": true,
+    "old_timing_profiles_unchanged": true,
+    "new_scale_metrics_all_null": true,
+    "before_sha256": "a6b0b6b0bbe133229a0e37c459fbbdd876b36e5a5fb4e9620cc97057c27b7e6d",
+    "after_sha256": "00477628cb6456b9b8f8434dc427f32b65e16979f8671903444ccd6b78aaa6c8",
+    "bytes": 2721989
+  },
+  "scope": "Appendix 1 only. No peak remeasurement, no modifications to any platform peaks/policies, no Hygon implementation or regression claim. The 491 existing unavailable cases and the 70+12 out-of-scope cases were not retried."
+}

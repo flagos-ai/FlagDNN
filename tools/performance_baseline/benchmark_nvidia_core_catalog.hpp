@@ -135,10 +135,86 @@ inline int capture_standalone_catalog(int, char**, std::span<const BenchmarkCase
 #define main standalone_catalog_entry_conv_wgrad
 #include "../../benchmark/test_conv_wgrad.cpp"
 #undef main
+#define main standalone_catalog_entry_abs
+#include "../../benchmark/test_abs.cpp"
+#undef main
+#define main standalone_catalog_entry_add
+#include "../../benchmark/test_add.cpp"
+#undef main
+#define main standalone_catalog_entry_add_square
+#include "../../benchmark/test_add_square.cpp"
+#undef main
+#define main standalone_catalog_entry_elu
+#include "../../benchmark/test_elu.cpp"
+#undef main
+#define main standalone_catalog_entry_max
+#include "../../benchmark/test_max.cpp"
+#undef main
+#define main standalone_catalog_entry_min
+#include "../../benchmark/test_min.cpp"
+#undef main
+#define main standalone_catalog_entry_mul
+#include "../../benchmark/test_mul.cpp"
+#undef main
+#define main standalone_catalog_entry_relu
+#include "../../benchmark/test_relu.cpp"
+#undef main
+#define main standalone_catalog_entry_relu_backward
+#include "../../benchmark/test_relu_backward.cpp"
+#undef main
+#define main standalone_catalog_entry_scale
+#include "../../benchmark/test_scale.cpp"
+#undef main
+#define main standalone_catalog_entry_sigmoid
+#include "../../benchmark/test_sigmoid.cpp"
+#undef main
+#define main standalone_catalog_entry_sigmoid_backward
+#include "../../benchmark/test_sigmoid_backward.cpp"
+#undef main
+#define main standalone_catalog_entry_sub
+#include "../../benchmark/test_sub.cpp"
+#undef main
+#define main standalone_catalog_entry_swish
+#include "../../benchmark/test_swish.cpp"
+#undef main
+#define main standalone_catalog_entry_swish_backward
+#include "../../benchmark/test_swish_backward.cpp"
+#undef main
+#define main standalone_catalog_entry_tanh
+#include "../../benchmark/test_tanh.cpp"
+#undef main
+#define main standalone_catalog_entry_tanh_backward
+#include "../../benchmark/test_tanh_backward.cpp"
+#undef main
+#define main standalone_catalog_entry_identity
+#include "../../benchmark/test_identity.cpp"
+#undef main
+#define main standalone_catalog_entry_batchnorm
+#include "../../benchmark/test_batchnorm.cpp"
+#undef main
 #undef run_benchmark_suite
 namespace standalone_cudnn {
 struct CatalogEntry { const char* name; int (*entry)(int, char**); };
 inline const CatalogEntry catalog_entries[] = {
+  {"abs", standalone_catalog_entry_abs},
+  {"add", standalone_catalog_entry_add},
+  {"add_square", standalone_catalog_entry_add_square},
+  {"elu", standalone_catalog_entry_elu},
+  {"max", standalone_catalog_entry_max},
+  {"min", standalone_catalog_entry_min},
+  {"mul", standalone_catalog_entry_mul},
+  {"relu", standalone_catalog_entry_relu},
+  {"relu_backward", standalone_catalog_entry_relu_backward},
+  {"scale", standalone_catalog_entry_scale},
+  {"sigmoid", standalone_catalog_entry_sigmoid},
+  {"sigmoid_backward", standalone_catalog_entry_sigmoid_backward},
+  {"sub", standalone_catalog_entry_sub},
+  {"swish", standalone_catalog_entry_swish},
+  {"swish_backward", standalone_catalog_entry_swish_backward},
+  {"tanh", standalone_catalog_entry_tanh},
+  {"tanh_backward", standalone_catalog_entry_tanh_backward},
+  {"identity", standalone_catalog_entry_identity},
+  {"batchnorm", standalone_catalog_entry_batchnorm},
   {"mod", standalone_catalog_entry_mod},
   {"pow", standalone_catalog_entry_pow},
   {"div", standalone_catalog_entry_div},
@@ -180,5 +256,13 @@ inline const CatalogEntry catalog_entries[] = {
   {"conv_dgrad", standalone_catalog_entry_conv_dgrad},
   {"conv_wgrad", standalone_catalog_entry_conv_wgrad},
 };
+// Existing core profiles retain 10/20/50; training BatchNorm keeps its
+// authoritative shared-catalog configuration (5/10/20 for performance cases).
+inline flagdnn::benchmarking::BenchmarkConfig core_benchmark_configuration(
+    const flagdnn::benchmarking::BenchmarkCase& specification) {
+  return specification.operation == flagdnn::benchmarking::Operation::kBatchnorm
+             ? specification.benchmark
+             : flagdnn::benchmarking::BenchmarkConfig{10, 20, 50};
+}
 }
 #endif

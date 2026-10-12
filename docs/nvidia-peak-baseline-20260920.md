@@ -8,7 +8,9 @@
 - `timing_profile`：计时配置；`validation`：`cpu_full` 全量 CPU 校验、`cpu_sampled` CPU 采样、`bit_exact` 按位校验或 `sanity` 输出写入/有限值/填充区完整性检查。
 - `reference.coverage`：覆盖统计与没有可用 NVIDIA 对照的算子；`reference.unavailable_cases`：被目录排除、构建/执行失败或校验失败的用例，不提供可用于验收的时间。
 
-依据 [算子支持表](operator-support.md)，当前包含 **16 项峰值、65 个算子的 2893 个参考用例**。除最初四算子外，已补比较/逻辑/选择、一元运算、激活及反向、布局、矩阵乘、卷积、归一化和注意力的可测缺口；具体 dtype/属性覆盖以 `case_name`、`coverage.catalog_limits` 和不可用记录为准。INT32 额外尝试了共享用例，只有通过精确校验的用例才保存时间，不代表完整 INT32 语义均受支持。
+依据 [算子支持表](operator-support.md)，当前包含 **16 项峰值、82 个算子的 3264 个参考用例**。除最初四算子外，已补比较/逻辑/选择、一元运算、激活及反向、布局、矩阵乘、卷积、归一化和注意力的可测缺口；具体 dtype/属性覆盖以 `case_name`、`coverage.catalog_limits` 和不可用记录为准。INT32 额外尝试了共享用例，只有通过精确校验的用例才保存时间，不代表完整 INT32 语义均受支持。
+
+2026-10-12 按[补测清单](nvidia-performance-missing-cases-20261012.md)完成 **371/371 条 NVIDIA 原生采集，0 ERROR**：core 291 条、aux 80 条，其中 `cpu_full` 335 条、`bit_exact` 36 条；每条均保留计时前后及重置输出后回放校验。历史 2893 条有效参考和 491 条不可用记录完整保留，所有平台对象与峰值保持原样。来源见[测量摘要](../tools/performance_baseline/measurements/nvidia-missing-20261012.json)和[原始归档](../tools/performance_baseline/measurements/nvidia-missing-20261012.tar.gz)。这批数据不代表 Hygon 策略已接入或 371 个 Hygon 用例已通过；后续仍需适配、匹配计时 profile 并正式回归。
 
 不可用状态：`excluded` 表示目录过滤，`build_failed` 表示 cuDNN 构建失败，`execution_failed` 表示执行失败，`validation_failed` 表示结果校验失败。原先笼统标为 `ERROR` 的 213 条中，198 条是 INT32 经 FLOAT 参考路径产生精度差异，15 条无法构建执行计划；这些记录没有 `time_us`，不能参与换算，也不能据此判断 FlagDNN 实现失败。
 
@@ -23,7 +25,7 @@
 | 激活、幂、除法、归一化等 | 检查向量计算或带宽；cuDNN 低精度输入不等于低精度计算。特殊函数按 FMA 峰值缩放只是近似。 |
 | MatMul、卷积、Attention | 张量计算受限时选实际计算精度对应的 `tensor_*`；显式 TF32 与普通 FP32 用例分开记录。 |
 
-NVIDIA 性能计数器权限受限（`ERR_NVGPUCTRPERM`），因此不把瓶颈猜测写成实测结论。下述 Hygon 等效性能覆盖的 40 个算子显式采用 FP32 FMA 或逻辑带宽代理，各代理的局限仅记录在 `platforms.hygon.scaling.case_policies`。共享 `reference` 整体保留原始 NVIDIA 基线，2893 条用例的 `scale_metric` 均为 `null`；新增目标平台策略不修改它。混合 FP8 峰值 `tensor_fp8_e5m2_e4m3` 对应 E5M2 × E4M3；不能直接当作任意 FP8/MXFP8 配置的峰值。
+NVIDIA 性能计数器权限受限（`ERR_NVGPUCTRPERM`），因此不把瓶颈猜测写成实测结论。下述 Hygon 等效性能覆盖的 40 个算子显式采用 FP32 FMA 或逻辑带宽代理，各代理的局限仅记录在 `platforms.hygon.scaling.case_policies`。共享 `reference` 保留历史 2893 条 NVIDIA 记录并追加本轮 371 条，3264 条用例的 `scale_metric` 均为 `null`；目标平台策略不改写这些参考记录。混合 FP8 峰值 `tensor_fp8_e5m2_e4m3` 对应 E5M2 × E4M3；不能直接当作任意 FP8/MXFP8 配置的峰值。
 
 读取示例（先显式配置目标平台策略、填写目标设备峰值；缺少该平台的算子策略时报错，不回退到 Hygon 或共享参考）：
 
@@ -59,7 +61,7 @@ with open("docs/performance-baseline.json") as f:
 
 `traffic_ratio` 默认 1；仅在带宽模型成立且实际读写量不同的情况下，传入目标/NVIDIA 的流量比。例：两个 FP32 输入的比较运算，cuDNN 输出 1 bit、目标输出 1 byte，比值为 `72/65`；FP16/BF16 为 `40/33`。布尔参考位宽见各 tensor 的 `reference_storage_bits`。
 
-计时排除建图、拷贝和校验。本基准将普通用例统一为预热 10 次、Graph 每批 50 次、采样 20 批，部分用例与原测试默认配置不同，目标平台需匹配；Attention 沿用原生配置 5/20/10，均取 nearest-rank P50。`sanity` 不代表完整数值正确性。未提供 NVIDIA 对照的 `genstats`、`rng`、`rope`、`rope_backward`、`moe_grouped_matmul_bwd` 不使用其他算子的时间替代。
+计时排除建图、拷贝和校验。`native` 为预热 10 次、采样 20 批、Graph 每批 50 次；`attention` 为 5 次、10 批、每批 20 次。2026-10-12 新增的 24 条 batchnorm 训练用例使用独立 `batchnorm_training` profile，同为预热 5 次、采样 10 批、每批 20 次，不修改已有 profile。三者均有一次 Graph 预热回放，并取 nearest-rank P50；目标平台须匹配对应配置。`sanity` 不代表完整数值正确性。未提供 NVIDIA 对照的 `genstats`、`rng`、`rope`、`rope_backward`、`moe_grouped_matmul_bwd` 不使用其他算子的时间替代。
 
 复测命令见 [工具目录](../tools/performance_baseline/README.md)。工具：[向量/带宽](../tools/performance_baseline/benchmark_nvidia_vector_memory.cu)、[张量](../tools/performance_baseline/benchmark_nvidia_tensor.py)、[核心用例](../tools/performance_baseline/benchmark_nvidia_cudnn.cpp)、[显式 TF32](../tools/performance_baseline/benchmark_nvidia_precision.cpp)、[扩展/Attention](../tools/performance_baseline/benchmark_nvidia_extended.py)、[属性/整数/FP8 复制](../tools/performance_baseline/run_benchmark_nvidia_pointwise_gaps.py)。Hygon 在下述范围内仅对缺少可用 hipDNN 性能对照的用例接入此 JSON；已有原生性能对照继续保留。
 
@@ -94,7 +96,7 @@ python3 tools/run_tests.py --platform hygon --ops div --suites benchmark --devic
 
 ## Hygon 缺失性能测试的等效补齐
 
-沿用上述五项 Hygon 实测峰值，新增范围没有依赖尚未测量的 FP16、BF16、INT32 向量峰值。仅在 `platforms.hygon.scaling.case_policies.<op>` 中为以下 40 个算子登记 Hygon 专属策略，其他平台不会自动启用。1597 是这 40 项策略所覆盖的已有 NVIDIA 记录数，不是被修改的公共记录数；共享 `reference` 保持不变。这些记录包含额外属性/整数探针，数量不等于 Hygon 默认测试目录大小。
+沿用上述五项 Hygon 实测峰值，新增范围没有依赖尚未测量的 FP16、BF16、INT32 向量峰值。仅在 `platforms.hygon.scaling.case_policies.<op>` 中为以下 40 个算子登记 Hygon 专属策略，其他平台不会自动启用。1597 是接入当时这 40 项策略所覆盖的历史 NVIDIA 记录数，不是本轮新增记录数；当时未修改共享 `reference`。这些记录包含额外属性/整数探针，数量不等于 Hygon 默认测试目录大小。
 
 | 指标 | 算子 |
 |---|---|
@@ -117,7 +119,7 @@ FP32 FMA 模型要求 `traffic_ratio = 1`。所有等效用例均做计时前后
 
 实际注册的布局 `.copy` 和 logical_not `.boolean` 测试已采用与 NVIDIA 相同的原生目录，分别各 36 和 12 条用例；不借用这些时间验收另一个大形状目录。concatenate 有 42 条浮点参考，gen_index 有 28 条（FP32/INT32）。`elu_backward`、`softplus`、`softplus_backward` 保留已有 hipDNN 对照，仅在静态能力、构建、执行探测或 Graph 捕获明确不支持时回退；数值错误或设备执行错误不转成等效通过。
 
-没有 NVIDIA 证据的范围继续明确报告：concatenate 的 70 条 INT32/BOOL/FP8 扩展用例列为 `EXCLUDED`，定点选择时为 `SKIP`；logical_and/or 的附加 `.boolean` 小形状目录为缺参考 `SKIP`，其已有参考的主性能目录运行等效测试。缺失文件、错误峰值、同名用例参数不匹配仍是硬错误，不作为缺参考跳过。
+concatenate 的 70 条 INT32/BOOL/FP8 扩展用例仍没有可用 NVIDIA 时间，列为 `EXCLUDED`，定点选择时为 `SKIP`。logical_and/or 的附加 `.boolean` 小形状目录现已新增 24 条 NVIDIA 参考，但 Hygon 对应路径仍按旧逻辑报告缺参考 `SKIP`，尚需接入新记录；其原有主性能目录继续运行等效测试。缺失文件、错误峰值、同名用例参数不匹配仍是硬错误，不作为缺参考跳过。
 
 2026-10-12 的 CPU 基线契约检查了 40 个算子的 **1570 条实际目录用例**（原有 1546 条及新增接入的 24 条 FP8 identity），并通过错误参数、流量、设备和来源信息的反例检查。identity 的两种 FP8 描述符已由独立探针确认被当前 hipDNN 返回 `NOT_SUPPORTED`；等效路径复用既有 NVIDIA 六值输入，计时前后及重置输出后的 Graph 回放均按原始字节校验复制，并检查输入未变和 padding。此路径不启用其他 identity dtype，不改动 NVIDIA 记录或任何平台的峰值。
 

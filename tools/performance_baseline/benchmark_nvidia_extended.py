@@ -33,7 +33,9 @@ def run_shared(args, selected, completed, output, logs):
 
     def save(row, wall_seconds):
         row["wall_seconds"] = wall_seconds
-        row["process_mode"] = "shared_cuda_context"
+        row["process_mode"] = getattr(
+            args, "process_mode", "shared_cuda_context"
+        )
         output.write(json.dumps(row, separators=(",", ":")) + "\n")
         output.flush()
         completed.add(row["case_name"])

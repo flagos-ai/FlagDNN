@@ -1,14 +1,34 @@
 # NVIDIA 性能基准补测清单
 
-2026-10-12 修复前的 59 算子 Hygon 性能回归有 425 个跳过用例。独立验证 hipDNN 后，本轮已实现 30 个 reduction 的原生对照，并将 24 个 identity FP8 用例接入已有 NVIDIA 等效参考；按同一目录核对，剩余 **371 个用例需要补齐参考路径**。这是目录与实现范围的核算，不是新一轮 59 算子全量通过结果；正式回归中止情况见下文。如采用 NVIDIA 等效性能路线，应补测附录一的 371 个用例。
+## 2026-10-12 NVIDIA 补测结果
 
-原清单的 401 条仍然都没有 NVIDIA 记录：其中 30 条现在已有原生 hipDNN 对照，不再需要为解除跳过而补测 NVIDIA，并非新增了 30 条 NVIDIA 数据。剩余 371 条也不能全部称为“已实测 hipDNN 不支持”；本轮验证范围、实际错误与尚未逐例验证的范围见下节。
+附录一的 **371 条 NVIDIA 原生参考已全部完成采集，371 PASS、0 ERROR**。采集器在计时前、计时后及重置输出后回放时验证全部输出、输入不变和 padding/边界；本轮没有新增 `sanity` 记录。
+
+| 项目 | 结果 |
+|---|---:|
+| 核心采集器：主逐元素、identity 主目录、batchnorm 训练 | 291 PASS |
+| 辅助采集器：identity copy、logical boolean、混合输出 reduction | 80 PASS |
+| 新增校验等级 | `cpu_full` 335 条；`bit_exact` 36 条 |
+| 有效参考总量 | 2893 条历史记录 + 371 条新增 = **3264 条、82 个算子** |
+| 历史不可用记录 | 491 条完整保留；本轮未新增失败记录 |
+
+新增 batchnorm 的 24 条使用独立 `batchnorm_training` profile（预热 5 次、采样 10 批、每批 20 次）；其余 347 条使用原有 `native`（10/20/50），Graph 均预热回放一次。历史有效记录、不可用记录、所有平台对象及峰值保持原样；新增记录的共享 `scale_metric` 为 `null`。
+
+原始记录独立验收通过 140080 项断言及 16 个反例检查；这是对记录证据的复核，不是另一次 GPU 测量。来源和证据见[测量摘要](../tools/performance_baseline/measurements/nvidia-missing-20261012.json)及[原始记录与日志归档](../tools/performance_baseline/measurements/nvidia-missing-20261012.tar.gz)。精确 371 条的构建、无 GPU 目录检查和串行复测命令见[工具说明](../tools/performance_baseline/README.md#2026-10-12-缺失目录补测)。下文保留补测前背景、hipDNN 探测和验收要求；附录一仍是准确复测清单，附录三、四没有计入本轮。
+
+**本轮只补 NVIDIA 数据，不表示 Hygon 等效策略已接入或 371 个 Hygon 用例已通过。** Hygon 的 logical_and/or 辅助 `.boolean` 路径仍按旧逻辑报告缺参考，需要改为加载这批新记录；其他待补路径也须完成策略、元数据和 profile 适配后再正式回归。
+
+## 补测前背景与 Hygon 状态
+
+2026-10-12 修复前的 59 算子 Hygon 性能回归有 425 个跳过用例。独立验证 hipDNN 后，此前 Hygon 修复已实现 30 个 reduction 的原生对照，并将 24 个 identity FP8 用例接入已有 NVIDIA 等效参考；按同一目录核对，当时剩余 **371 个用例需要补齐参考路径**。这是目录与实现范围的核算，不是新一轮 59 算子全量通过结果；正式回归中止情况见下文。这些用例构成本轮已完成的 NVIDIA 补测范围。
+
+补测前，原清单的 401 条均没有 NVIDIA 记录：其中 30 条已有原生 hipDNN 对照，不再需要为解除跳过而补测 NVIDIA，并非新增了 30 条 NVIDIA 数据。剩余 371 条也不能全部称为“已实测 hipDNN 不支持”；本轮验证范围、实际错误与尚未逐例验证的范围见下节。
 
 范围不包含 `DEFAULT_OPERATORS` 中注释的算子。concatenate 的 70 个排除用例、identity E8M0 的 12 个目录外用例另列为扩展任务，不混入当前 371 或历史 425 的计数。本轮正式回归计划范围为 identity、add、div、reduction、batchnorm，未重新执行全部 59 算子。
 
-## 补测范围
+## 本轮补测范围（按补测前缺口登记）
 
-| 分组 | 算子和 dtype | 缺少 NVIDIA 记录数 |
+| 分组 | 算子和 dtype | 本轮新增 NVIDIA 记录数 |
 |---|---|---:|
 | 主逐元素性能目录 | 下列 17 个算子的 BF16，各 15 个 | 255 |
 | identity 主目录 | BF16 | 12 |
@@ -22,22 +42,22 @@
 
 `abs`、`add`、`add_square`、`elu`、`max`、`min`、`mul`、`relu`、`relu_backward`、`scale`、`sigmoid`、`sigmoid_backward`、`sub`、`swish`、`swish_backward`、`tanh`、`tanh_backward`。
 
-本清单按完整的 `(op, case_name)` 与 [performance-baseline.json](performance-baseline.json) 的 `reference.cases` 核对；371 条均无对应有效记录，也不在当前 `reference.unavailable_cases` 中。不是把现有的其他 dtype、近似 shape 或其他目录记录当成缺测用例的替代品。
+补测前按完整的 `(op, case_name)` 与 [performance-baseline.json](performance-baseline.json) 核对，371 条均无对应有效记录，也不在当时的 `reference.unavailable_cases` 中；本轮按这些精确 ID 新增记录。不是把现有的其他 dtype、近似 shape 或其他目录记录当成缺测用例的替代品。
 
-## 当前跳过原因与 hipDNN 支持的区别
+## Hygon 历史跳过原因与 hipDNN 支持的区别
 
 “映射”指测试适配器如何把 FlagDNN 的操作、每个张量的 dtype/shape/strides、参数和输出，转换成语义一致的 hipDNN descriptor 与调用。API 有对应名称，不代表当前适配器已经实现了全部组合；适配器跳过，也不等于库实际返回不支持。
 
-| 当前待补范围 | 独立探测与适配状态 | 可以得出的结论 |
+| 补测前待补范围 | 独立探测与适配状态 | 可以得出的结论 |
 |---|---|---|
 | 303 个逐元素用例 | 原生 dtype 白名单保持不变；BF16 的 17 个算子各测 1 个代表用例，另测 identity 多 dtype 与 FP32/FP16 控制组，详见下表 | 已测低精度组合出现 API 拒绝或内核编译失败，不能直接删除白名单；没有逐一穷举全部 shape |
 | 24 个 batchnorm 用例 | 对 `1x128x8x8` 代表 shape 测试标准、Ex 和参数转换候选；仅原目录 FP32 及改变参数 dtype 的诊断变体通过 | 低精度原目录组合未找到五个输出都正确的路径；不是 rank 缺口，也不是 24 条都逐例测过 |
 | 20 个 reduction 用例 | 原 50 条中 30 条 FP16 → FP32 已补齐原生对照；余下 6 条 FP16 中间轴存在错误结果，14 条 BF16 均实测执行失败 | 不能使用只保留原始高维 descriptor 的混合输出实现，也不能为中间轴套用首/末轴二维视图 |
 | 24 个 logical 辅助 BOOL 用例 | [native_dtype.cpp](../backends/hygon/validation/benchmark/native_dtype.cpp) 明确报告缺少对应 NVIDIA 参考 | 主性能目录已测过同名算子，但不是这批 case，不能复用耗时 |
 
-原 327 个逐元素跳过用例中的 24 个 identity FP8 E4M3/E5M2，现已使用已有 NVIDIA `bit_exact` 记录；逐元素部分剩余需要新增参考的数量为 303。该路径在计时前后及重新填充输出后回放时，检查原始编码、输入未改变和 padding 未被破坏，不以 FLOAT 中转替代按位校验。
+原 327 个逐元素跳过用例中的 24 个 identity FP8 E4M3/E5M2，现已使用已有 NVIDIA `bit_exact` 记录；当时逐元素部分仍缺 303 条参考，现已包含在本轮 NVIDIA 新增数据中。该路径在计时前后及重新填充输出后回放时，检查原始编码、输入未改变和 padding 未被破坏，不以 FLOAT 中转替代按位校验。
 
-### 2026-10-12 独立验证证据
+### 2026-10-12 Hygon 独立验证证据（历史）
 
 环境：GPU `BW`，`arch=gfx936:sramecc+:xnack-`，HIP runtime/driver `60125085`，hipDNN `header=7000 runtime=8910`。以下结论仅针对该安装版本与已测配置，不代表所有 hipDNN 版本。
 
@@ -55,12 +75,12 @@
 
 可复现工具与参数见 [hipDNN 探针说明](../tools/hipdnn_capability/README.md)。本机原始探测、构建与正式回归产物位于 `build/hygon/hipdnn-capability-20261012-HaHtKP/`，其中 `pointwise/`、`batchnorm/`、`reduction/` 保留 API 状态与正确性日志，`regression/` 保存正式测试输出。探针不是峰值测试，不据此覆盖公共 NVIDIA 基线或 Hygon 峰值。
 
-### 正式回归状态与后续验收
+### Hygon 正式回归状态与后续验收（历史状态保留）
 
 - Hygon 全量构建成功；8 项 CPU 契约测试全部通过，涵盖目录、dtype、原生 descriptor、基线加载、计时策略和输出完整性。Python 批量脚本的解析、统计、设备及多平台策略契约也通过。
 - GPU 正式回归在功能测试阶段中止：identity 已输出 37 个通过，add 已输出 37 个通过，尚未进入 performance，不能据此称这两个完整 suite 或全部新增路径已正式通过。独立探测完成后，另一个项目的作业开始分别使用 GPU 0、1；为避免干扰其执行及后续性能采样，仅中止了本次启动的批量进程，退出码 130，原日志保留。
 - 新增 30 个 reduction 的 hipDNN 路径已完成独立 GPU 校验及生产 descriptor 的 CPU 契约验证；新增 24 个 identity FP8 的加载、元数据、原始字节及输出完整性逻辑通过 CPU 契约。两者仍需在空闲 GPU 上完成正式 benchmark 回归；未把未完成的测试改记为 passed。
-- 本轮仅新增 Hygon 私有 identity 换算策略。完整公共 `reference`、所有非 Hygon 平台对象和其余公共字段，修改前后指纹一致；没有改 NVIDIA 耗时、峰值或公共 profile。
+- 此前 Hygon 修复仅新增私有 identity 换算策略；当时完整公共 `reference`、所有非 Hygon 平台对象和其余公共字段指纹一致，没有改 NVIDIA 耗时、峰值或公共 profile。本轮 NVIDIA 补测另行追加新记录，不改写这段历史验证结论。
 
 获得独占测试 GPU 后，使用新的输出目录重新运行，不覆盖中止日志：
 
@@ -75,7 +95,7 @@ python3 tools/run_tests.py --platform hygon --build-dir build/hygon \
 
 ## 用例定义与不能省略的元数据
 
-附录一列出本轮剩余 371 个准确 case ID。shape、strides、张量角色、属性和输入生成规则应直接复用以下目录，不要只根据 case 名称重新拼装测试。
+附录一列出本轮已补测、可精确复测的 371 个 case ID。shape、strides、张量角色、属性和输入生成规则应直接复用以下目录，不要只根据 case 名称重新拼装测试。
 
 | 分组 | 权威用例定义 | 关键约束 |
 |---|---|---|
@@ -90,7 +110,7 @@ python3 tools/run_tests.py --platform hygon --build-dir build/hygon \
 - `add_square` 是 `left + right * right` 的图，不能当成普通 ADD 或单个 unary 算子。
 - batchnorm 的 x、scale、bias、y 使用该 case 的 FP16/BF16；输入运行统计及输出统计为 FP32。补测必须覆盖所有输出与运行统计更新，不能只测 y。
 - batchnorm 的共享目录采用 NCHW contiguous，而当前 NVIDIA benchmark 适配会把 x/y 改为 channels-last 参考布局，转换不计入采样。必须同时保留逻辑 `strides` 与实际 `reference_strides`；后续 Hygon 策略应显式处理或声明该布局差异，不能声称两边物理工作负载完全相同。实现见 [NVIDIA runner.cpp](../backends/nvidia/validation/benchmark/runner.cpp) 的 `cudnn_tensor_specification`。
-- reduction 原目录 FP16 → FP32 为 12 个 shape × sum/avg/mul，其中 10 个 shape 已接原生对照；当前只需补 `3x5x7 axis=1`、`2x7x5x3 axis=2` 的 6 条。另有 BF16 → FP32 的 14 个二维 sum 用例，不应扩成同目录所有 mode 后误计入这 20 条。
+- reduction 原目录 FP16 → FP32 为 12 个 shape × sum/avg/mul，其中 10 个 shape 已接原生对照；本轮仅补 `3x5x7 axis=1`、`2x7x5x3 axis=2` 的 6 条。另有 BF16 → FP32 的 14 个二维 sum 用例，不应扩成同目录所有 mode 后误计入这 20 条。
 - BOOL 要记录 NVIDIA 实际存储位宽。若参考为 bit-packed、Hygon 为 byte，后续带宽换算需按实际流量修正；不能把布尔逻辑张量元素数直接当成两边相同字节数。
 - INT32 identity 与 FP8 identity 应按原始编码校验复制结果，不能经 FLOAT 中转后声称整数/FP8 按位正确。
 
@@ -103,7 +123,7 @@ python3 tools/run_tests.py --platform hygon --build-dir build/hygon \
 | 除 batchnorm 外的本清单用例 | 10 | 20 | 50 | 1 |
 | batchnorm 24 个补测用例 | 5 | 10 | 20 | 1 |
 
-batchnorm 按当前共享性能用例的配置补测。它不能标成现有 `native` profile，因为后者固定为 10/20/50；入库与 Hygon 等效接入时须为其显式登记对应配置。现有 NVIDIA 采集器会统一部分用例为 10/20/50，因此扩展采集器时必须检查实际输出的配置，不能仅依赖 case 的默认值。不得修改已有 `native` 或 `attention` profile 的含义。
+batchnorm 按共享性能用例配置补测，并登记为独立的 `batchnorm_training` profile；不得标成固定为 10/20/50 的 `native`。Hygon 等效接入仍须显式匹配这个新 profile。采集器现在保留各 case 的实际配置，未修改已有 `native` 或 `attention` 的含义。
 
 NVIDIA 等效参考维持上述 Graph 口径。本轮 Hygon 部分原生 hipDNN 配对采用的 `hip_event_direct_batch` 是原生对照兼容策略，不应混入 NVIDIA Graph 基准或伪装成同口径数据。
 
@@ -113,19 +133,19 @@ NVIDIA 等效参考维持上述 Graph 口径。本轮 Hygon 部分原生 hipDNN 
 
 1. 使用与现有基准匹配的 NVIDIA H100 80GB HBM3 设备配置，并记录驱动、CUDA、cuDNN、cuDNN Frontend、设备标识、功率限制和源码版本。若更换设备，须使用独立的设备基准及对应峰值，不能把新设备耗时与旧 H100 峰值拼接。
 2. 先导出采集器的用例目录，与附录一逐项核对。仓库中的正式 NVIDIA 测试目录、独立采集器目录和已入库数据是三个不同集合；重新执行旧采集命令不保证会覆盖新增用例。
-3. 扩展缺少的采集入口，复用上节的原始 case 定义。新入口必须使用 NVIDIA 原生参考，不得将 FlagDNN 实现本身当作 NVIDIA 对照。
+3. 使用已扩展的 core 和新增 aux 采集入口，复用上节的原始 case 定义；不得将 FlagDNN 实现本身当作 NVIDIA 对照。
 4. 保证 GPU 空闲、测量串行运行。对每个 case 先检查全量正确性和完整写入，再采样；失败须保留阶段、返回码及原因，不能写入有效 `time_us`。
 
 已有工具及编译前提见 [工具说明](../tools/performance_baseline/README.md)。核心入口为 [benchmark_nvidia_cudnn.cpp](../tools/performance_baseline/benchmark_nvidia_cudnn.cpp) 与 [benchmark_nvidia_core_catalog.hpp](../tools/performance_baseline/benchmark_nvidia_core_catalog.hpp)；扩展入口为 [benchmark_nvidia_extended.cpp](../tools/performance_baseline/benchmark_nvidia_extended.cpp)；属性、整数、FP8 复制探测入口为 [benchmark_nvidia_pointwise_gaps.cpp](../tools/performance_baseline/benchmark_nvidia_pointwise_gaps.cpp)。
 
-当前采集器需要补齐的具体入口和导出内容：
+补测前的采集器缺口及本轮实现：
 
-- core catalog 未捕获上述 17 个主逐元素入口，也未捕获 identity、batchnorm 训练、reduction；需要新增真实入口捕获，不能只传入新的 `--op` 名称。
-- reduction 的 20 条来自独立的 `fp32_output` 辅助目录；加入普通 `test_reduction.cpp` 不能得到这些混合类型用例。其余 30 条已用原生对照解决，不要求为本次解除跳过而补测 NVIDIA。
-- gaps 工具的 identity 分支目前只收集 FP8 E4M3/E5M2，没有本清单的 BF16/INT32/BOOL copy 用例。extended 工具有 logical_not，但没有 logical_and/or 的辅助 boolean 目录。
-- core 采集器当前强制使用 `10/20/50`，且原导出字段没有完整覆盖 reduction 的 mode/axis/keep_dimensions、逐输入 domain 等信息。扩展时须一并补齐这些字段、batchnorm 的 `5/10/20` 配置和全部五个输出的校验证据。
+- core catalog 原先未捕获上述 17 个主逐元素入口及 identity、batchnorm 训练；本轮已捕获这些真实入口，共采集 291 条。
+- reduction 的 20 条来自独立的 `fp32_output` 辅助目录，本轮由 aux 复用真实 shared cases 的精确选择；加入普通 `test_reduction.cpp` 不能替代这些用例。其余 30 条已有原生 hipDNN 对照，不计入本轮。
+- gaps 的 identity 分支只有 FP8 E4M3/E5M2，extended 只有 logical_not 辅助目录；本轮 aux 补齐 36 条 BF16/INT32/BOOL identity copy 和 24 条 logical_and/or boolean，不借用其他目录耗时。
+- core 原先统一为 `10/20/50`；本轮已保留 batchnorm 的 `5/10/20` 和五个输出校验证据。core/aux 导出完整属性、逐输入生成规则、张量元数据、三阶段校验及原始样本。
 
-以下是已有的构建及只列目录命令，不是“现有工具已能收齐 371 条”的保证。先创建独立临时目录，避免覆盖旧测量产物：
+以下保留单入口构建与列目录示例；完整的 core + aux 精确 371 条调度命令以[工具说明](../tools/performance_baseline/README.md#2026-10-12-缺失目录补测)为准。先创建独立临时目录，避免覆盖旧测量产物：
 
 ```bash
 export CUDNN_ROOT=/path/to/cudnn
@@ -146,7 +166,7 @@ python3 tools/performance_baseline/benchmark_nvidia_extended.py --build-only \
 - 校验类型、误差容限、最大误差、校验元素数、计时前后结果，以及重置输出后回放的完整写入验证；整数、BOOL、复制应采用相应精确校验。
 - 原始日志、源码版本、设备与软件环境、测量日期。采用 `sanity` 时必须如实标注，不能称为全量精度通过。
 
-本清单缺的主要是算子参考耗时与上述元数据，不是要求重新覆盖已有 16 项 NVIDIA 峰值。后续选择换算指标时，应依据实际计算路径与数据流量；不能仅因为存储类型是 BF16，就自动选 `vector_bf16`。
+本轮补测内容是算子参考耗时与上述元数据，没有重新测量或覆盖已有 16 项 NVIDIA 峰值。后续选择换算指标时，应依据实际计算路径与数据流量；不能仅因为存储类型是 BF16，就自动选 `vector_bf16`。
 
 ### 入库与验收
 
@@ -170,7 +190,7 @@ concatenate 的精确定义见 [tests/common/index.cpp](../tests/common/index.cp
 
 ## 附录一 剩余需 NVIDIA 参考路线补齐的 371 个用例
 
-以下按算子列出完整 case ID，共 22 组、371 条。名称中的 `bfloat16` 即 BF16；`_perf_` 与无该前缀的辅助目录必须保留区别。
+以下保留补测前登记的完整 case ID，共 22 组、371 条；现已完成 NVIDIA 采集，仍用作精确复测清单。名称中的 `bfloat16` 即 BF16；`_perf_` 与无该前缀的辅助目录必须保留区别。
 
 ### abs 15 个
 

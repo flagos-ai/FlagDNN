@@ -31,6 +31,34 @@ python3 tools/performance_baseline/run_benchmark_nvidia_pointwise_gaps.py --bina
 python3 tools/performance_baseline/benchmark_nvidia_tensor.py --output /tmp/nv_tensor.json
 ```
 
+## 2026-10-12 缺失目录补测
+
+[补测清单附录一](../../docs/nvidia-performance-missing-cases-20261012.md#附录一-剩余需-nvidia-参考路线补齐的-371-个用例)的 371 条由两个采集器提供：核心采集器覆盖 291 条主逐元素、identity 主目录和 batchnorm 训练用例；[辅助采集器](benchmark_nvidia_missing_aux.cpp)覆盖 80 条 identity copy、logical boolean 和混合输出 reduction 用例。[调度脚本](run_benchmark_nvidia_missing.py)按完整 `(op, case_name)` 匹配目录，拒绝遗漏和重复，串行运行并在失败后重启进程。
+
+构建目录须已配置 NVIDIA 后端，并启用 `FLAGDNN_BUILD_TESTS` 和 `FLAGDNN_BUILD_BENCHMARKS`；沿用上面的 CUDA/cuDNN 环境变量。辅助构建脚本只链接已有验证库，不会自动运行 CMake 构建：
+
+```bash
+nv_missing_dir=$(mktemp -d /tmp/flagdnn-nv-missing-XXXXXX)
+cmake --build "${NVIDIA_BUILD_DIR:-build/nvidia}" --target \
+  flagdnn_test_nvidia_adapter flagdnn_validation_nvidia_tensor_io \
+  flagdnn_validation_cpu_reference
+bash tools/performance_baseline/build_benchmark_nvidia_cudnn.sh "$nv_missing_dir/core"
+bash tools/performance_baseline/build_benchmark_nvidia_missing_aux.sh "$nv_missing_dir/aux"
+
+# 无 GPU 目录核对：只生成清单、目录元数据和文件指纹，不测量。
+python3 tools/performance_baseline/run_benchmark_nvidia_missing.py \
+  --core-binary "$nv_missing_dir/core" --aux-binary "$nv_missing_dir/aux" \
+  --list-only --output-dir "$nv_missing_dir/catalog"
+
+# GPU 空闲且独占后，串行采集准确的 371 条；输出目录必须尚不存在。
+CUDA_VISIBLE_DEVICES=0 python3 tools/performance_baseline/run_benchmark_nvidia_missing.py \
+  --core-binary "$nv_missing_dir/core" --aux-binary "$nv_missing_dir/aux" \
+  --output-dir "$nv_missing_dir/measurement" \
+  > "$nv_missing_dir/collection.log" 2>&1
+```
+
+两采集器均支持无 GPU 的 `--list`、JSONL `--catalog`，以及精确过滤 `--case NAME` / `--case-file PATH`。调度输出包含 `collection-manifest.json`、两组 `.cases` / `.catalog.jsonl`、测量 `.jsonl` 和 `.logs/`；失败阶段和原始日志保留，不自动修改正式基线。数值及完整写入检查包括计时前、计时后、重置输出后回放；BOOL 保留参考存储位宽，batchnorm 使用独立的 5/10/20 配置。入库前需逐项核对元数据、校验结果和计时配置；补测归档说明见 [nvidia-missing-20261012.json](measurements/nvidia-missing-20261012.json)，不能将目录条数当作测量通过数。
+
 向量和显存带宽工具的编译/运行参数见 [benchmark_nvidia_vector_memory.cu](benchmark_nvidia_vector_memory.cu) 文件开头。CPU 采样参考自测的编译命令见 [check_benchmark_nvidia_sampled_reference.cpp](check_benchmark_nvidia_sampled_reference.cpp)。
 
 测量时保证 GPU 独占，所有 GPU 测试串行执行。上述命令输出原始记录，不自动覆盖正式 JSON；部分能力探测预期会失败，失败记录不能作为有效耗时。完整数值校验、抽样校验和 `sanity` 基础检查应分别看待。
@@ -55,7 +83,7 @@ mkdir -p build/hygon/performance-baseline-20261010
 
 默认扫描和计数口径与 NVIDIA 向量/带宽工具一致：8 条独立寄存器链、每轮 32 次展开的 FP32 FMA（每条 2 FLOP），内存按逻辑读写字节计数。配置峰值取 `record=summary` 的最高中位吞吐，不能取最快单样本；CSV 的 GB/s 除以 1000 后填写 JSON 的 TB/s。工具不自动修改正式基线，不测量的精度保留 `null`。首次实测全部配置摘要见 [hygon-20261010.json](measurements/hygon-20261010.json)，div 的代理指标及限制见[基准说明](../../docs/nvidia-peak-baseline-20260920.md#hygon-div-等效性能2026-10-10)。
 
-Hygon 的等效性能回退现覆盖布局、索引及逐元素/激活共 40 个算子（identity 仅 FP8 E4M3/E5M2），具体指标和缺参考目录见[覆盖说明](../../docs/nvidia-peak-baseline-20260920.md#hygon-缺失性能测试的等效补齐)。换算策略仅在 `platforms.hygon.scaling.case_policies.<op>` 中显式启用，均为有局限的近似模型，不是已验证的瓶颈结论；公共 NVIDIA `reference` 保持原始内容，2893 条记录的 `scale_metric` 均为 `null`。其他平台只能读取自身 `scaling.case_policies`，即使峰值齐全，没有自己的算子策略仍须报错，不能回退到 Hygon 策略或修改公共参考。已有可用 hipDNN 对照保持原样；无对照用例输出带实际样本、流量修正及 NVIDIA 验证等级的 schema v4。默认只报告性能评价，不因低于 0.8 而失败；仅显式指定 `--min-speedup` 后才启用性能失败门槛。精度错误、运行异常或无效数据仍然失败。修改退出语义后必须重建对应 benchmark 目标，原始历史报告不重写。示例：
+Hygon 的等效性能回退现覆盖布局、索引及逐元素/激活共 40 个算子（identity 仅 FP8 E4M3/E5M2），具体指标和缺参考目录见[覆盖说明](../../docs/nvidia-peak-baseline-20260920.md#hygon-缺失性能测试的等效补齐)。换算策略仅在 `platforms.hygon.scaling.case_policies.<op>` 中显式启用，均为有局限的近似模型，不是已验证的瓶颈结论；公共 NVIDIA `reference` 保留历史 2893 条有效记录及已有峰值、profile，可追加经过校验的新测量；共享 `scale_metric` 保持 `null`。其他平台只能读取自身 `scaling.case_policies`，即使峰值齐全，没有自己的算子策略仍须报错，不能回退到 Hygon 策略或修改公共参考。已有可用 hipDNN 对照保持原样；无对照用例输出带实际样本、流量修正及 NVIDIA 验证等级的 schema v4。默认只报告性能评价，不因低于 0.8 而失败；仅显式指定 `--min-speedup` 后才启用性能失败门槛。精度错误、运行异常或无效数据仍然失败。修改退出语义后必须重建对应 benchmark 目标，原始历史报告不重写。示例：
 
 ```bash
 # CPU 基线契约名称沿用最初的 div，但已覆盖 40 算子的 1570 条实际目录用例。
