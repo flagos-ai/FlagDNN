@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+import os
 from pathlib import Path
 import re
 from typing import Any
@@ -11,7 +13,62 @@ from typing import Any
 COMPARABLE_CASE_CATALOG = (
     Path(__file__).resolve().parent / "benchmark" / "comparable_cases.json"
 )
+PERFORMANCE_BASELINE_FILE = (
+    Path(__file__).resolve().parents[3] / "docs" / "performance-baseline.json"
+)
+# These auxiliary cases come from tests/common/pointwise.cpp's packed boolean
+# catalog, not the separately measured *_perf_bool_* benchmark catalog.
+NVIDIA_BASELINE_BOOLEAN_SKIPS = frozenset(
+    f"{operator}_bool_{shape}"
+    for operator in ("logical_and", "logical_or")
+    for shape in (
+        "1x1x16",
+        "2x8x8",
+        "1x8x4x8",
+        "2x8x4x8",
+        "1x1x8",
+        "1x1x24",
+        "1x1x128",
+        "1x1x256",
+        "3x5x32",
+        "1x16x3x5",
+        "2x16x7x9",
+        "3x32x5x7",
+    )
+)
 SPEEDUP_METRIC = "hipdnn_median_us/flagdnn_median_us"
+EQUIVALENT_METRIC = "nvidia_equivalent_time_us/flagdnn_median_us"
+EQUIVALENT_OPERATORS = frozenset(
+    "identity reshape transpose slice concatenate gen_index div pow mod "
+    "cmp_eq cmp_neq cmp_gt cmp_ge cmp_lt cmp_le "
+    "logical_and logical_or logical_not binary_select "
+    "neg sqrt rsqrt reciprocal ceil floor exp log erf sin cos tan "
+    "leaky_relu leaky_relu_backward elu_backward gelu gelu_backward "
+    "gelu_approx_tanh gelu_approx_tanh_backward "
+    "softplus softplus_backward".split()
+)
+EQUIVALENT_CASE_PATTERN = re.compile(
+    # Identity is limited to the two FP8 formats with measured NVIDIA records.
+    # Other identity dtypes need native support or additional measurements.
+    r"^(?=(?P<operator>"
+    + "|".join(sorted(EQUIVALENT_OPERATORS, key=lambda op: (-len(op), op)))
+    + r")_)(?:identity_fp8_(?:e4m3|e5m2)_|(?:"
+    + "|".join(
+        sorted(
+            EQUIVALENT_OPERATORS - {"identity"}, key=lambda op: (-len(op), op)
+        )
+    )
+    + r")_(?:(?:perf|attributes)_)?"
+    r"(?:fp32|fp16|bfloat16|bf16|bool|int32)_"
+    r"(?:case[0-9]+_)?)[0-9][a-z0-9_-]*$"
+)
+EQUIVALENT_SCALE_METRICS = {
+    "vector_fp32",
+    "hbm_copy",
+    "hbm_write",
+    "hbm_triad",
+}
+REFERENCE_VALIDATIONS = {"cpu_full", "cpu_sampled", "bit_exact", "sanity"}
 VISIBILITY_VARIABLES = (
     "CUDA_VISIBLE_DEVICES",
     "HIP_VISIBLE_DEVICES",
@@ -86,9 +143,10 @@ def configure_environment(
     environment["HIP_VISIBLE_DEVICES"] = device
 
 
-def preflight_tests(_suites: list[str] | tuple[str, ...]) -> set[str]:
+def preflight_tests(suites: list[str] | tuple[str, ...]) -> set[str]:
     return {
         "integration.hygon.validation_contract",
+        "integration.hygon.tensor_reference_contract",
         "integration.hygon.convolution_validation_static_contract",
         "integration.hygon.cmake_configuration_contract",
         "integration.hygon.dependency_boundary",
@@ -103,7 +161,15 @@ def preflight_tests(_suites: list[str] | tuple[str, ...]) -> set[str]:
         "integration.hygon.jit_global_state_contract",
         "integration.hygon.python_runtime_lifecycle_contract",
         "integration.hygon.normalization_stability",
-    }
+    } | (
+        {
+            "integration.hygon.div_performance_baseline",
+            "integration.hygon.benchmark_validation_guards",
+            "integration.hygon.benchmark_timing_policy",
+        }
+        if "benchmark" in suites
+        else set()
+    )
 
 
 def preflight_metadata(environment: dict[str, str]) -> dict[str, Any]:
@@ -269,6 +335,28 @@ def load_hygon_comparable_case_catalog(
     }
 
 
+def complete_benchmark(benchmark: Any) -> bool:
+    """A completed equivalent failure still contains valid native pairs."""
+    return (
+        isinstance(benchmark, dict)
+        and (
+            benchmark.get("status") == "passed"
+            or (
+                benchmark.get("status") == "failed"
+                and bool(benchmark.get("performance_errors"))
+            )
+        )
+        and not any(
+            benchmark.get(key)
+            for key in (
+                "record_errors",
+                "case_accounting_errors",
+                "skip_record_errors",
+            )
+        )
+    )
+
+
 def hygon_comparable_coverage(
     results: dict[str, dict[str, Any]],
     selected_benchmark_operators: list[str],
@@ -283,6 +371,8 @@ def hygon_comparable_coverage(
     missing: list[dict[str, str]] = []
     observed_required = 0
     observed_pairs = 0
+    raw_required = 0
+    raw_pairs = 0
     required_cases = {
         (operator, case)
         for operator in selected_declared
@@ -302,36 +392,51 @@ def hygon_comparable_coverage(
             records = {}
         for case in declared[operator]:
             providers = records.get(case)
-            if (
-                status == "passed"
-                and isinstance(providers, dict)
-                and set(providers) == {"flagdnn", "hipdnn"}
-            ):
+            paired = isinstance(providers, dict) and set(providers) == {
+                "flagdnn",
+                "hipdnn",
+            }
+            raw_required += int(paired)
+            if complete_benchmark(benchmark) and paired:
                 observed_required += 1
                 continue
+            reason = (
+                "pair_present_but_suite_failed"
+                if paired
+                else (
+                    "partial_pair"
+                    if providers
+                    else (
+                        "not_run"
+                        if status in {"not_run", "not_found"}
+                        else "pair_not_emitted"
+                    )
+                )
+            )
             missing.append(
                 {
                     "operator": operator,
                     "case": case,
                     "benchmark_status": str(status),
+                    "reason": reason,
                 }
             )
 
     for operator in dict.fromkeys(selected_benchmark_operators):
         benchmark = results.get(operator, {}).get("benchmark")
-        if (
-            not isinstance(benchmark, dict)
-            or benchmark.get("status") != "passed"
-        ):
+        if not isinstance(benchmark, dict):
             continue
         records = benchmark.get("records", {})
         if not isinstance(records, dict):
             continue
-        observed_pairs += sum(
+        pairs = sum(
             isinstance(providers, dict)
             and set(providers) == {"flagdnn", "hipdnn"}
             for providers in records.values()
         )
+        raw_pairs += pairs
+        if complete_benchmark(benchmark):
+            observed_pairs += pairs
 
     return {
         "schema_version": catalog["schema_version"],
@@ -346,10 +451,242 @@ def hygon_comparable_coverage(
         "required_case_count": len(required_cases),
         "observed_required_case_count": observed_required,
         "observed_pair_case_count": observed_pairs,
+        "raw_complete_required_case_count": raw_required,
+        "raw_complete_pair_case_count": raw_pairs,
+        "excluded_complete_required_case_count": raw_required
+        - observed_required,
         "extra_pair_case_count": observed_pairs - observed_required,
         "missing_case_count": len(missing),
+        "missing_reason_counts": {
+            reason: sum(case["reason"] == reason for case in missing)
+            for reason in (
+                "pair_present_but_suite_failed",
+                "partial_pair",
+                "pair_not_emitted",
+                "not_run",
+            )
+        },
         "missing_cases": missing,
         "verified": not missing,
+    }
+
+
+def validate_benchmark_record(
+    record: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Validate equivalent v4 or explicitly identified native timing v5."""
+    if (
+        type(record.get("schema_version")) is int
+        and record["schema_version"] == 5
+    ):
+        expected = {
+            "schema_version",
+            "kind",
+            "provider",
+            "case",
+            "unit",
+            "median",
+            "p90",
+            "samples",
+            "timing_mode",
+            "timing_reason",
+            "benchmark_config",
+        }
+        if set(record) != expected:
+            raise ValueError("fields do not match Hygon benchmark schema v5")
+        if (
+            record["kind"] != "steady_state"
+            or record["provider"] not in ("flagdnn", "hipdnn")
+            or record["unit"] != "us"
+            or not isinstance(record["case"], str)
+            or not record["case"]
+        ):
+            raise ValueError(
+                "schema v5 requires a native FlagDNN/hipDNN timing"
+            )
+        modes = {
+            "hip_graph_batch": "standard",
+            "hip_event_direct_batch": "hipdnn_graph_tail_workaround",
+        }
+        if (
+            not isinstance(record["timing_mode"], str)
+            or record["timing_mode"] not in modes
+            or record["timing_reason"] != modes[record["timing_mode"]]
+        ):
+            raise ValueError(
+                "schema v5 timing mode/reason combination is invalid"
+            )
+        config = record["benchmark_config"]
+        limits = {
+            "warmup_iterations": 0,
+            "sample_count": 1,
+            "iterations_per_sample": 1,
+        }
+        if (
+            not isinstance(config, dict)
+            or set(config) != set(limits)
+            or any(
+                type(config[key]) is not int or config[key] < minimum
+                for key, minimum in limits.items()
+            )
+        ):
+            raise ValueError("schema v5 benchmark config is invalid")
+        if (
+            not isinstance(record["samples"], list)
+            or len(record["samples"]) != config["sample_count"]
+        ):
+            raise ValueError(
+                "schema v5 sample count differs from benchmark config"
+            )
+        try:
+            valid_numbers = all(
+                type(value) in (int, float)
+                and math.isfinite(value)
+                and value > 0
+                for value in (
+                    record["median"],
+                    record["p90"],
+                    *record["samples"],
+                )
+            )
+        except OverflowError:
+            valid_numbers = False
+        if not valid_numbers:
+            raise ValueError("schema v5 timings must be finite and positive")
+        return {
+            "timing": {
+                key: record[key] for key in ("median", "p90", "samples")
+            }
+        }
+
+    # v4 stores measured samples and a derived, unsampled reference.
+    expected = {
+        "schema_version",
+        "kind",
+        "provider",
+        "case",
+        "unit",
+        "median",
+        "p90",
+        "samples",
+        "equivalent_baseline",
+    }
+    if set(record) != expected:
+        raise ValueError("fields do not match Hygon benchmark schema v4")
+    if (
+        type(record["schema_version"]) is not int
+        or record["schema_version"] != 4
+        or record["kind"] != "steady_state"
+        or record["provider"] != "flagdnn"
+        or record["unit"] != "us"
+        or not isinstance(record["case"], str)
+        or EQUIVALENT_CASE_PATTERN.fullmatch(record["case"]) is None
+    ):
+        raise ValueError(
+            "schema v4 requires a supported measured FlagDNN case"
+        )
+    case_operator = EQUIVALENT_CASE_PATTERN.fullmatch(record["case"]).group(
+        "operator"
+    )
+    baseline = record["equivalent_baseline"]
+    identities = {
+        "provider": "nvidia_equivalent",
+        "platform": "nvidia",
+        "target_platform": "hygon",
+        "timing_profile": "native",
+    }
+    numeric = {
+        "reference_time_us",
+        "reference_peak",
+        "target_peak",
+        "min_relative_efficiency",
+        "equivalent_time_us",
+        "limit_us",
+        "relative_efficiency",
+    }
+    required = set(identities) | numeric | {"scale_metric", "passed"}
+    extensions = {"traffic_ratio", "reference_validation"}
+    if case_operator != "div":
+        required |= extensions
+    if (
+        not isinstance(baseline, dict)
+        or not required <= set(baseline) <= required | extensions
+        or any(baseline[key] != value for key, value in identities.items())
+        or not isinstance(baseline["scale_metric"], str)
+        or baseline["scale_metric"] not in EQUIVALENT_SCALE_METRICS
+        or not isinstance(
+            baseline.get("reference_validation", "cpu_full"), str
+        )
+        or baseline.get("reference_validation", "cpu_full")
+        not in REFERENCE_VALIDATIONS
+    ):
+        raise ValueError("invalid equivalent-baseline fields or identity")
+    if case_operator == "identity" and (
+        baseline["scale_metric"] != "hbm_copy"
+        or baseline["reference_validation"] != "bit_exact"
+        or baseline["traffic_ratio"] != 1
+    ):
+        raise ValueError(
+            "FP8 identity requires a bit-exact byte-preserving copy baseline"
+        )
+
+    def positive(value: Any) -> bool:
+        try:
+            return (
+                type(value) in (int, float)
+                and math.isfinite(value)
+                and value > 0
+            )
+        except OverflowError:
+            return False
+
+    if any(not positive(baseline[key]) for key in numeric) or not positive(
+        record["median"]
+    ):
+        raise ValueError(
+            "equivalent-baseline numbers must be finite and positive"
+        )
+    traffic_ratio = baseline.get("traffic_ratio", 1.0)
+    if not positive(traffic_ratio) or (
+        baseline["scale_metric"] == "vector_fp32" and traffic_ratio != 1
+    ):
+        raise ValueError(
+            "traffic_ratio must be finite and positive; "
+            "non-unit traffic is only supported by HBM metrics"
+        )
+    if baseline["min_relative_efficiency"] > 1:
+        raise ValueError("min_relative_efficiency must be in (0, 1]")
+    if not isinstance(record["samples"], list) or len(record["samples"]) != 20:
+        raise ValueError("native timing profile requires 20 measured samples")
+    try:
+        equivalent = (
+            baseline["reference_time_us"]
+            * baseline["reference_peak"]
+            / baseline["target_peak"]
+            * traffic_ratio
+        )
+        derived = {
+            "equivalent_time_us": equivalent,
+            "limit_us": equivalent / baseline["min_relative_efficiency"],
+            "relative_efficiency": equivalent / record["median"],
+        }
+    except OverflowError as error:
+        raise ValueError("equivalent-baseline formula overflowed") from error
+    for key, value in derived.items():
+        if not positive(value) or not math.isclose(
+            baseline[key], value, rel_tol=1.0e-12, abs_tol=0.0
+        ):
+            raise ValueError(
+                f"equivalent-baseline {key} does not match formula"
+            )
+    if type(baseline["passed"]) is not bool or baseline["passed"] != (
+        record["median"] <= baseline["limit_us"]
+    ):
+        raise ValueError(
+            "equivalent-baseline passed disagrees with measured limit"
+        )
+    return {
+        "timing": {key: record[key] for key in ("median", "p90", "samples")}
     }
 
 
@@ -370,11 +707,62 @@ def validate_hygon_benchmark_pairs(
                 f"expected owner={operator}"
             )
         actual = set(providers)
+        equivalent = providers.get("flagdnn", {}).get("equivalent_baseline")
+        if equivalent is not None:
+            match = EQUIVALENT_CASE_PATTERN.fullmatch(case)
+            if (
+                operator not in EQUIVALENT_OPERATORS
+                or actual != {"flagdnn"}
+                or match is None
+                or match.group("operator") != operator
+                or providers["flagdnn"].get("case") != case
+            ):
+                errors.append(
+                    f"Hygon equivalent benchmark case={case} must have only "
+                    "the measured FlagDNN provider for the matching operator"
+                )
+            else:
+                try:
+                    validate_benchmark_record(providers["flagdnn"])
+                except ValueError as error:
+                    errors.append(
+                        f"Hygon equivalent benchmark case={case}: {error}"
+                    )
+            continue
         if actual != expected:
             errors.append(
                 f"Hygon benchmark case={case} providers={sorted(actual)}; "
                 f"expected={sorted(expected)}"
             )
+            continue
+        versions = [providers[key].get("schema_version") for key in expected]
+        if 5 in versions:
+            if versions != [5, 5]:
+                errors.append(
+                    f"Hygon benchmark case={case} mixes native schemas"
+                )
+                continue
+            for provider, record in providers.items():
+                try:
+                    validate_benchmark_record(record)
+                    if (
+                        record["provider"] != provider
+                        or record["case"] != case
+                    ):
+                        raise ValueError(
+                            "record case/provider differs from its pair"
+                        )
+                except ValueError as error:
+                    errors.append(
+                        f"Hygon benchmark case={case} provider={provider}: {error}"
+                    )
+            for key in ("timing_mode", "timing_reason", "benchmark_config"):
+                if providers["flagdnn"].get(key) != providers["hipdnn"].get(
+                    key
+                ):
+                    errors.append(
+                        f"Hygon benchmark case={case} has mismatched {key}"
+                    )
     return errors
 
 
@@ -386,10 +774,7 @@ def benchmark_speedup_summary(
     cases: list[dict[str, Any]] = []
     for operator, operator_results in results.items():
         benchmark = operator_results.get("benchmark")
-        if (
-            not isinstance(benchmark, dict)
-            or benchmark.get("status") != "passed"
-        ):
+        if not complete_benchmark(benchmark):
             continue
         records = benchmark.get("records", {})
         if not isinstance(records, dict):
@@ -409,6 +794,15 @@ def benchmark_speedup_summary(
                     "flagdnn_median_us": flagdnn_us,
                     "hipdnn_median_us": hipdnn_us,
                     "speedup": hipdnn_us / flagdnn_us,
+                    **{
+                        key: providers["flagdnn"][key]
+                        for key in (
+                            "timing_mode",
+                            "timing_reason",
+                            "benchmark_config",
+                        )
+                        if key in providers["flagdnn"]
+                    },
                 }
             )
     cases.sort(key=lambda record: (record["speedup"], record["case"]))
@@ -442,6 +836,139 @@ def benchmark_speedup_summary(
     }
 
 
+def equivalent_performance_summary(
+    results: dict[str, dict[str, Any]],
+    threshold: float | None,
+) -> dict[str, Any]:
+    """Keep peak-normalized efficiency separate from native hipDNN speedup."""
+    cases: list[dict[str, Any]] = []
+    for operator, operator_results in results.items():
+        benchmark = operator_results.get("benchmark")
+        if not complete_benchmark(benchmark):
+            continue
+        for case, providers in benchmark.get("records", {}).items():
+            if set(providers) != {"flagdnn"}:
+                continue
+            record = providers["flagdnn"]
+            if record.get("schema_version") != 4:
+                continue
+            validate_benchmark_record(record)
+            baseline = record["equivalent_baseline"]
+            minimum = baseline["min_relative_efficiency"]
+            required = (
+                max(minimum, threshold) if threshold is not None else minimum
+            )
+            passed = baseline["passed"] and (
+                required == minimum
+                or baseline["relative_efficiency"] >= required
+            )
+            cases.append(
+                {
+                    "operator": operator,
+                    "case": case,
+                    "flagdnn_median_us": record["median"],
+                    "equivalent_baseline": dict(baseline),
+                    "relative_efficiency": baseline["relative_efficiency"],
+                    "required_relative_efficiency": required,
+                    "passed": passed,
+                }
+            )
+    cases.sort(
+        key=lambda record: (record["relative_efficiency"], record["case"])
+    )
+    failures = [record for record in cases if not record["passed"]]
+    return {
+        "metric": EQUIVALENT_METRIC,
+        "min_speedup_semantics": (
+            "opt-in relative_efficiency gate; cannot relax baseline minimum"
+        ),
+        "requested_min_speedup": threshold,
+        "gate_enabled": threshold is not None,
+        "gate_passed": (
+            not failures if threshold is not None and cases else None
+        ),
+        "case_count": len(cases),
+        "passed_case_count": len(cases) - len(failures),
+        "failed_case_count": len(failures),
+        "minimum_relative_efficiency": (
+            cases[0]["relative_efficiency"] if cases else None
+        ),
+        "cases": cases,
+        "failures": failures,
+    }
+
+
+def apply_equivalent_report_gates(
+    results: dict[str, Any], equivalent: dict[str, Any]
+) -> None:
+    """Keep the measured baseline verdict distinct from the final CLI gate."""
+    gates = {
+        (record["operator"], record["case"]): record
+        for record in equivalent["cases"]
+    }
+    enabled = equivalent.get("gate_enabled", False)
+    for operator, result in results.items():
+        performance = result.get("performance", {})
+        for entry in performance.get("data", {}).values():
+            for case, row in entry.get("details", {}).items():
+                gate = gates.get((operator, case))
+                if gate is None:
+                    continue
+                row["performance_gate"] = {
+                    "enabled": enabled,
+                    "metric": equivalent["metric"],
+                    "relative_efficiency": gate["relative_efficiency"],
+                    "required_relative_efficiency": (
+                        gate["required_relative_efficiency"]
+                        if enabled
+                        else None
+                    ),
+                    "passed": gate["passed"] if enabled else None,
+                }
+                if enabled and not gate["passed"]:
+                    entry["result"] = "FAIL"
+                    performance["status"] = "Failed"
+                    performance["exit_code"] = 1
+
+
+def postprocess_report(
+    *,
+    report: dict[str, Any],
+    platform_summary: dict[str, Any],
+    exit_code: int | None,
+) -> bool:
+    """Apply the finalized platform gate to a public single/merged report."""
+    equivalent = platform_summary.get("equivalent_performance")
+    if not isinstance(equivalent, dict) or not equivalent.get("case_count"):
+        return False
+    apply_equivalent_report_gates(report["result"], equivalent)
+    report.update(
+        equivalent_performance=equivalent,
+        overall_status="passed" if exit_code == 0 else "failed",
+        exit_code=exit_code,
+    )
+    return True
+
+
+def postprocess_batch_report(
+    *,
+    partitions: dict[int, dict[str, Any]],
+    report: dict[str, Any],
+    platform_summary: dict[str, Any],
+    exit_code: int | None,
+) -> bool:
+    """Apply final gates to every worker partition and the merged report."""
+    changed = postprocess_report(
+        report=report, platform_summary=platform_summary, exit_code=exit_code
+    )
+    if changed:
+        for partition in partitions.values():
+            apply_equivalent_report_gates(
+                partition, platform_summary["equivalent_performance"]
+            )
+    return changed
+
+
 def validate_hygon_case_accounting(
     output: str,
     operator: str,
@@ -456,7 +983,7 @@ def validate_hygon_case_accounting(
         r"^(FLAGDNN_[A-Z0-9_]+_(?:FUNCTIONAL|BENCHMARK)):\s*(.*)$"
     )
     accounting_pattern = re.compile(
-        r"(PASS|SKIP)\s+"
+        r"(PASS|SKIP|FAIL)\s+"
         r"(?:(?:cases)=(\d+)\s+)?executed=(\d+)\s+skipped=(\d+)\s*$"
     )
     for raw_line in output.splitlines():
@@ -480,7 +1007,7 @@ def validate_hygon_case_accounting(
     finished = re.findall(
         r"^\s*\d+/\d+\s+Test\s+#(\d+):\s+"
         + re.escape(f"{suite}.hygon.{operator}")
-        + r"(?:\.[a-z0-9_]+)?\s+\.*\s*(?:\*\*\*)?(Passed|Skipped)\s",
+        + r"(?:\.[a-z0-9_]+)?\s+\.*\s*(?:\*\*\*)?(Passed|Skipped|Failed)\s",
         output,
         re.MULTILINE,
     )
@@ -493,7 +1020,11 @@ def validate_hygon_case_accounting(
                 "Hygon must emit one accounting marker per CTest child"
             )
         for test_id, (_, payload) in zip(marker_test_ids, marker_records):
-            expected = "PASS" if statuses.get(test_id) == "Passed" else "SKIP"
+            expected = {
+                "Passed": "PASS",
+                "Skipped": "SKIP",
+                "Failed": "FAIL",
+            }.get(statuses.get(test_id))
             if test_id in statuses and not payload.startswith(expected + " "):
                 errors.append(
                     f"Hygon accounting disagrees with CTest child #{test_id}"
@@ -525,15 +1056,41 @@ def validate_hygon_case_accounting(
             errors.append(
                 "Hygon suite cases must be positive and equal executed+skipped"
             )
-        if reported == "PASS" and group_executed <= 0:
-            errors.append("Hygon PASS suite must execute at least one case")
+        if reported in {"PASS", "FAIL"} and group_executed <= 0:
+            errors.append(
+                "Hygon PASS/FAIL suite must execute at least one case"
+            )
+        if reported == "FAIL" and not (
+            suite == "benchmark"
+            and operator in EQUIVALENT_OPERATORS
+            and ctest_reported_status == "failed"
+        ):
+            errors.append(
+                "Hygon FAIL accounting requires a failed equivalent benchmark"
+            )
         if reported == "SKIP" and (
             group_executed != 0 or matched is None or group_skipped != matched
         ):
             errors.append(
                 "Hygon SKIP suite must execute zero cases and skip every case"
             )
-    if (ctest_reported_status == "passed") != (executed > 0):
+    completed_failure = (
+        ctest_reported_status == "failed"
+        and operator in EQUIVALENT_OPERATORS
+        and suite == "benchmark"
+        and executed > 0
+        and any(payload.startswith("FAIL ") for _, payload in marker_records)
+        and any(
+            providers.get("flagdnn", {})
+            .get("equivalent_baseline", {})
+            .get("passed")
+            is False
+            for providers in records.values()
+        )
+    )
+    if not completed_failure and (ctest_reported_status == "passed") != (
+        executed > 0
+    ):
         errors.append(
             "Hygon aggregate execution count disagrees with CTest status"
         )
@@ -550,14 +1107,16 @@ def validate_hygon_case_accounting(
     return errors
 
 
-def hipdnn_skip_records(output: str) -> list[dict[str, str]]:
+def reference_skip_records(output: str, provider: str) -> list[dict[str, str]]:
     records: list[dict[str, str]] = []
+    prefix = f"[SKIP][{provider}]"
     pattern = re.compile(
-        r"^\[SKIP\]\[hipdnn\]\s+op=([^\s]+)\s+" r"case=([^\s]+)\s+reason=(.+)$"
+        "^" + re.escape(prefix) + r"\s+op=([^\s]+)\s+"
+        r"case=([^\s]+)\s+reason=(.+)$"
     )
     for raw_line in output.splitlines():
         line = re.sub(r"^\s*\d+:\s?", "", raw_line).strip()
-        if not line.startswith("[SKIP][hipdnn]"):
+        if not line.startswith(prefix):
             continue
         match = pattern.fullmatch(line)
         record = {"message": line}
@@ -573,17 +1132,23 @@ def hipdnn_skip_records(output: str) -> list[dict[str, str]]:
     return records
 
 
+def hipdnn_skip_records(output: str) -> list[dict[str, str]]:
+    return reference_skip_records(output, "hipdnn")
+
+
 def validate_hygon_skip_records(
     records: list[dict[str, str]],
     operator: str,
     manifest_operators: list[str],
+    provider: str = "hipdnn",
 ) -> list[str]:
     errors: list[str] = []
     matching_records = 0
+    label = "hipDNN" if provider == "hipdnn" else "NVIDIA baseline"
     if not records:
         return [
             "skipped Hygon suite emitted no structured "
-            f"[SKIP][hipdnn] record for op={operator}"
+            f"[SKIP][{provider}] record for op={operator}"
         ]
     for index, record in enumerate(records, start=1):
         missing = [
@@ -593,13 +1158,13 @@ def validate_hygon_skip_records(
         ]
         if missing:
             errors.append(
-                f"hipDNN skip record {index} is missing non-empty "
+                f"{label} skip record {index} is missing non-empty "
                 + ", ".join(missing)
             )
             continue
         if record["op"] != operator:
             errors.append(
-                f"hipDNN skip record {index} has op={record['op']}; "
+                f"{label} skip record {index} has op={record['op']}; "
                 f"expected op={operator}"
             )
             continue
@@ -607,14 +1172,14 @@ def validate_hygon_skip_records(
         owner = benchmark_case_operator(case, manifest_operators)
         if owner != operator:
             errors.append(
-                f"hipDNN skip record {index} has case={case} "
+                f"{label} skip record {index} has case={case} "
                 f"owned_by={owner}; expected owner={operator}"
             )
             continue
         matching_records += 1
     cases = [record.get("case", "") for record in records]
     if len(cases) != len(set(cases)):
-        errors.append("hipDNN skip records contain duplicate case names")
+        errors.append(f"{label} skip records contain duplicate case names")
     if matching_records == 0:
         errors.append(
             "skipped Hygon suite emitted no legal skip record matching "
@@ -630,6 +1195,44 @@ def prepare(
     if "benchmark" in suites:
         catalog = load_hygon_comparable_case_catalog(manifests["benchmark"])
     return {"comparable_catalog": catalog}
+
+
+def validate_nvidia_baseline_skips(
+    records: list[dict[str, str]], operator: str
+) -> list[str]:
+    """Only known unmeasured auxiliary/excluded cases may skip this gate."""
+    if operator not in {"logical_and", "logical_or", "concatenate"}:
+        return [f"NVIDIA baseline skips are not permitted for op={operator}"]
+    try:
+        baseline_path = Path(
+            os.environ.get("FLAGDNN_PERFORMANCE_BASELINE")
+            or PERFORMANCE_BASELINE_FILE
+        )
+        reference = json.loads(baseline_path.read_text())["reference"]
+        measured = reference["cases"]
+        unavailable = reference["unavailable_cases"]
+        if not isinstance(measured, dict) or not isinstance(unavailable, dict):
+            raise ValueError("reference case catalogs must be objects")
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return [f"Cannot verify NVIDIA baseline skip evidence: {error}"]
+    errors = []
+    for record in records:
+        case = record.get("case", "")
+        exclusion = unavailable.get(case, {})
+        allowed = (
+            case in NVIDIA_BASELINE_BOOLEAN_SKIPS
+            if operator in {"logical_and", "logical_or"}
+            else (
+                isinstance(exclusion, dict)
+                and exclusion.get("op") == "concatenate"
+                and exclusion.get("status") == "excluded"
+            )
+        )
+        if case in measured or not allowed:
+            errors.append(
+                f"NVIDIA baseline skip is not a known unmeasured case: {case}"
+            )
+    return errors
 
 
 def postprocess_result(
@@ -660,24 +1263,64 @@ def postprocess_result(
         else:
             result.pop("record_errors", None)
             result["status"] = "passed"
-    skip_records = hipdnn_skip_records(output)
-    if skip_records:
-        result["skip_records"] = skip_records
+    hipdnn_skips = hipdnn_skip_records(output)
+    baseline_skips = reference_skip_records(output, "nvidia_baseline")
+    skip_records = hipdnn_skips + baseline_skips
+    if hipdnn_skips:
+        result["skip_records"] = hipdnn_skips
+    if baseline_skips:
+        result["baseline_skip_records"] = baseline_skips
     if ctest_reported_status == "skipped" or skip_records:
-        skip_errors = validate_hygon_skip_records(
-            skip_records, operator, manifest_operators
-        )
+        skip_errors = []
+        if hipdnn_skips or not baseline_skips:
+            skip_errors.extend(
+                validate_hygon_skip_records(
+                    hipdnn_skips, operator, manifest_operators
+                )
+            )
+        if baseline_skips:
+            if suite != "benchmark" or operator not in EQUIVALENT_OPERATORS:
+                skip_errors.append(
+                    "NVIDIA baseline skips require a supported "
+                    "equivalent benchmark"
+                )
+            skip_errors.extend(
+                validate_hygon_skip_records(
+                    baseline_skips,
+                    operator,
+                    manifest_operators,
+                    "nvidia_baseline",
+                )
+            )
+            skip_errors.extend(
+                validate_nvidia_baseline_skips(baseline_skips, operator)
+            )
+        names = [record.get("case", "") for record in skip_records]
+        if len(names) != len(set(names)):
+            skip_errors.append(
+                "Hygon reference skips contain duplicate case names"
+            )
         if skip_errors:
             result["skip_record_errors"] = skip_errors
             result["status"] = "failed"
-    if suite == "benchmark" and result["status"] == "passed":
+    equivalent_records = (
+        suite == "benchmark"
+        and ctest_reported_status in {"passed", "failed"}
+        and any(
+            providers.get("flagdnn", {}).get("schema_version") == 4
+            for providers in records.values()
+        )
+    )
+    if suite == "benchmark" and (
+        result["status"] == "passed" or equivalent_records
+    ):
         pair_errors = validate_hygon_benchmark_pairs(
             records, operator, manifest_operators
         )
         if pair_errors:
             result.setdefault("record_errors", []).extend(pair_errors)
             result["status"] = "failed"
-    if ctest_reported_status in {"passed", "skipped"}:
+    if ctest_reported_status in {"passed", "skipped"} or equivalent_records:
         accounting_errors = validate_hygon_case_accounting(
             output,
             operator,
@@ -689,17 +1332,53 @@ def postprocess_result(
         if accounting_errors:
             result["case_accounting_errors"] = accounting_errors
             result["status"] = "failed"
+    if equivalent_records and not any(
+        result.get(key)
+        for key in (
+            "record_errors",
+            "case_accounting_errors",
+            "skip_record_errors",
+        )
+    ):
+        failures = [
+            f"{case}: measured_us={providers['flagdnn']['median']:.9g} "
+            "exceeds "
+            f"equivalent limit_us={baseline['limit_us']:.9g} "
+            f"(relative_efficiency={baseline['relative_efficiency']:.9g}, "
+            f"minimum={baseline['min_relative_efficiency']:.9g})"
+            for case, providers in records.items()
+            if (baseline := providers["flagdnn"].get("equivalent_baseline"))
+            and not baseline["passed"]
+        ]
+        if failures:
+            # A completed measurement below the reference is informational.
+            # Preserve failures from older executables (or other real process
+            # errors); never turn a nonzero execution into a successful task.
+            key = (
+                "performance_errors"
+                if ctest_reported_status == "failed"
+                else "performance_warnings"
+            )
+            result[key] = failures
 
 
 def result_diagnostics(result: dict[str, Any]) -> list[tuple[str, str]]:
     diagnostics: list[tuple[str, str]] = []
     diagnostics.extend(
-        ("hipDNN skip record error", error)
+        ("Hygon reference skip record error", error)
         for error in result.get("skip_record_errors", [])
     )
     diagnostics.extend(
         ("Hygon case accounting error", error)
         for error in result.get("case_accounting_errors", [])
+    )
+    diagnostics.extend(
+        ("Hygon equivalent performance failure", error)
+        for error in result.get("performance_errors", [])
+    )
+    diagnostics.extend(
+        ("Hygon equivalent baseline warning", warning)
+        for warning in result.get("performance_warnings", [])
     )
     return diagnostics
 
@@ -717,7 +1396,11 @@ def finalize(
     min_speedup: float | None,
     preflight_passed: bool,
 ) -> dict[str, Any]:
-    failed = False
+    failed = any(
+        not status_is_success(task.get("status", "error"))
+        for operator_results in results.values()
+        for task in operator_results.values()
+    )
     catalog = state.get("comparable_catalog")
     comparable_coverage: dict[str, Any] | None = None
     if catalog is not None and preflight_passed:
@@ -729,13 +1412,16 @@ def finalize(
                 "comparable coverage gate: "
                 f"{comparable_coverage['observed_required_case_count']}/"
                 f"{comparable_coverage['required_case_count']} declared cases "
-                "emitted complete FlagDNN/hipDNN pairs",
+                "have complete FlagDNN/hipDNN pairs in completed suites; "
+                f"raw_complete={comparable_coverage['raw_complete_required_case_count']} "
+                f"excluded_suite_failed={comparable_coverage['excluded_complete_required_case_count']}",
                 flush=True,
             )
             for missing in comparable_coverage["missing_cases"]:
                 print(
-                    "  FAIL missing comparable pair "
+                    "  FAIL comparable coverage "
                     f"op={missing['operator']} case={missing['case']} "
+                    f"reason={missing['reason']} "
                     f"benchmark_status={missing['benchmark_status']}",
                     flush=True,
                 )
@@ -746,7 +1432,24 @@ def finalize(
         if "benchmark" in suites
         else None
     )
-    if min_speedup is not None:
+    equivalent = (
+        equivalent_performance_summary(results, min_speedup)
+        if "benchmark" in suites
+        else None
+    )
+    has_equivalent = equivalent is not None and equivalent["case_count"] > 0
+    if (
+        performance is not None
+        and not performance["case_count"]
+        and has_equivalent
+    ):
+        # A div-only run has no native-reference speedup gate to apply.
+        performance["gate_passed"] = None
+        performance["ratio_gate_passed"] = None
+    if min_speedup is not None and (
+        performance is not None
+        and (performance["case_count"] or not has_equivalent)
+    ):
         assert performance is not None
         failures = performance["failures"]
         print(
@@ -772,25 +1475,70 @@ def finalize(
                 flush=True,
             )
         failed = failed or not performance["gate_passed"]
+    if has_equivalent:
+        assert equivalent is not None
+        enabled = equivalent["gate_enabled"]
+        print(
+            (
+                "equivalent performance gate: "
+                if enabled
+                else "equivalent performance report (informational): "
+            )
+            + f"{equivalent['passed_case_count']}/{equivalent['case_count']} "
+            "cases "
+            "meet baseline relative efficiency"
+            + (
+                f" and --min-speedup >= {min_speedup:.6g}"
+                if min_speedup is not None
+                else "; performance gate disabled (no --min-speedup)"
+            ),
+            flush=True,
+        )
+        for record in equivalent["failures"]:
+            print(
+                f"  {'FAIL' if enabled else 'BELOW_BASELINE'} "
+                f"op={record['operator']} case={record['case']} "
+                f"flagdnn_us={record['flagdnn_median_us']:.9g} "
+                f"relative_efficiency={record['relative_efficiency']:.9g} "
+                f"required={record['required_relative_efficiency']:.9g}",
+                flush=True,
+            )
+        if enabled:
+            failed = failed or not equivalent["gate_passed"]
 
     skip_record_errors = 0
     accounting_errors = 0
     reference_skips = 0
+    baseline_skips = 0
     for operator_results in results.values():
         for result in operator_results.values():
             skip_record_errors += len(result.get("skip_record_errors", []))
             accounting_errors += len(result.get("case_accounting_errors", []))
-            if result["status"] in {"passed", "skipped"}:
+            valid_skips = not any(
+                result.get(key)
+                for key in (
+                    "record_errors",
+                    "case_accounting_errors",
+                    "skip_record_errors",
+                )
+            )
+            if valid_skips and (
+                result["status"] in {"passed", "skipped"}
+                or complete_benchmark(result)
+            ):
                 reference_skips += len(result.get("skip_records", []))
+                baseline_skips += len(result.get("baseline_skip_records", []))
 
     return {
         "failed": failed,
         "summary": {
             "comparable_coverage": comparable_coverage,
             "performance": performance,
+            "equivalent_performance": equivalent,
         },
         "coverage": {
             "hipdnn_reference_skips": reference_skips,
+            "nvidia_baseline_skips": baseline_skips,
             "hipdnn_skip_record_errors": skip_record_errors,
             "hygon_case_accounting_errors": accounting_errors,
         },

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 import contextlib
 import importlib.util
 import io
@@ -452,6 +453,305 @@ def check_legacy_summary(runner) -> None:
         )
 
 
+def check_platform_single_report_hooks(runner) -> None:
+    """Optional single-report processing must preserve other platforms."""
+
+    class DisabledHook:
+        postprocess_report = None
+
+    native = {
+        "timestamp_utc": "2026-10-10T00:00:00+00:00",
+        "overall_status": "passed",
+        "exit_code": 0,
+        "suite_operators": {"benchmark": ["add"]},
+        "results": {
+            "add": {
+                "benchmark": {
+                    "status": "passed",
+                    "exit_code": 0,
+                    "records": {
+                        "add_fp32": {
+                            provider: {"median": latency, "unit": "us"}
+                            for provider, latency in (
+                                ("flagdnn", 2.0),
+                                ("reference", 6.0),
+                            )
+                        }
+                    },
+                }
+            }
+        },
+    }
+    expected = runner.summary_document(native)
+    adapters = [("none", None), ("no-hook", object())]
+    adapters.append(("disabled-hook", DisabledHook()))
+    for platform in (
+        "nvidia",
+        "ascend",
+        "thead",
+        "iluvatar",
+        "mthreads",
+        "hygon",
+    ):
+        adapter = runner.load_platform_adapter(platform)
+        require(adapter is not None, f"missing {platform} test adapter")
+        adapters.append((platform, adapter))
+    for label, adapter in adapters:
+        require(
+            runner.summary_document(native, adapter=adapter) == expected,
+            f"{label} changed the native-only single-report contract",
+        )
+
+
+def check_platform_batch_report_hooks(runner) -> None:
+    """Platforms opt into report changes; the default archive stays intact."""
+
+    class NoHook:
+        pass
+
+    class DisabledHook:
+        postprocess_batch_report = None
+
+    adapters = [
+        ("no-adapter", None),
+        ("no-hook", NoHook()),
+        ("disabled-hook", DisabledHook()),
+    ]
+    for platform in ("nvidia", "ascend", "thead", "iluvatar", "mthreads"):
+        adapter = runner.load_platform_adapter(platform)
+        require(adapter is not None, f"missing {platform} test adapter")
+        require(
+            getattr(adapter, "postprocess_batch_report", None) is None,
+            f"{platform} unexpectedly opted into batch report rewriting",
+        )
+        adapters.append((platform, adapter))
+    environment = {
+        "os_name": "fixture",
+        "os_release": "fixture",
+        "flag_dnn": "fixture",
+        "flag_gems": "legacy alias",
+    }
+    native_case = "add_fp32"
+    flagdnn = json.loads(timing(native_case, "flagdnn"))
+    reference = json.loads(timing(native_case, "native_reference"))
+    reference.update(median=6.0, p90=6.0, samples=[6.0])
+    native_task = {
+        "status": "passed",
+        "exit_code": 0,
+        "duration_seconds": 0.25,
+        "test_case": "benchmark/test_add.cpp",
+        "records": {
+            native_case: {"flagdnn": flagdnn, "native_reference": reference}
+        },
+    }
+    with tempfile.TemporaryDirectory(
+        prefix="flagdnn-platform-reports-"
+    ) as tmp:
+        output = Path(tmp)
+        performance = runner.batch_suite_result(
+            "add", "benchmark", native_task, output
+        )
+        row = performance["data"]["fp32"]["details"][native_case]
+        require(
+            row == {"base": 0.006, "gems": 0.002, "speedup": 3.0},
+            "generic native-pair serialization changed",
+        )
+        partitions = {
+            0: {"add": {"customized": False, "performance": performance}},
+            1: {
+                "sub": {
+                    "customized": True,
+                    "performance": {
+                        "status": "Failed",
+                        "exit_code": 1,
+                        "duration": 0.5,
+                        "data": {},
+                        "test_case": "benchmark/test_sub.cpp",
+                    },
+                }
+            },
+            9: {},
+        }
+        originals = {
+            gpu: json.dumps(partition, indent=1) + "\n"
+            for gpu, partition in partitions.items()
+        }
+        expected_results = {**partitions[0], **partitions[1]}
+        archive = output / "add/performance_result.log"
+        archive_bytes = archive.read_bytes()
+
+        def reset_partitions():
+            for gpu, content in originals.items():
+                (output / f"summary{gpu}.json").write_text(content)
+
+        def require_unchanged(label):
+            for gpu, content in originals.items():
+                require(
+                    (output / f"summary{gpu}.json").read_text() == content,
+                    f"{label} rewrote a per-GPU report without opting in",
+                )
+            require(
+                not (output / "summary2.json").exists()
+                and archive.read_bytes() == archive_bytes,
+                f"{label} created a missing partition "
+                "or rewrote the native archive",
+            )
+
+        # A final platform outcome with equivalent-looking keys must not
+        # activate common-runner policy for platforms without the hook.
+        unrelated_summary = {
+            "equivalent_performance": {
+                "case_count": 1,
+                "metric": "must_not_be_interpreted",
+                "cases": [
+                    {
+                        "operator": "add",
+                        "case": native_case,
+                        "passed": False,
+                        "relative_efficiency": 0.1,
+                        "required_relative_efficiency": 0.8,
+                    }
+                ],
+            },
+            "platform_owned_field": "untouched",
+        }
+        for label, adapter in adapters:
+            reset_partitions()
+            runner.write_batch_summary(
+                output,
+                environment,
+                [0, 1, 2, 9],
+                adapter=adapter,
+                platform_summary=unrelated_summary,
+                exit_code=1,
+            )
+            report = json.loads((output / "summary.json").read_text())
+            require(
+                set(report) == {"timestamp", "env", "result"}
+                and report["result"] == expected_results
+                and report["env"] == runner.batch_environment(environment),
+                f"{label} inherited another platform's "
+                "report fields or status",
+            )
+            require_unchanged(label)
+
+        # The original three-argument API remains usable without an adapter.
+        reset_partitions()
+        runner.write_batch_summary(output, environment, [0, 1, 2, 9])
+        require_unchanged("legacy batch writer")
+        hygon = runner.load_platform_adapter("hygon")
+        require(
+            callable(getattr(hygon, "postprocess_batch_report", None)),
+            "Hygon equivalent reporting did not opt into the generic hook",
+        )
+        for summary in (
+            {},
+            {"equivalent_performance": {"case_count": 0, "cases": []}},
+        ):
+            reset_partitions()
+            runner.write_batch_summary(
+                output,
+                environment,
+                [0, 1, 2, 9],
+                adapter=hygon,
+                platform_summary=summary,
+                exit_code=1,
+            )
+            report = json.loads((output / "summary.json").read_text())
+            require(
+                set(report) == {"timestamp", "env", "result"}
+                and report["result"] == expected_results,
+                "Hygon native-only reporting changed "
+                "through the equivalent hook",
+            )
+            require_unchanged("Hygon native-only hook")
+
+        class GenericHook:
+            def postprocess_batch_report(
+                self, *, partitions, report, platform_summary, exit_code
+            ):
+                require(
+                    set(partitions) == {0, 1, 9},
+                    "generic hook received the wrong GPU partitions",
+                )
+                require(
+                    exit_code == 7
+                    and platform_summary == {"vendor_gate": "failed"},
+                    "generic hook lost final platform state",
+                )
+                target = partitions[0]["add"]["performance"]
+                target.update(status="Failed", exit_code=7)
+                target["data"]["fp32"]["result"] = "FAIL"
+                target["vendor_gate"] = {"score": 0.25, "passed": False}
+                report["result"]["add"] = partitions[0]["add"]
+                report["vendor_gate"] = platform_summary["vendor_gate"]
+                report["exit_code"] = exit_code
+                return True
+
+        reset_partitions()
+        runner.write_batch_summary(
+            output,
+            environment,
+            [0, 1, 2, 9],
+            adapter=GenericHook(),
+            platform_summary={"vendor_gate": "failed"},
+            exit_code=7,
+        )
+        report = json.loads((output / "summary.json").read_text())
+        stored = json.loads((output / "summary0.json").read_text())
+        require(
+            report["vendor_gate"] == "failed"
+            and report["exit_code"] == 7
+            and stored["add"]["performance"]["status"] == "Failed"
+            and stored["add"] == report["result"]["add"]
+            and stored["add"]["performance"]["vendor_gate"]["score"] == 0.25
+            and report["result"]["sub"] == expected_results["sub"],
+            "generic report hook failed to persist "
+            "non-Hygon fields and statuses",
+        )
+
+        class MetadataHook:
+            def postprocess_batch_report(self, *, report, **_kwargs):
+                report["vendor_note"] = "metadata only"
+                return False
+
+        reset_partitions()
+        runner.write_batch_summary(
+            output, environment, [0, 1, 2, 9], adapter=MetadataHook()
+        )
+        report = json.loads((output / "summary.json").read_text())
+        require(
+            report["vendor_note"] == "metadata only"
+            and report["result"] == expected_results,
+            "metadata-only report hook was ignored or changed native results",
+        )
+        require_unchanged("metadata-only hook")
+
+        class InvalidHook:
+            def postprocess_batch_report(self, **_kwargs):
+                return {"changed": True}
+
+        merged_before = (output / "summary.json").read_bytes()
+        try:
+            runner.write_batch_summary(
+                output, environment, [0, 1, 9], adapter=InvalidHook()
+            )
+        except RuntimeError as error:
+            require(
+                "invalid batch report update" in str(error),
+                "invalid generic hook failed with an unrelated error",
+            )
+        else:
+            raise RuntimeError(
+                "non-boolean report-hook return value was accepted"
+            )
+        require(
+            (output / "summary.json").read_bytes() == merged_before,
+            "invalid report-hook output overwrote the published summary",
+        )
+        require_unchanged("invalid hook")
+
+
 def check_batch_runner(runner) -> None:
     """Exercise concurrent CTest processes and the public archive protocol."""
     with tempfile.TemporaryDirectory(prefix="flagdnn-batch-contract-") as tmp:
@@ -459,7 +759,8 @@ def check_batch_runner(runner) -> None:
         build = root / "build"
         build.mkdir()
         fixture = root / "case.py"
-        fixture.write_text("""import json, os, sys, time
+        fixture.write_text(
+            """import json, os, sys, time
 op, suite = sys.argv[1:]
 gpu = os.environ['CUDA_VISIBLE_DEVICES']
 print('GPU=' + gpu, flush=True)
@@ -479,7 +780,8 @@ else:
         print(json.dumps({'schema_version': 1, 'kind': 'steady_state',
             'provider': provider, 'case': op + '_fp32', 'unit': 'us',
             'median': latency, 'p90': latency, 'samples': [latency]}))
-""")
+"""
+        )
         (build / "CMakeCache.txt").write_text(
             "FLAGDNN_BACKENDS:STRING=nvidia\n"
         )
@@ -780,9 +1082,11 @@ def check_batch_cache_environment(runner) -> None:
         build = root / "build"
         build.mkdir()
         fixture = root / "cache_case.py"
-        fixture.write_text("""import json, os, sys, time
+        fixture.write_text(
+            """import json, os, sys, time
 from pathlib import Path
-print('CACHE_ENV=' + json.dumps(os.environ.get('FLAGDNN_CACHE_PATH')), flush=True)
+print('CACHE_ENV=' + json.dumps(os.environ.get('FLAGDNN_CACHE_PATH')),
+      flush=True)
 cuda_mask = os.environ.get('CUDA_VISIBLE_DEVICES')
 print('DEVICE_ENV=' + json.dumps({
     'CUDA_VISIBLE_DEVICES': cuda_mask,
@@ -795,15 +1099,18 @@ if barrier:
     barrier = Path(barrier)
     (barrier / sys.argv[1]).touch()
     deadline = time.monotonic() + 20
-    while not all((barrier / operator).is_file() for operator in ('add', 'sub')):
+    while not all((barrier / operator).is_file()
+                  for operator in ('add', 'sub')):
         if time.monotonic() >= deadline:
-            raise RuntimeError('both GPU workers must start before either exits')
+            raise RuntimeError(
+                'both GPU workers must start before either exits')
         time.sleep(0.01)
 time.sleep(0.05)
 print(sys.argv[1] + '_fp32: reference PASS', flush=True)
 print('FLAGDNN_' + sys.argv[1].upper() +
       '_FUNCTIONAL: PASS cases=1 executed=1 skipped=0', flush=True)
-""")
+"""
+        )
         (build / "CMakeCache.txt").write_text(
             "FLAGDNN_BACKENDS:STRING=nvidia;thead\n"
         )
@@ -855,14 +1162,21 @@ print('FLAGDNN_' + sys.argv[1].upper() +
                 [
                     sys.executable,
                     str(Path(runner.__file__).resolve()),
-                    "--build-dir", str(build),
-                    "--platform", platform,
-                    "--output-dir", str(output),
-                    "--ops", "add,sub",
-                    "--suites", "functional",
-                    "--gpus", "0,1",
+                    "--build-dir",
+                    str(build),
+                    "--platform",
+                    platform,
+                    "--output-dir",
+                    str(output),
+                    "--ops",
+                    "add,sub",
+                    "--suites",
+                    "functional",
+                    "--gpus",
+                    "0,1",
                     "--dump-output",
-                    "--color", "never",
+                    "--color",
+                    "never",
                 ],
                 capture_output=True,
                 text=True,
@@ -918,11 +1232,16 @@ print('FLAGDNN_' + sys.argv[1].upper() +
             [
                 sys.executable,
                 str(Path(runner.__file__).resolve()),
-                "--build-dir", str(build),
-                "--platform", "thead",
-                "--output", str(root / "legacy.json"),
-                "--ops", "add",
-                "--suites", "functional",
+                "--build-dir",
+                str(build),
+                "--platform",
+                "thead",
+                "--output",
+                str(root / "legacy.json"),
+                "--ops",
+                "add",
+                "--suites",
+                "functional",
                 "--no-preflight",
                 "--verbose",
             ],
@@ -934,7 +1253,1641 @@ print('FLAGDNN_' + sys.argv[1].upper() +
         require(
             process.returncode == 0 and "CACHE_ENV=null" in process.stdout,
             "batch cache default leaked into serial mode: "
-            + process.stdout + process.stderr,
+            + process.stdout
+            + process.stderr,
+        )
+
+
+def check_hygon_native_timing(runner, hygon) -> None:
+    case = "add_perf_fp32_8x16x32_by_8x16x32"
+    metadata_keys = ("timing_mode", "timing_reason", "benchmark_config")
+
+    def native(provider="flagdnn", *, direct=False):
+        record = json.loads(timing(case, provider))
+        record.update(
+            schema_version=5,
+            timing_mode=(
+                "hip_event_direct_batch" if direct else "hip_graph_batch"
+            ),
+            timing_reason=(
+                "hipdnn_graph_tail_workaround" if direct else "standard"
+            ),
+            benchmark_config={
+                "warmup_iterations": 0,
+                "sample_count": 3,
+                "iterations_per_sample": 50,
+            },
+        )
+        if provider == "hipdnn":
+            record.update(median=1.0, p90=1.5, samples=[0.5, 1.0, 1.5])
+        return record
+
+    for direct in (False, True):
+        pair = {
+            provider: native(provider, direct=direct)
+            for provider in ("flagdnn", "hipdnn")
+        }
+        output = "\n".join(json.dumps(record) for record in pair.values())
+        records, errors = runner.benchmark_records(output, hygon)
+        require(
+            not errors
+            and records == {case: pair}
+            and not hygon.validate_hygon_benchmark_pairs(
+                records, "add", ["add"]
+            ),
+            "valid Hygon native timing provenance was rejected",
+        )
+        unsupported, errors = runner.benchmark_records(output)
+        require(
+            errors and not unsupported, "v5 leaked into the generic parser"
+        )
+        task = {"status": "passed", "exit_code": 0, "records": records}
+        hygon.postprocess_result(
+            result=task,
+            ctest_reported_status="passed",
+            output="FLAGDNN_ADD_BENCHMARK: PASS cases=1 executed=1 skipped=0\n",
+            operator="add",
+            suite="benchmark",
+            records=records,
+            manifest_operators=["add"],
+        )
+        public = runner.suite_result(task, "benchmark")
+        row = public["data"]["fp32"]["details"][case]
+        exported = runner.performance_file("add", task, public)["add"][
+            "details"
+        ][0]["result"][0]
+        with tempfile.TemporaryDirectory(prefix="flagdnn-native-v5-") as tmp:
+            batch = runner.batch_suite_result(
+                "add", "benchmark", task, Path(tmp)
+            )
+            batch_row = batch["data"]["fp32"]["details"][case]
+            log = (Path(tmp) / "add/performance_result.log").read_text()
+            logged = json.loads(log.splitlines()[1].removeprefix("[INFO] "))[
+                "result"
+            ][0]
+        performance = hygon.benchmark_speedup_summary(
+            {"add": {"benchmark": task}}, None
+        )
+        gated = hygon.benchmark_speedup_summary(
+            {"add": {"benchmark": task}}, 0.9
+        )
+        for rendered in (
+            row,
+            exported,
+            batch_row,
+            logged,
+            gated["failures"][0],
+        ):
+            require(
+                all(
+                    rendered.get(key) == pair["flagdnn"][key]
+                    for key in metadata_keys
+                ),
+                "native timing provenance was lost in a report",
+            )
+        require(
+            task["status"] == "passed"
+            and public["status"] == "Passed"
+            and public["data"]["fp32"]["result"] == "OK"
+            and row["speedup"] == 0.5
+            and performance["minimum_speedup"] == 0.5,
+            "native v5 metadata changed speedup math or enabled a default gate",
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            default = hygon.finalize(
+                results={"add": {"benchmark": task}},
+                suite_operators={"benchmark": ["add"]},
+                suites=["benchmark"],
+                state={},
+                min_speedup=None,
+                preflight_passed=True,
+            )
+        require(
+            not default["failed"],
+            "default slow native v5 became a failed task",
+        )
+        failed_task = {**task, "status": "failed", "exit_code": 7}
+        hygon.postprocess_result(
+            result=failed_task,
+            ctest_reported_status="failed",
+            output="FLAGDNN_ADD_BENCHMARK_FAILED: precision mismatch\n",
+            operator="add",
+            suite="benchmark",
+            records=records,
+            manifest_operators=["add"],
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            failed = hygon.finalize(
+                results={"add": {"benchmark": failed_task}},
+                suite_operators={"benchmark": ["add"]},
+                suites=["benchmark"],
+                state={},
+                min_speedup=None,
+                preflight_passed=True,
+            )
+        require(
+            failed["failed"]
+            and failed_task["status"] == "failed"
+            and failed_task["exit_code"] == 7,
+            "native v5 metadata masked a real execution/precision failure",
+        )
+
+    valid = native()
+    malformed = [
+        {**valid, key: value}
+        for key, value in (
+            ("schema_version", 5.0),
+            ("schema_version", True),
+            ("provider", "cudnn"),
+            ("case", ""),
+            ("unit", "ms"),
+            ("timing_mode", "cuda_graph"),
+            ("timing_mode", []),
+            ("timing_reason", "hipdnn_graph_tail_workaround"),
+            ("median", 0),
+            ("median", 10**1000),
+            ("p90", float("inf")),
+            ("samples", [float("nan")] * 3),
+            ("samples", [1.0, 2.0]),
+            ("p90", 2.0),
+            ("extra", True),
+            ("benchmark_config", None),
+        )
+    ]
+    for key in valid:
+        malformed.append(
+            {name: value for name, value in valid.items() if name != key}
+        )
+    for key in valid["benchmark_config"]:
+        for value in (-1, True, 1.5, None):
+            malformed.append(
+                {
+                    **valid,
+                    "benchmark_config": {
+                        **valid["benchmark_config"],
+                        key: value,
+                    },
+                }
+            )
+        malformed.append(
+            {
+                **valid,
+                "benchmark_config": {
+                    name: value
+                    for name, value in valid["benchmark_config"].items()
+                    if name != key
+                },
+            }
+        )
+    for key in ("sample_count", "iterations_per_sample"):
+        malformed.append(
+            {
+                **valid,
+                "benchmark_config": {**valid["benchmark_config"], key: 0},
+            }
+        )
+    malformed.append(
+        {
+            **valid,
+            "benchmark_config": {**valid["benchmark_config"], "extra": 1},
+        }
+    )
+    malformed.append({**native(direct=True), "timing_reason": "standard"})
+    for record in malformed:
+        rejected, errors = runner.benchmark_records(json.dumps(record), hygon)
+        # A record not claiming the timing protocol remains unrelated diagnostics.
+        require(
+            not rejected and (errors or "kind" not in record),
+            "malformed native v5 timing was accepted: " + repr(record),
+        )
+    for other in (
+        json.loads(timing(case, "hipdnn")),
+        native("hipdnn", direct=True),
+        {
+            **native("hipdnn"),
+            "benchmark_config": {
+                **valid["benchmark_config"],
+                "warmup_iterations": 1,
+            },
+        },
+        {**native("hipdnn"), "case": case + "_wrong"},
+        {**native("hipdnn"), "provider": "flagdnn"},
+    ):
+        require(
+            hygon.validate_hygon_benchmark_pairs(
+                {case: {"flagdnn": valid, "hipdnn": other}}, "add", ["add"]
+            ),
+            "mixed native timing provenance or identity was accepted",
+        )
+    incompatible_pairs = [
+        (native(), native("hipdnn", direct=True)),
+        (native(), json.loads(timing(case, "hipdnn"))),
+        (json.loads(timing(case, "flagdnn")), native("hipdnn")),
+        (
+            native(),
+            {
+                **native("hipdnn"),
+                "benchmark_config": {
+                    **valid["benchmark_config"],
+                    "warmup_iterations": 1,
+                },
+            },
+        ),
+        (native(), {**native("hipdnn"), "timing_reason": "different_reason"}),
+    ]
+    for key in metadata_keys:
+        incompatible_pairs.append(
+            (
+                native(),
+                {
+                    name: value
+                    for name, value in native("hipdnn").items()
+                    if name != key
+                },
+            )
+        )
+        if key != "timing_mode":
+            incompatible_pairs.append(
+                tuple(
+                    {
+                        name: value
+                        for name, value in native(provider).items()
+                        if name != key
+                    }
+                    for provider in ("flagdnn", "hipdnn")
+                )
+            )
+    with tempfile.TemporaryDirectory(prefix="flagdnn-incompatible-v5-") as tmp:
+        for index, (actual, reference) in enumerate(incompatible_pairs):
+            raw = {case: {"flagdnn": actual, "hipdnn": reference}}
+            errors = hygon.validate_hygon_benchmark_pairs(raw, "add", ["add"])
+            require(errors, "incompatible fixture was not rejected by adapter")
+            task = {
+                "status": "failed",
+                "exit_code": 1,
+                "records": raw,
+                "record_errors": errors,
+            }
+            snapshot = json.dumps(task, sort_keys=True)
+            batch = runner.batch_suite_result(
+                "add", "benchmark", task, Path(tmp) / str(index)
+            )
+            log = (
+                Path(tmp) / str(index) / "add/performance_result.log"
+            ).read_text()
+            require(
+                runner.performance_data(task) == {}
+                and batch["status"] == "Failed"
+                and batch["data"] == {}
+                and "speedup" not in log
+                and json.dumps(task, sort_keys=True) == snapshot,
+                "incompatible timing pair produced a ratio/fake OK or lost raw diagnostics",
+            )
+        good_case = case + "_compatible"
+        compatible = {
+            provider: {**native(provider), "case": good_case}
+            for provider in ("flagdnn", "hipdnn")
+        }
+        task["records"] = {**raw, good_case: compatible}
+        details = runner.performance_data(task)["fp32"]["details"]
+        require(
+            set(details) == {good_case}
+            and details[good_case]["speedup"] == 0.5,
+            "an incompatible timing pair erased unrelated valid comparisons",
+        )
+    legacy = "\n".join(
+        timing(case, provider) for provider in ("flagdnn", "hipdnn")
+    )
+    legacy_records, errors = runner.benchmark_records(legacy, hygon)
+    require(
+        not errors
+        and not hygon.validate_hygon_benchmark_pairs(
+            legacy_records, "add", ["add"]
+        ),
+        "native v5 support broke legacy v1 provider pairs",
+    )
+    legacy_row = runner.performance_data({"records": legacy_records})["fp32"][
+        "details"
+    ][case]
+    require(
+        not any(key in legacy_row for key in metadata_keys),
+        "v1 invented timing provenance",
+    )
+    # Older adapters may carry their own benchmark_config without declaring
+    # this timing provenance. Do not change their public row format.
+    legacy_records[case]["flagdnn"]["benchmark_config"] = {"legacy": True}
+    legacy_row = runner.performance_data({"records": legacy_records})["fp32"][
+        "details"
+    ][case]
+    require(
+        not any(key in legacy_row for key in metadata_keys),
+        "native timing metadata passthrough changed an older adapter's output",
+    )
+
+
+def check_equivalent_performance(runner, hygon) -> None:
+    case = "div_perf_fp32_1x1x1024_by_1x1x1024"
+
+    def measured(median=2.0):
+        return {
+            "schema_version": 4,
+            "kind": "steady_state",
+            "provider": "flagdnn",
+            "case": case,
+            "unit": "us",
+            "median": median,
+            "p90": median + 1.0,
+            "samples": [1.0] * 9 + [median] + [median + 1.0] * 10,
+            "equivalent_baseline": {
+                "provider": "nvidia_equivalent",
+                "platform": "nvidia",
+                "target_platform": "hygon",
+                "scale_metric": "vector_fp32",
+                "timing_profile": "native",
+                "reference_time_us": 2.0,
+                "reference_peak": 4.0,
+                "target_peak": 5.0,
+                "min_relative_efficiency": 0.8,
+                "equivalent_time_us": 1.6,
+                "limit_us": 2.0,
+                "relative_efficiency": 1.6 / median,
+                "passed": median <= 2.0,
+            },
+        }
+
+    valid = measured()
+    records, errors = runner.benchmark_records(json.dumps(valid), hygon)
+    require(
+        not errors and records == {case: {"flagdnn": valid}},
+        "equivalent baseline lost the real samples "
+        "or invented reference samples",
+    )
+    for key, value in (
+        ("schema_version", 4.0),
+        ("case", "add_perf_fp32_1_by_1"),
+        ("case", "div_perf_fp64_1_by_1"),
+        ("provider", "nvidia_equivalent"),
+        ("unit", "ms"),
+        ("median", 0.0),
+        ("median", float("nan")),
+        ("p90", 2.0),
+        ("samples", [2.0]),
+        ("samples", [float("inf")] * 20),
+        ("unexpected", 1),
+    ):
+        malformed = {**valid, key: value}
+        rejected, errors = runner.benchmark_records(
+            json.dumps(malformed), hygon
+        )
+        require(
+            errors and not rejected,
+            f"invalid equivalent record {key} accepted",
+        )
+    numeric = (
+        "reference_time_us",
+        "reference_peak",
+        "target_peak",
+        "min_relative_efficiency",
+        "equivalent_time_us",
+        "limit_us",
+        "relative_efficiency",
+    )
+    mutations = [
+        (key, value)
+        for key in numeric
+        for value in (0.0, -1.0, float("nan"), float("inf"), True, None)
+    ] + [
+        ("target_peak", 10**1000),
+        ("min_relative_efficiency", 1.1),
+        ("equivalent_time_us", 2.0),
+        ("limit_us", 2.1),
+        ("relative_efficiency", 1.0),
+        ("reference_time_us", 1.0e308),
+        ("passed", False),
+        ("passed", 1),
+        ("provider", "hipdnn"),
+        ("platform", "hygon"),
+        ("target_platform", "nvidia"),
+        ("scale_metric", "vector_fp16"),
+        ("timing_profile", "attention"),
+        ("samples", [1.6]),
+    ]
+    for key, value in mutations:
+        malformed = {
+            **valid,
+            "equivalent_baseline": {
+                **valid["equivalent_baseline"],
+                key: value,
+            },
+        }
+        rejected, errors = runner.benchmark_records(
+            json.dumps(malformed), hygon
+        )
+        require(
+            errors and not rejected,
+            f"invalid equivalent baseline {key} accepted",
+        )
+    for key in valid["equivalent_baseline"]:
+        baseline = dict(valid["equivalent_baseline"])
+        del baseline[key]
+        rejected, errors = runner.benchmark_records(
+            json.dumps({**valid, "equivalent_baseline": baseline}), hygon
+        )
+        require(
+            errors and not rejected, f"missing equivalent field {key} accepted"
+        )
+    overflow = {
+        **valid,
+        "equivalent_baseline": {
+            **valid["equivalent_baseline"],
+            "reference_time_us": 10**308,
+            "reference_peak": 10**308,
+        },
+    }
+    rejected, errors = runner.benchmark_records(json.dumps(overflow), hygon)
+    require(
+        errors and not rejected, "integer equivalent formula overflow escaped"
+    )
+    require(
+        not hygon.validate_hygon_benchmark_pairs(
+            records, "div", ["div", "add"]
+        )
+        and hygon.validate_hygon_benchmark_pairs(
+            records, "add", ["div", "add"]
+        )
+        and hygon.validate_hygon_benchmark_pairs(
+            {case: {"flagdnn": valid, "hipdnn": {}}}, "div", ["div"]
+        )
+        and hygon.validate_hygon_benchmark_pairs(
+            {"add_perf": {"flagdnn": {}}}, "add", ["add"]
+        ),
+        "single-provider exception leaked outside equivalent div records",
+    )
+
+    def processed(median=2.0, *, reported=None, output=None):
+        record = measured(median)
+        status = reported or "passed"
+        task = {
+            "status": status,
+            "exit_code": int(status != "passed"),
+            "records": {case: {"flagdnn": record}},
+        }
+        marker = "PASS" if status == "passed" else "FAIL"
+        hygon.postprocess_result(
+            result=task,
+            ctest_reported_status=status,
+            output=(
+                output
+                if output is not None
+                else (
+                    f"FLAGDNN_DIV_BENCHMARK: {marker} "
+                    "cases=1 executed=1 skipped=0\n"
+                )
+            ),
+            operator="div",
+            suite="benchmark",
+            records=task["records"],
+            manifest_operators=["div"],
+        )
+        return task
+
+    passed = processed()
+    below_baseline = processed(2.000001)
+    failed = processed(2.000001, reported="failed")
+    require(
+        passed["status"] == "passed"
+        and not passed.get("performance_errors")
+        and failed["status"] == "failed"
+        and failed.get("performance_errors")
+        and not failed.get("case_accounting_errors")
+        and not failed.get("record_errors"),
+        "equivalent threshold boundary or completed-failure "
+        "accounting is wrong",
+    )
+    require(
+        below_baseline["status"] == "passed"
+        and below_baseline["exit_code"] == 0
+        and below_baseline.get("performance_warnings")
+        and not below_baseline.get("performance_errors")
+        and hygon.complete_benchmark(below_baseline),
+        "informational baseline evaluation failed a successful default run",
+    )
+    incomplete = processed(2.000001, output="")
+    timed_out = processed(2.000001, reported="timeout", output="")
+    require(
+        incomplete.get("case_accounting_errors")
+        and not incomplete.get("performance_errors")
+        and hygon.equivalent_performance_summary(
+            {"div": {"benchmark": incomplete}}, None
+        )["case_count"]
+        == 0,
+        "aborted equivalent execution was treated as a complete "
+        "performance failure",
+    )
+    require(
+        timed_out["status"] == "timeout"
+        and not timed_out.get("performance_errors")
+        and not timed_out.get("case_accounting_errors"),
+        "partial equivalent records replaced the original timeout status",
+    )
+    public = runner.suite_result(failed, "benchmark")
+    row = public["data"]["fp32"]["details"][case]
+    require(
+        public["status"] == "Failed"
+        and public["data"]["fp32"]["result"] == "OK"
+        and row["base"] == 0.0016
+        and row["equivalent_baseline"]
+        == measured(2.000001)["equivalent_baseline"]
+        and row["speedup"] == 1.6 / 2.000001,
+        "an execution failure lost baseline data "
+        "or invented an implicit dtype performance gate",
+    )
+    exported = runner.performance_file("div", failed, public)
+    require(
+        exported["div"]["details"][0]["result"][0]["equivalent_baseline"]
+        == row["equivalent_baseline"],
+        "legacy performance JSON erased the equivalent reference identity",
+    )
+    with tempfile.TemporaryDirectory(
+        prefix="flagdnn-equivalent-report-"
+    ) as tmp:
+        batch = runner.batch_suite_result(
+            "div", "benchmark", failed, Path(tmp)
+        )
+        log = (Path(tmp) / "div" / "performance_result.log").read_text()
+        exported = json.loads(log.splitlines()[1].removeprefix("[INFO] "))
+        require(
+            batch["data"]["fp32"]["details"][case]["equivalent_baseline"]
+            == row["equivalent_baseline"]
+            and exported["result"][0]["equivalent_baseline"]
+            == row["equivalent_baseline"],
+            "batch performance report erased the equivalent "
+            "reference identity",
+        )
+
+    def outcome(task, threshold):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return hygon.finalize(
+                results={"div": {"benchmark": task}},
+                suite_operators={"benchmark": ["div"]},
+                suites=["benchmark"],
+                state={},
+                min_speedup=threshold,
+                preflight_passed=True,
+            )
+
+    for task, threshold, expect_failure in (
+        (passed, None, False),
+        (passed, 0.8, False),
+        (passed, 0.9, True),
+        (below_baseline, None, False),
+        (below_baseline, 0.1, True),
+        (failed, None, True),
+        (failed, 0.1, True),
+    ):
+        result = outcome(task, threshold)
+        equivalent = result["summary"]["equivalent_performance"]
+        native = result["summary"]["performance"]
+        require(
+            result["failed"] == expect_failure
+            and equivalent["case_count"] == 1
+            and equivalent["gate_enabled"] == (threshold is not None)
+            and equivalent["gate_passed"]
+            is (None if threshold is None else not expect_failure)
+            and equivalent["metric"] == hygon.EQUIVALENT_METRIC
+            and native["metric"] == hygon.SPEEDUP_METRIC
+            and native["case_count"] == 0
+            and native["gate_passed"] is None,
+            "default evaluation enabled a gate, execution failure was hidden, "
+            "or explicit --min-speedup relaxed 0.8",
+        )
+    with tempfile.TemporaryDirectory(
+        prefix="flagdnn-equivalent-batch-"
+    ) as tmp:
+        root = Path(tmp)
+        build, output = root / "build", root / "results"
+        fixture = root / "case.py"
+        fixture.write_text(
+            "print(" + repr(json.dumps(valid)) + ")\n"
+            "print('FLAGDNN_DIV_BENCHMARK: "
+            "PASS cases=1 executed=1 skipped=0')\n"
+        )
+        runner.isolated_ctest_directory(
+            build,
+            [
+                {
+                    "name": "benchmark.hygon.div",
+                    "command": [sys.executable, str(fixture)],
+                    "properties": [],
+                }
+            ],
+        )
+        (build / "CMakeCache.txt").write_text(
+            "FLAGDNN_BACKENDS:STRING=hygon\n"
+        )
+        process = subprocess.run(
+            [
+                sys.executable,
+                str(Path(runner.__file__).resolve()),
+                "--build-dir",
+                str(build),
+                "--platform",
+                "hygon",
+                "--output-dir",
+                str(output),
+                "--gpus",
+                "0",
+                "--ops",
+                "div",
+                "--suites",
+                "benchmark",
+                "--no-preflight",
+                "--min-speedup",
+                "0.9",
+                "--color",
+                "never",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        require(
+            process.returncode == 1,
+            "strict equivalent batch gate did not fail: "
+            + process.stdout
+            + process.stderr,
+        )
+        merged = json.loads((output / "summary.json").read_text())
+        partition = json.loads((output / "summary0.json").read_text())
+        performance = merged["result"]["div"]["performance"]
+        detail = performance["data"]["fp32"]["details"][case]
+        require(
+            merged["overall_status"] == "failed"
+            and merged["exit_code"] == 1
+            and merged["equivalent_performance"]["requested_min_speedup"]
+            == 0.9
+            and not merged["equivalent_performance"]["gate_passed"]
+            and merged["equivalent_performance"]["gate_enabled"]
+            and performance["status"] == "Failed"
+            and performance["data"]["fp32"]["result"] == "FAIL"
+            and detail["equivalent_baseline"]["passed"]
+            and detail["performance_gate"]["enabled"]
+            and not detail["performance_gate"]["passed"]
+            and detail["performance_gate"]["required_relative_efficiency"]
+            == 0.9
+            and partition["div"]["performance"] == performance,
+            "batch finalization lost the stricter threshold "
+            "or kept a false pass",
+        )
+        single_output = root / "single.json"
+        process = subprocess.run(
+            [
+                sys.executable,
+                str(Path(runner.__file__).resolve()),
+                "--build-dir",
+                str(build),
+                "--platform",
+                "hygon",
+                "--output",
+                str(single_output),
+                "--ops",
+                "div",
+                "--suites",
+                "benchmark",
+                "--no-preflight",
+                "--min-speedup",
+                "0.9",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        require(
+            process.returncode == 1,
+            "strict equivalent single gate did not fail: "
+            + process.stdout
+            + process.stderr,
+        )
+        single = json.loads(single_output.read_text())
+        performance = single["result"]["div"]["performance"]
+        detail = performance["data"]["fp32"]["details"][case]
+        data_file = json.loads(
+            (single_output.parent / performance["data_file"]).read_text()
+        )["div"]
+        exported = data_file["details"][0]["result"][0]
+        diagnostic = json.loads(
+            runner.diagnostic_path(single_output).read_text()
+        )
+        require(
+            single["overall_status"] == "failed"
+            and single["exit_code"] == 1
+            and performance["status"] == "Failed"
+            and performance["exit_code"] == 1
+            and performance["data"]["fp32"]["result"] == "FAIL"
+            and detail["performance_gate"]["enabled"]
+            and not detail["performance_gate"]["passed"]
+            and detail["performance_gate"]["required_relative_efficiency"]
+            == 0.9
+            and detail["equivalent_baseline"]["passed"]
+            and data_file["result"] == "failed"
+            and exported["performance_gate"] == detail["performance_gate"]
+            and exported["equivalent_baseline"]
+            == detail["equivalent_baseline"]
+            and diagnostic["overall_status"] == "failed"
+            and diagnostic["results"]["div"]["benchmark"]["records"][case][
+                "flagdnn"
+            ]
+            == valid,
+            "single-mode final gate disagrees with its data file "
+            "or overwrites original baseline/samples",
+        )
+        low_record = measured(2.5)
+
+        def fixture_source(record, trailer):
+            return (
+                "print("
+                + repr(json.dumps(record))
+                + ", flush=True)\n"
+                + trailer
+            )
+
+        passing_trailer = (
+            "print('FLAGDNN_DIV_BENCHMARK: "
+            "PASS cases=1 executed=1 skipped=0', flush=True)\n"
+        )
+        fixture.write_text(fixture_source(low_record, passing_trailer))
+        common_arguments = [
+            sys.executable,
+            str(Path(runner.__file__).resolve()),
+            "--build-dir",
+            str(build),
+            "--platform",
+            "hygon",
+            "--ops",
+            "div",
+            "--suites",
+            "benchmark",
+            "--no-preflight",
+        ]
+        for mode in ("single", "batch"):
+            target = root / f"default-{mode}"
+            mode_arguments = (
+                ["--output", str(target)]
+                if mode == "single"
+                else [
+                    "--output-dir",
+                    str(target),
+                    "--gpus",
+                    "0",
+                    "--dump-output",
+                ]
+            )
+            process = subprocess.run(
+                common_arguments + mode_arguments,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            require(
+                process.returncode == 0,
+                f"default below-baseline {mode} run failed: "
+                + process.stdout
+                + process.stderr,
+            )
+            require(
+                "equivalent performance gate:" not in process.stdout
+                and "  FAIL op=" not in process.stdout
+                and "informational" in process.stdout
+                and "BELOW_BASELINE" in process.stdout,
+                f"default {mode} console output mislabeled evaluation "
+                "as an enabled performance gate",
+            )
+            report = json.loads(
+                (
+                    target if mode == "single" else target / "summary.json"
+                ).read_text()
+            )
+            performance = report["result"]["div"]["performance"]
+            detail = performance["data"]["fp32"]["details"][case]
+            gate = detail["performance_gate"]
+            evaluation = report["equivalent_performance"]
+            require(
+                report["overall_status"] == "passed"
+                and report["exit_code"] == 0
+                and performance["status"] == "Passed"
+                and performance["exit_code"] == 0
+                and performance["data"]["fp32"]["result"] == "OK"
+                and not evaluation["gate_enabled"]
+                and evaluation["gate_passed"] is None
+                and evaluation["failed_case_count"] == 1
+                and not evaluation["cases"][0]["passed"]
+                and not gate["enabled"]
+                and gate["passed"] is None
+                and gate["required_relative_efficiency"] is None
+                and detail["equivalent_baseline"]
+                == low_record["equivalent_baseline"],
+                f"default {mode} report turned baseline evaluation "
+                "into an implicit failure",
+            )
+            if mode == "single":
+                diagnostic = json.loads(
+                    runner.diagnostic_path(target).read_text()
+                )
+                measured_task = diagnostic["results"]["div"]["benchmark"]
+                raw_record = measured_task["records"][case]["flagdnn"]
+                exported = json.loads(
+                    (target.parent / performance["data_file"]).read_text()
+                )["div"]
+                require(
+                    measured_task.get("performance_warnings")
+                    and not measured_task.get("performance_errors")
+                    and exported["result"] == "passed"
+                    and exported["details"][0]["result"][0]["performance_gate"]
+                    == gate,
+                    "default single-run diagnostics/data file lost "
+                    "informational gate semantics",
+                )
+            else:
+                partition = json.loads((target / "summary0.json").read_text())
+                require(
+                    partition["div"]["performance"] == performance,
+                    "default batch partition disagrees with merged report",
+                )
+                raw_records, errors = runner.benchmark_records(
+                    (target / "div/performance_stdout.log").read_text(), hygon
+                )
+                require(not errors, "default batch raw record became invalid")
+                raw_record = raw_records[case]["flagdnn"]
+            require(
+                raw_record == low_record
+                and raw_record["equivalent_baseline"]["passed"] is False,
+                f"default {mode} reporting overwrote baseline or real samples",
+            )
+
+        explicit_output = root / "explicit-low.json"
+        process = subprocess.run(
+            common_arguments
+            + ["--output", str(explicit_output), "--min-speedup", "0.1"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        report = json.loads(explicit_output.read_text())
+        performance = report["result"]["div"]["performance"]
+        require(
+            process.returncode == 1
+            and performance["status"] == "Failed"
+            and performance["data"]["fp32"]["result"] == "FAIL"
+            and report["equivalent_performance"]["gate_enabled"]
+            and report["equivalent_performance"]["gate_passed"] is False,
+            "an explicit low threshold relaxed the minimum baseline gate",
+        )
+        for label, source, extra_arguments, expected_status in (
+            (
+                "nonzero",
+                fixture_source(
+                    low_record,
+                    "print('FLAGDNN_DIV_BENCHMARK: FAIL "
+                    "cases=1 executed=1 skipped=0', flush=True)\n"
+                    "raise SystemExit(7)\n",
+                ),
+                [],
+                "Failed",
+            ),
+            (
+                "precision",
+                fixture_source(
+                    low_record,
+                    "print('[FAIL][cpu_reference] precision mismatch', "
+                    "flush=True)\n"
+                    "raise SystemExit(1)\n",
+                ),
+                [],
+                "Failed",
+            ),
+            (
+                "malformed",
+                fixture_source(
+                    {**low_record, "samples": [1.0]}, passing_trailer
+                ),
+                [],
+                "Failed",
+            ),
+            (
+                "timeout",
+                fixture_source(low_record, "import time\ntime.sleep(30)\n"),
+                ["--timeout", "1"],
+                "Timeout",
+            ),
+        ):
+            fixture.write_text(source)
+            target = root / f"default-error-{label}.json"
+            process = subprocess.run(
+                common_arguments + ["--output", str(target)] + extra_arguments,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            report = json.loads(target.read_text())
+            diagnostic = json.loads(runner.diagnostic_path(target).read_text())
+            require(
+                process.returncode == 1
+                and diagnostic["overall_status"] == "failed"
+                and report["result"]["div"]["performance"]["status"]
+                == expected_status,
+                f"disabled performance gate concealed a real {label} failure",
+            )
+    require(
+        "integration.hygon.div_performance_baseline"
+        in hygon.preflight_tests(["benchmark"])
+        and "integration.hygon.div_performance_baseline"
+        not in hygon.preflight_tests(["functional"]),
+        "div equivalent-baseline preflight escaped benchmark scope",
+    )
+
+
+def check_hygon_baseline_skip_scope(runner, hygon) -> None:
+    """Only known auxiliary cases can claim a missing NVIDIA baseline."""
+    boolean_shapes = (
+        "1x1x16",
+        "2x8x8",
+        "1x8x4x8",
+        "2x8x4x8",
+        "1x1x8",
+        "1x1x24",
+        "1x1x128",
+        "1x1x256",
+        "3x5x32",
+        "1x16x3x5",
+        "2x16x7x9",
+        "3x32x5x7",
+    )
+    index_shapes = (
+        (1,),
+        (17,),
+        (33,),
+        (2, 3),
+        (3, 7),
+        (2, 3, 5),
+        (1, 3, 17),
+        (2, 4, 33),
+        (2, 3, 4, 5),
+        (1, 7, 3, 9),
+        (2, 2, 2, 2, 3),
+        (1, 2, 1, 3, 1, 2, 1, 5),
+        (3, 257),
+        (2, 1025),
+    )
+    allowed = {
+        operator: [f"{operator}_bool_{shape}" for shape in boolean_shapes]
+        for operator in ("logical_and", "logical_or")
+    }
+    allowed["concatenate"] = []
+    for index, shape in enumerate(index_shapes):
+        axis = index % len(shape) - (len(shape) if index % 2 else 0)
+        dimensions = "_".join(map(str, shape))
+        for dtype in ("int32", "bool", "fp8_e4m3", "fp8_e5m2", "fp8_e8m0"):
+            allowed["concatenate"].append(
+                f"concatenate_{dtype}_{dimensions}_axis{axis}"
+            )
+    require(
+        {operator: len(cases) for operator, cases in allowed.items()}
+        == {"logical_and": 12, "logical_or": 12, "concatenate": 70},
+        "NVIDIA auxiliary exclusion fixture coverage changed",
+    )
+
+    def processed(operator, cases):
+        marker = f"FLAGDNN_{operator.upper()}_BENCHMARK"
+        suffix = ".boolean" if operator.startswith("logical_") else ""
+        output = "".join(
+            f"1: [SKIP][nvidia_baseline] op={operator} "
+            f"case={case} reason=no matching NVIDIA reference\n"
+            for case in cases
+        ) + (
+            f"1: {marker}: SKIP cases={len(cases)} "
+            f"executed=0 skipped={len(cases)}\n"
+            f"1/1 Test #1: benchmark.hygon.{operator}{suffix} "
+            ".... ***Skipped 0.01 sec\n"
+        )
+        task = {"status": "skipped", "exit_code": 0, "records": {}}
+        hygon.postprocess_result(
+            result=task,
+            ctest_reported_status="skipped",
+            output=output,
+            operator=operator,
+            suite="benchmark",
+            records={},
+            manifest_operators=[operator],
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            outcome = hygon.finalize(
+                results={operator: {"benchmark": task}},
+                suite_operators={"benchmark": [operator]},
+                suites=["benchmark"],
+                state={},
+                min_speedup=None,
+                preflight_passed=True,
+            )
+        return task, outcome
+
+    for operator, cases in allowed.items():
+        task, outcome = processed(operator, cases)
+        require(
+            task["status"] == "skipped"
+            and not task.get("skip_record_errors")
+            and not task.get("case_accounting_errors")
+            and outcome["coverage"]["nvidia_baseline_skips"] == len(cases),
+            f"legitimate {operator} auxiliary exclusions were rejected",
+        )
+    rejected = (
+        ("div", "div_perf_fp32_1x1x1024_by_1x1x1024"),
+        ("div", "div_no_such_case"),
+        ("logical_and", "logical_and_perf_bool_1x1x1024_by_1x1x1024"),
+        ("logical_or", "logical_or_perf_bool_1x1x1024_by_1x1x1024"),
+        ("logical_and", "logical_and_bool_1x1x17"),
+        ("logical_and", "logical_and_fp32_1x1x16"),
+        ("logical_not", "logical_not_bool_1x1x16"),
+        ("concatenate", "concatenate_fp32_1_axis0"),
+        ("concatenate", "concatenate_bf16_2_1025_axis-1"),
+        ("concatenate", "concatenate_int32_7_axis0"),
+        ("concatenate", "concatenate_int32_1_axis1"),
+        ("concatenate", "concatenate_int64_1_axis0"),
+        ("add", "add_fp32_1"),
+    )
+    for operator, case in rejected:
+        task, outcome = processed(operator, [case])
+        require(
+            task["status"] == "failed"
+            and task.get("skip_record_errors")
+            and outcome["coverage"]["nvidia_baseline_skips"] == 0,
+            f"unproven NVIDIA baseline absence was accepted for {case}",
+        )
+    variable = "FLAGDNN_PERFORMANCE_BASELINE"
+    previous_baseline = os.environ.get(variable)
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="flagdnn-baseline-skip-evidence-"
+        ) as tmp:
+            override = Path(tmp) / "baseline.json"
+            os.environ[variable] = str(override)
+            task, _ = processed("logical_and", allowed["logical_and"][:1])
+            require(
+                task["status"] == "failed" and task.get("skip_record_errors"),
+                "missing override baseline silently "
+                "used default skip evidence",
+            )
+            for contents in (
+                "{invalid JSON",
+                json.dumps({"reference": {"cases": {}}}),
+                json.dumps(
+                    {"reference": {"cases": [], "unavailable_cases": {}}}
+                ),
+                json.dumps(
+                    {
+                        "reference": {
+                            "cases": {allowed["logical_and"][0]: {}},
+                            "unavailable_cases": {},
+                        }
+                    }
+                ),
+            ):
+                override.write_text(contents)
+                task, _ = processed("logical_and", allowed["logical_and"][:1])
+                require(
+                    task["status"] == "failed"
+                    and task.get("skip_record_errors"),
+                    "malformed/contradictory override baseline "
+                    "was ignored by skip validation",
+                )
+            os.environ[variable] = ""
+            task, _ = processed("logical_and", allowed["logical_and"][:1])
+            require(
+                task["status"] == "skipped",
+                "empty baseline override did not select the default evidence",
+            )
+    finally:
+        if previous_baseline is None:
+            os.environ.pop(variable, None)
+        else:
+            os.environ[variable] = previous_baseline
+
+
+def check_performance_baseline_policy_isolation(runner, hygon) -> None:
+    """Target scaling policies must not redefine the shared NVIDIA data."""
+    root = Path(runner.__file__).resolve().parents[1]
+    catalog = json.loads((root / "docs/performance-baseline.json").read_text())
+    reference = catalog["reference"]
+    cases = reference["cases"]
+    require(
+        reference["platform"] == "nvidia"
+        and len(cases) == reference["coverage"]["case_count"] == 2893
+        and len({case["op"] for case in cases.values()})
+        == reference["coverage"]["operator_count"]
+        == 65,
+        "shared NVIDIA reference coverage changed during policy isolation",
+    )
+    require(
+        "case_policies" not in reference["scaling"]
+        and reference["scaling"]["status"] == "unverified"
+        and all(
+            "scale_metric" in case and case["scale_metric"] is None
+            for case in cases.values()
+        ),
+        "a target-specific scaling policy leaked into shared NVIDIA data",
+    )
+    expected_groups = {
+        "vector_fp32": {
+            "cos",
+            "div",
+            "elu_backward",
+            "erf",
+            "exp",
+            "gelu",
+            "gelu_approx_tanh",
+            "gelu_approx_tanh_backward",
+            "gelu_backward",
+            "log",
+            "mod",
+            "pow",
+            "reciprocal",
+            "rsqrt",
+            "sin",
+            "softplus",
+            "softplus_backward",
+            "sqrt",
+            "tan",
+        },
+        "hbm_copy": {
+            "identity",
+            "ceil",
+            "concatenate",
+            "floor",
+            "leaky_relu",
+            "logical_not",
+            "neg",
+            "reshape",
+            "slice",
+            "transpose",
+        },
+        "hbm_triad": {
+            "binary_select",
+            "cmp_eq",
+            "cmp_ge",
+            "cmp_gt",
+            "cmp_le",
+            "cmp_lt",
+            "cmp_neq",
+            "leaky_relu_backward",
+            "logical_and",
+            "logical_or",
+        },
+        "hbm_write": {"gen_index"},
+    }
+    expected_metrics = {
+        operator: metric
+        for metric, operators in expected_groups.items()
+        for operator in operators
+    }
+    platforms = catalog["platforms"]
+    policies = platforms["hygon"]["scaling"]["case_policies"]
+    require(
+        len(policies) == 40
+        and set(policies) == hygon.EQUIVALENT_OPERATORS
+        and {op: policy["scale_metric"] for op, policy in policies.items()}
+        == expected_metrics,
+        "Hygon-owned policies changed their operator/metric assignments",
+    )
+    require(
+        Counter(
+            policies[case["op"]]["scale_metric"]
+            for case in cases.values()
+            if case["op"] in policies
+        )
+        == {
+            "vector_fp32": 855,
+            "hbm_copy": 366,
+            "hbm_triad": 348,
+            "hbm_write": 28,
+        },
+        "Hygon-owned policy case coverage changed during isolation",
+    )
+    for name, platform in platforms.items():
+        if name == "hygon":
+            continue
+        require(
+            not platform.get("scaling", {}).get("case_policies"),
+            f"{name} inherited Hygon-specific scaling policies",
+        )
+
+
+def check_general_equivalent_performance(runner, hygon) -> None:
+    """Exercise bandwidth normalization and mixed native/equivalent suites."""
+
+    def measured(
+        case,
+        metric="vector_fp32",
+        traffic=1.0,
+        validation="cpu_full",
+        efficiency=1.0,
+    ):
+        equivalent = 2.0 * 4.0 / 5.0 * traffic
+        median = equivalent / efficiency
+        return {
+            "schema_version": 4,
+            "kind": "steady_state",
+            "provider": "flagdnn",
+            "case": case,
+            "unit": "us",
+            "median": median,
+            "p90": median,
+            "samples": [median] * 20,
+            "equivalent_baseline": {
+                "provider": "nvidia_equivalent",
+                "platform": "nvidia",
+                "target_platform": "hygon",
+                "scale_metric": metric,
+                "timing_profile": "native",
+                "reference_time_us": 2.0,
+                "reference_peak": 4.0,
+                "target_peak": 5.0,
+                "min_relative_efficiency": 0.8,
+                "traffic_ratio": traffic,
+                "reference_validation": validation,
+                "equivalent_time_us": equivalent,
+                "limit_us": equivalent / 0.8,
+                "relative_efficiency": equivalent / median,
+                "passed": median <= equivalent / 0.8,
+            },
+        }
+
+    root = Path(runner.__file__).resolve().parents[1]
+    catalog = json.loads((root / "docs/performance-baseline.json").read_text())
+    policies = catalog["platforms"]["hygon"]["scaling"]["case_policies"]
+    schema = json.loads((root / "benchmark/result.schema.json").read_text())
+    case_pattern = schema["$defs"]["v4"]["properties"]["case"]["pattern"]
+    seen = set()
+    for case, reference in catalog["reference"]["cases"].items():
+        operator = reference["op"]
+        if operator not in hygon.EQUIVALENT_OPERATORS:
+            continue
+        seen.add(operator)
+        record = measured(
+            case,
+            metric=policies[operator]["scale_metric"],
+            validation=reference["validation"],
+        )
+        records, errors = runner.benchmark_records(json.dumps(record), hygon)
+        require(
+            not errors
+            and re.fullmatch(case_pattern, case) is not None
+            and not hygon.validate_hygon_benchmark_pairs(
+                records, operator, sorted(hygon.EQUIVALENT_OPERATORS)
+            ),
+            f"reference case is excluded by generalized v4 identity: {case}",
+        )
+    require(
+        len(seen) == 40 and seen == hygon.EQUIVALENT_OPERATORS,
+        "equivalent validation does not cover all 40 supported operators",
+    )
+
+    examples = (
+        ("identity_fp8_e4m3_2x3x4", "hbm_copy", 1.0),
+        ("identity_fp8_e5m2_2x3x4", "hbm_copy", 1.0),
+        ("logical_and_perf_bool_1x1x1024_by_1x1x1024", "hbm_triad", 8.0),
+        ("cmp_eq_perf_fp32_1x1x1024_by_1x1x1024", "hbm_triad", 72 / 65),
+        ("cmp_eq_perf_fp16_1x1x1024_by_1x1x1024", "hbm_triad", 40 / 33),
+        ("reshape_fp32_2x3x4_to_6x4", "hbm_copy", 1.0),
+        ("gen_index_int32_3_axis0", "hbm_write", 1.0),
+        ("concatenate_bf16_2_1025_axis-1", "hbm_copy", 1.0),
+        (
+            "gelu_approx_tanh_backward_perf_fp32_1x1x1024_by_1x1x1024",
+            "vector_fp32",
+            1.0,
+        ),
+    )
+    for case, metric, ratio in examples:
+        validations = (
+            ("bit_exact",)
+            if case.startswith("identity_")
+            else ("cpu_full", "cpu_sampled", "bit_exact", "sanity")
+        )
+        for validation in validations:
+            record = measured(case, metric, ratio, validation)
+            parsed, errors = runner.benchmark_records(
+                json.dumps(record), hygon
+            )
+            require(
+                not errors and parsed[case]["flagdnn"] == record,
+                f"traffic or reference validation was lost for {case}",
+            )
+            task = {"status": "passed", "records": parsed}
+            detail = next(iter(runner.performance_data(task).values()))[
+                "details"
+            ][case]
+            require(
+                detail["equivalent_baseline"] == record["equivalent_baseline"]
+                and detail["speedup"] == 1.0,
+                f"reported bandwidth ratio is not normalized for {case}",
+            )
+
+    for field, value in (
+        ("reference_validation", "cpu_full"),
+        ("reference_validation", "sanity"),
+        ("scale_metric", "vector_fp32"),
+        ("traffic_ratio", 8.0),
+    ):
+        identity = measured(
+            "identity_fp8_e4m3_2x3x4", "hbm_copy", 1.0, "bit_exact"
+        )
+        identity["equivalent_baseline"][field] = value
+        parsed, errors = runner.benchmark_records(json.dumps(identity), hygon)
+        require(
+            errors and not parsed, f"invalid FP8 identity {field} accepted"
+        )
+
+    case = "cmp_eq_perf_fp32_1x1x1024_by_1x1x1024"
+    valid = measured(case, "hbm_triad", 72 / 65)
+    mutations = [
+        ("traffic_ratio", value)
+        for value in (0, -1, None, True, "8", float("nan"), float("inf"))
+    ] + [
+        ("traffic_ratio", 1),  # Derived values must change with traffic.
+        ("reference_validation", "unknown"),
+        ("reference_validation", []),
+        ("reference_validation", None),
+        ("scale_metric", "hbm_read"),
+        ("scale_metric", []),
+        ("scale_metric", "vector_fp32"),  # Non-unit traffic is forbidden.
+    ]
+    for key, value in mutations:
+        record = {
+            **valid,
+            "equivalent_baseline": {
+                **valid["equivalent_baseline"],
+                key: value,
+            },
+        }
+        parsed, errors = runner.benchmark_records(json.dumps(record), hygon)
+        require(
+            errors and not parsed, f"invalid generalized field {key} accepted"
+        )
+    for key in ("traffic_ratio", "reference_validation"):
+        baseline = dict(valid["equivalent_baseline"])
+        del baseline[key]
+        parsed, errors = runner.benchmark_records(
+            json.dumps({**valid, "equivalent_baseline": baseline}), hygon
+        )
+        require(errors and not parsed, f"new operator omitted mandatory {key}")
+    for invalid_case in (
+        "add_perf_fp32_1_by_1",
+        "pow_unknown_fp32_1_by_1",
+        "gelu_other_perf_fp32_1024",
+        "logical_or_perf_fp64_1_by_1",
+        "identity_fp32_2x3x4",
+        "identity_bfloat16_2x3x4",
+        "identity_fp8_e8m0_2x3x4",
+        "identity_perf_fp8_e4m3_2x3x4",
+        "neg_fp8_e4m3_2x3x4",
+    ):
+        parsed, errors = runner.benchmark_records(
+            json.dumps({**valid, "case": invalid_case}), hygon
+        )
+        require(
+            errors and not parsed, f"invalid operator identity {invalid_case}"
+        )
+    nested_case = examples[-1][0]
+    nested = {nested_case: {"flagdnn": measured(nested_case)}}
+    require(
+        hygon.validate_hygon_benchmark_pairs(nested, "gelu", ["gelu"])
+        and hygon.validate_hygon_benchmark_pairs(
+            {case: {"flagdnn": measured(nested_case)}}, "cmp_eq", ["cmp_eq"]
+        ),
+        "longer operator prefixes or mismatched "
+        "record identities were accepted",
+    )
+
+    native_case = "cmp_eq_perf_fp16_1x1x1024_by_1x1x1024"
+    equivalent = measured(case, "hbm_triad", 72 / 65, efficiency=0.79)
+    records, errors = runner.benchmark_records(
+        "\n".join(
+            (
+                timing(native_case, "flagdnn"),
+                timing(native_case, "hipdnn"),
+                json.dumps(equivalent),
+            )
+        ),
+        hygon,
+    )
+    require(not errors, "valid mixed native/equivalent records were rejected")
+    task = {"status": "failed", "exit_code": 1, "records": records}
+    output = (
+        "1: FLAGDNN_CMP_EQ_BENCHMARK: PASS cases=1 executed=1 skipped=0\n"
+        "1/2 Test #1: benchmark.hygon.cmp_eq .... Passed 0.01 sec\n"
+        "2: FLAGDNN_CMP_EQ_BENCHMARK: FAIL cases=1 executed=1 skipped=0\n"
+        "2/2 Test #2: benchmark.hygon.cmp_eq.boolean .... ***Failed 0.01 sec\n"
+    )
+    hygon.postprocess_result(
+        result=task,
+        ctest_reported_status="failed",
+        output=output,
+        operator="cmp_eq",
+        suite="benchmark",
+        records=records,
+        manifest_operators=["cmp_eq"],
+    )
+    require(
+        task.get("performance_errors") and hygon.complete_benchmark(task),
+        "mixed PASS/FAIL children lost completed equivalent failure records",
+    )
+    public = runner.suite_result(task, "benchmark")
+    require(
+        public["status"] == "Failed"
+        and public["data"]["fp16"]["result"] == "OK"
+        and public["data"]["fp32"]["result"] == "OK"
+        and set(public["data"]["fp16"]["details"]) == {native_case},
+        "equivalent failure discarded or rewrote a valid native pair",
+    )
+    declared = {
+        "schema_version": 1,
+        "metric": hygon.SPEEDUP_METRIC,
+        "source": "fixture",
+        "declared_operator_count": 1,
+        "declared_case_count": 1,
+        "operators": {"cmp_eq": [native_case]},
+    }
+    results = {"cmp_eq": {"benchmark": task}}
+    coverage = hygon.hygon_comparable_coverage(results, ["cmp_eq"], declared)
+    native = hygon.benchmark_speedup_summary(results, 1.1, coverage)
+    normalized = hygon.equivalent_performance_summary(results, 0.1)
+    require(
+        coverage["verified"]
+        and coverage["observed_pair_case_count"] == 1
+        and native["case_count"] == native["failed_case_count"] == 1
+        and normalized["case_count"] == normalized["failed_case_count"] == 1
+        and normalized["cases"][0]["required_relative_efficiency"] == 0.8,
+        "mixed native/equivalent summaries conflated gates "
+        "or dropped native data",
+    )
+    for broken in (
+        output.replace(
+            "2: FLAGDNN_CMP_EQ_BENCHMARK: FAIL cases=1 executed=1 skipped=0\n",
+            "",
+        ),
+        output.replace("FAIL cases=1 executed=1", "FAIL cases=2 executed=2"),
+        output.replace("***Failed", "Passed"),
+    ):
+        require(
+            hygon.validate_hygon_case_accounting(
+                broken, "cmp_eq", "benchmark", "failed", records, []
+            ),
+            "incomplete or inconsistent mixed CTest accounting was accepted",
+        )
+
+    logical_case = "logical_and_perf_bool_1x1x1024_by_1x1x1024"
+    logical_records = {
+        logical_case: {"flagdnn": measured(logical_case, "hbm_triad", 8.0)}
+    }
+    auxiliary_output = (
+        "2: [SKIP][nvidia_baseline] op=logical_and "
+        "case=logical_and_bool_1x1x16 reason=no matching NVIDIA reference\n"
+        "2: [SKIP][nvidia_baseline] op=logical_and "
+        "case=logical_and_bool_2x8x8 reason=no matching NVIDIA reference\n"
+        "2: FLAGDNN_LOGICAL_AND_BENCHMARK: SKIP cases=2 executed=0 skipped=2\n"
+        "2/2 Test #2: benchmark.hygon.logical_and.boolean "
+        ".... ***Skipped 0.01 sec\n"
+    )
+    mixed_output = (
+        "1: [EXCLUDED][nvidia_baseline] op=logical_and "
+        "case=logical_and_excluded reason=not a measured case\n"
+        "1: FLAGDNN_LOGICAL_AND_BENCHMARK: PASS cases=1 executed=1 skipped=0\n"
+        "1/2 Test #1: benchmark.hygon.logical_and .... Passed 0.01 sec\n"
+        + auxiliary_output
+    )
+    mixed_task = {
+        "status": "skipped",
+        "exit_code": 0,
+        "records": logical_records,
+        "record_errors": ["skipped benchmark emitted timing provider records"],
+    }
+    hygon.postprocess_result(
+        result=mixed_task,
+        ctest_reported_status="skipped",
+        output=mixed_output,
+        operator="logical_and",
+        suite="benchmark",
+        records=logical_records,
+        manifest_operators=["logical_and"],
+    )
+    require(
+        mixed_task["status"] == "passed"
+        and hygon.complete_benchmark(mixed_task)
+        and len(mixed_task["baseline_skip_records"]) == 2
+        and not mixed_task.get("skip_records"),
+        "explicit NVIDIA auxiliary exclusions masked the measured main suite",
+    )
+    with contextlib.redirect_stdout(io.StringIO()):
+        outcome = hygon.finalize(
+            results={"logical_and": {"benchmark": mixed_task}},
+            suite_operators={"benchmark": ["logical_and"]},
+            suites=["benchmark"],
+            state={},
+            min_speedup=None,
+            preflight_passed=True,
+        )
+    require(
+        not outcome["failed"]
+        and outcome["coverage"]["nvidia_baseline_skips"] == 2
+        and outcome["coverage"]["hipdnn_reference_skips"] == 0
+        and outcome["summary"]["equivalent_performance"]["case_count"] == 1,
+        "NVIDIA baseline exclusions were reported as hipDNN capability skips",
+    )
+    only_auxiliary = {"status": "skipped", "exit_code": 0, "records": {}}
+    hygon.postprocess_result(
+        result=only_auxiliary,
+        ctest_reported_status="skipped",
+        output=auxiliary_output,
+        operator="logical_and",
+        suite="benchmark",
+        records={},
+        manifest_operators=["logical_and"],
+    )
+    require(
+        only_auxiliary["status"] == "skipped"
+        and not only_auxiliary.get("case_accounting_errors"),
+        "an entirely excluded NVIDIA auxiliary catalog was misclassified",
+    )
+    failed_records = {
+        logical_case: {
+            "flagdnn": measured(
+                logical_case, "hbm_triad", 8.0, efficiency=0.79
+            )
+        }
+    }
+    failed_output = mixed_output.replace(
+        "BENCHMARK: PASS", "BENCHMARK: FAIL"
+    ).replace(".... Passed 0.01 sec", ".... ***Failed 0.01 sec")
+
+    def failed_with_skips(output):
+        task = {"status": "failed", "exit_code": 1, "records": failed_records}
+        hygon.postprocess_result(
+            result=task,
+            ctest_reported_status="failed",
+            output=output,
+            operator="logical_and",
+            suite="benchmark",
+            records=failed_records,
+            manifest_operators=["logical_and"],
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            outcome = hygon.finalize(
+                results={"logical_and": {"benchmark": task}},
+                suite_operators={"benchmark": ["logical_and"]},
+                suites=["benchmark"],
+                state={},
+                min_speedup=None,
+                preflight_passed=True,
+            )
+        return task, outcome
+
+    for provider, counter in (
+        ("nvidia_baseline", "nvidia_baseline_skips"),
+        ("hipdnn", "hipdnn_reference_skips"),
+    ):
+        task, outcome = failed_with_skips(
+            failed_output.replace("[nvidia_baseline]", f"[{provider}]")
+        )
+        require(
+            hygon.complete_benchmark(task)
+            and outcome["failed"]
+            and outcome["coverage"][counter] == 2
+            and outcome["summary"]["equivalent_performance"]["case_count"] == 1
+            and outcome["summary"]["equivalent_performance"][
+                "failed_case_count"
+            ]
+            == 1,
+            f"complete performance failure discarded valid {provider} skips",
+        )
+    for malformed in (
+        failed_output.replace(
+            "cases=2 executed=0 skipped=2", "cases=3 " "executed=0 skipped=3"
+        ),
+        failed_output.replace("logical_and_bool_2x8x8", "logical_and_unknown"),
+        failed_output.replace(
+            "reason=no matching NVIDIA reference", "reason="
+        ),
+    ):
+        task, outcome = failed_with_skips(malformed)
+        require(
+            not hygon.complete_benchmark(task)
+            and (
+                task.get("case_accounting_errors")
+                or task.get("skip_record_errors")
+            )
+            and outcome["coverage"]["nvidia_baseline_skips"] == 0
+            and outcome["coverage"]["hipdnn_reference_skips"] == 0
+            and outcome["summary"]["equivalent_performance"]["case_count"]
+            == 0,
+            "malformed accounting/skip evidence contributed to coverage",
         )
 
 
@@ -943,6 +2896,8 @@ def main() -> int:
         raise RuntimeError("usage: run_tests_contract.py RUN_TESTS_PY")
     runner = load_runner(Path(sys.argv[1]).resolve())
     check_legacy_summary(runner)
+    check_platform_single_report_hooks(runner)
+    check_platform_batch_report_hooks(runner)
     check_batch_runner(runner)
     check_batch_cache_environment(runner)
     hygon = runner.load_platform_adapter("hygon")
@@ -957,6 +2912,11 @@ def main() -> int:
         and iluvatar is not None,
         "repository platform test adapters are incomplete",
     )
+    check_hygon_native_timing(runner, hygon)
+    check_equivalent_performance(runner, hygon)
+    check_hygon_baseline_skip_scope(runner, hygon)
+    check_performance_baseline_policy_isolation(runner, hygon)
+    check_general_equivalent_performance(runner, hygon)
     runtime_record = json.loads(timing("runtime_profile", "flagdnn"))
     runtime_record.update(
         {
@@ -1406,6 +3366,76 @@ def main() -> int:
         and selected_missing["missing_case_count"] == 1
         and selected_missing["missing_cases"][0]["operator"] == "mul",
         "selected declared operator subset was not required exactly",
+    )
+    diagnostic_catalog = {
+        **synthetic_catalog,
+        "declared_case_count": 4,
+        "operators": {
+            "add": [
+                "add_perf_complete",
+                "add_perf_partial",
+                "add_perf_absent",
+            ],
+            "mul": ["mul_perf_not_run"],
+        },
+    }
+    failed_with_partial_results = {
+        "add": {
+            "benchmark": {
+                "status": "failed",
+                "records": {
+                    "add_perf_complete": provider_pair("add_perf_complete"),
+                    "add_perf_partial": {
+                        "flagdnn": json.loads(
+                            timing("add_perf_partial", "flagdnn")
+                        )
+                    },
+                },
+            }
+        }
+    }
+    diagnosed = hygon.hygon_comparable_coverage(
+        failed_with_partial_results, ["add", "mul"], diagnostic_catalog
+    )
+    require(
+        not diagnosed["verified"]
+        and diagnosed["observed_required_case_count"] == 0
+        and diagnosed["raw_complete_required_case_count"] == 1
+        and diagnosed["raw_complete_pair_case_count"] == 1
+        and diagnosed["excluded_complete_required_case_count"] == 1
+        and diagnosed["missing_case_count"] == 4
+        and diagnosed["missing_reason_counts"]
+        == {
+            "pair_present_but_suite_failed": 1,
+            "partial_pair": 1,
+            "pair_not_emitted": 1,
+            "not_run": 1,
+        }
+        and [entry["reason"] for entry in diagnosed["missing_cases"]]
+        == [
+            "pair_present_but_suite_failed",
+            "partial_pair",
+            "pair_not_emitted",
+            "not_run",
+        ],
+        "comparable coverage confused complete-but-excluded, partial, absent, and unrun cases",
+    )
+    diagnostics = io.StringIO()
+    with contextlib.redirect_stdout(diagnostics):
+        diagnostic_outcome = hygon.finalize(
+            results=failed_with_partial_results,
+            suite_operators={"benchmark": ["add", "mul"]},
+            suites=["benchmark"],
+            state={"comparable_catalog": diagnostic_catalog},
+            min_speedup=None,
+            preflight_passed=True,
+        )
+    require(
+        diagnostic_outcome["failed"]
+        and "raw_complete=1" in diagnostics.getvalue()
+        and "reason=pair_present_but_suite_failed" in diagnostics.getvalue()
+        and "missing comparable pair" not in diagnostics.getvalue(),
+        "coverage diagnostics still describe complete-but-excluded pairs as missing output",
     )
     require(
         hygon.hygon_comparable_coverage(
@@ -2063,21 +4093,28 @@ def main() -> int:
         "integration.hygon.python_runtime_lifecycle_contract",
         "integration.hygon.convolution_validation_static_contract",
         "integration.hygon.normalization_stability",
+        "integration.hygon.tensor_reference_contract",
+        "integration.hygon.div_performance_baseline",
+        "integration.hygon.benchmark_validation_guards",
+        "integration.hygon.benchmark_timing_policy",
     ):
         require(
             required_contract in hygon_preflight,
             f"Hygon preflight omits {required_contract}",
         )
     require(
-        len(hygon_preflight) == 30,
-        "Hygon preflight required-test count is not 30",
+        len(hygon_preflight) == 34,
+        "Hygon preflight required-test count is not 34",
     )
     functional_preflight = runner.required_preflight_tests(
         "hygon", ["functional"]
     )
     require(
         "benchmark.catalog_contract" not in functional_preflight
-        and "benchmark.catalog_dependency_boundary"
+        and "benchmark.catalog_dependency_boundary" not in functional_preflight
+        and "integration.hygon.benchmark_validation_guards"
+        not in functional_preflight
+        and "integration.hygon.benchmark_timing_policy"
         not in functional_preflight,
         "functional-only preflight still requires benchmark targets",
     )

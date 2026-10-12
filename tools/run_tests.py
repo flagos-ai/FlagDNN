@@ -33,40 +33,20 @@ BUILD_CONFIGURATION_FILE = ".flagdnn-build-config"
 PLATFORM_ADAPTER_FILE = "run_tests_adapter.py"
 DEFAULT_OPERATORS = (
     "identity",
-    "add",
-    "sub",
-    "mul",
-    "max",
-    "min",
-    "add_square",
-    "scale",
-    "abs",
-    "relu",
-    "relu_backward",
-    "elu",
-    "sigmoid",
-    "sigmoid_backward",
-    "swish",
-    "swish_backward",
-    "tanh",
-    "tanh_backward",
-    # "conv_fprop",
-    # "conv_dgrad",
-    # "conv_wgrad",
-    # "conv_bias_relu",
-    "reduction",
-    "batchnorm",
-    # Simple operators with NVIDIA timings in performance-baseline.json that
-    # need equivalent references on some platforms. The JSON fallback is not
-    # integrated yet, so missing native references still cause benchmark skips.
     "reshape",
     "transpose",
     "slice",
     "concatenate",
     "gen_index",
+    "add",
+    "sub",
+    "mul",
     "div",
     "pow",
+    "max",
+    "min",
     "mod",
+    "add_square",
     "cmp_eq",
     "cmp_neq",
     "cmp_gt",
@@ -77,6 +57,7 @@ DEFAULT_OPERATORS = (
     "logical_or",
     "logical_not",
     "binary_select",
+    "abs",
     "neg",
     "sqrt",
     "rsqrt",
@@ -89,15 +70,57 @@ DEFAULT_OPERATORS = (
     "sin",
     "cos",
     "tan",
+    "scale",
+    "relu",
+    "relu_backward",
     "leaky_relu",
     "leaky_relu_backward",
+    "elu",
     "elu_backward",
     "gelu",
     "gelu_backward",
     "gelu_approx_tanh",
     "gelu_approx_tanh_backward",
+    "sigmoid",
+    "sigmoid_backward",
+    "swish",
+    "swish_backward",
+    "tanh",
+    "tanh_backward",
     "softplus",
     "softplus_backward",
+    # "conv_fprop",
+    # "conv_dgrad",
+    # "conv_wgrad",
+    # "causal_conv1d",
+    # "matmul",
+    # "matmul_fp8",
+    # "moe_grouped_matmul",
+    # "moe_grouped_matmul_bwd",
+    "reduction",
+    # "genstats",
+    # "rng",
+    # "resample",
+    # "rope",
+    # "rope_backward",
+    "batchnorm",
+    # "batchnorm_backward",
+    # "batchnorm_inference",
+    # "layernorm",
+    # "layernorm_backward",
+    # "rmsnorm",
+    # "rmsnorm_backward",
+    # "instancenorm",
+    # "instancenorm_backward",
+    # "adalayernorm",
+    # "adalayernorm_backward",
+    # "bn_finalize",
+    # "sdpa",  # scaled_dot_product_flash_attention
+    # "sdpa_backward",
+    # "sdpa_fp8",
+    # "sdpa_fp8_backward",
+    # "sdpa_mxfp8",
+    # "sdpa_mxfp8_backward",
 )
 PLATFORM_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 CTEST_SKIPPED_PATTERN = re.compile(
@@ -214,14 +237,37 @@ def functional_counts(output: str, status: str) -> dict[str, int]:
 def performance_data(task: dict[str, Any]) -> dict[str, Any]:
     data: dict[str, Any] = {}
     for case, providers in task.get("records", {}).items():
-        if "flagdnn" not in providers or len(providers) != 2:
+        if "flagdnn" not in providers:
             continue
         actual = providers["flagdnn"]
-        reference = next(
-            value for key, value in providers.items() if key != "flagdnn"
-        )
-        values = (actual.get("median"), reference.get("median"))
-        if any(record.get("unit") != "us" for record in (actual, reference)):
+        equivalent = actual.get("equivalent_baseline")
+        if len(providers) == 1 and isinstance(equivalent, dict):
+            reference_us = equivalent.get("equivalent_time_us")
+            reference_unit = "us"
+        elif len(providers) == 2 and equivalent is None:
+            reference = next(
+                value for key, value in providers.items() if key != "flagdnn"
+            )
+            if "timing_mode" in actual or "timing_mode" in reference:
+                # Failed tasks may retain raw records for diagnostics. Do not
+                # turn incompatible timing methods into a comparison row.
+                if any(
+                    key not in actual
+                    or key not in reference
+                    or actual[key] != reference[key]
+                    for key in (
+                        "timing_mode",
+                        "timing_reason",
+                        "benchmark_config",
+                    )
+                ):
+                    continue
+            reference_us = reference.get("median")
+            reference_unit = reference.get("unit")
+        else:
+            continue
+        values = (actual.get("median"), reference_us)
+        if actual.get("unit") != "us" or reference_unit != "us":
             raise ValueError(f"unsupported latency unit for {case}")
         if not all(
             type(value) in (int, float) and math.isfinite(value) and value > 0
@@ -234,11 +280,29 @@ def performance_data(task: dict[str, Any]) -> dict[str, Any]:
         # the complete native case identity so layout/mode variants cannot
         # overwrite each other when their input dimensions are equal.
         entry["details"][case] = {
-            "base": float(reference["median"]) / 1000.0,
+            "base": float(reference_us) / 1000.0,
             "flag_dnn": float(actual["median"]) / 1000.0,
             "gems": float(actual["median"]) / 1000.0,
-            "speedup": float(reference["median"]) / float(actual["median"]),
+            "speedup": float(reference_us) / float(actual["median"]),
         }
+        if equivalent is not None:
+            entry["details"][case]["equivalent_baseline"] = dict(equivalent)
+            # The baseline verdict is diagnostic data. Only an explicitly
+            # enabled platform gate may turn it into a failed public result.
+        # Preserve optional timing provenance without interpreting platform
+        # modes or changing the latency ratio used by older protocols.
+        if "timing_mode" in actual:
+            entry["details"][case].update(
+                {
+                    key: actual[key]
+                    for key in (
+                        "timing_mode",
+                        "timing_reason",
+                        "benchmark_config",
+                    )
+                    if key in actual
+                }
+            )
     for entry in data.values():
         details = entry["details"]
         total_speedup = 0.0
@@ -267,17 +331,26 @@ def suite_result(task: dict[str, Any], suite: str) -> dict[str, Any]:
         result.update({name: int(counts.get(name, 0)) for name in COUNT_NAMES})
         result["total"] = sum(result[name] for name in COUNT_NAMES)
     else:
-        result["data"] = performance_data(task) if status == "passed" else {}
+        # A completed performance failure still has useful measured results.
+        # Malformed or incomplete executions retain their native diagnostics.
+        reportable = status == "passed" or bool(task.get("performance_errors"))
+        result["data"] = performance_data(task) if reportable else {}
         if status not in {"timeout", "not_found"}:
             result["test_case"] = task.get("test_case", "Unknown")
         if status not in {"passed", "timeout", "not_found"}:
             result["reason"] = (
-                "; ".join(task.get("record_errors", [])) or status
+                "; ".join(
+                    task.get("record_errors", [])
+                    + task.get("performance_errors", [])
+                )
+                or status
             )
     return result
 
 
-def summary_document(summary: dict[str, Any]) -> dict[str, Any]:
+def summary_document(
+    summary: dict[str, Any], *, adapter: ModuleType | None = None
+) -> dict[str, Any]:
     timestamp = summary.get("timestamp_utc")
     instant = (
         dt.datetime.fromisoformat(timestamp)
@@ -314,12 +387,30 @@ def summary_document(summary: dict[str, Any]) -> dict[str, Any]:
         environment["triton"] = {"version": "unknown"}
     # FlagGems' psum_text uses these aliases for the tested implementation.
     environment["flag_gems"] = dict(environment["flag_dnn"])
-    return {
+    document = {
         "timestamp": instant.astimezone().strftime("%Y-%m-%d %H:%M:%S"),
         "env": environment,
         "selected_suites": selected,
         "result": results,
     }
+    # Platform gates are finalized after the measured tasks finish. Keep the
+    # shared runner neutral and let an optional adapter update public results.
+    postprocess = (
+        None
+        if adapter is None
+        else getattr(adapter, "postprocess_report", None)
+    )
+    if postprocess is not None:
+        changed = postprocess(
+            report=document,
+            platform_summary=summary,
+            exit_code=summary.get("exit_code"),
+        )
+        if not isinstance(changed, bool):
+            raise RuntimeError(
+                "platform adapter returned invalid single report update"
+            )
+    return document
 
 
 def performance_file(
@@ -335,7 +426,9 @@ def performance_file(
     }
     return {
         operator: {
-            "result": task["status"],
+            "result": {value: key for key, value in STATUS_NAMES.items()}.get(
+                result["status"], task["status"]
+            ),
             "test_case": result.get("test_case", "Unknown"),
             "reason": result.get("reason"),
             "details": [
@@ -347,6 +440,17 @@ def performance_file(
                             "latency_base": row["base"],
                             "latency": row["flag_dnn"],
                             "speedup": row["speedup"],
+                            **{
+                                key: row[key]
+                                for key in (
+                                    "equivalent_baseline",
+                                    "performance_gate",
+                                    "timing_mode",
+                                    "timing_reason",
+                                    "benchmark_config",
+                                )
+                                if key in row
+                            },
                         }
                         for case, row in entry["details"].items()
                     ],
@@ -1597,8 +1701,13 @@ def atomic_write_summary(output: Path, summary: dict[str, Any]) -> None:
                 pass
 
 
-def publish_summary(output: Path, summary: dict[str, Any]) -> None:
-    document = summary_document(summary)
+def publish_summary(
+    output: Path,
+    summary: dict[str, Any],
+    *,
+    adapter: ModuleType | None = None,
+) -> None:
+    document = summary_document(summary, adapter=adapter)
     snapshot: Path | None = None
     published = False
     try:
@@ -1974,6 +2083,16 @@ def batch_suite_result(
                             "utilization": None,
                             "compared_speedup": None,
                             "error_msg": None,
+                            **{
+                                key: row[key]
+                                for key in (
+                                    "equivalent_baseline",
+                                    "timing_mode",
+                                    "timing_reason",
+                                    "benchmark_config",
+                                )
+                                if key in row
+                            },
                         }
                     )
                 stream.write(
@@ -2026,20 +2145,57 @@ def batch_environment(environment: dict[str, Any]) -> dict[str, Any]:
 
 
 def write_batch_summary(
-    output: Path, environment: dict[str, Any], gpu_list: list[int]
+    output: Path,
+    environment: dict[str, Any],
+    gpu_list: list[int],
+    *,
+    adapter: ModuleType | None = None,
+    platform_summary: dict[str, Any] | None = None,
+    exit_code: int | None = None,
 ) -> None:
+    """Merge worker reports, optionally applying the adapter's final outcome.
+
+    The optional postprocess_batch_report hook receives mutable partitions
+    keyed by device ID and the merged report. Operator entries are shared, so
+    in-place edits to a partition also update the merged report. The hook
+    returns whether to persist the partitions; it must not write files.
+    Without the hook, the historical report format and partitions stay intact.
+    """
+    partitions = {}
     results = {}
     for gpu in gpu_list:
         path = output / f"summary{gpu}.json"
         if path.exists():
-            results.update(json.loads(path.read_text()))
+            partition = json.loads(path.read_text())
+            partitions[gpu] = partition
+            results.update(partition)
+    document = {
+        "timestamp": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "env": batch_environment(environment),
+        "result": results,
+    }
+    postprocess = (
+        None
+        if adapter is None
+        else getattr(adapter, "postprocess_batch_report", None)
+    )
+    if postprocess is not None:
+        changed = postprocess(
+            partitions=partitions,
+            report=document,
+            platform_summary=platform_summary or {},
+            exit_code=exit_code,
+        )
+        if not isinstance(changed, bool):
+            raise RuntimeError(
+                "platform adapter returned invalid batch report update"
+            )
+        if changed:
+            for gpu, partition in partitions.items():
+                atomic_write_summary(output / f"summary{gpu}.json", partition)
     atomic_write_summary(
         output / "summary.json",
-        {
-            "timestamp": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "env": batch_environment(environment),
-            "result": results,
-        },
+        document,
     )
 
 
@@ -2947,6 +3103,21 @@ def _run_main() -> int:
         raise RuntimeError("platform adapter returned invalid summary")
 
     final_exit_code = 1 if failed else 0
+    if (
+        arguments.batch
+        and adapter is not None
+        and getattr(adapter, "postprocess_batch_report", None) is not None
+    ):
+        # Worker reports precede adapter finalization. Let the adapter reflect
+        # its final outcome in per-device reports and the merged summary.
+        write_batch_summary(
+            arguments.output_dir,
+            batch_env,
+            arguments.gpu_ids,
+            adapter=adapter,
+            platform_summary=platform_summary,
+            exit_code=final_exit_code,
+        )
     summary = {
         **summary_envelope(
             arguments,
@@ -2979,7 +3150,7 @@ def _run_main() -> int:
     }
     if output is not None:
         try:
-            publish_summary(output, summary)
+            publish_summary(output, summary, adapter=adapter)
         except OSError as error:
             print(
                 f"error: cannot finalize --output summary: {error}",

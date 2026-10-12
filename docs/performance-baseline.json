@@ -49,10 +49,35 @@
       }
     },
     "hygon": {
-      "device": null,
-      "measured_on": null,
+      "device": "BW",
+      "measured_on": "2026-10-10",
+      "architecture": "gfx936:sramecc+:xnack-",
+      "power_limit_w": 1000,
+      "measurement": {
+        "device_ordinal": 0,
+        "compute_units": 80,
+        "wavefront_size": 64,
+        "l2_bytes": 8388608,
+        "total_memory_bytes": 68702699520,
+        "hip_runtime_version": 60125085,
+        "driver_version": "6.3.30-V1.4.1a",
+        "compiler": "DTK 25.04 / dcc 24.10.0-0 / clang 15.0.0",
+        "collector": "tools/performance_baseline/benchmark_hygon_vector_memory.hip.cpp",
+        "raw_csv": "build/hygon/performance-baseline-20261010/vector-memory.csv",
+        "raw_csv_sha256": "2fe8322d95e3265bb56cbb8e245274b397555b68a19f1cecbd764a8767602bb4",
+        "summary": "tools/performance_baseline/measurements/hygon-20261010.json",
+        "timing_method": "hip_events_per_kernel",
+        "statistic": "maximum_across_configurations_of_all_sample_median_throughput",
+        "warmup_iterations": 20,
+        "rounds": 5,
+        "samples_per_round": 20,
+        "configuration_count": 54,
+        "sample_count": 5400,
+        "validation": "All FP32 FMA outputs checked exactly; memory windows and read checksums sampled after each round. All checks passed.",
+        "scope": "FP32 vector and memory peaks needed to assess div scaling. Unmeasured vector/tensor precisions remain null."
+      },
       "peaks": {
-        "vector_fp32": null,
+        "vector_fp32": 14.60953232,
         "vector_fp16": null,
         "vector_bf16": null,
         "vector_fp64": null,
@@ -63,11 +88,311 @@
         "tensor_fp64": null,
         "tensor_fp8_e4m3": null,
         "tensor_int8": null,
-        "hbm_triad": null,
-        "hbm_copy": null,
-        "hbm_read": null,
-        "hbm_write": null,
+        "hbm_triad": 1.134362154,
+        "hbm_copy": 1.132065845,
+        "hbm_read": 1.189452346,
+        "hbm_write": 1.125421181,
         "tensor_fp8_e5m2_e4m3": null
+      },
+      "scaling": {
+        "case_policies": {
+          "identity": {
+            "scale_metric": "hbm_copy",
+            "status": "logical_bandwidth_proxy",
+            "supported_dtypes": ["fp8_e4m3", "fp8_e5m2"],
+            "reason": "Only the existing bit-exact FP8 E4M3/E5M2 identity reference cases are enabled. The installed hipDNN rejects both tensor descriptor dtypes. Logical-byte copy bandwidth is an explicit approximation, not a measured bottleneck conclusion; repeated buffers may be cache or launch limited."
+          },
+          "div": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "Both cuDNN and Hygon div use FP32 compute for FP32/FP16/BF16 inputs. FP32 FMA peak is an explicit approximation for division throughput, not a verified bottleneck model; small repeated-buffer cases may be cache or launch limited.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "reshape": {
+            "scale_metric": "hbm_copy",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "transpose": {
+            "scale_metric": "hbm_copy",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "slice": {
+            "scale_metric": "hbm_copy",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "concatenate": {
+            "scale_metric": "hbm_copy",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "gen_index": {
+            "scale_metric": "hbm_write",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "pow": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "mod": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "cmp_eq": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "cmp_neq": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "cmp_gt": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "cmp_ge": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "cmp_lt": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "cmp_le": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "logical_and": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "logical_or": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "logical_not": {
+            "scale_metric": "hbm_copy",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "binary_select": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "neg": {
+            "scale_metric": "hbm_copy",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "sqrt": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "rsqrt": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "reciprocal": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "ceil": {
+            "scale_metric": "hbm_copy",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "floor": {
+            "scale_metric": "hbm_copy",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "exp": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "log": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "erf": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "sin": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "cos": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "tan": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "leaky_relu": {
+            "scale_metric": "hbm_copy",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "leaky_relu_backward": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "reason": "Explicit logical-byte bandwidth approximation, not a measured bottleneck conclusion. Repeated buffers may be cache or launch limited. Logical tensor traffic excludes padding; boolean reference_storage_bits determines the target/NVIDIA traffic ratio."
+          },
+          "elu_backward": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "gelu": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "gelu_backward": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "gelu_approx_tanh": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "gelu_approx_tanh_backward": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "softplus": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          },
+          "softplus_backward": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "reason": "cuDNN and Hygon use FP32 compute for the measured floating point cases, including FP16/BF16 storage. FP32 FMA peak is an explicit proxy, not the measured throughput of special functions; cache and launch overhead may dominate small cases.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/hygon/dispatch/pointwise.py",
+              "backends/hygon/codegen/pointwise.py"
+            ]
+          }
+        }
       }
     },
     "ascend": {

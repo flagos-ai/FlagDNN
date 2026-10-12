@@ -44,10 +44,20 @@ def main(source_root: Path, build_dir: Path) -> None:
     assert cpp_tokens(nv) == cpp_tokens(
         hg
     ), "NVIDIA default benchmark selection changed"
-    assert cpp_tokens(
+    native_nv = cpp_tokens(
         (nvidia / "benchmark/native_runner.cpp").read_text()
-    ) == cpp_tokens(
-        (hygon / "benchmark/native_runner.cpp").read_text()
+    )
+    native_hg = cpp_tokens((hygon / "benchmark/native_runner.cpp").read_text())
+    # Hygon's native index entry preserves the shared catalog but supplies its
+    # own CPU oracle and equivalent timing instead of a vendor primitive.
+    native_hg = native_hg.replace('#include"native.hpp"', "")
+    native_hg = native_hg.replace(
+        "returnrun_native_index_benchmark(argc,argv,operation);",
+        "returnrun_index_functional_test(argc,argv,"
+        "make_index_cases(operation),true);",
+    )
+    assert (
+        native_nv == native_hg
     ), "NVIDIA extended benchmark generators changed"
 
     # The C++ probe compiles NVIDIA selectors directly. Review its local

@@ -19,6 +19,9 @@ enum class BenchmarkPhase {
   kWarmup,
   kCaptureBuild,
   kCaptureReplay,
+  kBatchBuild,
+  kBatchReplay,
+  kFreshValidation,
   kTiming,
 };
 
@@ -44,6 +47,12 @@ benchmark_phase_name(BenchmarkPhase phase) {
     return "capture-build";
   case BenchmarkPhase::kCaptureReplay:
     return "capture-replay";
+  case BenchmarkPhase::kBatchBuild:
+    return "batch-build";
+  case BenchmarkPhase::kBatchReplay:
+    return "batch-replay";
+  case BenchmarkPhase::kFreshValidation:
+    return "fresh-validation";
   case BenchmarkPhase::kTiming:
     return "timing";
   }

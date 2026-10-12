@@ -6,10 +6,13 @@
 
 #include "benchmark_phase.hpp"
 #include "common/flagdnn_provider.hpp"
+#include "equivalent_baseline.hpp"
 #include "hip_driver.hpp"
 #include "hip_graph.hpp"
 #include "hipdnn_provider.hpp"
 #include "tensor_io.hpp"
+#include "validation_guards.hpp"
+#include "reference/cpu/benchmark.hpp"
 
 #include <flagdnn/flagdnn.hpp>
 
@@ -41,8 +44,6 @@ namespace {
 
 namespace hv = validation::hygon;
 namespace io = validation::hygon::tensor_io;
-
-constexpr int kSkipReturnCode = 77;
 
 template <typename Function>
 decltype(auto) run_benchmark_phase(BenchmarkProviderKind provider,
@@ -302,12 +303,39 @@ void reset_outputs(PreparedBuffers &prepared, hv::Stream &stream,
   }
 }
 
-std::vector<float> read_output(const PreparedBuffers &prepared,
-                               std::size_t output_index, hv::Stream &stream,
-                               BenchmarkProviderKind provider,
-                               BenchmarkPhase phase,
-                               std::string_view display_provider) {
-  const std::size_t tensor_index = prepared.input_count + output_index;
+void poison_capture_outputs(
+    PreparedBuffers &prepared,
+    const std::vector<std::vector<float>> &oracle_outputs,
+    const BenchmarkCase &specification, hv::Stream &stream,
+    BenchmarkProviderKind provider) {
+  if (oracle_outputs.size() != prepared.tensors.size() - prepared.input_count) {
+    throw std::invalid_argument("captured replay oracle output count differs");
+  }
+  for (std::size_t output_index = 0; output_index < oracle_outputs.size();
+       ++output_index) {
+    const std::size_t tensor_index = prepared.input_count + output_index;
+    const TensorSpec &output = prepared.tensors.at(tensor_index);
+    const auto poison = capture_output_poison(
+        oracle_outputs[output_index], output.data_type,
+        specification.absolute_tolerance, specification.relative_tolerance);
+    // scatter preserves padding separately from the logical poison. In
+    // particular a valid floating-point result equal to -97 cannot mask a
+    // missing write, while BOOL retains its reserved 0xA5 sentinel byte.
+    const auto encoded = io::encode(scatter(poison, output), output.data_type);
+    run_benchmark_phase(provider, BenchmarkPhase::kFreshValidation, [&] {
+      prepared.buffers.at(tensor_index)
+          ->copy_from_host_at(encoded.data(), encoded.size(),
+                              output.binding_byte_offset, stream.get());
+    });
+    synchronize_phase(stream, provider, BenchmarkPhase::kFreshValidation);
+  }
+}
+
+std::vector<std::uint8_t> read_tensor_bytes(const PreparedBuffers &prepared,
+                                            std::size_t tensor_index,
+                                            hv::Stream &stream,
+                                            BenchmarkProviderKind provider,
+                                            BenchmarkPhase phase) {
   const TensorSpec &output = prepared.tensors.at(tensor_index);
   const std::size_t storage = storage_element_count(output);
   std::vector<std::uint8_t> encoded(storage *
@@ -318,9 +346,25 @@ std::vector<float> read_output(const PreparedBuffers &prepared,
                           output.binding_byte_offset, stream.get());
   });
   synchronize_phase(stream, provider, phase);
+  return encoded;
+}
+
+std::vector<float> read_output(const PreparedBuffers &prepared,
+                               std::size_t output_index, hv::Stream &stream,
+                               BenchmarkProviderKind provider,
+                               BenchmarkPhase phase,
+                               std::string_view display_provider,
+                               bool encoded_padding = false) {
+  const std::size_t tensor_index = prepared.input_count + output_index;
+  const TensorSpec &output = prepared.tensors.at(tensor_index);
+  const auto encoded =
+      read_tensor_bytes(prepared, tensor_index, stream, provider, phase);
   const std::vector<float> physical =
-      io::decode(encoded, output.data_type, storage);
-  require_padding_unchanged(display_provider, physical, output);
+      io::decode(encoded, output.data_type, storage_element_count(output));
+  if (encoded_padding)
+    require_encoded_padding_unchanged(display_provider, encoded, output);
+  else
+    require_padding_unchanged(display_provider, physical, output);
   return gather(physical, output);
 }
 
@@ -392,6 +436,44 @@ void require_accuracy(const Accuracy &accuracy) {
   }
 }
 
+template <class Batch>
+Accuracy verify_captured_outputs(
+    PreparedBuffers &buffers,
+    const std::vector<std::vector<float>> &oracle_outputs,
+    const BenchmarkCase &specification, const Batch &batch, hv::Stream &stream,
+    BenchmarkProviderKind provider, std::string_view display_provider,
+    std::string_view display_oracle, bool encoded_padding = false) {
+  return run_benchmark_phase(provider, BenchmarkPhase::kFreshValidation, [&] {
+    return validate_fresh_capture(
+        [&] {
+          poison_capture_outputs(buffers, oracle_outputs, specification, stream,
+                                 provider);
+        },
+        [&] {
+          run_benchmark_phase(provider, BenchmarkPhase::kFreshValidation,
+                              [&] { batch.launch(stream.get()); });
+        },
+        [&] {
+          synchronize_phase(stream, provider, BenchmarkPhase::kFreshValidation);
+        },
+        [&] {
+          Accuracy accuracy;
+          for (std::size_t index = 0; index < specification.output_count;
+               ++index) {
+            merge_accuracy(
+                accuracy,
+                compare_outputs(read_output(buffers, index, stream, provider,
+                                            BenchmarkPhase::kFreshValidation,
+                                            display_provider, encoded_padding),
+                                oracle_outputs.at(index), specification, index,
+                                display_provider, display_oracle));
+          }
+          require_accuracy(accuracy);
+          return accuracy;
+        });
+  });
+}
+
 double percentile(std::vector<double> values, double fraction) {
   if (values.empty()) {
     throw std::invalid_argument("cannot summarize empty benchmark samples");
@@ -405,8 +487,18 @@ double percentile(std::vector<double> values, double fraction) {
 }
 
 void emit_samples(std::string_view provider, const BenchmarkCase &specification,
-                  const std::vector<double> &samples) {
-  std::cout << "{\"schema_version\":1,\"kind\":\"steady_state\","
+                  const std::vector<double> &samples,
+                  const EquivalentBaseline *baseline = nullptr,
+                  std::optional<NativeTimingMode> timing_mode = std::nullopt) {
+  const auto precision = std::cout.precision();
+  if (baseline != nullptr || timing_mode.has_value()) {
+    std::cout << std::setprecision(17);
+  }
+  std::cout << "{\"schema_version\":"
+            << (baseline != nullptr       ? 4
+                : timing_mode.has_value() ? 5
+                                          : 1)
+            << ",\"kind\":\"steady_state\","
             << "\"provider\":\"" << provider << "\",\"case\":\""
             << specification.name << "\",\"unit\":\"us\","
             << "\"median\":" << percentile(samples, 0.5)
@@ -417,7 +509,39 @@ void emit_samples(std::string_view provider, const BenchmarkCase &specification,
     }
     std::cout << samples[index];
   }
-  std::cout << "]}\n";
+  std::cout << ']';
+  if (timing_mode.has_value()) {
+    const auto &config = specification.benchmark;
+    std::cout << ",\"timing_mode\":\"" << timing_mode_name(*timing_mode)
+              << "\",\"timing_reason\":\"" << timing_mode_reason(*timing_mode)
+              << "\",\"benchmark_config\":{\"warmup_iterations\":"
+              << config.warmup_iterations
+              << ",\"sample_count\":" << config.sample_count
+              << ",\"iterations_per_sample\":" << config.iterations_per_sample
+              << '}';
+  }
+  if (baseline != nullptr) {
+    const double measured = percentile(samples, 0.5);
+    std::cout << ",\"equivalent_baseline\":{"
+              << "\"provider\":\"nvidia_equivalent\","
+              << "\"platform\":\"nvidia\",\"target_platform\":\"hygon\","
+              << "\"scale_metric\":\"" << baseline->scale_metric << "\","
+              << "\"timing_profile\":\"" << baseline->timing_profile << "\","
+              << "\"reference_time_us\":" << baseline->reference_time_us
+              << ",\"reference_peak\":" << baseline->reference_peak
+              << ",\"target_peak\":" << baseline->target_peak
+              << ",\"traffic_ratio\":" << baseline->traffic_ratio
+              << ",\"reference_validation\":\""
+              << baseline->reference_validation << '"'
+              << ",\"min_relative_efficiency\":"
+              << baseline->min_relative_efficiency
+              << ",\"equivalent_time_us\":" << baseline->equivalent_time_us()
+              << ",\"limit_us\":" << baseline->limit_us()
+              << ",\"relative_efficiency\":"
+              << baseline->equivalent_time_us() / measured << ",\"passed\":"
+              << (measured <= baseline->limit_us() ? "true" : "false") << '}';
+  }
+  std::cout << "}\n" << std::setprecision(precision);
 }
 
 void emit_skip(const HipdnnProvider &provider,
@@ -455,10 +579,188 @@ double measure_batch(hv::EventTimer &timer, const CapturedExecutionBatch &batch,
   return batch_microseconds / static_cast<double>(batch.execution_count());
 }
 
+double measure_batch(hv::EventTimer &timer, const NativeExecutionBatch &batch,
+                     hv::Stream &stream, BenchmarkProviderKind provider) {
+  const double measured = run_benchmark_phase(
+      provider, BenchmarkPhase::kTiming,
+      [&] { return batch.measure(timer, stream.get()); });
+  require_no_pending_hip_error(provider, BenchmarkPhase::kTiming);
+  if (!std::isfinite(measured) || measured <= 0.0)
+    throw std::runtime_error("native benchmark measured invalid duration");
+  return measured;
+}
+
 enum class CaseResult {
   kExecuted,
   kSkipped,
 };
+
+const PerformanceBaseline &performance_baseline() {
+  static const PerformanceBaseline baseline([] {
+    const char *path = std::getenv("FLAGDNN_PERFORMANCE_BASELINE");
+    return std::filesystem::path(path != nullptr && path[0] != '\0'
+                                     ? path
+                                     : FLAGDNN_PERFORMANCE_BASELINE_FILE);
+  }());
+  return baseline;
+}
+
+CaseResult run_equivalent_case(
+    const BenchmarkCase &specification,
+    const std::function<FlagdnnProvider &()> &get_flagdnn_provider,
+    hv::Stream &stream,
+    const std::function<std::unique_ptr<BenchmarkExecutable>(
+        const BenchmarkCase &)> &native_builder,
+    const NativeCpuOracle &native_oracle,
+    const NativeMetadata &native_metadata) {
+  int device = 0;
+  hv::check_hip(hipGetDevice(&device), "hipGetDevice(equivalent baseline)");
+  hipDeviceProp_t properties{};
+  hv::check_hip(hipGetDeviceProperties(&properties, device),
+                "hipGetDeviceProperties(equivalent baseline)");
+  const auto metadata = native_metadata
+      ? std::optional<NativeBaselineMetadata>(native_metadata(specification))
+      : std::nullopt;
+  const EquivalentBaseline baseline = performance_baseline().lookup(
+      specification, properties.name, properties.gcnArchName,
+      metadata ? &*metadata : nullptr);
+
+  const bool bit_exact_identity =
+      specification.operation == Operation::kPointwise &&
+      specification.pointwise_mode == FLAGDNN_POINTWISE_IDENTITY &&
+      specification.tensors.size() == 2 && specification.output_count == 1 &&
+      (specification.tensors.front().data_type == FLAGDNN_DATA_FP8_E4M3 ||
+       specification.tensors.front().data_type == FLAGDNN_DATA_FP8_E5M2);
+  const auto logical_inputs =
+      bit_exact_identity
+          ? std::vector<std::vector<float>>{fp8_identity_fixture(
+                logical_element_count(specification.tensors.front()))}
+          : make_logical_inputs(specification);
+  // Retain the original encoded input as the byte oracle. Do not derive it
+  // from a post-execution decode, which could hide input corruption or lost
+  // representation bits. These six values are exactly representable in FP8.
+  const auto initial_identity_input =
+      bit_exact_identity ? io::encode(scatter(logical_inputs.front(),
+                                              specification.tensors.front()),
+                                      specification.tensors.front().data_type)
+                         : std::vector<std::uint8_t>{};
+  const auto oracle_outputs =
+      native_oracle
+          ? native_oracle(specification, logical_inputs)
+          : reference::cpu::evaluate_benchmark(
+                specification, logical_inputs,
+                [](std::span<const float> values, flagdnnDataType_t dtype) {
+                  return io::decode(io::encode(values, dtype), dtype,
+                                    values.size());
+                });
+  FlagdnnProvider &provider = get_flagdnn_provider();
+  provider.set_autotune(true);
+  auto executable = native_builder ? native_builder(specification)
+                                   : provider.build(specification);
+  auto buffers = prepare_buffers(specification.tensors,
+                                 input_tensor_count(specification),
+                                 logical_inputs,
+                                 BindingAddress::kTensorEntrance, stream);
+  hv::DeviceBuffer workspace(executable->workspace_size());
+  run_benchmark_phase(BenchmarkProviderKind::kFlagdnn, BenchmarkPhase::kProbe,
+                      [&] { execute(*executable, buffers.bindings, workspace,
+                                     stream); });
+  synchronize_phase(stream, BenchmarkProviderKind::kFlagdnn,
+                    BenchmarkPhase::kProbe);
+  const auto validate_identity_bytes = [&](BenchmarkPhase phase) {
+    if (!bit_exact_identity)
+      return;
+    run_benchmark_phase(BenchmarkProviderKind::kFlagdnn, phase, [&] {
+      const auto input = read_tensor_bytes(
+          buffers, 0, stream, BenchmarkProviderKind::kFlagdnn, phase);
+      const auto output =
+          read_tensor_bytes(buffers, buffers.input_count, stream,
+                            BenchmarkProviderKind::kFlagdnn, phase);
+      require_bit_exact_identity(specification.name, buffers.tensors.front(),
+                                 buffers.tensors.at(buffers.input_count),
+                                 initial_identity_input, input, output);
+    });
+  };
+  const auto validate = [&](BenchmarkPhase phase) {
+    const std::string_view display =
+        phase == BenchmarkPhase::kTiming
+            ? "FlagDNN equivalent last-timed-sample"
+            : "FlagDNN equivalent";
+    Accuracy accuracy;
+    for (std::size_t index = 0; index < specification.output_count; ++index) {
+      merge_accuracy(
+          accuracy,
+          compare_outputs(read_output(buffers, index, stream,
+                                      BenchmarkProviderKind::kFlagdnn, phase,
+                                      display, bit_exact_identity),
+                          oracle_outputs.at(index), specification, index,
+                          display, "CPU reference"));
+    }
+    require_accuracy(accuracy);
+    validate_identity_bytes(phase);
+    return accuracy;
+  };
+  const Accuracy accuracy = validate(BenchmarkPhase::kProbe);
+  std::cout << specification.name << ": FlagDNN Graph vs CPU reference PASS"
+            << (bit_exact_identity ? " bit_exact=true" : "")
+            << " max_abs=" << accuracy.maximum_absolute
+            << " max_rel=" << accuracy.maximum_relative << std::endl;
+
+  const auto &config = specification.benchmark;
+  warmup(*executable, buffers.bindings, workspace, stream,
+         config.warmup_iterations, BenchmarkProviderKind::kFlagdnn);
+  auto batch = run_benchmark_phase(
+      BenchmarkProviderKind::kFlagdnn, BenchmarkPhase::kCaptureBuild, [&] {
+        return std::make_unique<CapturedExecutionBatch>(
+            stream.get(), config.iterations_per_sample, [&] {
+              execute(*executable, buffers.bindings, workspace, stream);
+            });
+      });
+  require_no_pending_hip_error(BenchmarkProviderKind::kFlagdnn,
+                               BenchmarkPhase::kCaptureBuild);
+  run_benchmark_phase(BenchmarkProviderKind::kFlagdnn,
+                      BenchmarkPhase::kCaptureReplay,
+                      [&] { batch->launch(stream.get()); });
+  synchronize_phase(stream, BenchmarkProviderKind::kFlagdnn,
+                    BenchmarkPhase::kCaptureReplay);
+  hv::EventTimer timer;
+  std::vector<double> samples;
+  samples.reserve(static_cast<std::size_t>(config.sample_count));
+  for (int sample = 0; sample < config.sample_count; ++sample) {
+    const double measured = measure_batch(timer, *batch, stream,
+                                          BenchmarkProviderKind::kFlagdnn);
+    if (!std::isfinite(measured) || measured <= 0.0) {
+      throw std::runtime_error("equivalent benchmark measured invalid duration");
+    }
+    samples.push_back(measured);
+  }
+  // Preserve the original last-sample check before modifying any outputs. The
+  // additional fresh replay is entirely outside event-timed samples and
+  // prevents direct probe/warmup results from validating an empty graph.
+  Accuracy post_accuracy = validate(BenchmarkPhase::kTiming);
+  merge_accuracy(post_accuracy,
+                 verify_captured_outputs(
+                     buffers, oracle_outputs, specification, *batch, stream,
+                     BenchmarkProviderKind::kFlagdnn, "FlagDNN fresh-capture",
+                     "CPU reference", bit_exact_identity));
+  validate_identity_bytes(BenchmarkPhase::kFreshValidation);
+  std::cout << "[postcheck] case=" << specification.name << " cpu_full=true"
+            << (bit_exact_identity ? " bit_exact=true" : "")
+            << " max_abs=" << post_accuracy.maximum_absolute
+            << " max_rel=" << post_accuracy.maximum_relative << std::endl;
+  emit_samples("flagdnn", specification, samples, &baseline);
+  const double measured = percentile(samples, 0.5);
+  const bool passed = measured <= baseline.limit_us();
+  std::cout << specification.name << ": nvidia_equivalent "
+            << (passed ? "MEETS_BASELINE" : "BELOW_BASELINE")
+            << " measured_us=" << measured
+            << " limit_us=" << baseline.limit_us()
+            << " relative_efficiency=" << baseline.equivalent_time_us() / measured
+            << " required=" << baseline.min_relative_efficiency << std::endl;
+  // Baseline performance is reported in the record, not an execution error.
+  // Only an explicitly requested Python CLI threshold may gate performance.
+  return CaseResult::kExecuted;
+}
 
 constexpr bool
 hipdnn_capture_status_is_capability(hipdnnStatus_t status) noexcept {
@@ -485,14 +787,25 @@ run_case(const BenchmarkCase &specification, HipdnnProvider &hipdnn_provider,
          const std::function<FlagdnnProvider &()> &get_flagdnn_provider,
          hv::Stream &stream,
          const std::function<std::unique_ptr<BenchmarkExecutable>(
-             const BenchmarkCase&)>& native_builder) {
+             const BenchmarkCase&)>& native_builder,
+         const NativeCpuOracle &native_oracle,
+         const NativeMetadata &native_metadata) {
   const std::vector<hv::ReferenceTensor> diagnostics =
       hipdnn_provider.diagnostic_tensors(specification);
+  const auto unavailable = [&](std::string_view reason) {
+    if (supports_equivalent_baseline(specification)) {
+      std::cout << "[equivalent] case=" << specification.name
+                << " hipdnn_unavailable=" << reason << std::endl;
+      return run_equivalent_case(specification, get_flagdnn_provider, stream,
+                                 native_builder, native_oracle, native_metadata);
+    }
+    emit_skip(hipdnn_provider, specification, reason, diagnostics);
+    return CaseResult::kSkipped;
+  };
   const ProviderCapability capability =
       hipdnn_provider.capability(specification);
   if (!capability.supported) {
-    emit_skip(hipdnn_provider, specification, capability.reason, diagnostics);
-    return CaseResult::kSkipped;
+    return unavailable(capability.reason);
   }
 
   const std::size_t inputs = input_tensor_count(specification);
@@ -510,10 +823,7 @@ run_case(const BenchmarkCase &specification, HipdnnProvider &hipdnn_provider,
     if (!hv::hipdnn_status_is_capability(error.status())) {
       throw;
     }
-    emit_skip(hipdnn_provider, specification,
-              std::string("hipDNN build capability: ") + error.what(),
-              diagnostics);
-    return CaseResult::kSkipped;
+    return unavailable(std::string("hipDNN build capability: ") + error.what());
   }
   PreparedBuffers reference_buffers = run_benchmark_phase(
       BenchmarkProviderKind::kHipdnn, BenchmarkPhase::kProbe, [&] {
@@ -534,9 +844,7 @@ run_case(const BenchmarkCase &specification, HipdnnProvider &hipdnn_provider,
   synchronize_phase(stream, BenchmarkProviderKind::kHipdnn,
                     BenchmarkPhase::kProbe);
   if (!runtime_capability.supported) {
-    emit_skip(hipdnn_provider, specification, runtime_capability.reason,
-              diagnostics);
-    return CaseResult::kSkipped;
+    return unavailable(runtime_capability.reason);
   }
   const std::string runtime_description = reference->runtime_description();
   if (!runtime_description.empty()) {
@@ -585,12 +893,13 @@ run_case(const BenchmarkCase &specification, HipdnnProvider &hipdnn_provider,
             << " PASS max_abs=" << aggregate.maximum_absolute
             << " max_rel=" << aggregate.maximum_relative << std::endl;
 
-  const ProviderCapability capture_capability =
-      hipdnn_provider.capture_capability(specification);
-  if (!capture_capability.supported) {
-    emit_skip(hipdnn_provider, specification, capture_capability.reason,
-              diagnostics);
-    return CaseResult::kSkipped;
+  const NativeTimingMode timing_mode =
+      native_timing_mode(hipdnn_provider.operation_name(specification));
+  if (timing_mode == NativeTimingMode::kGraphBatch) {
+    const ProviderCapability capture_capability =
+        hipdnn_provider.capture_capability(specification);
+    if (!capture_capability.supported)
+      return unavailable(capture_capability.reason);
   }
 
   std::unique_ptr<HipdnnExecutable> performance_reference;
@@ -713,27 +1022,37 @@ run_case(const BenchmarkCase &specification, HipdnnProvider &hipdnn_provider,
          *timed_reference_workspace, stream, config.warmup_iterations,
          BenchmarkProviderKind::kHipdnn);
 
-  std::unique_ptr<CapturedExecutionBatch> flagdnn_batch = run_benchmark_phase(
-      BenchmarkProviderKind::kFlagdnn, BenchmarkPhase::kCaptureBuild, [&] {
-        return std::make_unique<CapturedExecutionBatch>(
-            stream.get(), config.iterations_per_sample, [&] {
+  std::cout << "[timing] case=" << specification.name
+            << " mode=" << timing_mode_name(timing_mode)
+            << " reason=" << timing_mode_reason(timing_mode)
+            << " providers=flagdnn,hipdnn" << std::endl;
+  const auto build_phase = timing_mode == NativeTimingMode::kGraphBatch
+                               ? BenchmarkPhase::kCaptureBuild
+                               : BenchmarkPhase::kBatchBuild;
+  const auto replay_phase = timing_mode == NativeTimingMode::kGraphBatch
+                                ? BenchmarkPhase::kCaptureReplay
+                                : BenchmarkPhase::kBatchReplay;
+  std::unique_ptr<NativeExecutionBatch> flagdnn_batch =
+      run_benchmark_phase(BenchmarkProviderKind::kFlagdnn, build_phase, [&] {
+        return std::make_unique<NativeExecutionBatch>(
+            stream.get(), config.iterations_per_sample, timing_mode, [&] {
               execute(*flagdnn, flagdnn_buffers.bindings, flagdnn_workspace,
                       stream);
             });
       });
-  require_no_pending_hip_error(BenchmarkProviderKind::kFlagdnn,
-                               BenchmarkPhase::kCaptureBuild);
-  std::unique_ptr<CapturedExecutionBatch> reference_batch;
+  require_no_pending_hip_error(BenchmarkProviderKind::kFlagdnn, build_phase);
+  std::unique_ptr<NativeExecutionBatch> reference_batch;
   try {
-    reference_batch = std::make_unique<CapturedExecutionBatch>(
-        stream.get(), config.iterations_per_sample, [&] {
+    reference_batch = std::make_unique<NativeExecutionBatch>(
+        stream.get(), config.iterations_per_sample, timing_mode, [&] {
           execute(*timed_reference, timed_reference_buffers->bindings,
                   *timed_reference_workspace, stream);
         });
   } catch (const hv::HipdnnStatusError &error) {
-    const std::string context = benchmark_phase_context(
-        BenchmarkProviderKind::kHipdnn, BenchmarkPhase::kCaptureBuild);
-    if (!hipdnn_capture_status_is_capability(error.status())) {
+    const std::string context =
+        benchmark_phase_context(BenchmarkProviderKind::kHipdnn, build_phase);
+    if (timing_mode != NativeTimingMode::kGraphBatch ||
+        !hipdnn_capture_status_is_capability(error.status())) {
       throw std::runtime_error(context + ": " + error.what());
     }
     hipStreamCaptureStatus capture_status = hipStreamCaptureStatusActive;
@@ -747,31 +1066,23 @@ run_case(const BenchmarkCase &specification, HipdnnProvider &hipdnn_provider,
     }
     synchronize_phase(stream, BenchmarkProviderKind::kHipdnn,
                       BenchmarkPhase::kCaptureBuild);
-    emit_skip(hipdnn_provider, specification,
-              context + " status=" +
-                  std::string(hv::hipdnn_status_name(error.status())) +
-                  " HIP Graph capture capability: " + std::string(error.what()),
-              diagnostics);
-    return CaseResult::kSkipped;
+    return unavailable(
+        context +
+        " status=" + std::string(hv::hipdnn_status_name(error.status())) +
+        " HIP Graph capture capability: " + std::string(error.what()));
   } catch (const std::exception &error) {
     throw std::runtime_error(
-        benchmark_phase_context(BenchmarkProviderKind::kHipdnn,
-                                BenchmarkPhase::kCaptureBuild) +
+        benchmark_phase_context(BenchmarkProviderKind::kHipdnn, build_phase) +
         ": " + error.what());
   }
-  require_no_pending_hip_error(BenchmarkProviderKind::kHipdnn,
-                               BenchmarkPhase::kCaptureBuild);
+  require_no_pending_hip_error(BenchmarkProviderKind::kHipdnn, build_phase);
 
-  run_benchmark_phase(BenchmarkProviderKind::kFlagdnn,
-                      BenchmarkPhase::kCaptureReplay,
+  run_benchmark_phase(BenchmarkProviderKind::kFlagdnn, replay_phase,
                       [&] { flagdnn_batch->launch(stream.get()); });
-  synchronize_phase(stream, BenchmarkProviderKind::kFlagdnn,
-                    BenchmarkPhase::kCaptureReplay);
-  run_benchmark_phase(BenchmarkProviderKind::kHipdnn,
-                      BenchmarkPhase::kCaptureReplay,
+  synchronize_phase(stream, BenchmarkProviderKind::kFlagdnn, replay_phase);
+  run_benchmark_phase(BenchmarkProviderKind::kHipdnn, replay_phase,
                       [&] { reference_batch->launch(stream.get()); });
-  synchronize_phase(stream, BenchmarkProviderKind::kHipdnn,
-                    BenchmarkPhase::kCaptureReplay);
+  synchronize_phase(stream, BenchmarkProviderKind::kHipdnn, replay_phase);
 
   std::unique_ptr<hv::EventTimer> flagdnn_timer = run_benchmark_phase(
       BenchmarkProviderKind::kFlagdnn, BenchmarkPhase::kTiming,
@@ -817,20 +1128,37 @@ run_case(const BenchmarkCase &specification, HipdnnProvider &hipdnn_provider,
           compare_outputs(
               read_output(flagdnn_buffers, output_index, stream,
                           BenchmarkProviderKind::kFlagdnn,
-                          BenchmarkPhase::kTiming, "FlagDNN post-timing"),
+                          BenchmarkPhase::kTiming, "FlagDNN last-timed-sample"),
               oracle_outputs.at(output_index), specification, output_index,
-              "FlagDNN post-timing", "hipDNN correctness oracle"));
+              "FlagDNN last-timed-sample", "hipDNN correctness oracle"));
       merge_accuracy(
           post_hipdnn_accuracy,
           compare_outputs(
               read_output(*timed_reference_buffers, output_index, stream,
                           BenchmarkProviderKind::kHipdnn,
-                          BenchmarkPhase::kTiming, "hipDNN post-timing"),
+                          BenchmarkPhase::kTiming, "hipDNN last-timed-sample"),
               oracle_outputs.at(output_index), specification, output_index,
-              "hipDNN post-timing", "hipDNN correctness oracle"));
+              "hipDNN last-timed-sample", "hipDNN correctness oracle"));
     }
     require_accuracy(post_flagdnn_accuracy);
     require_accuracy(post_hipdnn_accuracy);
+    // Do not let a fresh replay overwrite and hide a last-sample error.
+    merge_accuracy(post_flagdnn_accuracy,
+                   verify_captured_outputs(
+                       flagdnn_buffers, oracle_outputs, specification,
+                       *flagdnn_batch, stream, BenchmarkProviderKind::kFlagdnn,
+                       timing_mode == NativeTimingMode::kGraphBatch
+                           ? "FlagDNN fresh-capture"
+                           : "FlagDNN fresh-direct-batch",
+                       "hipDNN correctness oracle"));
+    merge_accuracy(post_hipdnn_accuracy,
+                   verify_captured_outputs(
+                       *timed_reference_buffers, oracle_outputs, specification,
+                       *reference_batch, stream, BenchmarkProviderKind::kHipdnn,
+                       timing_mode == NativeTimingMode::kGraphBatch
+                           ? "hipDNN fresh-capture"
+                           : "hipDNN fresh-direct-batch",
+                       "hipDNN correctness oracle"));
     std::string timed_description;
     if (accuracy_gated_performance) {
       timed_description = timed_reference->runtime_description();
@@ -852,8 +1180,8 @@ run_case(const BenchmarkCase &specification, HipdnnProvider &hipdnn_provider,
               << std::endl;
   }
 
-  emit_samples("flagdnn", specification, flagdnn_samples);
-  emit_samples("hipdnn", specification, hipdnn_samples);
+  emit_samples("flagdnn", specification, flagdnn_samples, nullptr, timing_mode);
+  emit_samples("hipdnn", specification, hipdnn_samples, nullptr, timing_mode);
   const double flagdnn_median = percentile(flagdnn_samples, 0.5);
   const double hipdnn_median = percentile(hipdnn_samples, 0.5);
   std::cout << specification.name << ": median_us flagdnn=" << flagdnn_median
@@ -865,9 +1193,11 @@ run_case(const BenchmarkCase &specification, HipdnnProvider &hipdnn_provider,
 } // namespace
 
 int run_hygon_benchmark_suite(int argc, char **argv,
-                        std::span<const BenchmarkCase> cases,
-                        std::string_view suite_name,
-                        const NativeBuilder& builder) {
+                              std::span<const BenchmarkCase> cases,
+                              std::string_view suite_name,
+                              const NativeBuilder &builder,
+                              const NativeCpuOracle &native_oracle,
+                              const NativeMetadata &native_metadata) {
   if (argc != 3) {
     std::cerr << "usage: " << suite_name
               << " COMPILER_EXECUTABLE COMPILER_ENTRY" << std::endl;
@@ -907,21 +1237,16 @@ int run_hygon_benchmark_suite(int argc, char **argv,
       }
       ++matched;
       const CaseResult result = run_case(specification, hipdnn_provider,
-                                         get_flagdnn_provider, stream, native_builder);
-      if (result == CaseResult::kExecuted) {
+                                         get_flagdnn_provider, stream, native_builder,
+                                         native_oracle, native_metadata);
+      if (result != CaseResult::kSkipped) {
         ++executed;
       } else {
         ++skipped;
       }
     }
-    if (matched == 0) {
-      throw std::invalid_argument(
-          "FLAGDNN_BENCHMARK_CASE did not match any case");
-    }
-    std::cout << suite_name << ": " << (executed == 0 ? "SKIP" : "PASS")
-              << " cases=" << matched << " executed=" << executed
-              << " skipped=" << skipped << std::endl;
-    return executed == 0 ? kSkipReturnCode : 0;
+    return finish_benchmark_execution(suite_name, matched, executed, skipped,
+                                       std::cout);
   } catch (const std::exception &error) {
     std::cerr << suite_name << "_FAILED: " << error.what() << std::endl;
     return 1;

@@ -5,6 +5,7 @@
 
 #include "hipdnn_reference.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -28,6 +29,9 @@ enum class HipdnnTensorKind {
  * Describes only tensor operations with an exact, validated hipDNN primitive
  * mapping.  kUnavailable is intentional: callers use it to report a
  * structured SKIP before constructing a plan.
+ * Mixed FP16 -> FP32 reductions require dense storage. Higher-rank first/last
+ * axes use a validated no-copy rank-two descriptor view; middle axes and BF16
+ * inputs remain outside the exact-reference capability.
  */
 struct HipdnnTensorOperation {
   HipdnnTensorKind kind = HipdnnTensorKind::kUnavailable;
@@ -60,6 +64,12 @@ dense_reference_tensor(const ReferenceTensor &tensor);
 [[nodiscard]] HipdnnCapability
 hipdnn_tensor_capability(const HipdnnTensorOperation &operation,
                          std::span<const ReferenceTensor> tensors);
+
+// CPU-only descriptor metadata, also used by HipdnnTensorPlan. Public tensor
+// UIDs, dtypes, byte offsets and logical storage order are retained.
+[[nodiscard]] std::array<ReferenceTensor, 2>
+hipdnn_reduction_descriptors(const HipdnnTensorOperation &operation,
+                            std::span<const ReferenceTensor> tensors);
 
 [[nodiscard]] std::string_view
 hipdnn_tensor_kind_name(HipdnnTensorKind kind) noexcept;

@@ -1,5 +1,5 @@
 # Hygon validation deliberately has one vendor reference SDK: hipDNN. The
-# functional-only CPU semantic oracle is repository code and does not add a
+# CPU semantic oracle is repository code and does not add a
 # vendor dependency. Production backend targets do not link validation targets.
 
 include("${PROJECT_SOURCE_DIR}/cmake/Operators.cmake")
@@ -256,6 +256,19 @@ if(FLAGDNN_BUILD_TESTS)
     COMMAND flagdnn_test_hygon_validation_contract)
   set_tests_properties(integration.hygon.validation_contract PROPERTIES
     LABELS "integration;hygon;validation;contract")
+
+  # Descriptor/capability checks only: this contract never initializes a GPU.
+  add_executable(flagdnn_test_hygon_tensor_reference_contract
+    tensor_reference_contract.cpp)
+  target_compile_features(flagdnn_test_hygon_tensor_reference_contract PRIVATE
+    cxx_std_20)
+  target_link_libraries(flagdnn_test_hygon_tensor_reference_contract PRIVATE
+    flagdnn_validation_hygon_cases)
+  flagdnn_enable_warnings(flagdnn_test_hygon_tensor_reference_contract)
+  add_test(NAME integration.hygon.tensor_reference_contract
+    COMMAND flagdnn_test_hygon_tensor_reference_contract)
+  set_tests_properties(integration.hygon.tensor_reference_contract PROPERTIES
+    LABELS "integration;hygon;validation;contract" TIMEOUT 60)
 
   add_library(flagdnn_test_hygon_adapter STATIC
     "${PROJECT_SOURCE_DIR}/tests/common/pointwise_runner.cpp"
@@ -555,9 +568,74 @@ if(FLAGDNN_BUILD_TESTS)
 endif()
 
 if(FLAGDNN_BUILD_BENCHMARKS)
+  add_executable(flagdnn_benchmark_hygon_timing_policy_contract
+    benchmark/timing_policy_contract.cpp)
+  target_compile_features(flagdnn_benchmark_hygon_timing_policy_contract
+    PRIVATE cxx_std_20)
+  flagdnn_enable_warnings(flagdnn_benchmark_hygon_timing_policy_contract)
+  add_test(NAME integration.hygon.benchmark_timing_policy
+    COMMAND flagdnn_benchmark_hygon_timing_policy_contract)
+  set_tests_properties(integration.hygon.benchmark_timing_policy PROPERTIES
+    LABELS "integration;hygon;contract" TIMEOUT 60)
+
+  # Production validation guards and actual dtype codecs, without HIP or a
+  # benchmark executable: safe to run while a GPU benchmark is still active.
+  add_executable(flagdnn_benchmark_hygon_validation_guards_contract
+    benchmark/validation_guards_contract.cpp
+    tensor_io.cpp)
+  target_compile_features(flagdnn_benchmark_hygon_validation_guards_contract
+    PRIVATE cxx_std_20)
+  target_include_directories(flagdnn_benchmark_hygon_validation_guards_contract
+    PRIVATE "${PROJECT_SOURCE_DIR}/include"
+      "${PROJECT_BINARY_DIR}/generated/include"
+      "${PROJECT_SOURCE_DIR}/benchmark"
+      "${CMAKE_CURRENT_SOURCE_DIR}")
+  flagdnn_enable_warnings(flagdnn_benchmark_hygon_validation_guards_contract)
+  add_test(NAME integration.hygon.benchmark_validation_guards
+    COMMAND flagdnn_benchmark_hygon_validation_guards_contract)
+  set_tests_properties(integration.hygon.benchmark_validation_guards PROPERTIES
+    LABELS "integration;hygon;contract" TIMEOUT 60)
+
+  add_library(flagdnn_benchmark_hygon_baseline STATIC
+    benchmark/equivalent_baseline.cpp
+    "${PROJECT_SOURCE_DIR}/src/runtime/json.cpp")
+  target_compile_features(flagdnn_benchmark_hygon_baseline PUBLIC cxx_std_20)
+  target_include_directories(flagdnn_benchmark_hygon_baseline PUBLIC
+    "${PROJECT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/benchmark")
+  target_link_libraries(flagdnn_benchmark_hygon_baseline PUBLIC
+    flagdnn_benchmark_cases)
+  flagdnn_enable_warnings(flagdnn_benchmark_hygon_baseline)
+
+  # Native catalog generation and graph builders are backend-neutral. Keeping
+  # this archive separate allows baseline contracts to run without linking HIP.
+  add_library(flagdnn_hygon_baseline_native_cases STATIC
+    "${PROJECT_SOURCE_DIR}/tests/common/index.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/layout.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/pointwise.cpp")
+  target_compile_features(flagdnn_hygon_baseline_native_cases PUBLIC cxx_std_20)
+  target_include_directories(flagdnn_hygon_baseline_native_cases PUBLIC
+    "${PROJECT_SOURCE_DIR}/tests")
+  target_link_libraries(flagdnn_hygon_baseline_native_cases PUBLIC
+    FlagDNN::flagdnn)
+  flagdnn_enable_warnings(flagdnn_hygon_baseline_native_cases)
+
+  add_executable(flagdnn_benchmark_hygon_baseline_contract
+    benchmark/equivalent_baseline_contract.cpp)
+  target_link_libraries(flagdnn_benchmark_hygon_baseline_contract PRIVATE
+    flagdnn_benchmark_hygon_baseline
+    flagdnn_hygon_baseline_native_cases)
+  flagdnn_enable_warnings(flagdnn_benchmark_hygon_baseline_contract)
+  add_test(NAME integration.hygon.div_performance_baseline
+    COMMAND flagdnn_benchmark_hygon_baseline_contract
+      "${PROJECT_SOURCE_DIR}/docs/performance-baseline.json")
+  set_tests_properties(integration.hygon.div_performance_baseline PROPERTIES
+    LABELS "integration;hygon;contract" TIMEOUT 60)
+
   add_library(flagdnn_benchmark_hygon_adapter STATIC
     benchmark/runner.cpp
     benchmark/native_runner.cpp
+    benchmark/native_index.cpp
     benchmark/native_dtype.cpp
     benchmark/hipdnn_provider.cpp
     benchmark/pointwise.cpp
@@ -565,11 +643,14 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     benchmark/convolution.cpp
     benchmark/normalization.cpp)
   target_compile_features(flagdnn_benchmark_hygon_adapter PUBLIC cxx_std_20)
+  target_compile_definitions(flagdnn_benchmark_hygon_adapter PRIVATE
+    FLAGDNN_PERFORMANCE_BASELINE_FILE="${PROJECT_SOURCE_DIR}/docs/performance-baseline.json")
   target_include_directories(flagdnn_benchmark_hygon_adapter PUBLIC
     "${PROJECT_SOURCE_DIR}/benchmark"
     "${CMAKE_CURRENT_SOURCE_DIR}")
   target_link_libraries(flagdnn_benchmark_hygon_adapter PUBLIC
     FlagDNN::flagdnn
+    flagdnn_benchmark_hygon_baseline
     flagdnn_benchmark_cases
     flagdnn_validation_hygon_cases
     flagdnn_validation_hygon_platform

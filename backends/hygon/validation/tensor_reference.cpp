@@ -221,6 +221,46 @@ ReferenceTensor reduction_input_descriptor(const ReferenceTensor &input) {
   return minimum_rank_two(input);
 }
 
+bool mixed_fp16_reduction(const ReferenceTensor &input,
+                          const ReferenceTensor &output) noexcept {
+  return input.data_type == FLAGDNN_DATA_FLOAT16 &&
+         output.data_type == FLAGDNN_DATA_FLOAT32;
+}
+
+std::array<ReferenceTensor, 2>
+mapped_reduction_descriptors(const HipdnnTensorOperation &operation,
+                             const ReferenceTensor &input,
+                             const ReferenceTensor &output) {
+  std::array<ReferenceTensor, 2> result = {
+      reduction_input_descriptor(input),
+      reduction_output_descriptor(operation, input, output)};
+  if (!mixed_fp16_reduction(input, output) || input.dimensions.size() <= 2)
+    return result;
+  const auto axis = normalized_axis(operation, input.dimensions.size());
+  const auto reduced = input.dimensions[static_cast<std::size_t>(axis)];
+  std::int64_t remaining = 1;
+  for (std::size_t i = 0; i < input.dimensions.size(); ++i) {
+    if (i != static_cast<std::size_t>(axis) &&
+        (!checked_multiply(remaining, input.dimensions[i], remaining) ||
+         remaining > std::numeric_limits<int>::max()))
+      throw std::overflow_error("rank-two reduction view exceeds int metadata");
+  }
+  // Capability checks require dense storage and a boundary axis. Only the
+  // descriptors change: the original pointers/offsets and byte order do not.
+  if (axis == 0) {
+    result[0].dimensions = {reduced, remaining};
+    result[0].strides = {remaining, 1};
+    result[1].dimensions = {1, remaining};
+    result[1].strides = {remaining, 1};
+  } else {
+    result[0].dimensions = {remaining, reduced};
+    result[0].strides = {reduced, 1};
+    result[1].dimensions = {remaining, 1};
+    result[1].strides = {1, 1};
+  }
+  return result;
+}
+
 HipdnnCapability
 structural_capability(const HipdnnTensorOperation &operation,
                       std::span<const ReferenceTensor> tensors) {
@@ -240,13 +280,23 @@ structural_capability(const HipdnnTensorOperation &operation,
     return HipdnnCapability::invalid_adapter_contract(
         "hipDNN tensor input/output UIDs must differ");
   }
-  if (input.data_type != output.data_type) {
+  // FP16 -> FP32 has distinct descriptors with FP32 computation. BF16 -> FP32
+  // is a valid public operation but is explicitly rejected below: on the
+  // installed DTK stack, its CK source-datatype template does not compile.
+  const bool reduction_fp32_output =
+      is_reduction(operation.kind) &&
+      output.data_type == FLAGDNN_DATA_FLOAT32 &&
+      (input.data_type == FLAGDNN_DATA_FLOAT16 ||
+       input.data_type == FLAGDNN_DATA_BFLOAT16);
+  if (input.data_type != output.data_type && !reduction_fp32_output) {
     return HipdnnCapability::invalid_adapter_contract(
-        "hipDNN tensor input/output data types must match");
+        "hipDNN tensor data types must match or use a reduction FP32 output");
   }
   const std::size_t element_size = tensor_io::data_type_size(input.data_type);
+  const std::size_t output_element_size =
+      tensor_io::data_type_size(output.data_type);
   if (input.binding_byte_offset % element_size != 0 ||
-      output.binding_byte_offset % element_size != 0) {
+      output.binding_byte_offset % output_element_size != 0) {
     return HipdnnCapability::invalid_adapter_contract(
         "tensor binding byte offset is not element aligned");
   }
@@ -378,9 +428,31 @@ structural_capability(const HipdnnTensorOperation &operation,
     return HipdnnCapability::invalid_adapter_contract(
         "reduction output shape does not match axis semantics");
   }
-  const ReferenceTensor input_descriptor = reduction_input_descriptor(input);
-  const ReferenceTensor output_descriptor =
-      reduction_output_descriptor(operation, input, output);
+  if (mixed_fp16_reduction(input, output)) {
+    try {
+      if (rank < 2 || input.strides != dense_strides(input.dimensions) ||
+          output.strides != dense_strides(output.dimensions))
+        return HipdnnCapability::vendor_unsupported(
+            "mixed FP16-to-FP32 reduction requires validated dense rank>=2 storage");
+    } catch (const std::overflow_error &) {
+      return HipdnnCapability::vendor_unsupported(
+          "mixed reduction dense strides overflow");
+    }
+    if (rank > 2 && axis != 0 &&
+        axis != static_cast<std::int32_t>(rank - 1))
+      return HipdnnCapability::vendor_unsupported(
+          "mixed FP16-to-FP32 middle-axis reduction has no validated exact "
+          "mapping: the rank>2 hipDNN kernel writes FP16 output");
+  }
+  std::array<ReferenceTensor, 2> descriptors;
+  try {
+    descriptors = mapped_reduction_descriptors(operation, input, output);
+  } catch (const std::overflow_error &) {
+    return HipdnnCapability::vendor_unsupported(
+        "normalized reduction descriptors do not fit hipDNN");
+  }
+  const auto &input_descriptor = descriptors[0];
+  const auto &output_descriptor = descriptors[1];
   if (!metadata_fits_int(input_descriptor, false) ||
       !metadata_fits_int(output_descriptor, false) ||
       input_descriptor.dimensions.size() !=
@@ -490,6 +562,19 @@ hipdnn_tensor_capability(const HipdnnTensorOperation &operation,
   return {};
 }
 
+std::array<ReferenceTensor, 2>
+hipdnn_reduction_descriptors(const HipdnnTensorOperation &operation,
+                            std::span<const ReferenceTensor> tensors) {
+  if (!is_reduction(operation.kind))
+    throw std::invalid_argument("reduction descriptor query requires a reduction");
+  const auto capability = structural_capability(operation, tensors);
+  require_valid_hipdnn_adapter_contract(capability, "reduction descriptors");
+  if (!capability.supported)
+    throw std::invalid_argument("reduction descriptors unavailable: " +
+                                capability.reason);
+  return mapped_reduction_descriptors(operation, tensors[0], tensors[1]);
+}
+
 std::string_view hipdnn_tensor_kind_name(HipdnnTensorKind kind) noexcept {
   switch (kind) {
   case HipdnnTensorKind::kSlice:
@@ -530,11 +615,10 @@ public:
         set_tensor_descriptor(output_descriptor_, tensors_[1]);
         source_byte_offset_ = slice_source_byte_offset(operation_, tensors_[0]);
       } else {
-        const ReferenceTensor input = reduction_input_descriptor(tensors_[0]);
-        const ReferenceTensor output =
-            reduction_output_descriptor(operation_, tensors_[0], tensors_[1]);
-        set_tensor_descriptor(input_descriptor_, input);
-        set_tensor_descriptor(output_descriptor_, output);
+        const auto descriptors =
+            mapped_reduction_descriptors(operation_, tensors_[0], tensors_[1]);
+        set_tensor_descriptor(input_descriptor_, descriptors[0]);
+        set_tensor_descriptor(output_descriptor_, descriptors[1]);
         check_hipdnn_status(
             hipdnnCreateReduceTensorDescriptor(&reduction_descriptor_),
             "hipdnnCreateReduceTensorDescriptor");

@@ -1,11 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flagdnn.example/schemas/native-benchmark-result-v3.json",
+  "$id": "https://flagdnn.example/schemas/native-benchmark-result-v5.json",
   "title": "FlagDNN native benchmark result",
   "oneOf": [
     {"$ref": "#/$defs/v1"},
     {"$ref": "#/$defs/v2"},
-    {"$ref": "#/$defs/v3"}
+    {"$ref": "#/$defs/v3"},
+    {"$ref": "#/$defs/v4"},
+    {"$ref": "#/$defs/v5"}
   ],
   "$defs": {
     "positiveSamples": {
@@ -127,6 +129,33 @@
         }
       }
     },
+    "v5": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "kind", "provider", "case", "unit",
+        "median", "p90", "samples", "timing_mode", "timing_reason",
+        "benchmark_config"
+      ],
+      "properties": {
+        "schema_version": {"const": 5},
+        "kind": {"const": "steady_state"},
+        "provider": {"enum": ["flagdnn", "hipdnn"]},
+        "case": {"type": "string", "minLength": 1},
+        "unit": {"const": "us"},
+        "median": {"type": "number", "exclusiveMinimum": 0},
+        "p90": {"type": "number", "exclusiveMinimum": 0},
+        "samples": {"$ref": "#/$defs/positiveSamples"},
+        "timing_mode": {"enum": ["hip_graph_batch", "hip_event_direct_batch"]},
+        "timing_reason": {"enum": ["standard", "hipdnn_graph_tail_workaround"]},
+        "benchmark_config": {"$ref": "#/$defs/benchmarkConfig"}
+      },
+      "allOf": [{
+        "if": {"properties": {"timing_mode": {"const": "hip_graph_batch"}}},
+        "then": {"properties": {"timing_reason": {"const": "standard"}}},
+        "else": {"properties": {"timing_reason": {"const": "hipdnn_graph_tail_workaround"}}}
+      }]
+    },
     "v2": {
       "type": "object",
       "additionalProperties": false,
@@ -177,6 +206,89 @@
           }
         }
       ]
+    },
+    "equivalentBaseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider", "platform", "target_platform", "scale_metric", "timing_profile",
+        "reference_time_us", "reference_peak", "target_peak",
+        "min_relative_efficiency", "equivalent_time_us", "limit_us",
+        "relative_efficiency", "passed"
+      ],
+      "properties": {
+        "provider": {"const": "nvidia_equivalent"},
+        "platform": {"const": "nvidia"},
+        "target_platform": {"const": "hygon"},
+        "scale_metric": {"enum": ["vector_fp32", "hbm_copy", "hbm_write", "hbm_triad"]},
+        "timing_profile": {"const": "native"},
+        "traffic_ratio": {"type": "number", "exclusiveMinimum": 0, "default": 1},
+        "reference_validation": {
+          "enum": ["cpu_full", "cpu_sampled", "bit_exact", "sanity"],
+          "default": "cpu_full"
+        },
+        "reference_time_us": {"type": "number", "exclusiveMinimum": 0},
+        "reference_peak": {"type": "number", "exclusiveMinimum": 0},
+        "target_peak": {"type": "number", "exclusiveMinimum": 0},
+        "min_relative_efficiency": {
+          "type": "number", "exclusiveMinimum": 0, "maximum": 1
+        },
+        "equivalent_time_us": {"type": "number", "exclusiveMinimum": 0},
+        "limit_us": {"type": "number", "exclusiveMinimum": 0},
+        "relative_efficiency": {"type": "number", "exclusiveMinimum": 0},
+        "passed": {"type": "boolean"}
+      },
+      "allOf": [{
+        "if": {"properties": {"scale_metric": {"const": "vector_fp32"}}},
+        "then": {"properties": {"traffic_ratio": {"const": 1}}}
+      }]
+    },
+    "v4": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "kind", "provider", "case", "unit",
+        "median", "p90", "samples", "equivalent_baseline"
+      ],
+      "properties": {
+        "schema_version": {"const": 4},
+        "kind": {"const": "steady_state"},
+        "provider": {"const": "flagdnn"},
+        "case": {
+          "type": "string",
+          "pattern": "^(?:identity_fp8_(?:e4m3|e5m2)_|(?:reshape|transpose|slice|concatenate|gen_index|div|pow|mod|cmp_eq|cmp_neq|cmp_gt|cmp_ge|cmp_lt|cmp_le|logical_and|logical_or|logical_not|binary_select|neg|sqrt|rsqrt|reciprocal|ceil|floor|exp|log|erf|sin|cos|tan|leaky_relu|leaky_relu_backward|elu_backward|gelu|gelu_backward|gelu_approx_tanh|gelu_approx_tanh_backward|softplus|softplus_backward)_(?:(?:perf|attributes)_)?(?:fp32|fp16|bfloat16|bf16|bool|int32)_(?:case[0-9]+_)?)[0-9][a-z0-9_-]*$"
+        },
+        "unit": {"const": "us"},
+        "median": {"type": "number", "exclusiveMinimum": 0},
+        "p90": {"type": "number", "exclusiveMinimum": 0},
+        "samples": {
+          "allOf": [{"$ref": "#/$defs/positiveSamples"}],
+          "minItems": 20,
+          "maxItems": 20
+        },
+        "equivalent_baseline": {"$ref": "#/$defs/equivalentBaseline"}
+      },
+      "allOf": [{
+        "if": {"not": {"properties": {"case": {"pattern": "^div_"}}}},
+        "then": {
+          "properties": {
+            "equivalent_baseline": {"required": ["traffic_ratio", "reference_validation"]}
+          }
+        }
+      }, {
+        "if": {"properties": {"case": {"pattern": "^identity_"}}},
+        "then": {
+          "properties": {
+            "equivalent_baseline": {
+              "properties": {
+                "scale_metric": {"const": "hbm_copy"},
+                "reference_validation": {"const": "bit_exact"},
+                "traffic_ratio": {"const": 1}
+              }
+            }
+          }
+        }
+      }]
     },
     "v3": {
       "type": "object",

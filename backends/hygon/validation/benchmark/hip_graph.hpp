@@ -4,7 +4,10 @@
 #define FLAGDNN_BACKENDS_HYGON_VALIDATION_BENCHMARK_HIP_GRAPH_HPP_
 
 #include "hip_driver.hpp"
+#include "timing_policy.hpp"
 
+#include <functional>
+#include <memory>
 #include <stdexcept>
 #include <utility>
 
@@ -74,6 +77,43 @@ private:
   hipGraph_t graph_ = nullptr;
   hipGraphExec_t executable_ = nullptr;
   int execution_count_ = 0;
+};
+
+// A native pair always shares its mode. Direct event batches include gaps
+// while the CPU submits work, so records distinguish them from HIP graphs.
+class NativeExecutionBatch final {
+public:
+  template <typename Function>
+  NativeExecutionBatch(hipStream_t stream, int count, NativeTimingMode mode,
+                       Function &&execute)
+      : count_(count), mode_(mode), execute_(std::forward<Function>(execute)) {
+    if (count_ <= 0)
+      throw std::invalid_argument("batch count must be positive");
+    if (mode_ == NativeTimingMode::kGraphBatch)
+      graph_ =
+          std::make_unique<CapturedExecutionBatch>(stream, count_, execute_);
+  }
+
+  void launch(hipStream_t stream) const {
+    if (graph_) {
+      graph_->launch(stream);
+    } else {
+      for (int index = 0; index < count_; ++index)
+        execute_();
+    }
+  }
+
+  double measure(validation::hygon::EventTimer &timer,
+                 hipStream_t stream) const {
+    return measure_native_batch(timer, stream, mode_, count_, execute_,
+                                [&] { graph_->launch(stream); });
+  }
+
+private:
+  int count_;
+  NativeTimingMode mode_;
+  std::function<void()> execute_;
+  std::unique_ptr<CapturedExecutionBatch> graph_;
 };
 
 } // namespace flagdnn::benchmarking

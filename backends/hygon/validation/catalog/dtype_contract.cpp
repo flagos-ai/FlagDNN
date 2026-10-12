@@ -25,7 +25,8 @@ bool same_tensor(const TestTensor &a, const TestTensor &b) {
 namespace flagdnn::benchmarking {
 int run_hygon_benchmark_suite(int, char **,
                               std::span<const BenchmarkCase> cases,
-                              std::string_view, const NativeBuilder &) {
+                              std::string_view, const NativeBuilder &,
+                              const NativeCpuOracle &, const NativeMetadata &) {
   for (const auto &value : cases) {
     std::vector<testing::TestTensor> tensors;
     for (const auto &t : value.tensors)
