@@ -612,7 +612,8 @@ if(FLAGDNN_BUILD_BENCHMARKS)
   add_library(flagdnn_hygon_baseline_native_cases STATIC
     "${PROJECT_SOURCE_DIR}/tests/common/index.cpp"
     "${PROJECT_SOURCE_DIR}/tests/common/layout.cpp"
-    "${PROJECT_SOURCE_DIR}/tests/common/pointwise.cpp")
+    "${PROJECT_SOURCE_DIR}/tests/common/pointwise.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/common/reduction.cpp")
   target_compile_features(flagdnn_hygon_baseline_native_cases PUBLIC cxx_std_20)
   target_include_directories(flagdnn_hygon_baseline_native_cases PUBLIC
     "${PROJECT_SOURCE_DIR}/tests")

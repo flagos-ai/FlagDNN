@@ -221,7 +221,7 @@
         "platform": {"const": "nvidia"},
         "target_platform": {"const": "hygon"},
         "scale_metric": {"enum": ["vector_fp32", "hbm_copy", "hbm_write", "hbm_triad"]},
-        "timing_profile": {"const": "native"},
+        "timing_profile": {"enum": ["native", "batchnorm_training"]},
         "traffic_ratio": {"type": "number", "exclusiveMinimum": 0, "default": 1},
         "reference_validation": {
           "enum": ["cpu_full", "cpu_sampled", "bit_exact", "sanity"],
@@ -256,16 +256,12 @@
         "provider": {"const": "flagdnn"},
         "case": {
           "type": "string",
-          "pattern": "^(?:identity_fp8_(?:e4m3|e5m2)_|(?:reshape|transpose|slice|concatenate|gen_index|div|pow|mod|cmp_eq|cmp_neq|cmp_gt|cmp_ge|cmp_lt|cmp_le|logical_and|logical_or|logical_not|binary_select|neg|sqrt|rsqrt|reciprocal|ceil|floor|exp|log|erf|sin|cos|tan|leaky_relu|leaky_relu_backward|elu_backward|gelu|gelu_backward|gelu_approx_tanh|gelu_approx_tanh_backward|softplus|softplus_backward)_(?:(?:perf|attributes)_)?(?:fp32|fp16|bfloat16|bf16|bool|int32)_(?:case[0-9]+_)?)[0-9][a-z0-9_-]*$"
+          "pattern": "^(?:identity_(?:fp8_(?:e4m3|e5m2)|bfloat16|int32|bool)_|identity_perf_bfloat16_|batchnorm_perf_(?:fp16|bfloat16)_|reduction_(?:sum_bfloat16|(?:sum|avg|mul)_fp16)_to_fp32_|(?:abs|add|add_square|elu|max|min|mul|relu|relu_backward|scale|sigmoid|sigmoid_backward|sub|swish|swish_backward|tanh|tanh_backward)_perf_bfloat16_|(?:reshape|transpose|slice|concatenate|gen_index|div|pow|mod|cmp_eq|cmp_neq|cmp_gt|cmp_ge|cmp_lt|cmp_le|logical_and|logical_or|logical_not|binary_select|neg|sqrt|rsqrt|reciprocal|ceil|floor|exp|log|erf|sin|cos|tan|leaky_relu|leaky_relu_backward|elu_backward|gelu|gelu_backward|gelu_approx_tanh|gelu_approx_tanh_backward|softplus|softplus_backward)_(?:(?:perf|attributes)_)?(?:fp32|fp16|bfloat16|bf16|bool|int32)_(?:case[0-9]+_)?)[0-9][a-z0-9_-]*$"
         },
         "unit": {"const": "us"},
         "median": {"type": "number", "exclusiveMinimum": 0},
         "p90": {"type": "number", "exclusiveMinimum": 0},
-        "samples": {
-          "allOf": [{"$ref": "#/$defs/positiveSamples"}],
-          "minItems": 20,
-          "maxItems": 20
-        },
+        "samples": {"$ref": "#/$defs/positiveSamples"},
         "equivalent_baseline": {"$ref": "#/$defs/equivalentBaseline"}
       },
       "allOf": [{
@@ -281,13 +277,53 @@
           "properties": {
             "equivalent_baseline": {
               "properties": {
-                "scale_metric": {"const": "hbm_copy"},
-                "reference_validation": {"const": "bit_exact"},
-                "traffic_ratio": {"const": 1}
+                "scale_metric": {"const": "hbm_copy"}
               }
             }
           }
         }
+      }, {
+        "if": {"properties": {"case": {"pattern": "^identity_perf_"}}},
+        "then": {"properties": {"equivalent_baseline": {"properties": {
+          "reference_validation": {"const": "cpu_full"}
+        }}}},
+        "else": {
+          "if": {"properties": {"case": {"pattern": "^identity_"}}},
+          "then": {"properties": {"equivalent_baseline": {"properties": {
+            "reference_validation": {"const": "bit_exact"}
+          }}}}
+        }
+      }, {
+        "if": {"properties": {"case": {"pattern": "^identity_bool_"}}},
+        "then": {"properties": {"equivalent_baseline": {"properties": {
+          "traffic_ratio": {"const": 8}
+        }}}},
+        "else": {
+          "if": {"properties": {"case": {"pattern": "^identity_"}}},
+          "then": {"properties": {"equivalent_baseline": {"properties": {
+            "traffic_ratio": {"const": 1}
+          }}}}
+        }
+      }, {
+        "if": {"properties": {"case": {"pattern": "^(?:(?:abs|add|add_square|elu|max|min|mul|relu|relu_backward|scale|sigmoid|sigmoid_backward|sub|swish|swish_backward|tanh|tanh_backward)_perf_bfloat16_|batchnorm_perf_|reduction_)"}}},
+        "then": {"properties": {"equivalent_baseline": {"properties": {
+          "reference_validation": {"const": "cpu_full"},
+          "traffic_ratio": {"const": 1}
+        }}}}
+      }, {
+        "if": {"properties": {"case": {"pattern": "^batchnorm_"}}},
+        "then": {"properties": {
+          "samples": {"minItems": 10, "maxItems": 10},
+          "equivalent_baseline": {"properties": {
+            "timing_profile": {"const": "batchnorm_training"}
+          }}
+        }},
+        "else": {"properties": {
+          "samples": {"minItems": 20, "maxItems": 20},
+          "equivalent_baseline": {"properties": {
+            "timing_profile": {"const": "native"}
+          }}
+        }}
       }]
     },
     "v3": {

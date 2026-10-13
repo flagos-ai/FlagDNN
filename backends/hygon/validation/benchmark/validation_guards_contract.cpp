@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -203,6 +204,112 @@ void bit_exact_identity_contract() {
                                             original, original, expected);
         },
         "bit-exact identity accepted mismatched logical sizes");
+  }
+}
+
+void supplemental_bit_exact_identity_contract() {
+  for (const auto dtype : {FLAGDNN_DATA_BFLOAT16, FLAGDNN_DATA_INT32,
+                           FLAGDNN_DATA_BOOLEAN}) {
+    // These spans begin at the bound tensor entrance, as in runner.cpp. Input
+    // and output have different noncompact physical layouts and byte offsets.
+    const bench::TensorSpec input = {11, dtype, {2, 3}, {9, 2}, 16};
+    const bench::TensorSpec output = {12, dtype, {2, 3}, {8, 2}, 32};
+    const std::vector<float> logical =
+        dtype == FLAGDNN_DATA_BOOLEAN ? std::vector<float>{1, 0, 1, 0, 0, 1}
+                                     : std::vector<float>{0, -0.0F, 1, -1,
+                                                          1.5F, -97};
+    const auto width = io::data_type_size(dtype);
+    auto original = io::encode(io::scatter(logical, input), dtype);
+    if (dtype == FLAGDNN_DATA_INT32) {
+      // Preserve integers that a float-based comparison cannot distinguish.
+      // This tests the byte helper, without changing the NVIDIA input fixture.
+      const std::array<std::int32_t, 6> values = {
+          16777216, 16777217, std::numeric_limits<std::int32_t>::max(),
+          std::numeric_limits<std::int32_t>::min(), -16777217, 0};
+      for (std::size_t index = 0; index < values.size(); ++index)
+        std::memcpy(original.data() + io::logical_offset(index, input) * width,
+                    &values[index], width);
+    }
+    auto expected = io::encode(io::scatter(logical, output), dtype);
+    const auto copy_element = [&](auto &bytes, std::size_t index) {
+      std::copy_n(original.begin() + io::logical_offset(index, input) * width,
+                  width,
+                  bytes.begin() + io::logical_offset(index, output) * width);
+    };
+    for (std::size_t index = 0; index < logical.size(); ++index)
+      copy_element(expected, index);
+    const auto check = [&](const auto &actual_input, const auto &actual_output) {
+      bench::require_bit_exact_identity("supplemental identity", input, output,
+                                        original, actual_input, actual_output);
+    };
+    check(original, expected);
+    for (std::size_t index = 0; index < logical.size(); ++index) {
+      for (std::size_t byte = 0; byte < width; ++byte) {
+        auto changed_output = expected;
+        auto changed_input = original;
+        changed_output[io::logical_offset(index, output) * width + byte] ^= 1U;
+        changed_input[io::logical_offset(index, input) * width + byte] ^= 1U;
+        rejects([&] { check(original, changed_output); },
+                "supplemental identity accepted a changed output byte");
+        rejects([&] { check(changed_input, expected); },
+                "supplemental identity accepted a changed input byte");
+        rejects([&] { check(changed_input, changed_output); },
+                "matching corruption replaced the original byte oracle");
+      }
+    }
+    for (const bool checking_input : {false, true}) {
+      const auto &tensor = checking_input ? input : output;
+      std::vector<bool> occupied(io::storage_element_count(tensor), false);
+      for (std::size_t index = 0; index < logical.size(); ++index)
+        occupied[io::logical_offset(index, tensor)] = true;
+      for (std::size_t element = 0; element < occupied.size(); ++element) {
+        if (occupied[element])
+          continue;
+        for (std::size_t byte = 0; byte < width; ++byte) {
+          auto changed = checking_input ? original : expected;
+          changed[element * width + byte] ^= 1U;
+          rejects(
+              [&] {
+                check(checking_input ? changed : original,
+                      checking_input ? expected : changed);
+              },
+              "supplemental identity accepted modified padding");
+        }
+      }
+    }
+    auto incomplete = expected;
+    for (std::size_t index = 0; index < logical.size(); ++index)
+      for (std::size_t byte = 0; byte < width; ++byte)
+        incomplete[io::logical_offset(index, output) * width + byte] ^= 0xFFU;
+    for (std::size_t written = 0; written < logical.size(); ++written) {
+      rejects([&] { check(original, incomplete); },
+              "supplemental identity accepted empty or partial writes");
+      copy_element(incomplete, written);
+    }
+    check(original, incomplete);
+
+    // All three codecs can decode distinct representations to equal floats:
+    // BF16 +/-0, INT32 adjacent values above 2^24, and BOOL true bytes 1/2.
+    auto numerically_equal = expected;
+    const auto first = io::logical_offset(0, output) * width;
+    if (dtype == FLAGDNN_DATA_BFLOAT16) {
+      const auto negative_zero = io::encode(std::vector<float>{-0.0F}, dtype);
+      std::copy(negative_zero.begin(), negative_zero.end(),
+                numerically_equal.begin() + first);
+    } else if (dtype == FLAGDNN_DATA_INT32) {
+      const std::int32_t adjacent = 16777217;
+      std::memcpy(numerically_equal.data() + first, &adjacent, width);
+    } else {
+      numerically_equal[first] = 2U;
+    }
+    require(numerically_equal != expected &&
+                io::decode(numerically_equal, dtype,
+                           io::storage_element_count(output)) ==
+                    io::decode(expected, dtype,
+                               io::storage_element_count(output)),
+            "supplemental fixture does not distinguish bytes from numbers");
+    rejects([&] { check(original, numerically_equal); },
+            "supplemental identity compared decoded numbers, not bytes");
   }
 }
 
@@ -461,6 +568,7 @@ int main() {
     execution_status_contract();
     finite_poison_contract();
     bit_exact_identity_contract();
+    supplemental_bit_exact_identity_contract();
     for (auto writer : {Writer::kEmpty, Writer::kPartial, Writer::kFull}) {
       for (auto dtype : {FLAGDNN_DATA_FLOAT32, FLAGDNN_DATA_FLOAT16,
                          FLAGDNN_DATA_BFLOAT16}) {
@@ -488,6 +596,8 @@ int main() {
                  "finite dtype-aware poison, beta-zero writers and tolerance "
                  "boundaries; FP8 identity original-byte checks and encoded "
                  "padding; "
+                 "BF16/INT32/BOOL bit-exact noncompact identity and input "
+                 "immutability; "
                  "padding, sample accounting and error propagation\n";
     return 0;
   } catch (const std::exception &error) {

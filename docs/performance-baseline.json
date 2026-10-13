@@ -99,8 +99,122 @@
           "identity": {
             "scale_metric": "hbm_copy",
             "status": "logical_bandwidth_proxy",
-            "supported_dtypes": ["fp8_e4m3", "fp8_e5m2"],
-            "reason": "Only the existing bit-exact FP8 E4M3/E5M2 identity reference cases are enabled. The installed hipDNN rejects both tensor descriptor dtypes. Logical-byte copy bandwidth is an explicit approximation, not a measured bottleneck conclusion; repeated buffers may be cache or launch limited."
+            "supported_dtypes": ["fp8_e4m3", "fp8_e5m2", "bfloat16", "int32", "bool"],
+            "reason": "Existing bit-exact FP8 copies and supplemental BF16 main / BF16, INT32, BOOL auxiliary identity records are enabled only for matching validated cases. BOOL uses the explicit one-bit NVIDIA versus eight-bit Hygon traffic ratio. Logical copy bandwidth is an approximation, not a measured bottleneck; repeated buffers may be cache or launch limited."
+          },
+          "abs": {
+            "scale_metric": "hbm_copy",
+            "status": "logical_bandwidth_proxy",
+            "supported_dtypes": ["bfloat16"],
+            "reason": "Supplemental BF16 performance cases only. Logical input/output bandwidth is an explicit proxy, not a measured bottleneck; repeated buffers may be cache or launch limited."
+          },
+          "relu": {
+            "scale_metric": "hbm_copy",
+            "status": "logical_bandwidth_proxy",
+            "supported_dtypes": ["bfloat16"],
+            "reason": "Supplemental BF16 performance cases only. Logical input/output bandwidth is an explicit proxy, not a measured bottleneck; repeated buffers may be cache or launch limited."
+          },
+          "add": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "supported_dtypes": ["bfloat16"],
+            "reason": "Supplemental BF16 performance cases only. Logical two-input/output bandwidth is an explicit proxy, not a measured bottleneck; repeated buffers may be cache or launch limited."
+          },
+          "sub": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "supported_dtypes": ["bfloat16"],
+            "reason": "Supplemental BF16 performance cases only. Logical two-input/output bandwidth is an explicit proxy, not a measured bottleneck; repeated buffers may be cache or launch limited."
+          },
+          "mul": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "supported_dtypes": ["bfloat16"],
+            "reason": "Supplemental BF16 performance cases only. Logical two-input/output bandwidth is an explicit proxy, not a measured bottleneck; repeated buffers may be cache or launch limited."
+          },
+          "min": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "supported_dtypes": ["bfloat16"],
+            "reason": "Supplemental BF16 performance cases only. Logical two-input/output bandwidth is an explicit proxy, not a measured bottleneck; repeated buffers may be cache or launch limited."
+          },
+          "max": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "supported_dtypes": ["bfloat16"],
+            "reason": "Supplemental BF16 performance cases only. Logical two-input/output bandwidth is an explicit proxy, not a measured bottleneck; repeated buffers may be cache or launch limited."
+          },
+          "scale": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "supported_dtypes": ["bfloat16"],
+            "reason": "Supplemental BF16 performance cases only. Logical two-input/output bandwidth is an explicit proxy, not a measured bottleneck; repeated buffers may be cache or launch limited."
+          },
+          "relu_backward": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "supported_dtypes": ["bfloat16"],
+            "reason": "Supplemental BF16 performance cases only. Logical two-input/output bandwidth is an explicit proxy, not a measured bottleneck; repeated buffers may be cache or launch limited."
+          },
+          "add_square": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "supported_dtypes": ["bfloat16"],
+            "reason": "Supplemental BF16 graph cases only, preserving BF16 rounding of the intermediate square. FP32 arithmetic peak is an explicit proxy, not measured graph throughput; launch, fusion and cache differences are not modeled."
+          },
+          "elu": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "supported_dtypes": ["bfloat16"],
+            "reason": "Supplemental BF16 performance cases with FP32 computation only. FP32 FMA peak approximates, but does not measure, special-function throughput; cache and launch overhead are not modeled."
+          },
+          "sigmoid": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "supported_dtypes": ["bfloat16"],
+            "reason": "Supplemental BF16 performance cases with FP32 computation only. FP32 FMA peak approximates, but does not measure, special-function throughput; cache and launch overhead are not modeled."
+          },
+          "sigmoid_backward": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "supported_dtypes": ["bfloat16"],
+            "reason": "Supplemental BF16 performance cases with FP32 computation only. FP32 FMA peak is an explicit arithmetic proxy, not a verified bottleneck model; cache and launch overhead are not modeled."
+          },
+          "swish": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "supported_dtypes": ["bfloat16"],
+            "reason": "Supplemental BF16 performance cases with FP32 computation only. FP32 FMA peak approximates, but does not measure, special-function throughput; cache and launch overhead are not modeled."
+          },
+          "swish_backward": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "supported_dtypes": ["bfloat16"],
+            "reason": "Supplemental BF16 performance cases with FP32 computation only. FP32 FMA peak approximates, but does not measure, special-function throughput; cache and launch overhead are not modeled."
+          },
+          "tanh": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "supported_dtypes": ["bfloat16"],
+            "reason": "Supplemental BF16 performance cases with FP32 computation only. FP32 FMA peak approximates, but does not measure, special-function throughput; cache and launch overhead are not modeled."
+          },
+          "tanh_backward": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "supported_dtypes": ["bfloat16"],
+            "reason": "Supplemental BF16 performance cases with FP32 computation only. FP32 FMA peak is an explicit arithmetic proxy, not a verified bottleneck model; cache and launch overhead are not modeled."
+          },
+          "batchnorm": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "supported_dtypes": ["fp16", "bfloat16"],
+            "reason": "Supplemental training cases only, validating all five outputs and using the independent batchnorm_training timing profile. FP32 statistical arithmetic is a proxy, not measured normalization throughput. NVIDIA times NHWC x/y storage (reference_strides) with conversion excluded, while Hygon uses the declared NCHW strides; the layout, launch and cache differences are not normalized by this estimate."
+          },
+          "reduction": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "supported_dtypes": ["fp16", "bfloat16"],
+            "reason": "Supplemental BF16-to-FP32 2D sum and FP16-to-FP32 middle-axis sum/average/product cases only; validated native hipDNN combinations remain preferred. FP32 arithmetic peak is an explicit proxy, not measured reduction throughput or a verified bottleneck; reduction topology, cache and launch overhead are not modeled."
           },
           "div": {
             "scale_metric": "vector_fp32",

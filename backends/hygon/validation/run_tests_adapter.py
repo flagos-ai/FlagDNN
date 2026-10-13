@@ -16,30 +16,10 @@ COMPARABLE_CASE_CATALOG = (
 PERFORMANCE_BASELINE_FILE = (
     Path(__file__).resolve().parents[3] / "docs" / "performance-baseline.json"
 )
-# These auxiliary cases come from tests/common/pointwise.cpp's packed boolean
-# catalog, not the separately measured *_perf_bool_* benchmark catalog.
-NVIDIA_BASELINE_BOOLEAN_SKIPS = frozenset(
-    f"{operator}_bool_{shape}"
-    for operator in ("logical_and", "logical_or")
-    for shape in (
-        "1x1x16",
-        "2x8x8",
-        "1x8x4x8",
-        "2x8x4x8",
-        "1x1x8",
-        "1x1x24",
-        "1x1x128",
-        "1x1x256",
-        "3x5x32",
-        "1x16x3x5",
-        "2x16x7x9",
-        "3x32x5x7",
-    )
-)
 SPEEDUP_METRIC = "hipdnn_median_us/flagdnn_median_us"
 EQUIVALENT_METRIC = "nvidia_equivalent_time_us/flagdnn_median_us"
-EQUIVALENT_OPERATORS = frozenset(
-    "identity reshape transpose slice concatenate gen_index div pow mod "
+EQUIVALENT_GENERAL_OPERATORS = frozenset(
+    "reshape transpose slice concatenate gen_index div pow mod "
     "cmp_eq cmp_neq cmp_gt cmp_ge cmp_lt cmp_le "
     "logical_and logical_or logical_not binary_select "
     "neg sqrt rsqrt reciprocal ceil floor exp log erf sin cos tan "
@@ -47,16 +27,30 @@ EQUIVALENT_OPERATORS = frozenset(
     "gelu_approx_tanh gelu_approx_tanh_backward "
     "softplus softplus_backward".split()
 )
+EQUIVALENT_BFLOAT16_OPERATORS = frozenset(
+    "abs add add_square elu max min mul relu relu_backward scale sigmoid "
+    "sigmoid_backward sub swish swish_backward tanh tanh_backward".split()
+)
+EQUIVALENT_OPERATORS = (
+    EQUIVALENT_GENERAL_OPERATORS
+    | EQUIVALENT_BFLOAT16_OPERATORS
+    | {"identity", "batchnorm", "reduction"}
+)
 EQUIVALENT_CASE_PATTERN = re.compile(
-    # Identity is limited to the two FP8 formats with measured NVIDIA records.
-    # Other identity dtypes need native support or additional measurements.
+    # New scopes follow the measured supplement, not the complete dtype range
+    # of an operator. In particular, native FP32/FP16 pointwise paths retain
+    # their existing provider pairing and do not gain an unproven fallback.
     r"^(?=(?P<operator>"
     + "|".join(sorted(EQUIVALENT_OPERATORS, key=lambda op: (-len(op), op)))
-    + r")_)(?:identity_fp8_(?:e4m3|e5m2)_|(?:"
+    + r")_)(?:identity_(?:fp8_(?:e4m3|e5m2)|bfloat16|int32|bool)_"
+    r"|identity_perf_bfloat16_|batchnorm_perf_(?:fp16|bfloat16)_"
+    r"|reduction_(?:sum_bfloat16|(?:sum|avg|mul)_fp16)_to_fp32_|(?:"
     + "|".join(
-        sorted(
-            EQUIVALENT_OPERATORS - {"identity"}, key=lambda op: (-len(op), op)
-        )
+        sorted(EQUIVALENT_BFLOAT16_OPERATORS, key=lambda op: (-len(op), op))
+    )
+    + r")_perf_bfloat16_|(?:"
+    + "|".join(
+        sorted(EQUIVALENT_GENERAL_OPERATORS, key=lambda op: (-len(op), op))
     )
     + r")_(?:(?:perf|attributes)_)?"
     r"(?:fp32|fp16|bfloat16|bf16|bool|int32)_"
@@ -593,7 +587,9 @@ def validate_benchmark_record(
         "provider": "nvidia_equivalent",
         "platform": "nvidia",
         "target_platform": "hygon",
-        "timing_profile": "native",
+        "timing_profile": (
+            "batchnorm_training" if case_operator == "batchnorm" else "native"
+        ),
     }
     numeric = {
         "reference_time_us",
@@ -623,11 +619,27 @@ def validate_benchmark_record(
         raise ValueError("invalid equivalent-baseline fields or identity")
     if case_operator == "identity" and (
         baseline["scale_metric"] != "hbm_copy"
-        or baseline["reference_validation"] != "bit_exact"
+        or baseline["reference_validation"]
+        != (
+            "cpu_full"
+            if record["case"].startswith("identity_perf_")
+            else "bit_exact"
+        )
+        or baseline["traffic_ratio"]
+        != (8 if record["case"].startswith("identity_bool_") else 1)
+    ):
+        raise ValueError(
+            "identity requires its measured validation and logical-byte copy ratio"
+        )
+    if case_operator in EQUIVALENT_BFLOAT16_OPERATORS | {
+        "batchnorm",
+        "reduction",
+    } and (
+        baseline["reference_validation"] != "cpu_full"
         or baseline["traffic_ratio"] != 1
     ):
         raise ValueError(
-            "FP8 identity requires a bit-exact byte-preserving copy baseline"
+            "supplemental floating-point cases require CPU-full unit-traffic evidence"
         )
 
     def positive(value: Any) -> bool:
@@ -656,8 +668,15 @@ def validate_benchmark_record(
         )
     if baseline["min_relative_efficiency"] > 1:
         raise ValueError("min_relative_efficiency must be in (0, 1]")
-    if not isinstance(record["samples"], list) or len(record["samples"]) != 20:
-        raise ValueError("native timing profile requires 20 measured samples")
+    sample_count = 10 if case_operator == "batchnorm" else 20
+    if (
+        not isinstance(record["samples"], list)
+        or len(record["samples"]) != sample_count
+    ):
+        raise ValueError(
+            f"{identities['timing_profile']} timing profile requires "
+            f"{sample_count} measured samples"
+        )
     try:
         equivalent = (
             baseline["reference_time_us"]
@@ -1201,7 +1220,9 @@ def validate_nvidia_baseline_skips(
     records: list[dict[str, str]], operator: str
 ) -> list[str]:
     """Only known unmeasured auxiliary/excluded cases may skip this gate."""
-    if operator not in {"logical_and", "logical_or", "concatenate"}:
+    # The 24 auxiliary logical cases now have measured NVIDIA evidence. Only
+    # explicit concatenate exclusions remain eligible for a baseline skip.
+    if operator != "concatenate":
         return [f"NVIDIA baseline skips are not permitted for op={operator}"]
     try:
         baseline_path = Path(
@@ -1220,13 +1241,9 @@ def validate_nvidia_baseline_skips(
         case = record.get("case", "")
         exclusion = unavailable.get(case, {})
         allowed = (
-            case in NVIDIA_BASELINE_BOOLEAN_SKIPS
-            if operator in {"logical_and", "logical_or"}
-            else (
-                isinstance(exclusion, dict)
-                and exclusion.get("op") == "concatenate"
-                and exclusion.get("status") == "excluded"
-            )
+            isinstance(exclusion, dict)
+            and exclusion.get("op") == "concatenate"
+            and exclusion.get("status") == "excluded"
         )
         if case in measured or not allowed:
             errors.append(

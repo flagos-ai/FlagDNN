@@ -62,6 +62,38 @@ DEFAULT_OPERATORS = (
     "sqrt",
     "rsqrt",
     "reciprocal",
+)
+DEFAULT_OPERATORS_APPOINT = (
+    "identity",
+    "reshape",
+    "transpose",
+    "slice",
+    "concatenate",
+    "gen_index",
+    "add",
+    "sub",
+    "mul",
+    "div",
+    "pow",
+    "max",
+    "min",
+    "mod",
+    "add_square",
+    "cmp_eq",
+    "cmp_neq",
+    "cmp_gt",
+    "cmp_ge",
+    "cmp_lt",
+    "cmp_le",
+    "logical_and",
+    "logical_or",
+    "logical_not",
+    "binary_select",
+    "abs",
+    "neg",
+    "sqrt",
+    "rsqrt",
+    "reciprocal",
     "ceil",
     "floor",
     "exp",
@@ -716,7 +748,13 @@ def requested_operators(
     suites: list[str],
     value: str | None,
     list_file: Path | None,
+    *,
+    appoint: bool = False,
 ) -> dict[str, list[str]]:
+    if appoint and (value is not None or list_file is not None):
+        raise ValueError(
+            "--appoint cannot be combined with --ops or --op-list-file"
+        )
     if value is not None and list_file is not None:
         raise ValueError("--ops and --op-list-file are mutually exclusive")
     if value == "all":
@@ -736,7 +774,9 @@ def requested_operators(
                 "--op-list-file must contain at least one operator"
             )
     else:
-        selected = list(DEFAULT_OPERATORS)
+        selected = list(
+            DEFAULT_OPERATORS_APPOINT if appoint else DEFAULT_OPERATORS
+        )
 
     selected = list(dict.fromkeys(selected))
     unavailable = {
@@ -2490,6 +2530,11 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument("--op-list-file", type=Path)
     parser.add_argument(
+        "--appoint",
+        action="store_true",
+        help="select DEFAULT_OPERATORS_APPOINT instead of DEFAULT_OPERATORS",
+    )
+    parser.add_argument(
         "--suites",
         default=None,
         help=(
@@ -2583,6 +2628,12 @@ def parse_arguments() -> argparse.Namespace:
         help="operator stages (the native catalog is stable)",
     )
     arguments = parser.parse_args()
+    if arguments.appoint and (
+        arguments.ops is not None or arguments.op_list_file is not None
+    ):
+        parser.error(
+            "--appoint cannot be combined with --ops or --op-list-file"
+        )
     arguments.batch = arguments.output is None
     if not arguments.batch and (
         arguments.output_dir is not None
@@ -2755,6 +2806,7 @@ def _run_main() -> int:
                 suites,
                 arguments.ops,
                 arguments.op_list_file,
+                appoint=arguments.appoint,
             )
         )
     except (OSError, RuntimeError, ValueError) as error:
@@ -2809,6 +2861,7 @@ def _run_main() -> int:
                 suites,
                 arguments.ops,
                 arguments.op_list_file,
+                appoint=arguments.appoint,
             )
     except (OSError, RuntimeError, ValueError) as error:
         return validation_error(str(error))

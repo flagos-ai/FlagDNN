@@ -6,6 +6,7 @@
 #include <cmath>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <set>
 #include <stdexcept>
 
@@ -65,10 +66,17 @@ struct Policy {
 
 Policy policy(const BenchmarkCase& spec) {
   switch (spec.operation) {
+    case Operation::kAdd: return {"add", "hbm_triad", InputDomain::kReal, 2};
+    case Operation::kRelu: return {"relu", "hbm_copy"};
+    case Operation::kBatchnorm:
+      return {"batchnorm", "vector_fp32", InputDomain::kReal, 5};
+    case Operation::kReduction: return {"reduction", "vector_fp32"};
     case Operation::kReshape: return {"reshape", "hbm_copy"};
     case Operation::kTranspose: return {"transpose", "hbm_copy"};
     case Operation::kSlice: return {"slice", "hbm_copy"};
     case Operation::kGraph:
+      if (spec.name.starts_with("add_square_"))
+        return {"add_square", "vector_fp32", InputDomain::kReal, 2};
       if (!spec.graph.nodes.empty() || !spec.graph.intermediates.empty())
         return {};
       if (spec.name.starts_with("concatenate_"))
@@ -81,6 +89,26 @@ Policy policy(const BenchmarkCase& spec) {
   }
   switch (spec.pointwise_mode) {
     case FLAGDNN_POINTWISE_IDENTITY: return {"identity", "hbm_copy"};
+    case FLAGDNN_POINTWISE_ABS: return {"abs", "hbm_copy"};
+    case FLAGDNN_POINTWISE_SUB:
+      return {"sub", "hbm_triad", InputDomain::kReal, 2};
+    case FLAGDNN_POINTWISE_MUL:
+      return {spec.name.starts_with("scale_") ? "scale" : "mul", "hbm_triad",
+              InputDomain::kReal, 2};
+    case FLAGDNN_POINTWISE_MIN:
+      return {"min", "hbm_triad", InputDomain::kReal, 2};
+    case FLAGDNN_POINTWISE_MAX:
+      return {"max", "hbm_triad", InputDomain::kReal, 2};
+    case FLAGDNN_POINTWISE_ELU_FWD: return {"elu", "vector_fp32"};
+    case FLAGDNN_POINTWISE_SIGMOID_FWD: return {"sigmoid", "vector_fp32"};
+    case FLAGDNN_POINTWISE_SIGMOID_BWD:
+      return {"sigmoid_backward", "vector_fp32", InputDomain::kReal, 2};
+    case FLAGDNN_POINTWISE_SWISH_FWD: return {"swish", "vector_fp32"};
+    case FLAGDNN_POINTWISE_SWISH_BWD:
+      return {"swish_backward", "vector_fp32", InputDomain::kReal, 2};
+    case FLAGDNN_POINTWISE_TANH_FWD: return {"tanh", "vector_fp32"};
+    case FLAGDNN_POINTWISE_TANH_BWD:
+      return {"tanh_backward", "vector_fp32", InputDomain::kReal, 2};
     case FLAGDNN_POINTWISE_DIV:
       return {"div", "vector_fp32", InputDomain::kDivisor, 2};
     case FLAGDNN_POINTWISE_POW:
@@ -130,11 +158,11 @@ Policy policy(const BenchmarkCase& spec) {
       if (spec.name.starts_with("leaky_relu_") &&
           !spec.name.starts_with("leaky_relu_backward_"))
         return {"leaky_relu", "hbm_copy"};
-      return {};
+      return {"relu", "hbm_copy"};
     case FLAGDNN_POINTWISE_RELU_BWD:
       if (spec.name.starts_with("leaky_relu_backward_"))
         return {"leaky_relu_backward", "hbm_triad", InputDomain::kReal, 2};
-      return {};
+      return {"relu_backward", "hbm_triad", InputDomain::kReal, 2};
     case FLAGDNN_POINTWISE_ELU_BWD:
       return {"elu_backward", "vector_fp32", InputDomain::kReal, 2};
     case FLAGDNN_POINTWISE_GELU_FWD: return {"gelu", "vector_fp32"};
@@ -149,6 +177,28 @@ Policy policy(const BenchmarkCase& spec) {
       return {"softplus_backward", "vector_fp32", InputDomain::kReal, 2};
     default: return {};
   }
+}
+
+bool supplemental_pointwise(std::string_view operation) {
+  constexpr std::string_view names[] = {
+      "abs",   "add",          "add_square",
+      "elu",   "max",          "min",
+      "mul",   "relu",         "relu_backward",
+      "scale", "sigmoid",      "sigmoid_backward",
+      "sub",   "swish",        "swish_backward",
+      "tanh",  "tanh_backward"};
+  return std::find(std::begin(names), std::end(names), operation) !=
+         std::end(names);
+}
+
+bool supplemental_case(const BenchmarkCase& spec, const Policy& chosen) {
+  return supplemental_pointwise(chosen.operation) ||
+         chosen.operation == "batchnorm" || chosen.operation == "reduction" ||
+         (chosen.operation == "identity" &&
+          spec.tensors.front().data_type != FLAGDNN_DATA_FP8_E4M3 &&
+          spec.tensors.front().data_type != FLAGDNN_DATA_FP8_E5M2) ||
+         spec.name.starts_with("logical_and_bool_") ||
+         spec.name.starts_with("logical_or_bool_");
 }
 
 void exact_keys(const Value& object,
@@ -244,6 +294,167 @@ void layout_attributes(const BenchmarkCase& spec, const Value& entry) {
             "reshape attributes differ from output descriptor");
 }
 
+std::int64_t checked_element_count(const TensorSpec& tensor) {
+  std::int64_t count = 1;
+  for (const auto dimension : tensor.dimensions) {
+    require(dimension > 0 &&
+                count <= std::numeric_limits<std::int64_t>::max() / dimension,
+            "invalid flattened reference extent");
+    count *= dimension;
+  }
+  return count;
+}
+
+void flattened_descriptor(const TensorSpec& tensor, const Value& entry) {
+  const auto count = checked_element_count(tensor);
+  require(
+      same_vector(entry.at("reference_descriptor_shape"), {1, count, 1, 1}) &&
+          same_vector(entry.at("reference_descriptor_strides"),
+                      {count, 1, 1, 1}),
+      "flattened NVIDIA graph descriptor differs");
+}
+
+void graph_attributes(const BenchmarkCase& spec, const Value& entry,
+                      const Policy& chosen) {
+  pointwise_attributes(spec, entry, chosen);
+  const auto& nodes = entry.at("graph_nodes").as_array();
+  const auto& intermediates = entry.at("intermediate_tensors").as_array();
+  require(spec.graph.nodes.size() == 2 &&
+              spec.graph.intermediates.size() == 1 && nodes.size() == 2 &&
+              intermediates.size() == 1,
+          "add_square graph topology differs");
+  for (std::size_t i = 0; i < nodes.size(); ++i) {
+    const auto& node = spec.graph.nodes[i];
+    const auto& recorded = nodes[i];
+    exact_keys(
+        recorded,
+        {"name", "operation_kind", "input_uids", "output_uid", "pointwise_mode",
+         "alpha", "pointwise_flags", "relu_lower_clip", "relu_upper_clip",
+         "relu_lower_clip_slope", "swish_beta", "elu_alpha", "softplus_beta"});
+    require(recorded.at("name").as_string() == node.name &&
+                recorded.at("operation_kind").as_int() ==
+                    static_cast<int>(node.operation) &&
+                node.operation == Operation::kPointwise &&
+                same_vector(recorded.at("input_uids"), node.input_uids) &&
+                recorded.at("output_uid").as_int() == node.output_uid,
+            "add_square graph node differs");
+    const auto& a = node.pointwise_attributes;
+    const auto defaults = default_pointwise_attributes();
+    require(a.struct_size == defaults.struct_size &&
+                a.version == defaults.version &&
+                recorded.at("pointwise_mode").as_int() == node.pointwise_mode &&
+                recorded.at("pointwise_flags").as_int() ==
+                    static_cast<std::int64_t>(a.flags),
+            "add_square node attributes differ");
+    same_number(recorded, "alpha", node.alpha);
+    same_number(recorded, "relu_lower_clip", a.relu_lower_clip);
+    same_number(recorded, "relu_upper_clip", a.relu_upper_clip);
+    same_number(recorded, "relu_lower_clip_slope", a.relu_lower_clip_slope);
+    same_number(recorded, "swish_beta", a.swish_beta);
+    same_number(recorded, "elu_alpha", a.elu_alpha);
+    same_number(recorded, "softplus_beta", a.softplus_beta);
+  }
+  const auto& tensor = spec.graph.intermediates.front();
+  const auto& recorded = intermediates.front();
+  require(
+      recorded.at("uid").as_int() == tensor.uid &&
+          recorded.at("role").as_string() == "intermediate" &&
+          recorded.at("semantic_role").as_string() ==
+              "intermediate_" + std::to_string(tensor.uid) &&
+          recorded.at("dtype").as_string() == dtype_name(tensor.data_type) &&
+          same_vector(recorded.at("shape"), tensor.dimensions) &&
+          same_vector(recorded.at("strides"), tensor.strides) &&
+          recorded.at("binding_byte_offset").as_int() == 0 &&
+          tensor.binding_byte_offset == 0 && recorded.at("virtual").as_bool(),
+      "add_square intermediate differs");
+  require(std::none_of(
+              spec.tensors.begin(), spec.tensors.end(),
+              [&](const TensorSpec& bound) { return bound.uid == tensor.uid; }),
+          "add_square intermediate aliases a binding UID");
+  flattened_descriptor(tensor, recorded);
+}
+
+void supplemental_inputs(const BenchmarkCase& spec, const Value& entry,
+                         const Value& measurement,
+                         const std::vector<InputDomain>& domains) {
+  constexpr std::string_view id = "nvidia-missing-20261012";
+  require(entry.at("measurement_id").as_string() == id,
+          "supplemental measurement identity differs");
+  const auto& run = measurement.at("supplemental_runs").at(id);
+  require(run.at("case_count").as_int() == 371 &&
+              !run.at("source_revision").as_string().empty() &&
+              !run.at("manifest").as_string().empty(),
+          "supplemental provenance is incomplete");
+  const auto& generation = entry.at("input_generation");
+  constexpr std::string_view real_formula =
+      "float(int((index * 17 + input_index * 11) % 41) - 20) / float(13 + "
+      "input_index)";
+  const bool core = spec.name.find("_perf_") != std::string::npos;
+  if (core) {
+    require(entry.at("input_domain").as_int() ==
+                    static_cast<int>(spec.input_domain) &&
+                entry.at("output_count").as_int() ==
+                    static_cast<std::int64_t>(spec.output_count),
+            "core supplemental input/output contract differs");
+    std::vector<std::int64_t> domain_values;
+    for (auto domain : domains)
+      domain_values.push_back(static_cast<int>(domain));
+    require(same_vector(entry.at("input_domains"), domain_values),
+            "core supplemental per-input domains differ");
+    exact_keys(generation, {"source", "domain_definitions"});
+    require(
+        generation.at("source").as_string() ==
+                "backends/nvidia/validation/benchmark/runner.cpp::make_input" &&
+            generation.at("domain_definitions").as_string() ==
+                "measurement.supplemental_runs.nvidia-missing-20261012.input_"
+                "domains",
+        "core supplemental input generator differs");
+    const auto& definitions = run.at("input_domains");
+    require(definitions.at("real_value").as_string() ==
+                    "float(int((index * 17 + tensor_index * 11) % 41) - 20) / "
+                    "float(13 + tensor_index)" &&
+                definitions.at("0").as_string() == "real_value (kReal)" &&
+                definitions.at("1").as_string() ==
+                    "abs(real_value) + 0.5F (kPositive)",
+            "core supplemental input domain formula differs");
+    return;
+  }
+  exact_keys(generation, {"source", "inputs", "padding_value"});
+  require(generation.at("source").as_string() ==
+              "backends/hygon/validation/benchmark/runner.cpp:make_input",
+          "auxiliary supplemental input generator differs");
+  same_number(generation, "padding_value", -97);
+  const auto& inputs = generation.at("inputs").as_array();
+  require(inputs.size() == domains.size(), "supplemental input count differs");
+  for (std::size_t i = 0; i < inputs.size(); ++i) {
+    const auto& input = inputs[i];
+    exact_keys(input,
+               {"uid", "input_index", "domain", "formula", "conversion"});
+    require(
+        input.at("uid").as_int() == spec.tensors[i].uid &&
+            input.at("input_index").as_int() == static_cast<std::int64_t>(i),
+        "supplemental input identity differs");
+    const bool logical = domains[i] == InputDomain::kLogical;
+    require(
+        (logical || domains[i] == InputDomain::kReal) &&
+            input.at("domain").as_string() == (logical ? "logical" : "real") &&
+            input.at("formula").as_string() ==
+                (logical ? "((index * 17 + input_index * 11) % 3) != 0"
+                         : real_formula),
+        "supplemental input formula differs");
+    const auto dtype = spec.tensors[i].data_type;
+    const std::string_view conversion =
+        dtype == FLAGDNN_DATA_BOOLEAN
+            ? "nonzero to bool; pack little-endian bits"
+        : dtype == FLAGDNN_DATA_INT32
+            ? "truncate toward zero; equivalent integer rational evaluation "
+              "without FLOAT storage"
+            : "round to tensor dtype before CPU oracle";
+    require(input.at("conversion").as_string() == conversion,
+            "supplemental input conversion differs");
+  }
+}
+
 std::int64_t storage_bits(flagdnnDataType_t type) {
   switch (type) {
     case FLAGDNN_DATA_FP8_E4M3:
@@ -262,13 +473,62 @@ std::int64_t storage_bits(flagdnnDataType_t type) {
 bool supports_equivalent_baseline(const BenchmarkCase& specification) {
   const auto chosen = policy(specification);
   if (chosen.operation.empty()) return false;
-  // Only the 24 native FP8 identity cases have matching NVIDIA evidence.
-  // FP32/FP16 retain their native pair; BF16/INT32/BOOL cannot borrow it.
+  if (supplemental_pointwise(chosen.operation))
+    return specification.name.starts_with(std::string(chosen.operation) +
+                                          "_perf_bfloat16_") &&
+           !specification.tensors.empty() &&
+           std::all_of(specification.tensors.begin(),
+                       specification.tensors.end(),
+                       [](const TensorSpec& tensor) {
+                         return tensor.data_type == FLAGDNN_DATA_BFLOAT16;
+                       });
   if (chosen.operation == "identity") {
     if (specification.tensors.size() != 2) return false;
     const auto type = specification.tensors.front().data_type;
-    return (type == FLAGDNN_DATA_FP8_E4M3 || type == FLAGDNN_DATA_FP8_E5M2) &&
-           specification.tensors.back().data_type == type;
+    const bool dtype_supported =
+        type == FLAGDNN_DATA_FP8_E4M3 || type == FLAGDNN_DATA_FP8_E5M2 ||
+        type == FLAGDNN_DATA_BFLOAT16 || type == FLAGDNN_DATA_INT32 ||
+        type == FLAGDNN_DATA_BOOLEAN;
+    return dtype_supported &&
+           specification.tensors.back().data_type == type &&
+           (specification.name.starts_with(
+                "identity_" + std::string(dtype_name(type)) + "_") ||
+            (type == FLAGDNN_DATA_BFLOAT16 &&
+             specification.name.starts_with("identity_perf_bfloat16_")));
+  }
+  if (chosen.operation == "batchnorm") {
+    if (specification.tensors.size() != 10 || specification.output_count != 5)
+      return false;
+    const auto type = specification.tensors.front().data_type;
+    if ((type != FLAGDNN_DATA_FLOAT16 && type != FLAGDNN_DATA_BFLOAT16) ||
+        !specification.name.starts_with("batchnorm_perf_" +
+                                        std::string(dtype_name(type)) + "_"))
+      return false;
+    for (std::size_t i = 0; i < specification.tensors.size(); ++i)
+      if (specification.tensors[i].data_type !=
+          (i <= 2 || i == 5 ? type : FLAGDNN_DATA_FLOAT32))
+        return false;
+    return true;
+  }
+  if (chosen.operation == "reduction") {
+    if (specification.tensors.size() != 2 || specification.output_count != 1 ||
+        specification.tensors.back().data_type != FLAGDNN_DATA_FLOAT32)
+      return false;
+    const auto& input = specification.tensors.front();
+    const auto rank = static_cast<std::int32_t>(input.dimensions.size());
+    const auto axis = specification.reduction_axis < 0
+                          ? specification.reduction_axis + rank
+                          : specification.reduction_axis;
+    if (input.data_type == FLAGDNN_DATA_BFLOAT16)
+      return rank == 2 &&
+             specification.reduction_mode == FLAGDNN_REDUCTION_ADD &&
+             specification.name.starts_with("reduction_sum_bfloat16_to_fp32_");
+    return input.data_type == FLAGDNN_DATA_FLOAT16 && rank > 2 && axis > 0 &&
+           axis < rank - 1 &&
+           (specification.reduction_mode == FLAGDNN_REDUCTION_ADD ||
+            specification.reduction_mode == FLAGDNN_REDUCTION_AVG ||
+            specification.reduction_mode == FLAGDNN_REDUCTION_MUL) &&
+           specification.name.find("_fp16_to_fp32_") != std::string::npos;
   }
   return std::all_of(specification.tensors.begin(), specification.tensors.end(),
                      [&](const TensorSpec& tensor) {
@@ -345,7 +605,12 @@ EquivalentBaseline PerformanceBaseline::lookup(
     const auto chosen = policy(specification);
     require(specification.name.starts_with(std::string(chosen.operation) + "_"),
             "case name and operation differ");
-    require(specification.output_count == 1, "expected exactly one output");
+    const bool batchnorm = chosen.operation == "batchnorm";
+    const bool reduction = chosen.operation == "reduction";
+    const bool add_square = chosen.operation == "add_square";
+    const bool supplement = supplemental_case(specification, chosen);
+    require(specification.output_count == (batchnorm ? 5U : 1U),
+            "output count differs from operation");
     const std::size_t input_count = input_tensor_count(specification);
     require(chosen.operation == "concatenate" ? input_count >= 1
                                               : input_count == chosen.inputs,
@@ -354,11 +619,12 @@ EquivalentBaseline PerformanceBaseline::lookup(
             "input domain differs from the NVIDIA catalog");
     std::vector<InputDomain> domains(input_count, chosen.domain);
     if (chosen.operation == "binary_select") domains[2] = InputDomain::kLogical;
+    if (batchnorm) domains[4] = InputDomain::kPositive;
     require(specification.input_domains.empty()
-                ? chosen.operation != "binary_select"
+                ? chosen.operation != "binary_select" && !batchnorm
                 : specification.input_domains == domains,
             "per-input domains differ from the NVIDIA catalog");
-    require((specification.operation == Operation::kGraph) == (metadata != nullptr),
+    require((specification.operation == Operation::kGraph && !add_square) == (metadata != nullptr),
             "native metadata is required only for native index operations");
 
     const auto& target = document_.at("platforms").at("hygon");
@@ -371,17 +637,42 @@ EquivalentBaseline PerformanceBaseline::lookup(
     const auto& entry = reference.at("cases").at(specification.name);
     require(entry.at("op").as_string() == chosen.operation,
             "reference operation differs");
-    const bool pointwise = specification.operation == Operation::kPointwise;
+    const bool pointwise = specification.operation == Operation::kPointwise ||
+                           specification.operation == Operation::kAdd ||
+                           specification.operation == Operation::kRelu;
     const std::string validation = entry.at("validation").as_string();
     require(chosen.operation == "identity"
-                ? validation == "bit_exact" &&
+                ? validation == (specification.name.starts_with("identity_perf_")
+                                 ? "cpu_full"
+                                 : "bit_exact") &&
                       specification.absolute_tolerance == 0 &&
                       specification.relative_tolerance == 0
                 : validation == "cpu_full" ||
-                      (!pointwise && validation == "sanity"),
+                      (!pointwise && !supplement && validation == "sanity"),
             "reference validation is insufficient or unknown");
     if (pointwise) {
       pointwise_attributes(specification, entry, chosen);
+    } else if (add_square) {
+      graph_attributes(specification, entry, chosen);
+    } else if (batchnorm) {
+      exact_keys(entry.at("attributes"), {"epsilon", "momentum"});
+      same_number(entry.at("attributes"), "epsilon",
+                  specification.normalization.epsilon);
+      same_number(entry.at("attributes"), "momentum",
+                  specification.normalization.momentum);
+    } else if (reduction) {
+      const auto& attrs = entry.at("attributes");
+      exact_keys(attrs, {"mode", "mode_name", "axis", "keep_dimensions"});
+      const auto mode = specification.reduction_mode;
+      require(attrs.at("mode").as_int() == mode &&
+                  attrs.at("mode_name").as_string() ==
+                      (mode == FLAGDNN_REDUCTION_ADD   ? "sum"
+                       : mode == FLAGDNN_REDUCTION_AVG ? "avg"
+                                                       : "mul") &&
+                  attrs.at("axis").as_int() == specification.reduction_axis &&
+                  attrs.at("keep_dimensions").as_bool() ==
+                      specification.keep_dimensions,
+              "reduction attributes differ");
     } else if (metadata) {
       require(metadata->operation == chosen.operation,
               "native operation differs from reference");
@@ -404,7 +695,12 @@ EquivalentBaseline PerformanceBaseline::lookup(
               "reference per-input domains differ");
     }
     if (const auto* count = optional(entry, "output_count"))
-      require(count->as_int() == 1, "reference output count is not one");
+      require(count->as_int() ==
+                  static_cast<std::int64_t>(specification.output_count),
+              "reference output count differs");
+    if (supplement)
+      supplemental_inputs(specification, entry, reference.at("measurement"),
+                          domains);
 
     const auto& tensors = entry.at("tensors").as_array();
     require(tensors.size() == specification.tensors.size(),
@@ -417,6 +713,9 @@ EquivalentBaseline PerformanceBaseline::lookup(
       const auto& expected = tensors[i];
       const std::string label = "tensor " + std::to_string(i);
       require(uids.insert(tensor.uid).second, "tensor UIDs are not unique");
+      if (supplement)
+        require(expected.at("uid").as_int() == tensor.uid,
+                label + " UID differs");
       require(expected.at("role").as_string() ==
                   (i < input_count ? "input" : "output"),
               label + " role differs");
@@ -432,9 +731,44 @@ EquivalentBaseline PerformanceBaseline::lookup(
                   static_cast<std::uint64_t>(expected_offset) ==
                       tensor.binding_byte_offset,
               label + " binding offset differs");
-      if (const auto* strides = optional(expected, "reference_strides"))
+      if (batchnorm && (i == 0 || i == 5)) {
+        const auto& shape = tensor.dimensions;
+        // Validate every positive product before computing either layout.
+        // Even adversarial matching source/target metadata must fail closed.
+        (void)checked_element_count(tensor);
+        require(shape.size() == 4 &&
+                    tensor.strides == contiguous_strides(shape) &&
+                    same_vector(expected.at("reference_strides"),
+                                {shape[1] * shape[2] * shape[3], 1,
+                                 shape[3] * shape[1], shape[1]}) &&
+                    !expected.at("reference_layout_conversion_timed").as_bool(),
+                label + " batchnorm NCHW-to-NHWC reference layout differs");
+      } else if (const auto* strides = optional(expected, "reference_strides")) {
         require(same_vector(*strides, tensor.strides),
                 label + " converted reference strides differ");
+      }
+      if (batchnorm) {
+        constexpr std::string_view roles[] = {"x",
+                                              "scale",
+                                              "bias",
+                                              "previous_running_mean",
+                                              "previous_running_variance",
+                                              "y",
+                                              "saved_mean",
+                                              "saved_inverse_variance",
+                                              "next_running_mean",
+                                              "next_running_variance"};
+        require(expected.at("semantic_role").as_string() == roles[i],
+                label + " batchnorm semantic role differs");
+      } else if (supplement &&
+                 specification.name.find("_perf_") != std::string::npos) {
+        require(
+            expected.at("semantic_role").as_string() ==
+                (i < input_count ? "input_" + std::to_string(i)
+                                 : "output_" + std::to_string(i - input_count)),
+            label + " core semantic role differs");
+      }
+      if (add_square) flattened_descriptor(tensor, expected);
       require(tensor.dimensions.size() == tensor.strides.size(),
               label + " rank and strides differ");
       double count = 1;
@@ -473,8 +807,8 @@ EquivalentBaseline PerformanceBaseline::lookup(
     require(bandwidth || result.traffic_ratio == 1,
             "storage conversion is unsupported for a compute proxy");
     result.timing_profile = entry.at("timing_profile").as_string();
-    require(result.timing_profile == "native",
-            "equivalent baseline requires the native timing profile");
+    require(result.timing_profile == (batchnorm ? "batchnorm_training" : "native"),
+        "equivalent baseline timing profile differs");
     const auto& measurement = reference.at("measurement");
     require(measurement.at("timing_method").as_string() ==
                 "device_events_over_cuda_graph",
@@ -484,10 +818,9 @@ EquivalentBaseline PerformanceBaseline::lookup(
     const auto& timing =
         measurement.at("timing_profiles").at(result.timing_profile);
     const auto& config = specification.benchmark;
-    if (chosen.operation == "identity")
-      require(config.warmup_iterations == 10 && config.sample_count == 20 &&
-                  config.iterations_per_sample == 50,
-              "FP8 identity requires the recorded native timing configuration");
+    require(config.warmup_iterations == (batchnorm ? 5 : 10) && config.sample_count == (batchnorm ? 10 : 20) &&
+                  config.iterations_per_sample == (batchnorm ? 20 : 50),
+            "equivalent baseline requires the recorded timing configuration");
     require(config.warmup_iterations >= 0 && config.sample_count > 0 &&
                 config.iterations_per_sample > 0,
             "invalid benchmark timing configuration");

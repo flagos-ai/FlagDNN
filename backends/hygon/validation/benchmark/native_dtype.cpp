@@ -8,6 +8,7 @@
 #include "common/reduction.hpp"
 #include "native.hpp"
 #include "precision.hpp"
+#include "reference/cpu/matrix.hpp"
 #include "validation_guards.hpp"
 #include <cstdlib>
 #include <map>
@@ -88,19 +89,18 @@ struct Catalog {
         [&](flagdnn::Handle &handle, const bm::BenchmarkCase &value) {
           return std::make_unique<NativeExecutable>(
               builders.at(value.name)(handle));
-        });
-  }
-
-  int skip_without_nvidia_reference(int argc, std::string_view operation) const {
-    const char *filter = std::getenv("FLAGDNN_BENCHMARK_CASE");
-    std::vector<std::string_view> names;
-    names.reserve(cases.size());
-    for (const auto &value : cases) names.push_back(value.name);
-    return bm::skip_unreferenced_benchmark_cases(
-        argc, operation, names, filter != nullptr ? filter : "",
-        "Native boolean auxiliary catalog has no matching NVIDIA reference; "
-        "measured performance cases are in the main benchmark catalog",
-        std::cout, std::cerr);
+        },
+        operation == "reduction"
+            ? bm::NativeCpuOracle{[](const bm::BenchmarkCase &spec,
+                                     const auto &inputs) {
+                // Match the supplemental NVIDIA collector's double-precision
+                // accumulation oracle without changing production tolerances.
+                return std::vector<std::vector<float>>{
+                    reference::cpu::evaluate_reduction(
+                        {spec.tensors.front().dimensions, spec.reduction_axis,
+                         spec.reduction_mode}, inputs.at(0))};
+              }}
+            : bm::NativeCpuOracle{});
   }
 };
 } // namespace
@@ -239,15 +239,6 @@ int run_native_dtype_benchmark(int argc, char **argv,
     }
   } else
     throw std::invalid_argument("unknown dtype benchmark category");
-#ifndef FLAGDNN_HYGON_CATALOG_PROBE
-  // NVIDIA recorded the main logical_and/or performance catalog only. Their
-  // separately registered shared boolean catalogs have different case names
-  // and shapes, so they cannot borrow the main catalog's reference times.
-  // Keep probing the complete native catalog in the CPU registration contract.
-  if (category == "boolean" &&
-      (operation == "logical_and" || operation == "logical_or"))
-    return catalog.skip_without_nvidia_reference(argc, operation);
-#endif
   return catalog.run(argc, argv, operation,
                      category == "precision" &&
                          validation::hygon::selected_input_precision() == 2);

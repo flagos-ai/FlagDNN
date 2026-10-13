@@ -1,11 +1,6 @@
 /* Copyright (c) 2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
-#include "equivalent_baseline.hpp"
-#include "cases.hpp"
-#include "common/cases.hpp"
-#include "common/index.hpp"
-#include "common/layout.hpp"
-#include "common/pointwise.hpp"
+#include <unistd.h>
 
 #include <algorithm>
 #include <cmath>
@@ -18,8 +13,14 @@
 #include <set>
 #include <stdexcept>
 #include <string>
-#include <unistd.h>
 #include <utility>
+#include "cases.hpp"
+#include "common/cases.hpp"
+#include "common/index.hpp"
+#include "common/layout.hpp"
+#include "common/pointwise.hpp"
+#include "common/reduction.hpp"
+#include "equivalent_baseline.hpp"
 
 namespace {
 
@@ -178,14 +179,63 @@ std::vector<CatalogCase> full_catalog() {
   }
   append(bench::binary_select_benchmark_cases());
 
+  // Exact supplemental main catalog: retain the existing FP32/FP16 native
+  // pairs and do not import the old activation attribute-only probes.
+  const auto append_bf16 = [&](const std::vector<bench::BenchmarkCase>& cases) {
+    for (auto spec : bench::aligned_benchmark_cases(cases))
+      if (spec.tensors.front().data_type == FLAGDNN_DATA_BFLOAT16)
+        result.push_back({std::move(spec), std::nullopt});
+  };
+  append_bf16(bench::add_benchmark_cases());
+  append_bf16(bench::relu_benchmark_cases());
+  append_bf16(bench::add_square_benchmark_cases());
+  const Pointwise supplement[] = {
+      {FLAGDNN_POINTWISE_ABS, "abs", Domain::kReal, false},
+      {FLAGDNN_POINTWISE_SUB, "sub", Domain::kReal, true},
+      {FLAGDNN_POINTWISE_MUL, "mul", Domain::kReal, true},
+      {FLAGDNN_POINTWISE_MIN, "min", Domain::kReal, true},
+      {FLAGDNN_POINTWISE_MAX, "max", Domain::kReal, true},
+      {FLAGDNN_POINTWISE_MUL, "scale", Domain::kReal, true},
+      {FLAGDNN_POINTWISE_ELU_FWD, "elu", Domain::kReal, false},
+      {FLAGDNN_POINTWISE_RELU_BWD, "relu_backward", Domain::kReal, true},
+      {FLAGDNN_POINTWISE_SIGMOID_FWD, "sigmoid", Domain::kReal, false},
+      {FLAGDNN_POINTWISE_SIGMOID_BWD, "sigmoid_backward", Domain::kReal, true},
+      {FLAGDNN_POINTWISE_SWISH_FWD, "swish", Domain::kReal, false},
+      {FLAGDNN_POINTWISE_SWISH_BWD, "swish_backward", Domain::kReal, true},
+      {FLAGDNN_POINTWISE_TANH_FWD, "tanh", Domain::kReal, false},
+      {FLAGDNN_POINTWISE_TANH_BWD, "tanh_backward", Domain::kReal, true},
+      {FLAGDNN_POINTWISE_IDENTITY, "identity", Domain::kReal, false},
+  };
+  for (const auto& operation : supplement) {
+    auto cases = operation.binary
+                     ? bench::binary_pointwise_benchmark_cases(
+                           operation.mode, operation.name, operation.domain)
+                     : bench::unary_pointwise_benchmark_cases(
+                           operation.mode, operation.name, operation.domain);
+    for (auto& spec : cases) {
+      if (operation.name == "elu")
+        spec.pointwise_attributes.flags = FLAGDNN_POINTWISE_ATTRIBUTE_ELU_ALPHA;
+      if (operation.name == "swish") {
+        spec.pointwise_attributes.flags =
+            FLAGDNN_POINTWISE_ATTRIBUTE_SWISH_BETA;
+        spec.pointwise_attributes.swish_beta = 1.25;
+      }
+    }
+    append_bf16(cases);
+  }
+  for (auto spec : bench::batchnorm_benchmark_cases())
+    if (spec.tensors.front().data_type != FLAGDNN_DATA_FLOAT32)
+      result.push_back({std::move(spec), std::nullopt});
+
   namespace testing = flagdnn::testing;
   testing::PointwiseCaseDefinition identity;
   identity.operation_name = "identity";
   identity.mode = FLAGDNN_POINTWISE_IDENTITY;
-  std::size_t fp8_identity_count = 0;
+  std::size_t identity_count = 0;
   for (const auto& value : testing::make_unary_pointwise_cases(identity)) {
-    if (value.output.data_type != FLAGDNN_DATA_FP8_E4M3 &&
-        value.output.data_type != FLAGDNN_DATA_FP8_E5M2) continue;
+    if (value.output.data_type == FLAGDNN_DATA_FLOAT32 ||
+        value.output.data_type == FLAGDNN_DATA_FLOAT16 ||
+        value.output.data_type == FLAGDNN_DATA_FP8_E8M0) continue;
     bench::BenchmarkCase spec;
     spec.name = value.name;
     spec.operation = bench::Operation::kPointwise;
@@ -197,9 +247,52 @@ std::vector<CatalogCase> full_catalog() {
     for (const auto& input : value.inputs) spec.tensors.push_back(tensor(input));
     spec.tensors.push_back(tensor(value.output));
     result.push_back({std::move(spec), std::nullopt});
-    ++fp8_identity_count;
+    ++identity_count;
   }
-  require(fp8_identity_count == 24, "expected exactly 24 native FP8 identity cases");
+  require(identity_count == 60, "expected exactly 60 native identity cases");
+  for (std::string_view operation : {"logical_and", "logical_or"}) {
+    testing::PointwiseCaseDefinition definition;
+    definition.operation_name = operation;
+    definition.mode = operation == "logical_and" ? FLAGDNN_POINTWISE_LOGICAL_AND
+                                                 : FLAGDNN_POINTWISE_LOGICAL_OR;
+    definition.input_domain = testing::PointwiseInputDomain::kLogical;
+    for (const auto& value : testing::make_binary_pointwise_cases(definition)) {
+      bench::BenchmarkCase spec;
+      spec.name = value.name;
+      spec.operation = bench::Operation::kPointwise;
+      spec.pointwise_mode = value.mode;
+      spec.pointwise_attributes = value.attributes;
+      spec.add_alpha = value.alpha;
+      spec.input_domain = Domain::kLogical;
+      for (const auto& input : value.inputs)
+        spec.tensors.push_back(tensor(input));
+      spec.tensors.push_back(tensor(value.output));
+      result.push_back({std::move(spec), std::nullopt});
+    }
+  }
+  std::size_t reduction_count = 0;
+  for (const auto& value : testing::make_reduction_cases()) {
+    if (value.name.find("_to_fp32_") == std::string::npos) continue;
+    const auto rank = static_cast<std::int32_t>(value.input.dimensions.size());
+    const bool selected = value.input.data_type == FLAGDNN_DATA_BFLOAT16
+                              ? rank == 2 && value.mode == FLAGDNN_REDUCTION_ADD
+                              : value.input.data_type == FLAGDNN_DATA_FLOAT16 &&
+                                    rank > 2 && value.axis > 0 &&
+                                    value.axis < rank - 1;
+    if (!selected) continue;
+    bench::BenchmarkCase spec;
+    spec.name = value.name;
+    spec.operation = bench::Operation::kReduction;
+    spec.tensors = {tensor(value.input), tensor(value.output)};
+    spec.reduction_mode = value.mode;
+    spec.reduction_axis = value.axis;
+    spec.keep_dimensions = value.keep_dimensions;
+    spec.absolute_tolerance = value.absolute_tolerance;
+    spec.relative_tolerance = value.relative_tolerance;
+    result.push_back({std::move(spec), std::nullopt});
+    ++reduction_count;
+  }
+  require(reduction_count == 20, "expected exactly 20 supplemental reductions");
   testing::PointwiseCaseDefinition logical;
   logical.operation_name = "logical_not";
   logical.mode = FLAGDNN_POINTWISE_LOGICAL_NOT;
@@ -266,8 +359,8 @@ int main(int argc, char** argv) {
     const auto& target = document.at("platforms").at("hygon");
     const auto& reference = document.at("reference");
     const auto& policies = target.at("scaling").at("case_policies");
-    require(policies.as_object().size() == 40,
-            "expected 40 Hygon-specific scaling policies");
+    require(policies.as_object().size() == 59,
+            "expected 59 Hygon-specific scaling policies");
     for (const auto& [name, entry] : reference.at("cases").as_object())
       require(entry.at("scale_metric").is_null(),
               "shared reference metric must remain unknown: " + name);
@@ -298,9 +391,11 @@ int main(int argc, char** argv) {
     }
 
     const auto catalog = full_catalog();
-    require(catalog.size() == 1570, "expected 1570 current equivalent catalog cases");
+    require(catalog.size() == 1941,
+            "expected 1570 original + 371 supplemental catalog cases");
     std::set<std::string> operations;
     std::set<std::string> names;
+    std::set<std::string> supplemental_names;
     for (const auto& item : catalog) {
       const auto& spec = item.specification;
       require(bench::supports_equivalent_baseline(spec),
@@ -309,6 +404,8 @@ int main(int argc, char** argv) {
       const auto* metadata = item.metadata ? &*item.metadata : nullptr;
       const auto value = baseline.lookup(spec, device, architecture, metadata);
       const auto& entry = reference.at("cases").at(spec.name);
+      if (entry.as_object().contains("measurement_id"))
+        supplemental_names.insert(spec.name);
       const auto operation = entry.at("op").as_string();
       operations.insert(operation);
       require(value.scale_metric ==
@@ -324,7 +421,9 @@ int main(int argc, char** argv) {
       const auto dtype = spec.tensors.front().data_type;
       const double float_bits = dtype == FLAGDNN_DATA_FLOAT32 ? 32.0 : 16.0;
       const double ratio = comparison ? (2 * float_bits + 8) / (2 * float_bits + 1)
-                           : operation.starts_with("logical_") ? 8.0
+                           : operation.starts_with("logical_") ||
+                  (operation == "identity" && dtype == FLAGDNN_DATA_BOOLEAN)
+              ? 8.0
                            : operation == "binary_select"
                                ? (3 * float_bits + 8) / (3 * float_bits + 1)
                                : 1.0;
@@ -341,7 +440,16 @@ int main(int argc, char** argv) {
       rejects([&] { (void)baseline.lookup(unknown, device, architecture, metadata); },
               "unknown reference " + spec.name);
     }
-    require(operations.size() == 40, "not all 40 operations were validated");
+    require(operations.size() == 59, "not all 59 operations were validated");
+    std::set<std::string> reference_supplement;
+    for (const auto& [name, entry] : reference.at("cases").as_object())
+      if (entry.as_object().contains("measurement_id") &&
+          entry.at("measurement_id").as_string() == "nvidia-missing-20261012")
+        reference_supplement.insert(name);
+    require(
+        supplemental_names.size() == 371 &&
+            supplemental_names == reference_supplement,
+        "supplemental catalog does not exactly cover the 371 measured cases");
 
     const auto find_case = [&](std::string_view prefix) -> const CatalogCase& {
       const auto found = std::find_if(catalog.begin(), catalog.end(),
@@ -392,13 +500,112 @@ int main(int argc, char** argv) {
     invalid_catalog_spec("logical_not_", [](auto& item) {
       item.specification.tensors[0].data_type = FLAGDNN_DATA_INT32;
     }, "logical datatype");
+    invalid_catalog_spec(
+        "add_square_perf_bfloat16_",
+        [](auto& item) {
+          item.specification.graph.nodes[0].input_uids[0] =
+              item.specification.tensors[0].uid;
+        },
+        "add_square operand wiring");
+    invalid_catalog_spec(
+        "add_square_perf_bfloat16_",
+        [](auto& item) {
+          item.specification.graph.nodes[1].pointwise_mode =
+              FLAGDNN_POINTWISE_SUB;
+        },
+        "add_square node mode");
+    invalid_catalog_spec(
+        "add_square_perf_bfloat16_",
+        [](auto& item) { item.specification.graph.nodes[1].alpha = 2; },
+        "add_square node alpha");
+    invalid_catalog_spec(
+        "add_square_perf_bfloat16_",
+        [](auto& item) {
+          item.specification.graph.intermediates[0].strides[0] += 1;
+        },
+        "add_square intermediate stride");
+    invalid_catalog_spec(
+        "batchnorm_perf_fp16_",
+        [](auto& item) { item.specification.normalization.epsilon = 0.1; },
+        "batchnorm epsilon");
+    invalid_catalog_spec(
+        "batchnorm_perf_bfloat16_",
+        [](auto& item) { item.specification.normalization.momentum = 0.2; },
+        "batchnorm momentum");
+    invalid_catalog_spec(
+        "batchnorm_perf_fp16_",
+        [](auto& item) {
+          item.specification.input_domains.back() = bench::InputDomain::kReal;
+        },
+        "batchnorm positive running variance domain");
+    invalid_catalog_spec(
+        "batchnorm_perf_fp16_",
+        [](auto& item) {
+          item.specification.benchmark = {10, 20, 50};
+        },
+        "batchnorm cannot borrow native profile");
+    invalid_catalog_spec(
+        "batchnorm_perf_fp16_",
+        [](auto& item) { item.specification.output_count = 1; },
+        "batchnorm five outputs");
+    invalid_catalog_spec(
+        "batchnorm_perf_fp16_",
+        [](auto& item) {
+          item.specification.tensors.back().data_type = FLAGDNN_DATA_FLOAT16;
+        },
+        "batchnorm FP32 statistic dtype");
+    invalid_catalog_spec(
+        "reduction_sum_bfloat16_to_fp32_",
+        [](auto& item) {
+          item.specification.keep_dimensions =
+              !item.specification.keep_dimensions;
+        },
+        "reduction keep dimensions");
+    invalid_catalog_spec(
+        "reduction_sum_fp16_to_fp32_",
+        [](auto& item) {
+          item.specification.reduction_mode = FLAGDNN_REDUCTION_AVG;
+        },
+        "reduction mode identity");
+    invalid_catalog_spec(
+        "reduction_sum_fp16_to_fp32_",
+        [](auto& item) { item.specification.reduction_axis = 0; },
+        "native-supported reduction outside supplemental scope");
+    invalid_catalog_spec(
+        "identity_int32_",
+        [](auto& item) { item.specification.tensors[0].uid += 10000; },
+        "supplemental input generator UID");
+    invalid_catalog_spec(
+        "logical_and_bool_",
+        [](auto& item) {
+          item.specification.input_domain = bench::InputDomain::kReal;
+        },
+        "logical auxiliary input domain");
+    for (const auto prefix : {"add_perf_bfloat16_", "relu_perf_bfloat16_",
+                              "sigmoid_perf_bfloat16_"}) {
+      auto item = find_case(prefix);
+      for (auto& tensor : item.specification.tensors)
+        tensor.data_type = FLAGDNN_DATA_FLOAT32;
+      require(!bench::supports_equivalent_baseline(item.specification),
+              "new BF16 proxy replaced a native FP32 pair");
+    }
+    for (const auto prefix :
+         {"relu_backward_perf_bfloat16_", "swish_backward_perf_bfloat16_"}) {
+      auto item = find_case(prefix);
+      item.specification.name =
+          std::string(prefix).substr(0, std::string(prefix).find("perf_")) +
+          "attributes_bfloat16_2x3x4";
+      require(
+          !bench::supports_equivalent_baseline(item.specification),
+          "supplemental scope imported an unrequested attribute-only probe");
+    }
     for (const auto type : {FLAGDNN_DATA_FLOAT32, FLAGDNN_DATA_FLOAT16,
                             FLAGDNN_DATA_BFLOAT16, FLAGDNN_DATA_INT32,
                             FLAGDNN_DATA_BOOLEAN, FLAGDNN_DATA_FP8_E8M0}) {
       auto item = find_case("identity_fp8_e4m3_");
       for (auto& tensor : item.specification.tensors) tensor.data_type = type;
       require(!bench::supports_equivalent_baseline(item.specification),
-              "identity broadened beyond the two evidenced FP8 dtypes");
+              "identity dtype no longer agrees with the exact reference name");
     }
     invalid_catalog_spec("identity_fp8_e4m3_", [](auto& item) {
       item.specification.tensors.back().data_type = FLAGDNN_DATA_FP8_E5M2;
@@ -611,6 +818,90 @@ int main(int argc, char** argv) {
     bad_catalog_json("identity_fp8_e4m3_", "\"scale_metric\": \"hbm_copy\"",
                      "\"scale_metric\": \"vector_fp32\"", "identity metric",
                      "\"identity\": {");
+    bad_catalog_json("identity_perf_bfloat16_", "\"validation\": \"cpu_full\"",
+                     "\"validation\": \"bit_exact\"",
+                     "main identity validation provenance");
+    bad_catalog_json("identity_bfloat16_", "\"validation\": \"bit_exact\"",
+                     "\"validation\": \"cpu_full\"",
+                     "native identity must retain bit-exact evidence");
+    bad_catalog_json("identity_bool_", "\"reference_storage_bits\": 1",
+                     "\"reference_storage_bits\": 8",
+                     "identity packed BOOL traffic");
+    bad_catalog_json("logical_or_bool_", "\"reference_storage_bits\": 1",
+                     "\"missing_storage_bits\": 1",
+                     "auxiliary logical BOOL traffic");
+    bad_catalog_json("identity_int32_",
+                     "truncate toward zero; equivalent integer rational "
+                     "evaluation without FLOAT storage",
+                     "round to nearest through float",
+                     "identity integer input conversion");
+    bad_catalog_json("identity_bool_",
+                     "nonzero to bool; pack little-endian bits",
+                     "round to byte", "identity BOOL input conversion");
+    bad_catalog_json("logical_and_bool_",
+                     "((index * 17 + input_index * 11) % 3) != 0", "index % 2",
+                     "auxiliary logical input formula");
+    bad_catalog_json("reduction_sum_bfloat16_to_fp32_",
+                     "\"padding_value\": -97", "\"padding_value\": 0",
+                     "supplemental padding fixture");
+    bad_catalog_json(
+        "abs_perf_bfloat16_", "\"measurement_id\": \"nvidia-missing-20261012\"",
+        "\"measurement_id\": \"unknown\"", "supplemental measurement source");
+    bad_catalog_json("abs_perf_bfloat16_", "\"input_domains\": [0]",
+                     "\"unknown_domains\": [0]", "required core input domains");
+    bad_catalog_json(
+        "add_perf_bfloat16_",
+        "backends/nvidia/validation/benchmark/runner.cpp::make_input",
+        "unrelated_fixture", "core input generator source");
+    bad_catalog_json(
+        "batchnorm_perf_fp16_", "\"timing_profile\": \"batchnorm_training\"",
+        "\"timing_profile\": \"native\"", "BN reference timing profile");
+    bad_catalog_json("batchnorm_perf_fp16_",
+                     "\"reference_strides\": [32768, 1, 1024, 32]",
+                     "\"reference_strides\": [32768, 1024, 32, 1]",
+                     "BN recorded NHWC layout");
+    bad_catalog_json("batchnorm_perf_fp16_",
+                     "\"reference_layout_conversion_timed\": false",
+                     "\"reference_layout_conversion_timed\": true",
+                     "BN untimed layout conversion");
+    bad_catalog_json(
+        "batchnorm_perf_fp16_", "\"semantic_role\": \"saved_mean\"",
+        "\"semantic_role\": \"next_running_mean\"", "BN output semantic role");
+    bad_catalog_json("batchnorm_perf_bfloat16_", "\"output_count\": 5",
+                     "\"output_count\": 1", "BN reference five outputs");
+    bad_catalog_json("reduction_sum_fp16_to_fp32_", "\"axis\": 1",
+                     "\"axis\": 2", "reduction original axis");
+    bad_catalog_json("reduction_sum_fp16_to_fp32_", "\"mode_name\": \"sum\"",
+                     "\"mode_name\": \"mul\"", "reduction original mode name");
+    bad_catalog_json("add_square_perf_bfloat16_",
+                     "\"reference_descriptor_shape\": [1, 1024, 1, 1]",
+                     "\"reference_descriptor_shape\": [1, 1023, 1, 1]",
+                     "graph flattened descriptor");
+    bad_catalog_json("add_square_perf_bfloat16_", "\"virtual\": true",
+                     "\"virtual\": false", "graph intermediate virtual role");
+    bad_catalog_json(
+        "add_square_perf_bfloat16_", "\"input_uids\": [12009, 12009]",
+        "\"input_uids\": [12008, 12009]", "graph reference operand wiring");
+
+    bad_catalog_json("add_perf_bfloat16_", "\"semantic_role\": \"input_0\"",
+                     "\"semantic_role\": \"input_1\"",
+                     "core tensor semantic role");
+    bad_catalog_json("add_square_perf_bfloat16_",
+                     "\"semantic_role\": \"intermediate_12010\"",
+                     "\"semantic_role\": \"intermediate_12009\"",
+                     "graph intermediate semantic role");
+    auto overflowing_bn = find_case("batchnorm_perf_fp16_").specification;
+    overflowing_bn.tensors.front().dimensions[1] =
+        std::numeric_limits<std::int64_t>::max();
+    fixture.write(replace_after(raw, "\"" + overflowing_bn.name + "\"",
+                                "\"shape\": [8, 32, 32, 32]",
+                                "\"shape\": [8, 9223372036854775807, 32, 32]"));
+    rejects(
+        [&] {
+          const bench::PerformanceBaseline invalid(fixture.path);
+          (void)invalid.lookup(overflowing_bn, device, architecture);
+        },
+        "matching BN metadata whose NCHW/NHWC products overflow");
 
     bench::EquivalentBaseline arithmetic{
         "vector_fp32", "native", 2.0, 60.0, 15.0, 0.8, 1.0, "cpu_full"};
@@ -633,7 +924,8 @@ int main(int argc, char** argv) {
     arithmetic.reference_time_us = std::numeric_limits<double>::quiet_NaN();
     rejects([&] { (void)arithmetic.limit_us(); }, "nonfinite arithmetic");
     std::cout << "PASS: " << catalog.size()
-              << " baseline cases across 40 operations, formula, traffic, provenance, "
+              << " baseline cases across 59 operations, formula, traffic, "
+                 "provenance, "
                  "platform isolation, mismatch and invalid-data contracts\n";
     return 0;
   } catch (const std::exception& error) {

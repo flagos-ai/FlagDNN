@@ -629,21 +629,29 @@ CaseResult run_equivalent_case(
       specification.operation == Operation::kPointwise &&
       specification.pointwise_mode == FLAGDNN_POINTWISE_IDENTITY &&
       specification.tensors.size() == 2 && specification.output_count == 1 &&
+      baseline.reference_validation == "bit_exact";
+  const bool fp8_identity = bit_exact_identity &&
       (specification.tensors.front().data_type == FLAGDNN_DATA_FP8_E4M3 ||
        specification.tensors.front().data_type == FLAGDNN_DATA_FP8_E5M2);
   const auto logical_inputs =
-      bit_exact_identity
+      fp8_identity
           ? std::vector<std::vector<float>>{fp8_identity_fixture(
                 logical_element_count(specification.tensors.front()))}
           : make_logical_inputs(specification);
   // Retain the original encoded input as the byte oracle. Do not derive it
   // from a post-execution decode, which could hide input corruption or lost
-  // representation bits. These six values are exactly representable in FP8.
+  // representation bits. Only the old FP8 records use the six-value fixture;
+  // the supplemental BF16/INT32/BOOL copies use the ordinary quantized input.
   const auto initial_identity_input =
       bit_exact_identity ? io::encode(scatter(logical_inputs.front(),
                                               specification.tensors.front()),
                                       specification.tensors.front().data_type)
                          : std::vector<std::uint8_t>{};
+  std::vector<std::vector<std::uint8_t>> initial_inputs;
+  for (std::size_t index = 0; index < logical_inputs.size(); ++index)
+    initial_inputs.push_back(io::encode(
+        scatter(logical_inputs[index], specification.tensors[index]),
+        specification.tensors[index].data_type));
   const auto oracle_outputs =
       native_oracle
           ? native_oracle(specification, logical_inputs)
@@ -681,6 +689,16 @@ CaseResult run_equivalent_case(
                                  initial_identity_input, input, output);
     });
   };
+  const auto validate_inputs = [&](BenchmarkPhase phase) {
+    for (std::size_t index = 0; index < initial_inputs.size(); ++index) {
+      const auto actual = read_tensor_bytes(
+          buffers, index, stream, BenchmarkProviderKind::kFlagdnn, phase);
+      if (actual != initial_inputs[index])
+        throw std::runtime_error(specification.name +
+                                 " modified input data or padding at tensor " +
+                                 std::to_string(index));
+    }
+  };
   const auto validate = [&](BenchmarkPhase phase) {
     const std::string_view display =
         phase == BenchmarkPhase::kTiming
@@ -697,6 +715,7 @@ CaseResult run_equivalent_case(
                           display, "CPU reference"));
     }
     require_accuracy(accuracy);
+    validate_inputs(phase);
     validate_identity_bytes(phase);
     return accuracy;
   };
@@ -744,6 +763,7 @@ CaseResult run_equivalent_case(
                      BenchmarkProviderKind::kFlagdnn, "FlagDNN fresh-capture",
                      "CPU reference", bit_exact_identity));
   validate_identity_bytes(BenchmarkPhase::kFreshValidation);
+  validate_inputs(BenchmarkPhase::kFreshValidation);
   std::cout << "[postcheck] case=" << specification.name << " cpu_full=true"
             << (bit_exact_identity ? " bit_exact=true" : "")
             << " max_abs=" << post_accuracy.maximum_absolute
