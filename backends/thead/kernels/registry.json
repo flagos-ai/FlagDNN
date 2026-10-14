@@ -4,6 +4,12 @@
   "backend": "thead",
   "kernels": [
     {
+      "operation": "concatenate",
+      "provider": "thead_triton",
+      "source": "index.py",
+      "functions": ["concatenate_kernel"]
+    },
+    {
       "operation": "conv_bias_relu",
       "provider": "thead_triton",
       "source": "convolution.py",

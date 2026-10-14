@@ -110,6 +110,8 @@ endif()
 add_library(flagdnn_test_thead_adapter STATIC
   ${_flagdnn_thead_common_sources}
   functional/extended_runner.cpp
+  functional/index_runner.cpp
+  cpu_validation.cpp
   functional/attention_runner.cpp
   functional/acdnn_add.cpp
   functional/add_runner.cpp
@@ -128,25 +130,29 @@ target_compile_definitions(flagdnn_test_thead_adapter PRIVATE
 target_include_directories(flagdnn_test_thead_adapter PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${PROJECT_SOURCE_DIR}/tests"
-  "${PROJECT_SOURCE_DIR}/benchmark")
+  "${PROJECT_SOURCE_DIR}/benchmark"
+  PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}")
 target_link_libraries(flagdnn_test_thead_adapter PUBLIC
   FlagDNN::flagdnn
   flagdnn_validation_thead_reference)
-# The shared adapter also supplies benchmark reference builders. Its CPU
-# oracle dependency is used only by functional runners, never for timing.
+# The shared adapter also supplies benchmark reference builders. CPU oracles
+# validate functional and equivalent-performance outputs outside device timing.
 if(TARGET flagdnn_validation_cpu_reference)
   target_link_libraries(flagdnn_test_thead_adapter PRIVATE
     flagdnn_validation_cpu_reference)
 else()
-  # Benchmark-only builds still assemble this adapter for reference builders.
+  # Benchmark-only builds omit reference/CMakeLists.txt. Include the complete
+  # CPU oracle dependency of the shared validation adapter in that mode too.
   target_sources(flagdnn_test_thead_adapter PRIVATE
-    "${PROJECT_SOURCE_DIR}/reference/cpu/pointwise.cpp")
+    "${PROJECT_SOURCE_DIR}/reference/cpu/pointwise.cpp"
+    "${PROJECT_SOURCE_DIR}/reference/cpu/benchmark.cpp"
+    "${PROJECT_SOURCE_DIR}/reference/cpu/index.cpp")
   target_include_directories(flagdnn_test_thead_adapter PRIVATE
     "${PROJECT_SOURCE_DIR}")
 endif()
 flagdnn_enable_warnings(flagdnn_test_thead_adapter)
 
-set(_flagdnn_thead_extended_supported batchnorm_backward genstats bn_finalize resample)
+set(_flagdnn_thead_extended_supported batchnorm_backward genstats bn_finalize resample concatenate gen_index)
 set(_flagdnn_thead_unsupported ${FLAGDNN_EXTENDED_OPERATORS})
 list(REMOVE_ITEM _flagdnn_thead_unsupported ${_flagdnn_thead_extended_supported})
 
@@ -159,6 +165,13 @@ add_test(NAME integration.thead.catalog_selection_contract
   COMMAND flagdnn_test_thead_catalog_selection)
 set_tests_properties(integration.thead.catalog_selection_contract PROPERTIES
   LABELS "integration;thead;catalog;host;contract")
+
+add_test(NAME integration.thead.index_contract
+  COMMAND "${FLAGDNN_CODEGEN_PYTHON}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/index_contract.py")
+set_tests_properties(integration.thead.index_contract PROPERTIES
+  LABELS "integration;thead;compiler;index;host;contract"
+  ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
 
 add_test(NAME integration.thead.integer_pointwise_contract
   COMMAND "${FLAGDNN_CODEGEN_PYTHON}"
@@ -293,6 +306,22 @@ if(FLAGDNN_BUILD_TESTS)
         "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_thead>;${_flagdnn_thead_codegen_environment}"
       RUN_SERIAL TRUE TIMEOUT 600)
 
+  add_executable(flagdnn_test_thead_index_runtime
+    index_runtime_contract.cpp)
+  target_include_directories(flagdnn_test_thead_index_runtime PRIVATE
+    "${PROJECT_SOURCE_DIR}" "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(flagdnn_test_thead_index_runtime PRIVATE
+    flagdnn_test_thead_adapter)
+  flagdnn_enable_warnings(flagdnn_test_thead_index_runtime)
+  add_test(NAME integration.thead.index_runtime_contract
+    COMMAND flagdnn_test_thead_index_runtime
+      "${FLAGDNN_CODEGEN_PYTHON}" "${FLAGDNN_CODEGEN_COMPILER}")
+  set_tests_properties(integration.thead.index_runtime_contract PROPERTIES
+    LABELS "integration;thead;cpu-reference;index;contract"
+    ENVIRONMENT
+      "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_thead>;${_flagdnn_thead_codegen_environment}"
+    RUN_SERIAL TRUE TIMEOUT 600)
+
   add_executable(flagdnn_test_thead_validation_contract
     validation_contract.cpp
     $<TARGET_OBJECTS:flagdnn_test_common_objects>)
@@ -334,7 +363,8 @@ if(FLAGDNN_BUILD_TESTS)
   add_executable(flagdnn_test_thead_acdnn_gaps acdnn_gap_contract.cpp)
   target_compile_features(flagdnn_test_thead_acdnn_gaps PRIVATE cxx_std_20)
   target_link_libraries(flagdnn_test_thead_acdnn_gaps PRIVATE
-    flagdnn_validation_thead_reference)
+    flagdnn_validation_thead_reference
+    flagdnn_validation_cpu_reference)
   flagdnn_enable_warnings(flagdnn_test_thead_acdnn_gaps)
   add_test(NAME integration.thead.acdnn_gap_contract
     COMMAND flagdnn_test_thead_acdnn_gaps)
@@ -401,6 +431,7 @@ if(FLAGDNN_BUILD_TESTS)
     _GLIBCXX_USE_CXX11_ABI=${_FLAGDNN_THEAD_TORCH_CXX11_ABI})
   target_link_libraries(flagdnn_test_thead_jit PRIVATE
     FlagDNN::flagdnn
+    flagdnn_validation_cpu_reference
     FlagDNN::THeadCudaDriver
     FlagDNN::THeadTritonJIT
     "${CMAKE_DL_LIBS}")
@@ -999,13 +1030,49 @@ if(FLAGDNN_BUILD_TESTS)
 endif()
 
 if(FLAGDNN_BUILD_BENCHMARKS)
+  # Build the CPU-only baseline loader for Thead without changing other
+  # platforms' validation targets. The loader has no device SDK dependency.
+  add_library(flagdnn_benchmark_thead_baseline STATIC
+    benchmark/equivalent_baseline.cpp
+    "${PROJECT_SOURCE_DIR}/src/runtime/json.cpp")
+  target_compile_features(flagdnn_benchmark_thead_baseline PUBLIC cxx_std_20)
+  target_include_directories(flagdnn_benchmark_thead_baseline PUBLIC
+    "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(flagdnn_benchmark_thead_baseline PUBLIC
+    flagdnn_benchmark_cases)
+  flagdnn_enable_warnings(flagdnn_benchmark_thead_baseline)
+
+  add_executable(flagdnn_benchmark_thead_baseline_contract
+    benchmark/equivalent_baseline_contract.cpp
+    "${PROJECT_SOURCE_DIR}/tests/common/index.cpp")
+  target_include_directories(flagdnn_benchmark_thead_baseline_contract PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${PROJECT_SOURCE_DIR}/tests")
+  target_link_libraries(flagdnn_benchmark_thead_baseline_contract PRIVATE
+    flagdnn_benchmark_thead_baseline)
+  flagdnn_enable_warnings(flagdnn_benchmark_thead_baseline_contract)
+  add_test(NAME integration.thead.equivalent_baseline_contract
+    COMMAND flagdnn_benchmark_thead_baseline_contract
+      "${PROJECT_SOURCE_DIR}/docs/performance-baseline.json")
+  set_tests_properties(integration.thead.equivalent_baseline_contract PROPERTIES
+    LABELS "integration;thead;benchmark;contract" TIMEOUT 60)
+
+  add_test(NAME integration.thead.equivalent_baseline_dependency_boundary
+    COMMAND "${CMAKE_COMMAND}"
+      "-DBINARY=$<TARGET_FILE:flagdnn_benchmark_thead_baseline_contract>"
+      -P "${PROJECT_SOURCE_DIR}/cmake/VerifyNoVendorDependencies.cmake")
+  set_tests_properties(integration.thead.equivalent_baseline_dependency_boundary PROPERTIES
+    LABELS "integration;thead;benchmark;contract")
+
   add_library(flagdnn_benchmark_thead_adapter STATIC
     benchmark/native_runner.cpp
+    benchmark/native_index.cpp
+    benchmark/equivalent.cpp
     benchmark/acdnn_provider.cpp
     benchmark/pointwise.cpp
     benchmark/runner.cpp)
   target_compile_features(flagdnn_benchmark_thead_adapter PUBLIC cxx_std_20)
   target_compile_definitions(flagdnn_benchmark_thead_adapter PRIVATE
+    FLAGDNN_PERFORMANCE_BASELINE_FILE="${PROJECT_SOURCE_DIR}/docs/performance-baseline.json"
     FLAGDNN_THEAD_ACDNN_CAPABILITY_CATALOG="${CMAKE_CURRENT_SOURCE_DIR}/capability.json"
     FLAGDNN_THEAD_BENCHMARK_CATALOG="${CMAKE_CURRENT_SOURCE_DIR}/benchmark/comparable_cases.json"
     FLAGDNN_THEAD_PPU_SDK_VERSION="${_FLAGDNN_THEAD_PPU_SDK_VERSION}")
@@ -1018,6 +1085,7 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     "${PROJECT_SOURCE_DIR}")
   target_link_libraries(flagdnn_benchmark_thead_adapter PUBLIC
     FlagDNN::flagdnn
+    flagdnn_benchmark_thead_baseline
     flagdnn_benchmark_cases
     flagdnn_test_thead_adapter
     flagdnn_validation_thead_reference)
@@ -1025,7 +1093,7 @@ if(FLAGDNN_BUILD_BENCHMARKS)
 
   include("${PROJECT_SOURCE_DIR}/cmake/Operators.cmake")
   set(_flagdnn_thead_benchmark_operators ${FLAGDNN_BENCHMARK_OPERATORS}
-    batchnorm_backward genstats bn_finalize resample
+    batchnorm_backward genstats bn_finalize resample concatenate gen_index
     sdpa sdpa_backward sdpa_fp8 sdpa_fp8_backward)
   flagdnn_register_benchmark_suite(
     PLATFORM thead

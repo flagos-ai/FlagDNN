@@ -183,7 +183,11 @@ if(DEFINED REFERENCE_EXECUTABLE AND
     "${SOURCE_ROOT}/backends/thead/validation/capability.cpp"
     "${SOURCE_ROOT}/backends/thead/validation/capability.hpp"
     "${SOURCE_ROOT}/backends/thead/validation/tensor_io.cpp"
-    "${SOURCE_ROOT}/backends/thead/validation/tensor_io.hpp")
+    "${SOURCE_ROOT}/backends/thead/validation/tensor_io.hpp"
+    "${SOURCE_ROOT}/backends/thead/validation/cpu_validation.cpp"
+    "${SOURCE_ROOT}/backends/thead/validation/cpu_validation.hpp"
+    "${SOURCE_ROOT}/backends/thead/validation/acdnn_gap_contract.cpp"
+    "${SOURCE_ROOT}/backends/thead/validation/index_runtime_contract.cpp")
   file(GLOB _reference_extensions LIST_DIRECTORIES FALSE
     "${SOURCE_ROOT}/backends/thead/validation/*_reference.cpp"
     "${SOURCE_ROOT}/backends/thead/validation/*_reference.hpp"
@@ -215,11 +219,24 @@ if(DEFINED REFERENCE_EXECUTABLE AND
       message(FATAL_ERROR
         "forbidden numerical reference token found in ${_reference_source}")
     endif()
+    # The named shared validation module performs CPU correctness checks
+    # outside equivalent-performance timing. Named capability and runtime
+    # contracts also validate with shared CPU operators; benchmark providers
+    # and other non-functional sources may not depend directly on an oracle.
     if(NOT _reference_source MATCHES "/functional/" AND
+       NOT _reference_source STREQUAL
+         "${SOURCE_ROOT}/backends/thead/validation/cpu_validation.cpp" AND
+       NOT _reference_source STREQUAL
+         "${SOURCE_ROOT}/backends/thead/validation/cpu_validation.hpp" AND
+       NOT _reference_source STREQUAL
+         "${SOURCE_ROOT}/backends/thead/validation/acdnn_gap_contract.cpp" AND
+       NOT _reference_source STREQUAL
+         "${SOURCE_ROOT}/backends/thead/validation/index_runtime_contract.cpp" AND
        _reference_source_lower MATCHES
        "(reference_cpu|cpu_reference|reference/cpu/|reference::cpu)")
       message(FATAL_ERROR
-        "CPU oracle is restricted to functional validation: ${_reference_source}")
+        "CPU oracle is restricted to functional or explicit shared validation: "
+        "${_reference_source}")
     endif()
   endforeach()
 endif()

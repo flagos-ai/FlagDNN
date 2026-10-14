@@ -283,9 +283,10 @@ struct GraphDocument {
 std::vector<std::int64_t> parse_ports(
     const json::Value& value,
     const std::map<std::int64_t, std::size_t>& tensor_indices,
-    std::string_view description) {
+    std::string_view description, bool allow_empty = false) {
   const auto& ports = value.as_array();
-  require_artifact(!ports.empty(), std::string(description) + " is empty");
+  require_artifact(allow_empty || !ports.empty(),
+                   std::string(description) + " is empty");
   std::set<std::string> names;
   std::vector<std::int64_t> result;
   for (const auto& port_value : ports) {
@@ -410,7 +411,8 @@ GraphDocument parse_graph(std::string_view graph_ir) {
     (void)node.at("name").as_string();
     (void)node.at("compute_data_type").as_string();
     parsed.inputs = parse_ports(node.at("inputs"), tensor_indices,
-                                "Graph IR node inputs");
+                                "Graph IR node inputs",
+                                parsed.operation == "gen_index");
     parsed.outputs = parse_ports(node.at("outputs"), tensor_indices,
                                  "Graph IR node outputs");
     (void)node.at("attributes").as_object();

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import importlib.util
 import io
 import json
@@ -215,7 +216,8 @@ def check_cpu_reference_accounting(runner: Any, adapter: Any) -> None:
             + cpu_pass
             + "1: "
             + skip_line("add_remaining_fp16")
-            + "\n1: FLAGDNN_ADD_FUNCTIONAL: PASS cases=3 executed=2 skipped=1\n"
+            + "\n1: FLAGDNN_ADD_FUNCTIONAL: PASS cases=3 executed=2 "
+            "skipped=1\n"
             + "100% tests passed, 0 tests failed out of 1\n",
         )
         partial_batch = runner.batch_suite_result(
@@ -272,6 +274,347 @@ def check_cpu_reference_accounting(runner: Any, adapter: Any) -> None:
         )
 
 
+def equivalent_record(
+    case: str = "gelu_approx_tanh_backward_perf_fp32_1x1x1024_by_1x1x1024",
+    median: float = 2.0,
+) -> dict[str, Any]:
+    operator = (
+        "gelu_approx_tanh_backward" if case.startswith("gelu_")
+        else "concatenate" if case.startswith("concatenate_") else "gen_index"
+    )
+    equivalent = 1.5
+    baseline = {
+        "provider": "nvidia_equivalent", "platform": "nvidia",
+        "target_platform": "thead", "timing_profile": "native",
+        "scale_metric": {
+            "gelu_approx_tanh_backward": "vector_fp32",
+            "concatenate": "hbm_copy", "gen_index": "hbm_write",
+        }[operator],
+        "reference_validation": (
+            "cpu_full" if operator == "gelu_approx_tanh_backward" else "sanity"
+        ),
+        "reference_time_us": 3.0, "reference_peak": 1.0, "target_peak": 2.0,
+        "min_relative_efficiency": 0.8, "equivalent_time_us": equivalent,
+        "limit_us": equivalent / 0.8,
+        "relative_efficiency": equivalent / median,
+        "traffic_ratio": 1.0, "passed": median <= equivalent / 0.8,
+    }
+    return {
+        "schema_version": 4, "kind": "steady_state", "provider": "flagdnn",
+        "case": case, "unit": "us", "median": median, "p90": median,
+        "samples": [median] * 20, "equivalent_baseline": baseline,
+    }
+
+
+def check_equivalent_performance(runner: Any, adapter: Any) -> None:
+    record = equivalent_record()
+    case = record["case"]
+    operator = "gelu_approx_tanh_backward"
+    output = (
+        json.dumps(record) + "\nFLAGDNN_GELU_APPROX_TANH_BACKWARD_BENCHMARK: "
+        "PASS cases=1 comparable_executed=1 reference_skipped=0 "
+        "equivalent_executed=1\n"
+        "100% tests passed, 0 tests failed out of 1\n"
+    )
+    task = run_native_output(
+        runner, adapter, output, operator=operator, suite="benchmark"
+    )
+    require(
+        task["status"] == "passed"
+        and set(task["records"][case]) == {"flagdnn"}
+        and task["case_accounting"]["equivalent_executed"] == 1,
+        "measured equivalent case was rejected or fabricated a reference "
+        "provider",
+    )
+    results = {operator: {"benchmark": task}}
+    info = adapter.equivalent_performance_summary(results, None)
+    gate = adapter.equivalent_performance_summary(results, 0.5)
+    require(
+        info["failed_case_count"] == 1 and info["gate_passed"] is None
+        and not info["gate_enabled"] and gate["gate_passed"] is False
+        and gate["cases"][0]["required_relative_efficiency"] == 0.8,
+        "default equivalent report or non-relaxable minimum changed",
+    )
+    with contextlib.redirect_stdout(io.StringIO()):
+        finalized = adapter.finalize(
+            results=results, suite_operators={"benchmark": [operator]},
+            suites=["benchmark"], state={}, min_speedup=None,
+            preflight_passed=True,
+        )
+        gated = adapter.finalize(
+            results=results, suite_operators={"benchmark": [operator]},
+            suites=["benchmark"], state={}, min_speedup=0.5,
+            preflight_passed=True,
+        )
+    require(
+        not finalized["failed"] and gated["failed"]
+        and finalized["summary"]["performance"]["gate_passed"] is None,
+        "equivalent-only run incorrectly applied the native reference gate",
+    )
+    with tempfile.TemporaryDirectory(
+        prefix="flagdnn-thead-equivalent-contract-"
+    ) as directory:
+        public = runner.batch_suite_result(
+            operator, "benchmark", task, Path(directory)
+        )
+        report = {"result": {operator: {"performance": public}}}
+        adapter.postprocess_report(
+            report=report, platform_summary=finalized["summary"], exit_code=0
+        )
+        rows = [
+            row for entry in public["data"].values()
+            for row in entry["details"].values()
+        ]
+        require(
+            public["status"] == "Passed" and len(rows) == 1
+            and rows[0]["equivalent_baseline"] == record["equivalent_baseline"]
+            and rows[0]["performance_gate"]["passed"] is None,
+            "public report lost original equivalent evidence or enabled a "
+            "default gate",
+        )
+        adapter.postprocess_report(
+            report=report, platform_summary=gated["summary"], exit_code=1
+        )
+        require(
+            public["status"] == "Failed"
+            and report["overall_status"] == "failed",
+            "explicit equivalent failure was not reflected in public status",
+        )
+
+    accepted = equivalent_record(median=1.5)
+    accepted_results = {
+        operator: {"benchmark": {
+            "status": "passed", "records": {case: {"flagdnn": accepted}}
+        }}
+    }
+    require(
+        adapter.equivalent_performance_summary(accepted_results, 1.0)[
+            "gate_passed"
+        ]
+        and not adapter.equivalent_performance_summary(accepted_results, 1.01)[
+            "gate_passed"
+        ],
+        "requested equivalent threshold was not enforced",
+    )
+    malformed = []
+    for key, value in (
+        ("target_platform", "hygon"), ("scale_metric", "hbm_copy"),
+        ("reference_time_us", 0.0), ("reference_peak", float("nan")),
+        ("target_peak", -1.0), ("traffic_ratio", 2),
+        ("min_relative_efficiency", 0.5), ("equivalent_time_us", 3.0),
+        ("relative_efficiency", 1.0), ("passed", True),
+        ("reference_validation", "sanity"),
+    ):
+        invalid = copy.deepcopy(record)
+        invalid["equivalent_baseline"][key] = value
+        malformed.append(invalid)
+    for key, value in (
+        ("samples", [2.0] * 19), ("p90", 3.0), ("median", True)
+    ):
+        invalid = copy.deepcopy(record)
+        invalid[key] = value
+        malformed.append(invalid)
+    malformed.append(equivalent_record("concatenate_int32_1_axis0"))
+    for invalid in malformed:
+        _, errors = runner.benchmark_records(json.dumps(invalid), adapter)
+        require(bool(errors), "malformed equivalent evidence was accepted")
+    forged_pair = {
+        case: {"flagdnn": record, "acdnn": json.loads(timing(case, "acdnn"))}
+    }
+    require(
+        bool(adapter.validate_thead_benchmark_pairs(
+            forged_pair, operator, [operator]
+        )),
+        "equivalent baseline was accepted alongside fabricated acDNN timing",
+    )
+    bad_count = run_native_output(
+        runner, adapter,
+        output.replace("equivalent_executed=1", "equivalent_executed=0"),
+        operator=operator, suite="benchmark",
+    )
+    require(
+        bad_count["status"] == "failed",
+        "equivalent accounting mismatch was accepted",
+    )
+    crashed = run_native_output(
+        runner, adapter, output, operator=operator, suite="benchmark",
+        exit_code=1,
+    )
+    require(
+        crashed["status"] == "failed",
+        "nonzero native execution was converted to a pass",
+    )
+
+    missing_case = "concatenate_int32_1_axis0"
+    measured = equivalent_record("concatenate_fp32_1_axis0")
+    missing_line = skip_line(
+        missing_case, operator="concatenate",
+        reason="nvidia_reference_unavailable",
+    ).replace("[SKIP][acdnn]", "[SKIP][nvidia_baseline]")
+    partial = run_native_output(
+        runner, adapter, json.dumps(measured) + "\n" + missing_line + "\n"
+        "FLAGDNN_CONCATENATE_BENCHMARK: PASS cases=2 comparable_executed=1 "
+        "reference_skipped=1 equivalent_executed=1\n"
+        "100% tests passed, 0 tests failed out of 1\n",
+        operator="concatenate", suite="benchmark",
+    )
+    require(
+        partial["status"] == "passed"
+        and partial["case_accounting"]["reference_skipped"] == 1
+        and len(partial["baseline_skip_records"]) == 1,
+        "unmeasured concatenation was lost from explicit skip accounting",
+    )
+    # The per-operator report is published while the rest of a long batch is
+    # still running; reference omissions must be visible before finalization.
+    with tempfile.TemporaryDirectory(prefix="thead-live-skips-") as temporary:
+        public_live = runner.batch_suite_result(
+            "concatenate", "benchmark", partial, Path(temporary)
+        )
+        require(
+            public_live["status"] == "Skipped"
+            and public_live["skipped"] == 1
+            and public_live["skip_records"][0]["case"] == missing_case,
+            "live batch report hid unavailable references behind Passed",
+        )
+        for status, expected in (("failed", "Failed"), ("timeout", "Timeout")):
+            errored = copy.deepcopy(partial)
+            errored.update(status=status, exit_code=9)
+            public_error = runner.batch_suite_result(
+                "concatenate", "benchmark", errored, Path(temporary)
+            )
+            require(public_error["status"] == expected,
+                    "reference omissions hid a failed or timed-out benchmark")
+
+    partial_summary = adapter.equivalent_performance_summary(
+        {"concatenate": {"benchmark": partial}}, None
+    )
+    partial_report = {
+        "result": {"concatenate": {"performance": {"status": "Passed"}}}
+    }
+    adapter.postprocess_report(
+        report=partial_report,
+        platform_summary={"equivalent_performance": partial_summary},
+        exit_code=0,
+    )
+    public_partial = partial_report["result"]["concatenate"]["performance"]
+    require(
+        public_partial["status"] == "Skipped"
+        and public_partial["skipped"] == 1
+        and public_partial["skip_records"][0]["case"] == missing_case,
+        "public report hid an unavailable NVIDIA reference behind Passed",
+    )
+    known_measured_skip = adapter.nvidia_baseline_skip_records(
+        missing_line.replace(missing_case, "concatenate_fp32_1_axis0")
+    )
+    require(
+        bool(adapter.validate_nvidia_baseline_skips(known_measured_skip)),
+        "known measured concatenation was accepted as missing baseline",
+    )
+    require(
+        not adapter.nvidia_baseline_skip_records(
+            skip_line("add_fp32_contract")
+        ),
+        "native acDNN skips leaked into NVIDIA baseline accounting",
+    )
+
+
+def check_equivalent_coverage(adapter: Any) -> None:
+    document = json.loads(adapter.COMPARABLE_CASE_CATALOG.read_text())
+    catalog = adapter.load_thead_comparable_case_catalog(list(document["operators"]))
+    operators = list(adapter.EQUIVALENT_SCALE_METRICS)
+    results: dict[str, dict[str, Any]] = {
+        operator: {"benchmark": {
+            "status": "passed", "records": {}, "baseline_skip_records": []
+        }} for operator in operators
+    }
+    baseline = json.loads(adapter.PERFORMANCE_BASELINE_FILE.read_text())["reference"]
+    for case, capability in catalog["cases"].items():
+        if capability["status"] != "unsupported":
+            continue
+        operation = adapter.equivalent_case_operator(case)
+        if operation in operators:
+            require(case in baseline["cases"], "required equivalent has no measured reference")
+            results[operation]["benchmark"]["records"][case] = {
+                "flagdnn": equivalent_record(case, median=1.0)
+            }
+        elif case.startswith("concatenate_"):
+            require(case in baseline["unavailable_cases"], "unknown concatenate exclusion")
+            results["concatenate"]["benchmark"]["baseline_skip_records"].append({
+                "op": "concatenate", "case": case,
+                "reason": "nvidia_reference_unavailable",
+            })
+    complete = adapter.thead_equivalent_coverage(results, operators, catalog)
+    require(
+        complete["verified"] and complete["required_case_count"] == 115
+        and complete["observed_required_case_count"] == 115
+        and complete["expected_reference_skip_case_count"] == 70
+        and complete["observed_reference_skip_case_count"] == 70,
+        "the full equivalent scope must contain 115 measured and 70 explicitly unavailable cases",
+    )
+    only_index = adapter.thead_equivalent_coverage(results, ["gen_index"], catalog)
+    require(
+        only_index["verified"] and only_index["required_case_count"] == 28
+        and not only_index["expected_reference_skip_cases"],
+        "single-operator selection must require its complete equivalent catalog",
+    )
+    require(
+        adapter.thead_equivalent_coverage(results, ["add"], catalog)["required_case_count"] == 0,
+        "unselected equivalent operators must not be required",
+    )
+
+    partial = copy.deepcopy(results)
+    first = next(iter(partial["gen_index"]["benchmark"]["records"]))
+    partial["gen_index"]["benchmark"]["records"] = {
+        first: partial["gen_index"]["benchmark"]["records"][first]
+    }
+    missing = adapter.thead_equivalent_coverage(partial, ["gen_index"], catalog)
+    require(not missing["verified"] and missing["missing_case_count"] == 27,
+            "one self-consistent measured case must not pass all 28 gen_index cases")
+    with contextlib.redirect_stdout(io.StringIO()):
+        finalized = adapter.finalize(
+            results={"gen_index": partial["gen_index"]},
+            suite_operators={"benchmark": ["gen_index"]}, suites=["benchmark"],
+            state={"comparable_catalog": catalog}, min_speedup=None,
+            preflight_passed=True,
+        )
+    require(finalized["failed"], "missing equivalent measurements passed the default CLI")
+    report = {"result": {"gen_index": {"performance": {
+        "status": "Passed", "exit_code": 0
+    }}}}
+    adapter.postprocess_report(report=report, platform_summary=finalized["summary"], exit_code=1)
+    require(report["result"]["gen_index"]["performance"]["status"] == "Failed",
+            "public performance result hid incomplete equivalent coverage")
+
+    timed_out_report = {"result": {"gen_index": {"performance": {
+        "status": "Timeout", "exit_code": -100
+    }}}}
+    adapter.postprocess_report(
+        report=timed_out_report, platform_summary=finalized["summary"], exit_code=1
+    )
+    timed_out = timed_out_report["result"]["gen_index"]["performance"]
+    require(timed_out["status"] == "Timeout" and timed_out["exit_code"] == -100,
+            "coverage errors must preserve the original execution failure")
+
+    missing_skip = copy.deepcopy(results)
+    missing_skip["concatenate"]["benchmark"]["baseline_skip_records"].pop()
+    skipped_coverage = adapter.thead_equivalent_coverage(missing_skip, operators, catalog)
+    require(
+        not skipped_coverage["verified"]
+        and skipped_coverage["required_case_count"] == 115
+        and skipped_coverage["missing_case_count"] == 0
+        and len(skipped_coverage["missing_reference_skip_cases"]) == 1,
+        "missing skip evidence must fail coverage without fabricating a required measurement",
+    )
+    unknown = copy.deepcopy(results)
+    invented = first + "_unknown"
+    unknown["gen_index"]["benchmark"]["records"][invented] = {
+        "flagdnn": equivalent_record(invented, median=1.0)
+    }
+    unexpected = adapter.thead_equivalent_coverage(unknown, operators, catalog)
+    require(not unexpected["verified"] and len(unexpected["unexpected_cases"]) == 1,
+            "unregistered equivalent measurement passed coverage")
+
+
 def main() -> int:
     runner = load_module(
         "flagdnn_thead_run_tests_contract_subject",
@@ -280,6 +623,8 @@ def main() -> int:
     adapter = runner.load_platform_adapter("thead")
     require(adapter is not None, "THead run_tests adapter was not loaded")
     check_cpu_reference_accounting(runner, adapter)
+    check_equivalent_performance(runner, adapter)
+    check_equivalent_coverage(adapter)
     require(
         adapter.DEFAULT_TIMEOUT == 21600
         and adapter.PREFLIGHT_BY_DEFAULT is True
@@ -400,6 +745,7 @@ def main() -> int:
     require(
         {
             "integration.thead.run_tests_adapter_contract",
+            "integration.thead.index_contract",
             "integration.thead.installed_consumer",
             "integration.thead.triton_compilation",
             "integration.thead.jit_sub",
@@ -499,14 +845,18 @@ def main() -> int:
     # Re-selection must replace both aliases rather than inherit GPU 0.
     coordinator = {"CUDA_VISIBLE_DEVICES": "0", "HGGC_VISIBLE_DEVICES": "0"}
     for device in ("0", "1"):
-        worker = runner.device_environment("thead", device, coordinator, adapter)
+        worker = runner.device_environment(
+            "thead", device, coordinator, adapter
+        )
         require(
             worker["CUDA_VISIBLE_DEVICES"] == device
             and worker["HGGC_VISIBLE_DEVICES"] == device,
             "THead worker retained the coordinator's device mask",
         )
     require(
-        coordinator == {"CUDA_VISIBLE_DEVICES": "0", "HGGC_VISIBLE_DEVICES": "0"},
+        coordinator == {
+            "CUDA_VISIBLE_DEVICES": "0", "HGGC_VISIBLE_DEVICES": "0"
+        },
         "THead worker mutated its shared base environment",
     )
 

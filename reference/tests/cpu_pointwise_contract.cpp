@@ -80,6 +80,18 @@ void verify_float() {
   expect_values<float>("CMP_EQ", paired(FLAGDNN_POINTWISE_CMP_EQ,
                        {1, -2, 3}, {1, 2, 3}), {1, 0, 1});
 
+  const float comparison_nan = std::numeric_limits<float>::quiet_NaN();
+  expect_values<float>("CMP_NEQ IEEE NaN", paired(FLAGDNN_POINTWISE_CMP_NEQ,
+                       {comparison_nan, 1, -1}, {comparison_nan, 1, 0}), {1, 0, 1});
+  expect_values<float>("CMP_GT ordered", paired(FLAGDNN_POINTWISE_CMP_GT,
+                       {comparison_nan, 1, -1}, {0, 1, -2}), {0, 0, 1});
+  expect_values<float>("CMP_GE ordered", paired(FLAGDNN_POINTWISE_CMP_GE,
+                       {comparison_nan, 1, -1}, {0, 1, -2}), {0, 1, 1});
+  expect_values<float>("CMP_LT ordered", paired(FLAGDNN_POINTWISE_CMP_LT,
+                       {comparison_nan, 1, -1}, {0, 1, 0}), {0, 0, 1});
+  expect_values<float>("CMP_LE ordered", paired(FLAGDNN_POINTWISE_CMP_LE,
+                       {comparison_nan, 1, -1}, {0, 1, 0}), {0, 1, 1});
+
   const float nan = std::numeric_limits<float>::quiet_NaN();
   for (const auto mode : {FLAGDNN_POINTWISE_MIN, FLAGDNN_POINTWISE_MAX}) {
     const auto values = paired(mode, {nan, 2.0F, nan}, {2.0F, nan, nan});
@@ -170,6 +182,45 @@ void verify_integer() {
   expect_values<std::int32_t>("INT32 CMP_EQ exact",
       paired(FLAGDNN_POINTWISE_CMP_EQ, {16777217, minimum, maximum},
              {16777216, minimum, maximum}), {0, 1, 1});
+
+  const std::vector<std::int32_t> compare_left =
+      {16777217, minimum, maximum, -1, 0};
+  const std::vector<std::int32_t> compare_right =
+      {16777216, minimum, maximum - 1, 0, -1};
+  expect_values<std::int32_t>("INT32 CMP_NEQ exact",
+      paired(FLAGDNN_POINTWISE_CMP_NEQ, compare_left, compare_right),
+      {1, 0, 1, 1, 1});
+  expect_values<std::int32_t>("INT32 CMP_GT exact",
+      paired(FLAGDNN_POINTWISE_CMP_GT, compare_left, compare_right),
+      {1, 0, 1, 0, 1});
+  expect_values<std::int32_t>("INT32 CMP_GE exact",
+      paired(FLAGDNN_POINTWISE_CMP_GE, compare_left, compare_right),
+      {1, 1, 1, 0, 1});
+  expect_values<std::int32_t>("INT32 CMP_LT exact",
+      paired(FLAGDNN_POINTWISE_CMP_LT, compare_left, compare_right),
+      {0, 0, 0, 1, 0});
+  expect_values<std::int32_t>("INT32 CMP_LE exact",
+      paired(FLAGDNN_POINTWISE_CMP_LE, compare_left, compare_right),
+      {0, 1, 0, 1, 0});
+
+  const std::vector<std::int32_t> select_left = {16777217, minimum};
+  const std::vector<std::int32_t> select_right = {maximum, -16777217, 3};
+  const std::vector<std::uint8_t> predicate = {0, 1, 2};
+  expect_values<std::int32_t>("INT32 select three-input broadcast",
+      cpu::evaluate_binary_select_int32(
+          select_left, Shape{2, 1}, select_right, Shape{3}, predicate,
+          Shape{1, 3}, Shape{2, 3}),
+      {maximum, 16777217, 16777217, maximum, minimum, minimum});
+  expect_error("select predicate count mismatch", [&] {
+    (void)cpu::evaluate_binary_select_int32(
+        select_left, Shape{2, 1}, select_right, Shape{3}, predicate,
+        Shape{1, 2}, Shape{2, 3});
+  });
+  expect_error("select predicate broadcast mismatch", [&] {
+    (void)cpu::evaluate_binary_select_int32(
+        select_left, Shape{2, 1}, select_right, Shape{3}, predicate,
+        Shape{3, 1}, Shape{2, 3});
+  });
 
   const std::vector<std::int32_t> left = {16777217, -2};
   const std::vector<std::int32_t> right = {3, 4, -5};
@@ -311,6 +362,41 @@ void verify_activation_backward() {
   }
 }
 
+void verify_add_square() {
+  const std::vector<float> left = {1.0F, -2.0F};
+  const std::vector<float> right = {1.5F, -2.5F, 3.5F};
+  std::size_t calls = 0;
+  const auto round_virtual = [&](std::span<const float> values) {
+    ++calls;
+    std::vector<float> rounded;
+    for (const auto value : values) rounded.push_back(std::floor(value));
+    return rounded;
+  };
+  expect_values<float>("AddSquare virtual rounding before broadcast/add",
+      cpu::evaluate_add_square(left, Shape{2, 1}, right, Shape{3},
+                               Shape{2, 3}, round_virtual),
+      {3, 7, 13, 0, 4, 10});
+  if (calls != 1) throw std::runtime_error("AddSquare virtual quantization count differs");
+  expect_error("AddSquare missing quantizer", [&] {
+    (void)cpu::evaluate_add_square(left, Shape{2, 1}, right, Shape{3},
+                                   Shape{2, 3}, {});
+  });
+  expect_error("AddSquare quantizer count mismatch", [&] {
+    (void)cpu::evaluate_add_square(left, Shape{2, 1}, right, Shape{3},
+        Shape{2, 3}, [](std::span<const float>) { return std::vector<float>{1}; });
+  });
+  const std::vector<std::int32_t> integer_left = {16777217, -1};
+  const std::vector<std::int32_t> integer_right = {65536, 65537, -65537};
+  expect_values<std::int32_t>("INT32 AddSquare exact wrap and broadcast",
+      cpu::evaluate_add_square_int32(integer_left, Shape{2, 1}, integer_right,
+                                     Shape{3}, Shape{2, 3}),
+      {16777217, 16908290, 16908290, -1, 131072, 131072});
+  expect_error("AddSquare incompatible output", [&] {
+    (void)cpu::evaluate_add_square_int32(integer_left, Shape{2, 1},
+        integer_right, Shape{3}, Shape{3, 3});
+  });
+}
+
 template <typename T, typename Evaluate>
 void verify_invalid_inputs(Evaluate evaluate) {
   const std::vector<T> one = {1};
@@ -348,6 +434,7 @@ int main() {
     verify_legacy_float_special_values();
     verify_integer();
     verify_activation_backward();
+    verify_add_square();
     verify_invalid_inputs<float>([](auto mode, const auto& a, const auto& a_shape,
                                     const auto& b, const auto& b_shape,
                                     const auto& shape) {

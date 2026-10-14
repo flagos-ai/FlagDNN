@@ -155,20 +155,30 @@ void compare_floating(std::span<const float> actual,
   }
 }
 
+bool comparison_mode(flagdnnPointwiseMode_t mode) {
+  return mode == FLAGDNN_POINTWISE_CMP_EQ || mode == FLAGDNN_POINTWISE_CMP_NEQ ||
+         mode == FLAGDNN_POINTWISE_CMP_GT || mode == FLAGDNN_POINTWISE_CMP_GE ||
+         mode == FLAGDNN_POINTWISE_CMP_LT || mode == FLAGDNN_POINTWISE_CMP_LE;
+}
+
 bool supports_cpu_pointwise_case(const PointwiseTestCase& test_case) {
-  if (!cpu::supports_binary_pointwise(test_case.mode) ||
-      test_case.inputs.size() != 2 ||
+  const bool select = test_case.mode == FLAGDNN_POINTWISE_BINARY_SELECT;
+  if ((!select && !cpu::supports_binary_pointwise(test_case.mode)) ||
+      test_case.inputs.size() != (select ? 3U : 2U) ||
       test_case.inputs[0].data_type != test_case.inputs[1].data_type) {
     return false;
   }
   const auto type = test_case.inputs[0].data_type;
+  if (select && (type != FLAGDNN_DATA_INT32 ||
+                  test_case.inputs[2].data_type != FLAGDNN_DATA_BOOLEAN)) {
+    return false;
+  }
   if (type != FLAGDNN_DATA_FLOAT32 && type != FLAGDNN_DATA_FLOAT16 &&
       type != FLAGDNN_DATA_BFLOAT16 && type != FLAGDNN_DATA_INT32) {
     return false;
   }
   return test_case.output.data_type ==
-         (test_case.mode == FLAGDNN_POINTWISE_CMP_EQ ? FLAGDNN_DATA_BOOLEAN
-                                                    : type);
+         (comparison_mode(test_case.mode) ? FLAGDNN_DATA_BOOLEAN : type);
 }
 
 }  // namespace
@@ -187,7 +197,7 @@ void run_cpu_pointwise_case(const PointwiseTestCase& test_case,
   std::vector<BoundTensor> inputs;
   std::array<std::vector<float>, 2> floating_inputs;
   std::array<std::vector<std::int32_t>, 2> integer_inputs;
-  inputs.reserve(2);
+  inputs.reserve(test_case.inputs.size());
   for (std::size_t index = 0; index < 2; ++index) {
     const auto& specification = test_case.inputs[index];
     if (integer) {
@@ -202,6 +212,27 @@ void run_cpu_pointwise_case(const PointwiseTestCase& test_case,
     }
   }
 
+  std::vector<std::uint8_t> predicate;
+  if (test_case.mode == FLAGDNN_POINTWISE_BINARY_SELECT) {
+    const auto& specification = test_case.inputs[2];
+    inputs.push_back(make_input_buffer(
+        specification, 2, stream.get(),
+        flagdnn::testing::PointwiseInputDomain::kLogical));
+    const auto values = gather(read_output(inputs.back(), stream.get()),
+                               specification);
+    predicate.reserve(values.size());
+    for (const auto value : values) predicate.push_back(value != 0);
+  }
+  // Input bytes, including offsets and padding, must remain unchanged.
+  std::vector<std::vector<std::byte>> initial_inputs;
+  initial_inputs.reserve(inputs.size());
+  for (const auto& input : inputs) {
+    initial_inputs.emplace_back(allocation_size(input.specification));
+    copy_from_device_async(initial_inputs.back(), *input.buffer, 0, stream.get());
+  }
+  check_driver(cuStreamSynchronize(stream.get()),
+               "cuStreamSynchronize(CPU pointwise inputs)");
+
   const auto& left_shape = test_case.inputs[0].dimensions;
   const auto& right_shape = test_case.inputs[1].dimensions;
   const auto& output_shape = test_case.output.dimensions;
@@ -213,29 +244,33 @@ void run_cpu_pointwise_case(const PointwiseTestCase& test_case,
         std::trunc(test_case.alpha) != test_case.alpha) {
       throw std::invalid_argument("CPU int32 pointwise alpha is not an int32");
     }
-    auto right = integer_inputs[1];
+    const auto& right = integer_inputs[1];
     if (add_square) {
-      right = cpu::evaluate_binary_pointwise_int32(
-          FLAGDNN_POINTWISE_MUL, right, right_shape, right, right_shape,
-          right_shape);
+      integer_expected = cpu::evaluate_add_square_int32(
+          integer_inputs[0], left_shape, right, right_shape, output_shape);
+    } else if (test_case.mode == FLAGDNN_POINTWISE_BINARY_SELECT) {
+      integer_expected = cpu::evaluate_binary_select_int32(
+          integer_inputs[0], left_shape, right, right_shape, predicate,
+          test_case.inputs[2].dimensions, output_shape);
+    } else {
+      integer_expected = cpu::evaluate_binary_pointwise_int32(
+          test_case.mode, integer_inputs[0], left_shape, right, right_shape,
+          output_shape, static_cast<std::int32_t>(test_case.alpha));
     }
-    integer_expected = cpu::evaluate_binary_pointwise_int32(
-        test_case.mode, integer_inputs[0], left_shape, right, right_shape,
-        output_shape, static_cast<std::int32_t>(test_case.alpha));
   } else {
-    auto right = floating_inputs[1];
+    const auto& right = floating_inputs[1];
     if (add_square) {
-      // The graph declares the virtual square with the output storage dtype.
-      // Honor that graph boundary independently of the production fusion.
-      right = cpu::evaluate_binary_pointwise(
-          FLAGDNN_POINTWISE_MUL, right, right_shape, right, right_shape,
-          right_shape);
-      right = decode_floating(test_case.output.data_type,
-                              encode_floating(test_case.output.data_type, right));
+      floating_expected = cpu::evaluate_add_square(
+          floating_inputs[0], left_shape, right, right_shape, output_shape,
+          [&](std::span<const float> values) {
+            return decode_floating(test_case.output.data_type,
+                encode_floating(test_case.output.data_type, values));
+          });
+    } else {
+      floating_expected = cpu::evaluate_binary_pointwise_with_alpha(
+          test_case.mode, floating_inputs[0], left_shape, right, right_shape,
+          output_shape, test_case.alpha);
     }
-    floating_expected = cpu::evaluate_binary_pointwise_with_alpha(
-        test_case.mode, floating_inputs[0], left_shape, right, right_shape,
-        output_shape, test_case.alpha);
     if (test_case.output.data_type != FLAGDNN_DATA_BOOLEAN) {
       floating_expected = decode_floating(
           test_case.output.data_type,
@@ -266,6 +301,17 @@ void run_cpu_pointwise_case(const PointwiseTestCase& test_case,
   check_driver(cuStreamSynchronize(stream.get()),
                "cuStreamSynchronize(CPU pointwise comparison)");
   require_raw_padding_unchanged(actual, initial, test_case);
+  for (std::size_t index = 0; index < inputs.size(); ++index) {
+    std::vector<std::byte> after(initial_inputs[index].size());
+    copy_from_device_async(after, *inputs[index].buffer, 0, stream.get());
+    check_driver(cuStreamSynchronize(stream.get()),
+                 "cuStreamSynchronize(CPU pointwise input guard)");
+    if (after != initial_inputs[index]) {
+      throw std::runtime_error(test_case.name + ": FlagDNN modified input " +
+                               std::to_string(index));
+    }
+  }
+
   const auto payload = std::span<const std::byte>(actual).subspan(
       test_case.output.binding_byte_offset);
   if (integer) {

@@ -36,7 +36,8 @@ from ..dispatch.tensor import (
 
 
 _INTEGER_POINTWISE_OPERATIONS = {
-    "add", "sub", "mul", "div", "pow", "min", "max", "mod", "cmp_eq"
+    "add", "sub", "mul", "div", "pow", "min", "max", "mod",
+    "cmp_eq", "cmp_neq", "cmp_gt", "cmp_ge", "cmp_lt", "cmp_le"
 }
 
 
@@ -134,7 +135,7 @@ def _validate_binary_pointwise_graph(
         ):
             raise ValueError(
                 f"THead {operation_label} comparison inputs must use "
-                "matching float32/float16/bfloat16 types and output must be "
+                "matching float32/float16/bfloat16/int32 types and output must be "
                 "boolean"
             )
     elif operation in _LOGICAL_OPERATIONS:
@@ -309,11 +310,11 @@ def _validate_binary_select_graph(graph: dict[str, Any]) -> dict[str, Any]:
     by_uid = {int(tensor["uid"]): tensor for tensor in tensors}
     ordered = [by_uid[uid] for uid in uids]
     dtype = ordered[0]["data_type"]
-    if dtype not in _FLOATING_DATA_TYPES or [
+    if dtype not in (_FLOATING_DATA_TYPES | {"int32"}) or [
         t["data_type"] for t in ordered
     ] != [dtype, dtype, "boolean", dtype]:
         raise ValueError(
-            "THead BinarySelect requires matching floating values/output and"
+            "THead BinarySelect requires matching floating or int32 values/output and"
             " boolean mask"
         )
     dimensions = ordered[-1]["dimensions"]

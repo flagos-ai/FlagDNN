@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "benchmark/acdnn_provider.hpp"
+#include "benchmark/equivalent.hpp"
 #include "benchmark_mode.hpp"
 #include "capability.hpp"
 #include "common/flagdnn_provider.hpp"
@@ -1052,6 +1053,12 @@ int run_benchmark_suite(int argc, char **argv,
       const ProviderCapability capability =
           acdnn_provider.capability(specification);
       if (!capability.supported) {
+        if (!probe && operation == "gelu_approx_tanh_backward") {
+          auto production = flagdnn_provider.build(specification);
+          tv::run_equivalent_benchmark(specification, *production, stream);
+          ++comparable_executed;
+          continue;
+        }
         emit_skip(specification, capability.reason, target, operation);
         ++reference_skipped;
         continue;

@@ -8,8 +8,11 @@
 #include "common/resample.hpp"
 #include "common/statistics.hpp"
 namespace flagdnn::testing {
+int run_thead_index_benchmark(int argc, char** argv, std::string_view operation);
 int run_native_benchmark_test(int argc, char** argv,
                               std::string_view operation) {
+  if (operation == "concatenate" || operation == "gen_index")
+    return run_thead_index_benchmark(argc, argv, operation);
   if (operation == "bn_finalize")
     return run_statistics_functional_test(argc, argv, make_bn_finalize_cases(),
                                           true);

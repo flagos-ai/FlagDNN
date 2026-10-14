@@ -714,10 +714,10 @@
       }
     },
     "thead": {
-      "device": null,
-      "measured_on": null,
+      "device": "PPU-ZW810E",
+      "measured_on": "2026-10-13",
       "peaks": {
-        "vector_fp32": null,
+        "vector_fp32": 21.95791017,
         "vector_fp16": null,
         "vector_bf16": null,
         "vector_fp64": null,
@@ -728,11 +728,69 @@
         "tensor_fp64": null,
         "tensor_fp8_e4m3": null,
         "tensor_int8": null,
-        "hbm_triad": null,
-        "hbm_copy": null,
-        "hbm_read": null,
-        "hbm_write": null,
+        "hbm_triad": 2.101283396,
+        "hbm_copy": 2.0339100780000003,
+        "hbm_read": 1.834828781,
+        "hbm_write": 2.037074237,
         "tensor_fp8_e5m2_e4m3": null
+      },
+      "architecture": "sm_80",
+      "measurement": {
+        "device_ordinal": 0,
+        "compute_units": 64,
+        "warp_size": 32,
+        "l2_bytes": 67108864,
+        "total_memory_bytes": 102676561920,
+        "cuda_runtime_version": 13000,
+        "cuda_driver_version": 13000,
+        "ppu_sdk_version": "2.1.0-a5f865",
+        "compiler": "PPU SDK CUDA compatibility nvcc 13.0.0 (PPU code generation)",
+        "collector": "tools/performance_baseline/benchmark_thead_vector_memory.cu",
+        "collector_sha256": "1585f81615197bfb7a226fb30a0de340ad153b8fe211f8c8a2394c6892423b45",
+        "raw_csv": "tools/performance_baseline/measurements/thead-20261013/vector-memory.csv.gz",
+        "raw_csv_sha256": "ba4b8c2ab6a320d4d90644cf298f8c1a8ae82136306c46b33695933f53843bb2",
+        "raw_log": "tools/performance_baseline/measurements/thead-20261013/vector-memory.log",
+        "raw_log_sha256": "50a7e6356954d355971995dfaaf2303ad969f2e4264a80d8da8bd4eab72d6d05",
+        "summary": "tools/performance_baseline/measurements/thead-20261013.json",
+        "timing_method": "cuda_compatibility_events_per_kernel",
+        "statistic": "maximum_across_configurations_of_all_sample_median_throughput",
+        "warmup_iterations": 20,
+        "rounds": 5,
+        "samples_per_round": 20,
+        "configuration_count": 54,
+        "sample_count": 5400,
+        "validation": "All FP32 FMA outputs checked exactly; memory windows and read checksums sampled after each round. All 5400 samples passed validation.",
+        "scope": "FP32 vector FMA and logical streaming memory peaks only; unmeasured vector/tensor precisions remain null.",
+        "notes": [
+          "Memory buffers are 256 MiB and 1024 MiB each, exceeding the 64 MiB L2. Logical bandwidth is not a measurement of DRAM-controller transactions.",
+          "The PPU CUDA compatibility architecture is sm_80; this identifies the compatibility capability, not an NVIDIA GPU.",
+          "Memory read work excludes the small checksum output sink, whose size is recorded per configuration."
+        ],
+        "raw_csv_compression": "gzip",
+        "raw_csv_uncompressed_sha256": "15d4d72685d25b25a573e14ad3c2b6051101d6edf5b50d0c898a0015c7ded57f",
+        "raw_csv_uncompressed_bytes": 997539
+      },
+      "scaling": {
+        "case_policies": {
+          "concatenate": {
+            "scale_metric": "hbm_copy",
+            "scope": "The 42 fp32/fp16/bfloat16 native NVIDIA concatenate cases; other dtypes have no valid reference.",
+            "rationale": "Explicit Thead logical read/write bandwidth proxy for data movement. Same logical storage widths; traffic_ratio=1.",
+            "limitations": "Approximate scaling only. Small repeated buffers, strided accesses, cache residency and launch latency may dominate; not a measured bottleneck conclusion."
+          },
+          "gen_index": {
+            "scale_metric": "hbm_write",
+            "scope": "The 28 fp32/int32 native NVIDIA gen_index cases.",
+            "rationale": "Explicit Thead logical output-write bandwidth proxy for index generation; no input traffic.",
+            "limitations": "Approximate scaling only. Tiny outputs may be launch/cache limited; integer arithmetic is not characterized by this bandwidth peak."
+          },
+          "gelu_approx_tanh_backward": {
+            "scale_metric": "vector_fp32",
+            "scope": "The 45 default fp32/fp16/bfloat16 performance cases.",
+            "rationale": "Both providers compute pointwise activation gradients in FP32; measured FP32 FMA throughput is an explicit approximation for the vector compute path.",
+            "limitations": "FMA throughput does not measure tanh throughput. Cache and launch effects may dominate, especially small cases. Not a measured bottleneck conclusion."
+          }
+        }
       }
     }
   },

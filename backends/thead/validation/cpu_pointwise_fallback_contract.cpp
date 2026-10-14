@@ -12,6 +12,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -27,8 +28,8 @@ class NoOpExecutable final : public flagdnn::testing::TestExecutable {
                flagdnnStream_t) override {}
 };
 
-std::array<PointwiseTestCase, 3> cases() {
-  return {{
+std::vector<PointwiseTestCase> cases() {
+  std::vector<PointwiseTestCase> result = {
       {.name = "cpu_fallback_sub_fp16_alpha_neg2",
        .mode = FLAGDNN_POINTWISE_SUB,
        .inputs = {{1, FLAGDNN_DATA_FLOAT16, {1, 3, 8}, {24, 8, 1}},
@@ -56,7 +57,33 @@ std::array<PointwiseTestCase, 3> cases() {
        .output = {23, FLAGDNN_DATA_BOOLEAN, {1, 1, 16}, {16, 16, 1}},
        .input_domains = {PointwiseInputDomain::kComparison,
                          PointwiseInputDomain::kComparison}},
-  }};
+  };
+  for (const auto mode : {FLAGDNN_POINTWISE_CMP_NEQ, FLAGDNN_POINTWISE_CMP_GT,
+                          FLAGDNN_POINTWISE_CMP_GE, FLAGDNN_POINTWISE_CMP_LT,
+                          FLAGDNN_POINTWISE_CMP_LE, FLAGDNN_POINTWISE_MUL}) {
+    PointwiseTestCase item;
+    item.name = "cpu_fallback_int32_strided_" + std::to_string(mode);
+    item.mode = mode;
+    item.inputs = {{31, FLAGDNN_DATA_INT32, {2, 3, 4}, {31, 9, 1}, 16},
+                    {32, FLAGDNN_DATA_INT32, {2, 3, 4}, {37, 11, 1}, 32}};
+    item.output = {33, mode == FLAGDNN_POINTWISE_MUL ? FLAGDNN_DATA_INT32
+                                                  : FLAGDNN_DATA_BOOLEAN,
+                    {2, 3, 4}, {43, 14, 1}, 48};
+    item.input_domains = {PointwiseInputDomain::kComparison,
+                           PointwiseInputDomain::kComparison};
+    result.push_back(std::move(item));
+  }
+  PointwiseTestCase select;
+  select.name = "cpu_fallback_select_int32_strided";
+  select.mode = FLAGDNN_POINTWISE_BINARY_SELECT;
+  select.inputs = {{41, FLAGDNN_DATA_INT32, {2, 3, 4}, {31, 9, 1}, 16},
+                    {42, FLAGDNN_DATA_INT32, {2, 3, 4}, {37, 11, 1}, 32},
+                    {43, FLAGDNN_DATA_BOOLEAN, {2, 3, 4}, {41, 13, 1}, 16}};
+  select.output = {44, FLAGDNN_DATA_INT32, {2, 3, 4}, {43, 14, 1}, 48};
+  select.input_domains = {PointwiseInputDomain::kReal, PointwiseInputDomain::kReal,
+                           PointwiseInputDomain::kLogical};
+  result.push_back(std::move(select));
+  return result;
 }
 
 }  // namespace

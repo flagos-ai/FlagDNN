@@ -220,7 +220,7 @@
       "properties": {
         "provider": {"const": "nvidia_equivalent"},
         "platform": {"const": "nvidia"},
-        "target_platform": {"enum": ["hygon", "mthreads"]},
+        "target_platform": {"enum": ["hygon", "mthreads", "thead"]},
         "scale_metric": {"enum": ["vector_fp32", "hbm_copy", "hbm_write", "hbm_triad"]},
         "timing_profile": {"enum": ["native", "batchnorm_training"]},
         "traffic_ratio": {"type": "number", "exclusiveMinimum": 0, "default": 1},
@@ -291,6 +291,42 @@
         "then": {"properties": {"equivalent_baseline": {"properties": {
           "target_platform": {"const": "mthreads"}
         }}}}
+      }, {
+        "if": {"properties": {"equivalent_baseline": {"properties": {
+          "target_platform": {"const": "thead"}
+        }}}},
+        "then": {
+          "properties": {"equivalent_baseline": {"properties": {
+            "min_relative_efficiency": {"const": 0.8},
+            "traffic_ratio": {"const": 1},
+            "timing_profile": {"const": "native"}
+          }}},
+          "oneOf": [{
+            "properties": {
+              "case": {"pattern": "^concatenate_(?:fp32|fp16|bf16)_[0-9][a-z0-9_-]*$"},
+              "equivalent_baseline": {"properties": {
+                "scale_metric": {"const": "hbm_copy"},
+                "reference_validation": {"const": "sanity"}
+              }}
+            }
+          }, {
+            "properties": {
+              "case": {"pattern": "^gen_index_(?:fp32|int32)_[0-9][a-z0-9_-]*$"},
+              "equivalent_baseline": {"properties": {
+                "scale_metric": {"const": "hbm_write"},
+                "reference_validation": {"const": "sanity"}
+              }}
+            }
+          }, {
+            "properties": {
+              "case": {"pattern": "^gelu_approx_tanh_backward_perf_(?:fp32|fp16|bfloat16)_[0-9][a-z0-9_-]*$"},
+              "equivalent_baseline": {"properties": {
+                "scale_metric": {"const": "vector_fp32"},
+                "reference_validation": {"const": "cpu_full"}
+              }}
+            }
+          }]
+        }
       }, {
         "if": {"not": {"properties": {"case": {"pattern": "^div_"}}}},
         "then": {

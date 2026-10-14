@@ -10,7 +10,7 @@ add_test(NAME reference.cpu.pointwise.contract
 set_tests_properties(reference.cpu.pointwise.contract PROPERTIES
   LABELS "reference;cpu;pointwise;host;contract")
 
-foreach(_reference_contract IN ITEMS storage normalization)
+foreach(_reference_contract IN ITEMS index storage normalization)
   add_executable(flagdnn_reference_cpu_${_reference_contract}_contract
     tests/cpu_${_reference_contract}_contract.cpp)
   target_link_libraries(flagdnn_reference_cpu_${_reference_contract}_contract

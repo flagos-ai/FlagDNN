@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "backends/thead/validation/ppu_driver.hpp"
+#include "benchmark/common/case.hpp"
+#include "reference/cpu/benchmark.hpp"
+#include "reference/cpu/pointwise.hpp"
 
 #include <flagdnn/flagdnn.hpp>
 #include <flagdnn_frontend.h>
@@ -398,94 +401,97 @@ PointwiseOperation requested_operation(int argc, char** argv) {
       "[--operation add|sub|mul|min|max|scale|relu|leaky_relu|sigmoid|tanh|elu|identity|gelu|sqrt|neg|abs|ceil|floor|exp|log|cos|rsqrt|sin|tan|softplus|swish|gelu_approx_tanh|div|pow|mod|sigmoid_backward|reciprocal|add_square|cmp_eq|cmp_neq|cmp_gt|cmp_ge|cmp_lt|cmp_le]");
 }
 
-float expected_value(ExpectedOperation operation, float left, float right) {
+flagdnnPointwiseMode_t reference_mode(ExpectedOperation operation) {
+  // Frontend enum ordinals differ from the public C API; map explicitly.
   switch (operation) {
-    case ExpectedOperation::kAdd:
-      return left + right;
-    case ExpectedOperation::kSub:
-      return left - right;
-    case ExpectedOperation::kMul:
-      return left * right;
-    case ExpectedOperation::kMin:
-      return std::min(left, right);
-    case ExpectedOperation::kMax:
-      return std::max(left, right);
-    case ExpectedOperation::kRelu:
-      return std::max(left, 0.0F);
-    case ExpectedOperation::kLeakyRelu:
-      return left < 0.0F ? 0.2F * left : left;
-    case ExpectedOperation::kSigmoid:
-      return 1.0F / (1.0F + std::exp(-left));
-    case ExpectedOperation::kTanh:
-      return std::tanh(left);
-    case ExpectedOperation::kElu:
-      return left > 0.0F ? left : std::exp(left) - 1.0F;
-    case ExpectedOperation::kIdentity:
-      return left;
-    case ExpectedOperation::kGelu:
-      return 0.5F * left *
-             (1.0F + std::erf(left / std::sqrt(2.0F)));
-    case ExpectedOperation::kSqrt:
-      return std::sqrt(left);
-    case ExpectedOperation::kNeg:
-      return -left;
-    case ExpectedOperation::kAbs:
-      return std::abs(left);
-    case ExpectedOperation::kCeil:
-      return std::ceil(left);
-    case ExpectedOperation::kFloor:
-      return std::floor(left);
-    case ExpectedOperation::kExp:
-      return std::exp(left);
-    case ExpectedOperation::kLog:
-      return std::log(left);
-    case ExpectedOperation::kCos:
-      return std::cos(left);
-    case ExpectedOperation::kRsqrt:
-      return 1.0F / std::sqrt(left);
-    case ExpectedOperation::kSin:
-      return std::sin(left);
-    case ExpectedOperation::kTan:
-      return std::tan(left);
-    case ExpectedOperation::kSoftplus:
-      return std::max(left, 0.0F) +
-             std::log1p(std::exp(-std::abs(left)));
-    case ExpectedOperation::kSwish:
-      return left / (1.0F + std::exp(-1.25F * left));
-    case ExpectedOperation::kGeluApproxTanh: {
-      const float inner =
-          0.7978845608028654F *
-          (left + 0.044715F * left * left * left);
-      return 0.5F * left * (1.0F + std::tanh(inner));
-    }
-    case ExpectedOperation::kDiv:
-      return left / right;
-    case ExpectedOperation::kPow:
-      return std::pow(left, right);
-    case ExpectedOperation::kMod:
-      return std::fmod(left, right);
-    case ExpectedOperation::kSigmoidBackward: {
-      const float sigmoid = 1.0F / (1.0F + std::exp(-right));
-      return left * sigmoid * (1.0F - sigmoid);
-    }
-    case ExpectedOperation::kReciprocal:
-      return 1.0F / left;
-    case ExpectedOperation::kAddSquare:
-      return left + right * right;
-    case ExpectedOperation::kCmpEq:
-      return left == right ? 1.0F : 0.0F;
-    case ExpectedOperation::kCmpNeq:
-      return left != right ? 1.0F : 0.0F;
-    case ExpectedOperation::kCmpGt:
-      return left > right ? 1.0F : 0.0F;
-    case ExpectedOperation::kCmpGe:
-      return left >= right ? 1.0F : 0.0F;
-    case ExpectedOperation::kCmpLt:
-      return left < right ? 1.0F : 0.0F;
-    case ExpectedOperation::kCmpLe:
-      return left <= right ? 1.0F : 0.0F;
+    case ExpectedOperation::kAdd: return FLAGDNN_POINTWISE_ADD;
+    case ExpectedOperation::kSub: return FLAGDNN_POINTWISE_SUB;
+    case ExpectedOperation::kMul: return FLAGDNN_POINTWISE_MUL;
+    case ExpectedOperation::kMin: return FLAGDNN_POINTWISE_MIN;
+    case ExpectedOperation::kMax: return FLAGDNN_POINTWISE_MAX;
+    case ExpectedOperation::kRelu: return FLAGDNN_POINTWISE_RELU_FWD;
+    case ExpectedOperation::kLeakyRelu: return FLAGDNN_POINTWISE_RELU_FWD;
+    case ExpectedOperation::kSigmoid: return FLAGDNN_POINTWISE_SIGMOID_FWD;
+    case ExpectedOperation::kTanh: return FLAGDNN_POINTWISE_TANH_FWD;
+    case ExpectedOperation::kElu: return FLAGDNN_POINTWISE_ELU_FWD;
+    case ExpectedOperation::kIdentity: return FLAGDNN_POINTWISE_IDENTITY;
+    case ExpectedOperation::kGelu: return FLAGDNN_POINTWISE_GELU_FWD;
+    case ExpectedOperation::kSqrt: return FLAGDNN_POINTWISE_SQRT;
+    case ExpectedOperation::kNeg: return FLAGDNN_POINTWISE_NEG;
+    case ExpectedOperation::kAbs: return FLAGDNN_POINTWISE_ABS;
+    case ExpectedOperation::kCeil: return FLAGDNN_POINTWISE_CEIL;
+    case ExpectedOperation::kFloor: return FLAGDNN_POINTWISE_FLOOR;
+    case ExpectedOperation::kExp: return FLAGDNN_POINTWISE_EXP;
+    case ExpectedOperation::kLog: return FLAGDNN_POINTWISE_LOG;
+    case ExpectedOperation::kCos: return FLAGDNN_POINTWISE_COS;
+    case ExpectedOperation::kRsqrt: return FLAGDNN_POINTWISE_RSQRT;
+    case ExpectedOperation::kSin: return FLAGDNN_POINTWISE_SIN;
+    case ExpectedOperation::kTan: return FLAGDNN_POINTWISE_TAN;
+    case ExpectedOperation::kSoftplus: return FLAGDNN_POINTWISE_SOFTPLUS_FWD;
+    case ExpectedOperation::kSwish: return FLAGDNN_POINTWISE_SWISH_FWD;
+    case ExpectedOperation::kGeluApproxTanh: return FLAGDNN_POINTWISE_GELU_APPROX_TANH_FWD;
+    case ExpectedOperation::kDiv: return FLAGDNN_POINTWISE_DIV;
+    case ExpectedOperation::kPow: return FLAGDNN_POINTWISE_POW;
+    case ExpectedOperation::kMod: return FLAGDNN_POINTWISE_MOD;
+    case ExpectedOperation::kSigmoidBackward: return FLAGDNN_POINTWISE_SIGMOID_BWD;
+    case ExpectedOperation::kReciprocal: return FLAGDNN_POINTWISE_RECIPROCAL;
+    case ExpectedOperation::kCmpEq: return FLAGDNN_POINTWISE_CMP_EQ;
+    case ExpectedOperation::kCmpNeq: return FLAGDNN_POINTWISE_CMP_NEQ;
+    case ExpectedOperation::kCmpGt: return FLAGDNN_POINTWISE_CMP_GT;
+    case ExpectedOperation::kCmpGe: return FLAGDNN_POINTWISE_CMP_GE;
+    case ExpectedOperation::kCmpLt: return FLAGDNN_POINTWISE_CMP_LT;
+    case ExpectedOperation::kCmpLe: return FLAGDNN_POINTWISE_CMP_LE;
+    case ExpectedOperation::kAddSquare: break;
   }
-  throw std::logic_error("unknown THead JIT expected operation");
+  throw std::invalid_argument("AddSquare requires the composite CPU reference");
+}
+
+std::vector<float> reference_values(const PointwiseOperation& operation,
+                                    std::span<const float> left,
+                                    std::span<const float> right) {
+  namespace cpu = flagdnn::reference::cpu;
+  namespace bm = flagdnn::benchmarking;
+  if (left.empty() || left.size() != right.size())
+    throw std::invalid_argument("JIT reference fixture sizes differ");
+  const std::vector<std::int64_t> shape{static_cast<std::int64_t>(left.size())};
+  // The JIT graph stores both inputs, intermediates and value outputs as FP32.
+  // Host float values are copied byte-for-byte to the device, so this callback
+  // is the exact storage round trip; Boolean expectations are already 0 or 1.
+  const auto fp32 = [](std::span<const float> values) {
+    return std::vector<float>(values.begin(), values.end());
+  };
+  if (operation.expected == ExpectedOperation::kAddSquare)
+    return cpu::evaluate_add_square(left, shape, right, shape, shape, fp32);
+
+  bm::BenchmarkCase specification;
+  specification.name = operation.name;
+  specification.operation = bm::Operation::kPointwise;
+  specification.pointwise_mode = reference_mode(operation.expected);
+  auto& attributes = specification.pointwise_attributes;
+  if (operation.expected == ExpectedOperation::kLeakyRelu) {
+    attributes.flags |= FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP_SLOPE;
+    attributes.relu_lower_clip_slope = 0.2F;
+  } else if (operation.expected == ExpectedOperation::kElu) {
+    attributes.flags |= FLAGDNN_POINTWISE_ATTRIBUTE_ELU_ALPHA;
+    attributes.elu_alpha = 1.0F;
+  } else if (operation.expected == ExpectedOperation::kSoftplus) {
+    attributes.flags |= FLAGDNN_POINTWISE_ATTRIBUTE_SOFTPLUS_BETA;
+    attributes.softplus_beta = 1.0F;
+  } else if (operation.expected == ExpectedOperation::kSwish) {
+    attributes.flags |= FLAGDNN_POINTWISE_ATTRIBUTE_SWISH_BETA;
+    attributes.swish_beta = 1.25F;
+  }
+  specification.tensors.push_back({1, FLAGDNN_DATA_FLOAT32, shape, {1}});
+  std::vector<std::vector<float>> inputs{fp32(left)};
+  if (!operation.unary) {
+    specification.tensors.push_back({2, FLAGDNN_DATA_FLOAT32, shape, {1}});
+    inputs.push_back(fp32(right));
+  }
+  specification.tensors.push_back({3, operation.comparison ? FLAGDNN_DATA_BOOLEAN
+                                                          : FLAGDNN_DATA_FLOAT32,
+                                   shape, {1}});
+  return cpu::evaluate_benchmark(specification, inputs,
+      [&](std::span<const float> values, flagdnnDataType_t) { return fp32(values); }).at(0);
 }
 
 }  // namespace
@@ -703,9 +709,11 @@ int main(int argc, char** argv) {
             "steady-state execute re-entered libtriton_jit");
     require(snapshot(temporary.path()) == cache_after_build,
             "steady-state execute changed compiler/JIT cache files");
+    const auto expected_values = reference_values(operation, host_left, host_right);
+    require(expected_values.size() == host_output.size(),
+            "CPU JIT reference output size differs");
     for (std::size_t index = 0; index < host_output.size(); ++index) {
-      const float expected = expected_value(
-          operation.expected, host_left[index], host_right[index]);
+      const float expected = expected_values[index];
       if (operation.comparison) {
         require(host_boolean_output[index] ==
                     static_cast<std::uint8_t>(expected),

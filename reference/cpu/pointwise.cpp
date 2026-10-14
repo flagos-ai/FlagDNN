@@ -140,6 +140,11 @@ bool supports_binary_pointwise(flagdnnPointwiseMode_t mode) noexcept {
     case FLAGDNN_POINTWISE_POW:
     case FLAGDNN_POINTWISE_MOD:
     case FLAGDNN_POINTWISE_CMP_EQ:
+    case FLAGDNN_POINTWISE_CMP_NEQ:
+    case FLAGDNN_POINTWISE_CMP_GT:
+    case FLAGDNN_POINTWISE_CMP_GE:
+    case FLAGDNN_POINTWISE_CMP_LT:
+    case FLAGDNN_POINTWISE_CMP_LE:
       return true;
     default:
       return false;
@@ -204,6 +209,21 @@ std::vector<float> evaluate_binary_pointwise_with_alpha(
         break;
       case FLAGDNN_POINTWISE_CMP_EQ:
         output[index] = left_value == right_value ? 1.0F : 0.0F;
+        break;
+      case FLAGDNN_POINTWISE_CMP_NEQ:
+        output[index] = left_value != right_value ? 1.0F : 0.0F;
+        break;
+      case FLAGDNN_POINTWISE_CMP_GT:
+        output[index] = left_value > right_value ? 1.0F : 0.0F;
+        break;
+      case FLAGDNN_POINTWISE_CMP_GE:
+        output[index] = left_value >= right_value ? 1.0F : 0.0F;
+        break;
+      case FLAGDNN_POINTWISE_CMP_LT:
+        output[index] = left_value < right_value ? 1.0F : 0.0F;
+        break;
+      case FLAGDNN_POINTWISE_CMP_LE:
+        output[index] = left_value <= right_value ? 1.0F : 0.0F;
         break;
       default:
         throw std::logic_error("validated CPU pointwise mode became invalid");
@@ -355,6 +375,67 @@ std::vector<float> evaluate_activation_backward(
     result[index] = static_cast<float>(dy[index] * derivative);
   }
   return result;
+}
+
+std::vector<std::int32_t> evaluate_binary_select_int32(
+    std::span<const std::int32_t> left,
+    std::span<const std::int64_t> left_dimensions,
+    std::span<const std::int32_t> right,
+    std::span<const std::int64_t> right_dimensions,
+    std::span<const std::uint8_t> predicate,
+    std::span<const std::int64_t> predicate_dimensions,
+    std::span<const std::int64_t> output_dimensions) {
+  const auto count = checked_element_count(output_dimensions, "output");
+  validate_input(left, left_dimensions, output_dimensions, "left input");
+  validate_input(right, right_dimensions, output_dimensions, "right input");
+  validate_input(predicate, predicate_dimensions, output_dimensions, "predicate");
+  std::vector<std::int32_t> output(count);
+  for (std::size_t index = 0; index < count; ++index) {
+    output[index] = pointwise_integer_reference(
+        FLAGDNN_POINTWISE_BINARY_SELECT,
+        left[broadcast_index(index, left_dimensions, output_dimensions)],
+        right[broadcast_index(index, right_dimensions, output_dimensions)],
+        predicate[broadcast_index(index, predicate_dimensions, output_dimensions)]
+            != 0,
+        1);
+  }
+  return output;
+}
+
+std::vector<float> evaluate_add_square(
+    std::span<const float> left,
+    std::span<const std::int64_t> left_dimensions,
+    std::span<const float> right,
+    std::span<const std::int64_t> right_dimensions,
+    std::span<const std::int64_t> output_dimensions,
+    const PointwiseQuantizer& quantize_virtual) {
+  if (!quantize_virtual)
+    throw std::invalid_argument("AddSquare virtual quantizer is required");
+  (void)checked_element_count(output_dimensions, "output");
+  validate_input(left, left_dimensions, output_dimensions, "left input");
+  validate_input(right, right_dimensions, output_dimensions, "right input");
+  auto square = evaluate_binary_pointwise(FLAGDNN_POINTWISE_MUL,
+      right, right_dimensions, right, right_dimensions, right_dimensions);
+  square = quantize_virtual(square);
+  if (square.size() != right.size())
+    throw std::invalid_argument("AddSquare virtual quantizer changed value count");
+  return evaluate_binary_pointwise(FLAGDNN_POINTWISE_ADD,
+      left, left_dimensions, square, right_dimensions, output_dimensions);
+}
+
+std::vector<std::int32_t> evaluate_add_square_int32(
+    std::span<const std::int32_t> left,
+    std::span<const std::int64_t> left_dimensions,
+    std::span<const std::int32_t> right,
+    std::span<const std::int64_t> right_dimensions,
+    std::span<const std::int64_t> output_dimensions) {
+  (void)checked_element_count(output_dimensions, "output");
+  validate_input(left, left_dimensions, output_dimensions, "left input");
+  validate_input(right, right_dimensions, output_dimensions, "right input");
+  const auto square = evaluate_binary_pointwise_int32(FLAGDNN_POINTWISE_MUL,
+      right, right_dimensions, right, right_dimensions, right_dimensions);
+  return evaluate_binary_pointwise_int32(FLAGDNN_POINTWISE_ADD,
+      left, left_dimensions, square, right_dimensions, output_dimensions);
 }
 
 std::int32_t pointwise_integer_reference(flagdnnPointwiseMode_t mode,

@@ -2086,6 +2086,18 @@ def batch_suite_result(
             for row in entry["details"].values():
                 row.pop("flag_dnn", None)
         result["data"] = data
+        accounting = task.get("case_accounting", {})
+        skipped = accounting.get("reference_skipped", 0)
+        if skipped:
+            # Keep successful measured rows, but publish missing references
+            # immediately instead of waiting for whole-batch finalization.
+            result["skipped"] = skipped
+            result["skip_records"] = [
+                *task.get("skip_records", []),
+                *task.get("baseline_skip_records", []),
+            ]
+            if status == "passed":
+                result["status"] = "Skipped"
         relative = Path(operator) / "performance_result.log"
         dtype_names = {
             "fp16": "torch.float16",

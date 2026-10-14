@@ -16,8 +16,14 @@
 #include "acdnn_reference.hpp"
 #include "backend_pointwise_reference.hpp"
 #include "tensor_io.hpp"
+#include "benchmark/common/case.hpp"
+#include "reference/cpu/benchmark.hpp"
+#include "reference/cpu/matrix.hpp"
+#include "reference/cpu/pointwise.hpp"
 
 namespace tv = flagdnn::validation::thead;
+namespace cpu = flagdnn::reference::cpu;
+namespace bm = flagdnn::benchmarking;
 using flagdnn::testing::TestTensor;
 
 void probe(acdnnPointwiseMode_t mode, std::string_view name,
@@ -49,13 +55,29 @@ void probe(acdnnPointwiseMode_t mode, std::string_view name,
     for (std::size_t i = 0; i < left.size(); ++i) {
       left[i] = (i % 4) / 2;
       right[i] = i % 2;
-      expected[i] = mode == ACDNN_POINTWISE_LOGICAL_AND
-                        ? std::uint8_t(left[i] && right[i])
-                    : mode == ACDNN_POINTWISE_LOGICAL_OR
-                        ? std::uint8_t(left[i] || right[i])
-                        : std::uint8_t(!left[i]);
       mod_left[i] = 5.5F;
       mod_right[i] = 2.0F;
+    }
+    if (!is_mod && !approximate_backward) {
+      bm::BenchmarkCase oracle;
+      oracle.operation = bm::Operation::kPointwise;
+      oracle.pointwise_mode = mode == ACDNN_POINTWISE_LOGICAL_AND
+          ? FLAGDNN_POINTWISE_LOGICAL_AND : mode == ACDNN_POINTWISE_LOGICAL_OR
+          ? FLAGDNN_POINTWISE_LOGICAL_OR : FLAGDNN_POINTWISE_LOGICAL_NOT;
+      oracle.tensors.push_back({1, FLAGDNN_DATA_BOOLEAN, {16}, {1}});
+      std::vector<std::vector<float>> inputs{
+          std::vector<float>(left.begin(), left.end())};
+      if (!unary) {
+        oracle.tensors.push_back({2, FLAGDNN_DATA_BOOLEAN, {16}, {1}});
+        inputs.emplace_back(right.begin(), right.end());
+      }
+      oracle.tensors.push_back({3, FLAGDNN_DATA_BOOLEAN, {16}, {1}});
+      const auto values = cpu::evaluate_benchmark(oracle, inputs,
+          [](std::span<const float> values, flagdnnDataType_t) {
+            return std::vector<float>(values.begin(), values.end());
+          }).at(0);
+      for (std::size_t i = 0; i < expected.size(); ++i)
+        expected[i] = static_cast<std::uint8_t>(values.at(i));
     }
     if (is_mod || approximate_backward) {
       tv::copy_to_device_async<float>(a, mod_left, 0, stream.get());
@@ -128,6 +150,20 @@ class Int32PointwiseProbe final : public tv::AcdnnGraphReference {
   }
 };
 
+flagdnnPointwiseMode_t integer_reference_mode(acdnnPointwiseMode_t mode) {
+  switch (mode) {
+    case ACDNN_POINTWISE_ADD: return FLAGDNN_POINTWISE_ADD;
+    case ACDNN_POINTWISE_IDENTITY_FWD: return FLAGDNN_POINTWISE_IDENTITY;
+    case ACDNN_POINTWISE_CMP_EQ: return FLAGDNN_POINTWISE_CMP_EQ;
+    case ACDNN_POINTWISE_CMP_NEQ: return FLAGDNN_POINTWISE_CMP_NEQ;
+    case ACDNN_POINTWISE_CMP_GT: return FLAGDNN_POINTWISE_CMP_GT;
+    case ACDNN_POINTWISE_CMP_GE: return FLAGDNN_POINTWISE_CMP_GE;
+    case ACDNN_POINTWISE_CMP_LT: return FLAGDNN_POINTWISE_CMP_LT;
+    case ACDNN_POINTWISE_CMP_LE: return FLAGDNN_POINTWISE_CMP_LE;
+    default: throw std::invalid_argument("unsupported INT32 gap probe mode");
+  }
+}
+
 void probe_int32() {
   tv::DeviceStream stream;
   const std::array<std::int32_t, 16> edges{
@@ -171,21 +207,13 @@ void probe_int32() {
                          "INT32 probe synchronize");
         bool mismatch = false;
         for (std::size_t i = 0; i < x.size(); ++i) {
+          const auto expected = cpu::pointwise_integer_reference(
+              integer_reference_mode(mode), x[i], y[i], false, 1);
           if (comparison) {
-            const bool expected =
-                mode == ACDNN_POINTWISE_CMP_EQ    ? x[i] == y[i]
-                : mode == ACDNN_POINTWISE_CMP_NEQ ? x[i] != y[i]
-                : mode == ACDNN_POINTWISE_CMP_GT  ? x[i] > y[i]
-                : mode == ACDNN_POINTWISE_CMP_GE  ? x[i] >= y[i]
-                : mode == ACDNN_POINTWISE_CMP_LT  ? x[i] < y[i]
-                                                  : x[i] <= y[i];
             mismatch |= reinterpret_cast<const std::uint8_t*>(
                             actual.data())[i] != expected;
           } else {
-            const auto expected =
-                static_cast<std::uint32_t>(x[i]) +
-                (unary ? 0U : static_cast<std::uint32_t>(y[i]));
-            mismatch |= static_cast<std::uint32_t>(actual[i]) != expected;
+            mismatch |= actual[i] != expected;
           }
         }
         if (mismatch != edge_values)
@@ -307,9 +335,15 @@ void probe_tf32_matmul() {
     return std::bit_cast<float>(std::bit_cast<std::uint32_t>(value) &
                                 0xffffe000U);
   };
-  double expected = 0;
-  for (std::size_t k = 0; k < 32; ++k)
-    expected += static_cast<double>(tf32(a[k])) * tf32(b[k * 24]);
+  // Truncation is the probe's explicit input codec. The reference MatMul
+  // receives those quantized values with precision=1, so it does not apply its
+  // separate automatic/nearest-even TF32 input policy.
+  std::vector<float> quantized_a(a.begin(), a.end()), quantized_b(b.begin(), b.end());
+  for (auto& value : quantized_a) value = tf32(value);
+  for (auto& value : quantized_b) value = tf32(value);
+  const double expected = cpu::evaluate_matmul(
+      {{16, 32}, {32, 24}, {16, 24}, FLAGDNN_DATA_FLOAT32, 1},
+      quantized_a, quantized_b).at(0);
   const double difference = std::abs(static_cast<double>(c[0]) - expected);
   if (!std::isfinite(c[0]) || std::abs(c[0] - 2.680105925F) > 1.0e-6F ||
       difference <= 5.0e-5 || difference <= 5.0e-5 * std::abs(expected)) {

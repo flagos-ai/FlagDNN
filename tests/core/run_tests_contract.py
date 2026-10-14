@@ -517,7 +517,7 @@ def check_platform_batch_report_hooks(runner) -> None:
         ("no-hook", NoHook()),
         ("disabled-hook", DisabledHook()),
     ]
-    for platform in ("nvidia", "ascend", "thead", "iluvatar"):
+    for platform in ("nvidia", "ascend", "iluvatar"):
         adapter = runner.load_platform_adapter(platform)
         require(adapter is not None, f"missing {platform} test adapter")
         require(
@@ -639,32 +639,33 @@ def check_platform_batch_report_hooks(runner) -> None:
         reset_partitions()
         runner.write_batch_summary(output, environment, [0, 1, 2, 9])
         require_unchanged("legacy batch writer")
-        hygon = runner.load_platform_adapter("hygon")
-        require(
-            callable(getattr(hygon, "postprocess_batch_report", None)),
-            "Hygon equivalent reporting did not opt into the generic hook",
-        )
-        for summary in (
-            {},
-            {"equivalent_performance": {"case_count": 0, "cases": []}},
-        ):
-            reset_partitions()
-            runner.write_batch_summary(
-                output,
-                environment,
-                [0, 1, 2, 9],
-                adapter=hygon,
-                platform_summary=summary,
-                exit_code=1,
-            )
-            report = json.loads((output / "summary.json").read_text())
+        for platform in ("hygon", "thead", "mthreads"):
+            adapter = runner.load_platform_adapter(platform)
             require(
-                set(report) == {"timestamp", "env", "result"}
-                and report["result"] == expected_results,
-                "Hygon native-only reporting changed "
-                "through the equivalent hook",
+                callable(getattr(adapter, "postprocess_batch_report", None)),
+                f"{platform} equivalent reporting did not opt into the generic hook",
             )
-            require_unchanged("Hygon native-only hook")
+            for summary in (
+                {},
+                {"equivalent_performance": {"case_count": 0, "cases": []}},
+            ):
+                reset_partitions()
+                runner.write_batch_summary(
+                    output,
+                    environment,
+                    [0, 1, 2, 9],
+                    adapter=adapter,
+                    platform_summary=summary,
+                    exit_code=1,
+                )
+                report = json.loads((output / "summary.json").read_text())
+                require(
+                    set(report) == {"timestamp", "env", "result"}
+                    and report["result"] == expected_results,
+                    f"{platform} native-only reporting changed "
+                    "through the equivalent hook",
+                )
+                require_unchanged(f"{platform} native-only hook")
 
         class GenericHook:
             def postprocess_batch_report(
@@ -1090,7 +1091,9 @@ else:
             capture_output=True,
             text=True,
             env=environment,
-            timeout=60,
+            # The complete serial preset starts two CTest processes per
+            # operator; its deadline must scale beyond the smaller preset.
+            timeout=max(60, 3 * len(runner.DEFAULT_OPERATORS_APPOINT)),
         )
         require(
             process.returncode == 0,
@@ -2702,12 +2705,38 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
         and mthreads["measurement"]["raw_archive_sha256"],
         "MThreads policies must retain their measured device evidence and dtype scope",
     )
+    # Thead owns an explicit, narrower policy set. These policies must not
+    # inherit Hygon's other operators or alter the shared NVIDIA references.
+    thead_policies = platforms["thead"]["scaling"]["case_policies"]
+    require(
+        {op: policy["scale_metric"] for op, policy in thead_policies.items()}
+        == {
+            "concatenate": "hbm_copy",
+            "gen_index": "hbm_write",
+            "gelu_approx_tanh_backward": "vector_fp32",
+        }
+        and all(
+            policy != policies[op]
+            and all(policy.get(field) for field in ("scope", "rationale", "limitations"))
+            for op, policy in thead_policies.items()
+        ),
+        "Thead-owned policies changed scope or inherited Hygon-specific policies",
+    )
+    require(
+        Counter(case["op"] for case in cases.values() if case["op"] in thead_policies)
+        == {
+            "concatenate": 42,
+            "gen_index": 28,
+            "gelu_approx_tanh_backward": 45,
+        },
+        "Thead-owned policy reference coverage must remain 115 measured cases",
+    )
     for name, platform in platforms.items():
-        if name in {"hygon", "ascend", "mthreads"}:
+        if name in {"hygon", "thead", "ascend", "mthreads"}:
             continue
         require(
             not platform.get("scaling", {}).get("case_policies"),
-            f"{name} inherited Hygon-specific scaling policies",
+            f"{name} inherited platform-specific scaling policies",
         )
 
 

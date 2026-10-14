@@ -93,11 +93,13 @@ def _has_non_overlapping_strides(
         ),
         key=lambda item: item[0],
     )
-    required_stride = 1
+    # Match TensorSpec::has_non_overlapping_strides: the next axis must
+    # begin beyond the complete address span of the preceding axes.
+    required_span = 1
     for stride, dimension in axes:
-        if stride < required_stride:
+        if stride < required_span:
             return False
-        required_stride = stride * dimension
+        required_span += (dimension - 1) * stride
     return True
 
 

@@ -3,6 +3,7 @@
 """Materialize single-node extended plans using the common kernel registry."""
 
 from .artifacts import write_program_manifest
+from .index import materialize_concatenate_source
 
 import ast
 from pathlib import Path
@@ -28,12 +29,22 @@ def _compile_extended(
     tensors, config = kernel_configuration(request["graph"])
     function, runtime_signature, constants, grid, layout = config
     candidate = kernel_registry.select_kernel_candidate("thead", operation)
-    if candidate.ownership != "common" or function not in candidate.functions:
+    ownership = "platform" if operation == "concatenate" else "common"
+    if candidate.ownership != ownership or function not in candidate.functions:
         raise ValueError("extended THead kernel registry contract mismatch")
     source = kernel_registry.resolve_kernel_source(
         compiler_entry_path(), candidate
     )
     source_bytes = kernel_registry.materialize_kernel_source(source, candidate)
+    if operation == "concatenate":
+        source_bytes = materialize_concatenate_source(
+            source_bytes, tensors,
+            request["graph"]["nodes"][0]["attributes"]["axis"],
+        )
+    argument_tensors = (
+        list({tensor["uid"]: tensor for tensor in tensors}.values())
+        if operation == "concatenate" else tensors
+    )
     definition = next(
         node
         for node in ast.parse(source_bytes).body
@@ -53,17 +64,22 @@ def _compile_extended(
                 # HAS_* constexpr disables the branch using them.
                 tokens.append("nullopt")
             elif kind == "tensor":
-                tensor = tensors[tensor_index]
+                tensor = argument_tensors[tensor_index]
                 tensor_index += 1
-                tokens.append(_tensor_pointer_signature(tensor))
-                arguments.append(_tensor_argument(tensor))
+                copy_bits = operation == "concatenate"
+                tokens.append(_tensor_pointer_signature(
+                    tensor, copy_bits=copy_bits
+                ))
+                arguments.append(_tensor_argument(
+                    tensor, copy_bits=copy_bits
+                ))
             else:
                 raise ValueError(
                     f"unsupported extended argument layout: {kind}"
                 )
         else:
             raise ValueError(f"extended kernel parameter is not bound: {name}")
-    if tensor_index != len(tensors):
+    if tensor_index != len(argument_tensors):
         raise ValueError("extended kernel did not bind every graph tensor")
     variant = {
         "variant_id": "default",
@@ -101,7 +117,7 @@ def _compile_extended(
         "request_sha256": _sha256(request_bytes),
         "compiler": identity,
         "external_uids": [t["uid"] for t in request["graph"]["tensors"]],
-        "tensor_count": len(tensors),
+        "tensor_count": len(request["graph"]["tensors"]),
         "tensors": [_manifest_tensor(t) for t in request["graph"]["tensors"]],
         "workspace": {"size": 0, "alignment": 256},
         "program": {

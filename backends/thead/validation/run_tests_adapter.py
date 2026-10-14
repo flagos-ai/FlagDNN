@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
 import re
 import statistics
@@ -14,6 +15,19 @@ COMPARABLE_CASE_CATALOG = (
     Path(__file__).resolve().parent / "benchmark" / "comparable_cases.json"
 )
 SPEEDUP_METRIC = "acdnn_median_us/flagdnn_median_us"
+EQUIVALENT_METRIC = "nvidia_equivalent_time_us/flagdnn_median_us"
+PERFORMANCE_BASELINE_FILE = (
+    Path(__file__).resolve().parents[3] / "docs" / "performance-baseline.json"
+)
+EQUIVALENT_SCALE_METRICS = {
+    "concatenate": "hbm_copy",
+    "gen_index": "hbm_write",
+    "gelu_approx_tanh_backward": "vector_fp32",
+}
+EQUIVALENT_CASE_PATTERN = re.compile(
+    r"^(?P<operator>concatenate|gen_index|gelu_approx_tanh_backward)_"
+    r"(?:perf_)?(?:fp32|fp16|bfloat16|bf16|int32)_[0-9][a-z0-9_-]*$"
+)
 VISIBILITY_VARIABLES = (
     "CUDA_VISIBLE_DEVICES",
     "HIP_VISIBLE_DEVICES",
@@ -33,7 +47,7 @@ FUNCTIONAL_ACCOUNTING_PATTERN = re.compile(
 )
 BENCHMARK_ACCOUNTING_PATTERN = re.compile(
     r"(PASS|SKIP)\s+cases=(\d+)\s+comparable_executed=(\d+)\s+"
-    r"reference_skipped=(\d+)\s*$"
+    r"reference_skipped=(\d+)(?:\s+equivalent_executed=(\d+))?\s*$"
 )
 ACDNN_SKIP_PATTERN = re.compile(
     r"^\[SKIP\]\[acdnn\]\s+"
@@ -135,7 +149,9 @@ def configure_batch_environment(
 ) -> None:
     """Reuse native artifacts across suites, GPU workers, and batch runs."""
     if not environment.get("FLAGDNN_CACHE_PATH"):
-        environment["FLAGDNN_CACHE_PATH"] = str(build_dir / "cache" / "run_tests")
+        environment["FLAGDNN_CACHE_PATH"] = str(
+            build_dir / "cache" / "run_tests"
+        )
 
 
 def preflight_tests(_suites: list[str] | tuple[str, ...]) -> set[str]:
@@ -151,6 +167,8 @@ def preflight_tests(_suites: list[str] | tuple[str, ...]) -> set[str]:
         "integration.thead.dependency_boundary",
         "integration.thead.reference_dependency_boundary",
         "integration.thead.artifact_contract",
+        "integration.thead.index_contract",
+        "integration.thead.index_runtime_contract",
         "integration.thead.compiler_contract",
         "integration.thead.triton_compat_contract",
         "integration.thead.jit",
@@ -506,6 +524,218 @@ def thead_comparable_coverage(
     }
 
 
+def equivalent_case_operator(case: str) -> str | None:
+    """Return only the recorded dtype/catalog scope of the three policies."""
+    match = EQUIVALENT_CASE_PATTERN.fullmatch(case)
+    if match is None:
+        return None
+    operation = match.group("operator")
+    patterns = {
+        "concatenate": r"concatenate_(?:fp32|fp16|bf16)_",
+        "gen_index": r"gen_index_(?:fp32|int32)_",
+        "gelu_approx_tanh_backward": (
+            r"gelu_approx_tanh_backward_perf_(?:fp32|fp16|bfloat16)_"
+        ),
+    }
+    return operation if re.match(patterns[operation], case) else None
+
+
+def thead_equivalent_coverage(
+    results: dict[str, dict[str, Any]],
+    selected_benchmark_operators: list[str],
+    catalog: dict[str, Any],
+) -> dict[str, Any]:
+    """Require the whole selected equivalent catalog, independent of timing.
+
+    Unmeasured concatenate dtypes are expected to emit explicit skip evidence;
+    they never become required measured cases or fabricated passing records.
+    """
+    selected = [
+        operator for operator in dict.fromkeys(selected_benchmark_operators)
+        if operator in EQUIVALENT_SCALE_METRICS
+    ]
+    required: list[dict[str, str]] = []
+    unavailable: list[dict[str, str]] = []
+    for case, capability in catalog["cases"].items():
+        if capability["status"] != "unsupported":
+            continue
+        operator = benchmark_case_operator(case, selected)
+        if operator not in selected:
+            continue
+        item = {"operator": operator, "case": case}
+        if equivalent_case_operator(case) == operator:
+            required.append(item)
+        elif operator == "concatenate":
+            unavailable.append(item)
+    required.sort(key=lambda item: (item["operator"], item["case"]))
+    unavailable.sort(key=lambda item: item["case"])
+    missing: list[dict[str, str]] = []
+    missing_skips: list[dict[str, str]] = []
+    unexpected: list[dict[str, str]] = []
+    for item in required:
+        benchmark = results.get(item["operator"], {}).get("benchmark", {})
+        providers = benchmark.get("records", {}).get(item["case"], {})
+        if (
+            benchmark.get("status") == "passed"
+            and set(providers) == {"flagdnn"}
+            and providers["flagdnn"].get("schema_version") == 4
+        ):
+            continue
+        missing.append({
+            **item, "benchmark_status": str(benchmark.get("status", "not_run"))
+        })
+    for item in unavailable:
+        benchmark = results.get(item["operator"], {}).get("benchmark", {})
+        observed = {
+            record.get("case") for record in benchmark.get("baseline_skip_records", [])
+            if record.get("op") == item["operator"]
+        }
+        if item["case"] not in observed:
+            missing_skips.append(item)
+    required_names = {(item["operator"], item["case"]) for item in required}
+    for operator in selected:
+        for case, providers in results.get(operator, {}).get("benchmark", {}).get("records", {}).items():
+            if (
+                set(providers) == {"flagdnn"}
+                and providers["flagdnn"].get("schema_version") == 4
+                and (operator, case) not in required_names
+            ):
+                unexpected.append({"operator": operator, "case": case})
+    missing_operators = [operator for operator in selected if operator not in catalog["operators"]]
+    return {
+        "source": "repository-owned THead benchmark catalog and explicit equivalent scope",
+        "selected_operators": selected,
+        "required_cases": required,
+        "required_case_count": len(required),
+        "observed_required_case_count": len(required) - len(missing),
+        "missing_cases": missing,
+        "missing_case_count": len(missing),
+        "expected_reference_skip_cases": unavailable,
+        "expected_reference_skip_case_count": len(unavailable),
+        "observed_reference_skip_case_count": len(unavailable) - len(missing_skips),
+        "missing_reference_skip_cases": missing_skips,
+        "unexpected_cases": unexpected,
+        "missing_operators": missing_operators,
+        "verified": not (missing or missing_skips or unexpected or missing_operators),
+    }
+
+
+def validate_benchmark_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Validate measured FlagDNN samples and an unsampled NVIDIA estimate."""
+    expected = {
+        "schema_version", "kind", "provider", "case", "unit", "median",
+        "p90", "samples", "equivalent_baseline",
+    }
+    if not isinstance(record, dict) or set(record) != expected:
+        raise ValueError("fields do not match THead benchmark schema v4")
+    case = record["case"]
+    match = (
+        EQUIVALENT_CASE_PATTERN.fullmatch(case)
+        if isinstance(case, str) else None
+    )
+    if (
+        type(record["schema_version"]) is not int
+        or record["schema_version"] != 4
+        or record["kind"] != "steady_state"
+        or record["provider"] != "flagdnn"
+        or record["unit"] != "us"
+        or match is None
+    ):
+        raise ValueError(
+            "schema v4 requires a supported measured FlagDNN case"
+        )
+    operation = match.group("operator")
+    if equivalent_case_operator(case) != operation:
+        raise ValueError("case has no qualified NVIDIA equivalent baseline")
+    baseline = record["equivalent_baseline"]
+    identities = {
+        "provider": "nvidia_equivalent",
+        "platform": "nvidia",
+        "target_platform": "thead",
+        "timing_profile": "native",
+        "scale_metric": EQUIVALENT_SCALE_METRICS[operation],
+        "reference_validation": (
+            "cpu_full"
+            if operation == "gelu_approx_tanh_backward"
+            else "sanity"
+        ),
+    }
+    numeric = {
+        "reference_time_us", "reference_peak", "target_peak",
+        "min_relative_efficiency", "equivalent_time_us", "limit_us",
+        "relative_efficiency", "traffic_ratio",
+    }
+    if (
+        not isinstance(baseline, dict)
+        or set(baseline) != set(identities) | numeric | {"passed"}
+        or any(baseline[key] != value for key, value in identities.items())
+    ):
+        raise ValueError("invalid equivalent-baseline fields or identity")
+
+    def positive(value: Any) -> bool:
+        try:
+            return (
+                type(value) in (int, float)
+                and math.isfinite(value)
+                and value > 0
+            )
+        except OverflowError:
+            return False
+
+    samples = record["samples"]
+    if (
+        any(not positive(baseline[key]) for key in numeric)
+        or not positive(record["median"])
+        or not positive(record["p90"])
+        or not isinstance(samples, list)
+        or len(samples) != 20
+        or any(not positive(sample) for sample in samples)
+    ):
+        raise ValueError(
+            "native equivalent timing requires 20 finite positive samples"
+        )
+    ordered = sorted(samples)
+    if record["median"] != ordered[9] or record["p90"] != ordered[17]:
+        raise ValueError(
+            "equivalent timing quantiles disagree with measured samples"
+        )
+    if (
+        baseline["min_relative_efficiency"] != 0.8
+        or baseline["traffic_ratio"] != 1
+    ):
+        raise ValueError(
+            "THead baseline requires minimum 0.8 and unit logical traffic"
+        )
+    try:
+        equivalent = (
+            baseline["reference_time_us"] * baseline["reference_peak"]
+            / baseline["target_peak"] * baseline["traffic_ratio"]
+        )
+        derived = {
+            "equivalent_time_us": equivalent,
+            "limit_us": equivalent / baseline["min_relative_efficiency"],
+            "relative_efficiency": equivalent / record["median"],
+        }
+    except OverflowError as error:
+        raise ValueError("equivalent-baseline formula overflowed") from error
+    for key, value in derived.items():
+        if not positive(value) or not math.isclose(
+            baseline[key], value, rel_tol=1.0e-12, abs_tol=0.0
+        ):
+            raise ValueError(
+                f"equivalent-baseline {key} does not match formula"
+            )
+    if type(baseline["passed"]) is not bool or baseline["passed"] != (
+        record["median"] <= baseline["limit_us"]
+    ):
+        raise ValueError(
+            "equivalent-baseline passed disagrees with measured limit"
+        )
+    return {
+        "timing": {key: record[key] for key in ("median", "p90", "samples")}
+    }
+
+
 def validate_thead_benchmark_pairs(
     records: dict[str, dict[str, Any]],
     operator: str,
@@ -523,7 +753,22 @@ def validate_thead_benchmark_pairs(
                 f"expected owner={operator}"
             )
         actual = set(providers) if isinstance(providers, dict) else set()
-        if actual != expected:
+        if (
+            actual == {"flagdnn"}
+            and providers["flagdnn"].get("schema_version") == 4
+        ):
+            try:
+                validate_benchmark_record(providers["flagdnn"])
+                if providers["flagdnn"]["case"] != case:
+                    raise ValueError("record case differs from its group")
+            except ValueError as error:
+                errors.append(
+                    f"THead equivalent benchmark case={case}: {error}"
+                )
+            continue
+        if actual != expected or any(
+            record.get("schema_version") == 4 for record in providers.values()
+        ):
             errors.append(
                 f"THead benchmark case={case} providers={sorted(actual)}; "
                 f"expected={sorted(expected)}"
@@ -613,6 +858,178 @@ def benchmark_speedup_summary(
     }
 
 
+def equivalent_performance_summary(
+    results: dict[str, dict[str, Any]],
+    threshold: float | None,
+) -> dict[str, Any]:
+    """Keep peak-normalized efficiency separate from native acDNN speedup."""
+    cases: list[dict[str, Any]] = []
+    for operator, operator_results in results.items():
+        benchmark = operator_results.get("benchmark")
+        if (
+            not isinstance(benchmark, dict)
+            or benchmark.get("status") != "passed"
+        ):
+            continue
+        for case, providers in benchmark.get("records", {}).items():
+            if set(providers) != {"flagdnn"}:
+                continue
+            record = providers["flagdnn"]
+            if record.get("schema_version") != 4:
+                continue
+            validate_benchmark_record(record)
+            baseline = record["equivalent_baseline"]
+            minimum = baseline["min_relative_efficiency"]
+            required = (
+                max(minimum, threshold) if threshold is not None else minimum
+            )
+            passed = baseline["passed"] and (
+                required == minimum
+                or baseline["relative_efficiency"] >= required
+            )
+            cases.append(
+                {
+                    "operator": operator,
+                    "case": case,
+                    "flagdnn_median_us": record["median"],
+                    "equivalent_baseline": dict(baseline),
+                    "relative_efficiency": baseline["relative_efficiency"],
+                    "required_relative_efficiency": required,
+                    "passed": passed,
+                }
+            )
+    cases.sort(
+        key=lambda record: (record["relative_efficiency"], record["case"])
+    )
+    failures = [record for record in cases if not record["passed"]]
+    skips = [
+        dict(record)
+        for operator_results in results.values()
+        for record in operator_results.get("benchmark", {}).get(
+            "baseline_skip_records", []
+        )
+    ]
+    return {
+        "metric": EQUIVALENT_METRIC,
+        "reference_skipped_case_count": len(skips),
+        "reference_skips": skips,
+        "min_speedup_semantics": (
+            "opt-in relative_efficiency gate; cannot relax baseline minimum"
+        ),
+        "requested_min_speedup": threshold,
+        "gate_enabled": threshold is not None,
+        "gate_passed": (
+            not failures if threshold is not None and cases else None
+        ),
+        "case_count": len(cases),
+        "passed_case_count": len(cases) - len(failures),
+        "failed_case_count": len(failures),
+        "minimum_relative_efficiency": (
+            cases[0]["relative_efficiency"] if cases else None
+        ),
+        "cases": cases,
+        "failures": failures,
+    }
+
+
+def apply_equivalent_report_gates(
+    results: dict[str, Any], equivalent: dict[str, Any]
+) -> None:
+    """Keep the measured baseline verdict distinct from the final CLI gate."""
+    gates = {
+        (record["operator"], record["case"]): record
+        for record in equivalent["cases"]
+    }
+    enabled = equivalent.get("gate_enabled", False)
+    coverage = equivalent.get("coverage") or {}
+    incomplete = {}
+    for field in ("missing_cases", "missing_reference_skip_cases", "unexpected_cases"):
+        for item in coverage.get(field, []):
+            incomplete.setdefault(item["operator"], []).append({"kind": field, **item})
+    for operator in coverage.get("missing_operators", []):
+        incomplete.setdefault(operator, []).append({"kind": "missing_operator"})
+    for operator, result in results.items():
+        performance = result.get("performance", {})
+        if operator in incomplete:
+            performance["coverage_errors"] = incomplete[operator]
+            # Preserve an existing timeout or execution failure and its code.
+            # Coverage must only turn an otherwise successful report into failure.
+            if performance.get("status") in {"Passed", "Skipped", "NotFound"}:
+                performance["status"] = "Failed"
+                performance["exit_code"] = 1
+        skips = [
+            record for record in equivalent.get("reference_skips", [])
+            if record.get("op") == operator
+        ]
+        if skips:
+            performance["skipped"] = len(skips)
+            performance["skip_records"] = skips
+            if performance.get("status") == "Passed":
+                performance["status"] = "Skipped"
+        for entry in performance.get("data", {}).values():
+            for case, row in entry.get("details", {}).items():
+                gate = gates.get((operator, case))
+                if gate is None:
+                    continue
+                row["performance_gate"] = {
+                    "enabled": enabled,
+                    "metric": equivalent["metric"],
+                    "relative_efficiency": gate["relative_efficiency"],
+                    "required_relative_efficiency": (
+                        gate["required_relative_efficiency"]
+                        if enabled
+                        else None
+                    ),
+                    "passed": gate["passed"] if enabled else None,
+                }
+                if enabled and not gate["passed"]:
+                    entry["result"] = "FAIL"
+                    performance["status"] = "Failed"
+                    performance["exit_code"] = 1
+
+
+def postprocess_report(
+    *,
+    report: dict[str, Any],
+    platform_summary: dict[str, Any],
+    exit_code: int | None,
+) -> bool:
+    """Apply the finalized platform gate to a public single/merged report."""
+    equivalent = platform_summary.get("equivalent_performance")
+    if not isinstance(equivalent, dict) or not (
+        equivalent.get("case_count")
+        or equivalent.get("reference_skipped_case_count")
+        or (equivalent.get("coverage") or {}).get("verified") is False
+    ):
+        return False
+    apply_equivalent_report_gates(report["result"], equivalent)
+    report.update(
+        equivalent_performance=equivalent,
+        overall_status="passed" if exit_code == 0 else "failed",
+        exit_code=exit_code,
+    )
+    return True
+
+
+def postprocess_batch_report(
+    *,
+    partitions: dict[int, dict[str, Any]],
+    report: dict[str, Any],
+    platform_summary: dict[str, Any],
+    exit_code: int | None,
+) -> bool:
+    """Apply final gates to every worker partition and the merged report."""
+    changed = postprocess_report(
+        report=report, platform_summary=platform_summary, exit_code=exit_code
+    )
+    if changed:
+        for partition in partitions.values():
+            apply_equivalent_report_gates(
+                partition, platform_summary["equivalent_performance"]
+            )
+    return changed
+
+
 def acdnn_skip_records(output: str) -> list[dict[str, str]]:
     records: list[dict[str, str]] = []
     for raw_line in output.splitlines():
@@ -625,6 +1042,51 @@ def acdnn_skip_records(output: str) -> list[dict[str, str]]:
             record.update(match.groupdict())
         records.append(record)
     return records
+
+
+def nvidia_baseline_skip_records(output: str) -> list[dict[str, str]]:
+    lines = [
+        line.replace("[SKIP][nvidia_baseline]", "[SKIP][acdnn]")
+        for line in output.splitlines()
+        if _ctest_line(line).startswith("[SKIP][nvidia_baseline]")
+    ]
+    records = acdnn_skip_records("\n".join(lines))
+    for record in records:
+        record["message"] = record["message"].replace(
+            "[SKIP][acdnn]", "[SKIP][nvidia_baseline]"
+        )
+    return records
+
+
+def validate_nvidia_baseline_skips(records: list[dict[str, str]]) -> list[str]:
+    try:
+        path = Path(
+            os.environ.get("FLAGDNN_PERFORMANCE_BASELINE")
+            or PERFORMANCE_BASELINE_FILE
+        )
+        reference = json.loads(path.read_text())["reference"]
+        measured = reference["cases"]
+        unavailable = reference["unavailable_cases"]
+        if not isinstance(measured, dict) or not isinstance(unavailable, dict):
+            raise ValueError("reference case catalogs must be objects")
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return [f"Cannot verify NVIDIA baseline skip evidence: {error}"]
+    errors = []
+    for record in records:
+        case = record.get("case", "")
+        exclusion = unavailable.get(case, {})
+        if (
+            record.get("op") != "concatenate"
+            or record.get("reason") != "nvidia_reference_unavailable"
+            or case in measured
+            or not isinstance(exclusion, dict)
+            or exclusion.get("op") != "concatenate"
+            or exclusion.get("status") != "excluded"
+        ):
+            errors.append(
+                f"NVIDIA baseline skip is not a known unmeasured case: {case}"
+            )
+    return errors
 
 
 def validate_thead_skip_records(
@@ -720,7 +1182,8 @@ def validate_thead_case_accounting(
         if suite == "functional"
         else BENCHMARK_ACCOUNTING_PATTERN
     )
-    cases = executed = skipped = 0
+    cases = executed = skipped = equivalent_executed = 0
+    reports_equivalent = False
     statuses = []
     for marker, payload in marker_records:
         if marker not in allowed_markers:
@@ -732,7 +1195,10 @@ def validate_thead_case_accounting(
                 " malformed"
             )
             continue
-        status, count, ran, omitted = match.groups()
+        status, count, ran, omitted = match.groups()[:4]
+        if suite == "benchmark" and match.group(5) is not None:
+            reports_equivalent = True
+            equivalent_executed += int(match.group(5))
         count, ran, omitted = int(count), int(ran), int(omitted)
         if (
             count <= 0
@@ -752,6 +1218,17 @@ def validate_thead_case_accounting(
         accounting.update(
             {"comparable_executed": executed, "reference_skipped": skipped}
         )
+    if suite == "benchmark" and reports_equivalent:
+        accounting["equivalent_executed"] = equivalent_executed
+        measured_equivalent = sum(
+            set(providers) == {"flagdnn"}
+            and providers["flagdnn"].get("schema_version") == 4
+            for providers in records.values()
+        )
+        if equivalent_executed != measured_equivalent:
+            errors.append(
+                "THead equivalent_executed does not match measured records"
+            )
     expected_ctest = "skipped" if "SKIP" in statuses else "passed"
     if ctest_reported_status != expected_ctest:
         errors.append(
@@ -812,13 +1289,23 @@ def postprocess_result(
     records: dict[str, dict[str, Any]],
     manifest_operators: list[str],
 ) -> None:
-    skip_records = acdnn_skip_records(output)
-    if skip_records:
-        result["skip_records"] = skip_records
+    acdnn_skips = acdnn_skip_records(output)
+    baseline_skips = nvidia_baseline_skip_records(output)
+    skip_records = acdnn_skips + baseline_skips
+    if acdnn_skips:
+        result["skip_records"] = acdnn_skips
+    if baseline_skips:
+        result["baseline_skip_records"] = baseline_skips
     if ctest_reported_status == "skipped" or skip_records:
         skip_errors = validate_thead_skip_records(
             skip_records, operator, manifest_operators
         )
+        if baseline_skips:
+            if suite != "benchmark":
+                skip_errors.append(
+                    "NVIDIA baseline skips require a benchmark suite"
+                )
+            skip_errors.extend(validate_nvidia_baseline_skips(baseline_skips))
         if skip_errors:
             result["skip_record_errors"] = skip_errors
             result["status"] = "failed"
@@ -896,7 +1383,11 @@ def finalize(
     min_speedup: float | None,
     preflight_passed: bool,
 ) -> dict[str, Any]:
-    failed = False
+    failed = any(
+        not status_is_success(task.get("status", "error"))
+        for operator_results in results.values()
+        for task in operator_results.values()
+    )
     catalog = state.get("comparable_catalog")
     comparable_coverage: dict[str, Any] | None = None
     if catalog is not None and preflight_passed:
@@ -920,12 +1411,51 @@ def finalize(
                 )
             failed = True
 
+    equivalent_coverage = None
+    if catalog is not None and preflight_passed and "benchmark" in suites:
+        equivalent_coverage = thead_equivalent_coverage(
+            results, suite_operators["benchmark"], catalog
+        )
+        if not equivalent_coverage["verified"]:
+            print(
+                "equivalent coverage gate: "
+                f"{equivalent_coverage['observed_required_case_count']}/"
+                f"{equivalent_coverage['required_case_count']} required measurements; "
+                f"{equivalent_coverage['observed_reference_skip_case_count']}/"
+                f"{equivalent_coverage['expected_reference_skip_case_count']} "
+                "unavailable references explicitly reported",
+                flush=True,
+            )
+            for field in ("missing_cases", "missing_reference_skip_cases", "unexpected_cases"):
+                for item in equivalent_coverage[field]:
+                    print(f"  FAIL {field} op={item['operator']} case={item['case']}", flush=True)
+            for operator in equivalent_coverage["missing_operators"]:
+                print(f"  FAIL missing equivalent catalog operator={operator}", flush=True)
+            failed = True
+
     performance = (
         benchmark_speedup_summary(results, min_speedup, comparable_coverage)
         if "benchmark" in suites
         else None
     )
-    if min_speedup is not None:
+    equivalent = (
+        equivalent_performance_summary(results, min_speedup)
+        if "benchmark" in suites else None
+    )
+    if equivalent is not None:
+        equivalent["coverage"] = equivalent_coverage
+    has_equivalent = equivalent is not None and equivalent["case_count"] > 0
+    if (
+        performance is not None
+        and not performance["case_count"]
+        and has_equivalent
+    ):
+        performance["gate_passed"] = None
+        performance["ratio_gate_passed"] = None
+    if min_speedup is not None and (
+        performance is not None
+        and (performance["case_count"] or not has_equivalent)
+    ):
         assert performance is not None
         print(
             "performance gate: "
@@ -951,14 +1481,38 @@ def finalize(
             )
         failed = failed or not performance["gate_passed"]
 
+    if has_equivalent:
+        assert equivalent is not None
+        enabled = equivalent["gate_enabled"]
+        print(
+            "equivalent performance "
+            + ("gate: " if enabled else "report (informational): ")
+            + f"{equivalent['passed_case_count']}/{equivalent['case_count']} "
+            "cases meet required relative efficiency",
+            flush=True,
+        )
+        for record in equivalent["failures"]:
+            print(
+                f"  {'FAIL' if enabled else 'BELOW_BASELINE'} "
+                f"op={record['operator']} case={record['case']} "
+                f"flagdnn_us={record['flagdnn_median_us']:.9g} "
+                f"relative_efficiency={record['relative_efficiency']:.9g} "
+                f"required={record['required_relative_efficiency']:.9g}",
+                flush=True,
+            )
+        if enabled:
+            failed = failed or not equivalent["gate_passed"]
+
     skip_record_errors = 0
     accounting_errors = 0
     reference_skips = 0
+    baseline_skips = 0
     for operator_results in results.values():
         for result in operator_results.values():
             skip_record_errors += len(result.get("skip_record_errors", []))
             accounting_errors += len(result.get("case_accounting_errors", []))
             reference_skips += len(result.get("skip_records", []))
+            baseline_skips += len(result.get("baseline_skip_records", []))
     failed = failed or skip_record_errors > 0 or accounting_errors > 0
 
     return {
@@ -966,9 +1520,11 @@ def finalize(
         "summary": {
             "comparable_coverage": comparable_coverage,
             "performance": performance,
+            "equivalent_performance": equivalent,
         },
         "coverage": {
             "acdnn_reference_skips": reference_skips,
+            "nvidia_baseline_skips": baseline_skips,
             "acdnn_skip_record_errors": skip_record_errors,
             "thead_case_accounting_errors": accounting_errors,
         },

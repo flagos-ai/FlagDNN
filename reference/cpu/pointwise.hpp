@@ -6,6 +6,7 @@
 #include <flagdnn/flagdnn.h>
 
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <vector>
 
@@ -42,7 +43,7 @@ namespace flagdnn::reference::cpu {
     std::span<const std::int64_t> output_dimensions, double alpha);
 
 // Integer values stay exact; arithmetic follows pointwise_integer_reference.
-// CMP_EQ returns 0 or 1, which the caller can encode as Boolean output.
+// Comparisons return 0 or 1, which the caller can encode as Boolean output.
 [[nodiscard]] std::vector<std::int32_t> evaluate_binary_pointwise_int32(
     flagdnnPointwiseMode_t mode, std::span<const std::int32_t> left,
     std::span<const std::int64_t> left_dimensions,
@@ -58,6 +59,37 @@ namespace flagdnn::reference::cpu {
 [[nodiscard]] std::vector<float> evaluate_activation_backward(
     flagdnnPointwiseMode_t mode, std::span<const float> dy,
     std::span<const float> x, const flagdnnPointwiseAttributes_t& attributes);
+
+// Select preserves exact INT32 values and independently broadcasts all three
+// logical input tensors. Any nonzero Boolean predicate selects the left input.
+[[nodiscard]] std::vector<std::int32_t> evaluate_binary_select_int32(
+    std::span<const std::int32_t> left,
+    std::span<const std::int64_t> left_dimensions,
+    std::span<const std::int32_t> right,
+    std::span<const std::int64_t> right_dimensions,
+    std::span<const std::uint8_t> predicate,
+    std::span<const std::int64_t> predicate_dimensions,
+    std::span<const std::int64_t> output_dimensions);
+
+// AddSquare computes left + quantize_virtual(right * right). The callback
+// models the graph's virtual storage dtype; output quantization remains with
+// the caller, as for the other logical floating pointwise evaluators.
+using PointwiseQuantizer =
+    std::function<std::vector<float>(std::span<const float>)>;
+[[nodiscard]] std::vector<float> evaluate_add_square(
+    std::span<const float> left,
+    std::span<const std::int64_t> left_dimensions,
+    std::span<const float> right,
+    std::span<const std::int64_t> right_dimensions,
+    std::span<const std::int64_t> output_dimensions,
+    const PointwiseQuantizer& quantize_virtual);
+
+[[nodiscard]] std::vector<std::int32_t> evaluate_add_square_int32(
+    std::span<const std::int32_t> left,
+    std::span<const std::int64_t> left_dimensions,
+    std::span<const std::int32_t> right,
+    std::span<const std::int64_t> right_dimensions,
+    std::span<const std::int64_t> output_dimensions);
 
 [[nodiscard]] std::int32_t pointwise_integer_reference(
     flagdnnPointwiseMode_t mode, std::int32_t left, std::int32_t right,

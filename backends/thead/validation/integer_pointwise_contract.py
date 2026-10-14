@@ -28,6 +28,7 @@ os.environ["FLAGDNN_BACKEND_ROOT"] = str(SOURCE_ROOT / "backends")
 MODES = {
     "add": 1, "sub": 17, "mul": 18, "div": 19, "pow": 23,
     "min": 20, "max": 21, "mod": 22, "cmp_eq": 25,
+    "cmp_neq": 26, "cmp_gt": 27, "cmp_ge": 28, "cmp_lt": 29, "cmp_le": 30,
 }
 CONFIGURATION = {
     "META": {"BLOCK_SIZE": 1024}, "num_warps": 4, "num_stages": 1,
@@ -128,7 +129,7 @@ def verify_binary_plans(dispatch):
                 "integer pointers became floating",
             )
             require(
-                parts[2] == ("*i8:16" if operation == "cmp_eq" else "*i32:16"),
+                parts[2] == ("*i8:16" if operation.startswith("cmp_") else "*i32:16"),
                 "wrong output pointer type",
             )
             require(
@@ -166,6 +167,29 @@ def verify_binary_plans(dispatch):
     )
 
 
+def verify_binary_select(dispatch):
+    for shape, strides in (([2, 3], [[3, 1]] * 4),
+                           ([2, 3], [[9, 2], [8, 2], [7, 2], [10, 3]])):
+        graph = document_for("binary_select", [shape] * 4, strides)["graph"]
+        plan = dispatch._validate_binary_select_graph(graph)
+        variant = dispatch._binary_pointwise_variant(
+            graph["tensors"], 6, 41, 1, plan["stride_constants"],
+            CONFIGURATION, "integer_select",
+        )
+        require(variant["full_signature"].split(",")[:4] ==
+                ["*i32:16", "*i32:16", "*i8:16", "*i32:16"],
+                "integer selection lost exact value pointers")
+        if strides[0] != [3, 1]:
+            expected = [1] * 6 + shape
+            for stride in strides:
+                expected += [0] * 6 + stride
+            require(plan["stride_constants"] == expected,
+                    "integer selection addresses changed")
+        graph["tensors"][1]["data_type"] = "float32"
+        expect_rejected(lambda: dispatch._validate_binary_select_graph(graph),
+                        "mixed integer/float selection accepted")
+
+
 def verify_rejections(dispatch):
     base = document_for("add")["graph"]
     for alpha in (0.5, 2**31, -(2**31) - 1, math.nan, math.inf, True):
@@ -191,7 +215,7 @@ def verify_rejections(dispatch):
             variant["full_signature"].split(",")[-2] == str(alpha),
             "alpha boundary signature became floating",
         )
-    for operation in ("cmp_gt", "logical_and", "sigmoid_backward"):
+    for operation in ("logical_and", "sigmoid_backward"):
         graph = document_for(operation)["graph"]
         # Logical fixtures begin as Boolean, so explicitly test rejected INT32.
         for tensor in graph["tensors"][:2]:
@@ -346,12 +370,13 @@ def main() -> int:
         provider.__package__ + ".dispatch.pointwise",
     )
     verify_binary_plans(dispatch)
+    verify_binary_select(dispatch)
     verify_rejections(dispatch)
     verify_add_square(dispatch)
     verify_artifacts(provider)
     print(
-        "PASS THead INT32 pointwise: 63 layouts, validation, "
-        "alpha and 10 artifacts",
+        f"PASS THead INT32 pointwise: {len(MODES) * 7} layouts, "
+        f"selection, validation, alpha and {len(MODES) + 1} artifacts",
     )
     return 0
 

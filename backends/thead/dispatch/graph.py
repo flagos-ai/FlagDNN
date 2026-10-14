@@ -26,9 +26,10 @@ def _parse_ports(
     tensor_uids: set[int],
     *,
     allow_optional: bool,
+    allow_empty: bool = False,
 ) -> list[int]:
     ports = _require_list(value, description)
-    if not ports:
+    if not ports and not allow_empty:
         raise ValueError(f"{description} must not be empty")
     uids: list[int] = []
     names: set[str] = set()
@@ -142,6 +143,7 @@ def _parse_graph(value: object) -> list[str]:
             f"graph.nodes[{index}].inputs",
             set(tensor_registry),
             allow_optional=True,
+            allow_empty=operation == "gen_index",
         )
         _parse_ports(
             node["outputs"],

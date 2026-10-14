@@ -1,6 +1,7 @@
 """Dispatch additional operations supported by the acDNN validation stack."""
 
 from .extended_schema import tensor_roles
+from .index import _index_kernel_configuration
 from .normalization_extended import _extended_normalization_configuration
 from .resample import _resample_kernel_configuration
 from .statistics import (
@@ -13,6 +14,8 @@ SUPPORTED_OPERATIONS = {
     "resample",
     "genstats",
     "bn_finalize",
+    "concatenate",
+    "gen_index",
 }
 
 
@@ -47,13 +50,20 @@ def kernel_configuration(graph):
                 "extended THead operation port roles are inconsistent"
             )
         tensors.extend(registry[port["uid"]] for port in ports)
-    if len({t["uid"] for t in tensors}) != len(tensors) or any(
-        t["virtual"] for t in tensors
-    ):
+    tensor_uids = [tensor["uid"] for tensor in tensors]
+    unsupported_alias = (
+        tensor_uids[-1] in tensor_uids[:-1]
+        if operation == "concatenate"
+        else len(set(tensor_uids)) != len(tensor_uids)
+    )
+    if unsupported_alias or any(t["virtual"] for t in tensors):
         raise ValueError(
-            "extended THead operation requires distinct external tensors"
+            "extended THead operation requires external tensors with "
+            "distinct outputs"
         )
-    if operation == "batchnorm_backward":
+    if operation in {"concatenate", "gen_index"}:
+        config = _index_kernel_configuration(operation, parameters, tensors)
+    elif operation == "batchnorm_backward":
         config = _extended_normalization_configuration(
             operation, parameters, tensors
         )

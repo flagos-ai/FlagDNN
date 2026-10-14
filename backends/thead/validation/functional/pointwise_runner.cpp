@@ -23,6 +23,7 @@
 #include "acdnn_reference.hpp"
 #include "capability.hpp"
 #include "functional/cpu_pointwise.hpp"
+#include "cpu_validation.hpp"
 #include "common/pointwise.hpp"
 #include "functional/paired.hpp"
 #include "functional/pointwise_runner_support.hpp"
@@ -253,12 +254,51 @@ void emit_skip(const PointwiseTestCase &test_case,
 bool has_cpu_reference(std::string_view operation) {
   return operation == "sub" || operation == "mul" || operation == "div" ||
          operation == "pow" || operation == "max" || operation == "min" ||
-         operation == "mod" || operation == "cmp_eq";
+         operation == "mod" || operation == "cmp_eq" ||
+         operation == "cmp_neq" || operation == "cmp_gt" ||
+         operation == "cmp_ge" || operation == "cmp_lt" ||
+         operation == "cmp_le" || operation == "binary_select" ||
+         operation == "scale" || operation == "gelu_approx_tanh_backward";
 }
 
 void run_cpu_case(const PointwiseTestCase &test_case, flagdnn::Handle &handle,
                   tv::DeviceStream &stream, std::string_view reason) {
   auto production = build_flagdnn_pointwise(handle, test_case);
+  if (test_case.mode == FLAGDNN_POINTWISE_GELU_APPROX_TANH_BWD) {
+    namespace bench = flagdnn::benchmarking;
+    bench::BenchmarkCase specification;
+    specification.name = test_case.name;
+    specification.operation = bench::Operation::kPointwise;
+    specification.pointwise_mode = test_case.mode;
+    specification.pointwise_attributes = test_case.attributes;
+    specification.add_alpha = test_case.alpha;
+    specification.absolute_tolerance = test_case.absolute_tolerance;
+    specification.relative_tolerance = test_case.relative_tolerance;
+    for (const auto& tensor : test_case.inputs) {
+      specification.tensors.push_back({tensor.uid, tensor.data_type,
+          tensor.dimensions, tensor.strides, tensor.binding_byte_offset});
+    }
+    const auto& output = test_case.output;
+    specification.tensors.push_back({output.uid, output.data_type,
+        output.dimensions, output.strides, output.binding_byte_offset});
+    for (const auto domain : test_case.input_domains) {
+      switch (domain) {
+        case PointwiseInputDomain::kReal:
+          specification.input_domains.push_back(bench::InputDomain::kReal);
+          break;
+        case PointwiseInputDomain::kScaled:
+          specification.input_domains.push_back(bench::InputDomain::kScaled);
+          break;
+        default:
+          throw std::invalid_argument("unsupported GELU CPU input domain");
+      }
+    }
+    tv::TestBenchmarkExecutable executable(std::move(production));
+    (void)tv::run_cpu_validated_case(specification, executable, stream);
+    std::cout << "[CPU_REFERENCE] case=" << test_case.name
+              << " fallback_reason=" << reason << '\n';
+    return;
+  }
   functional::run_cpu_pointwise_case(test_case, *production, stream, reason);
 }
 
