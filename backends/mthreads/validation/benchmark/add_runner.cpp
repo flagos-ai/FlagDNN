@@ -13,6 +13,10 @@
 #include "backends/mthreads/validation/musa_driver.hpp"
 #include "backends/mthreads/validation/tensor_io.hpp"
 #include "common/flagdnn_provider.hpp"
+#include "backends/mthreads/validation/equivalent_pointwise.hpp"
+#include "backends/mthreads/validation/functional/pointwise_attributes.hpp"
+#include "reference/cpu/benchmark.hpp"
+#include "backends/mthreads/validation/benchmark/equivalent_baseline.hpp"
 
 #include <flagdnn/flagdnn.hpp>
 #include <musa_runtime_api.h>
@@ -1330,6 +1334,64 @@ void emit_samples(std::string_view provider,
   std::cout << "]}\n";
 }
 
+void run_equivalent_case(const BenchmarkCase& specification,
+                         FlagdnnProvider& provider, mv::Stream& stream) {
+  const auto logical_inputs = make_logical_inputs(specification);
+  // Only the CPU oracle uses rounded frontend attributes. Keep the original
+  // case intact for strict NVIDIA baseline matching and report metadata.
+  auto oracle_specification = specification;
+  oracle_specification.pointwise_attributes =
+      mv::normalize_frontend_pointwise_attributes(
+          specification.pointwise_attributes);
+  const auto oracle = reference::cpu::evaluate_benchmark(
+      oracle_specification, logical_inputs,
+      [](std::span<const float> values, flagdnnDataType_t dtype) {
+        return io::decode(io::encode(values, dtype), dtype);
+      });
+  auto executable = provider.build(specification);
+  auto buffers = prepare_buffers(specification, logical_inputs, stream);
+  mv::DeviceBuffer workspace(executable->workspace_size(), 256);
+  executable->prepare(buffers.bindings, stream.opaque());
+  const auto enqueue = [&] {
+    execute(*executable, buffers.bindings, workspace, stream);
+  };
+  const auto validate = [&] {
+    const auto accuracy = compare_output_sets(
+        read_outputs(buffers, stream, "FlagDNN equivalent"), oracle,
+        specification, "FlagDNN equivalent", "CPU reference");
+    require_inputs_unchanged(buffers, stream, "FlagDNN equivalent");
+    std::cout << "[accuracy] case=" << specification.name
+              << " cpu_full=true flagdnn_max_abs="
+              << accuracy.maximum_absolute << " flagdnn_max_rel="
+              << accuracy.maximum_relative << '\n';
+  };
+
+  // Every logical element is poisoned with the opposite sign from its
+  // quantized CPU value. A replay must write it, even when its oracle is zero.
+  // Keep host storage alive until the async copies have synchronized.
+  std::vector<std::vector<std::uint8_t>> poison;
+  for (std::size_t output = 0; output < specification.output_count; ++output) {
+    std::vector<float> values;
+    values.reserve(oracle.at(output).size());
+    for (float expected : oracle.at(output))
+      values.push_back(expected >= 0.0F ? -1.0F : 1.0F);
+    const auto& tensor = buffers.tensors.at(buffers.input_count + output);
+    poison.push_back(io::encode(io::scatter(values, tensor), tensor.data_type));
+  }
+  const auto reset_outputs = [&] {
+    for (std::size_t output = 0; output < poison.size(); ++output) {
+      const auto index = buffers.input_count + output;
+      buffers.buffers.at(index)->copy_from_host_at(
+          poison[output].data(), poison[output].size(),
+          buffers.tensors[index].binding_byte_offset, stream.get());
+    }
+  };
+  stream.synchronize();
+  enqueue();
+  stream.synchronize();
+  mv::equivalent::run(specification, stream, enqueue, validate, reset_outputs);
+}
+
 void run_case(const BenchmarkCase& specification,
               FlagdnnProvider& flagdnn_provider,
               MudnnProvider& mudnn_provider,
@@ -1532,8 +1594,15 @@ int run_benchmark_suite(int argc,
       try {
         run_case(specification, flagdnn_provider, mudnn_provider, stream);
       } catch (const mv::ReferenceUnsupported& error) {
-        ++skipped;
-        mv::report_skip(specification.name, error);
+        if (mthreads::supports_equivalent_baseline(specification, "mthreads")) {
+          std::cout << "[fallback] case=" << specification.name
+                    << " provider=nvidia_equivalent reason=" << error.what()
+                    << '\n';
+          run_equivalent_case(specification, flagdnn_provider, stream);
+        } else {
+          ++skipped;
+          mv::report_skip(specification.name, error);
+        }
       }
     }
     if (matched == 0) {

@@ -22,6 +22,8 @@
 #include <utility>
 #include <vector>
 
+#include "backends/mthreads/validation/equivalent_pointwise.hpp"
+#include "backends/mthreads/validation/functional/pointwise_attributes.hpp"
 #include "backends/mthreads/validation/functional/tensor_io_adapter.hpp"
 #include "backends/mthreads/validation/musa_driver.hpp"
 #include "backends/mthreads/validation/paired_timing.hpp"
@@ -198,10 +200,11 @@ struct Accuracy {
 
 Accuracy compare(std::span<const float> actual,
                  std::span<const float> reference,
-                 const PointwiseTestCase& test_case) {
+                 const PointwiseTestCase& test_case,
+                 std::string_view reference_provider = "muDNN") {
   if (actual.size() != reference.size()) {
     throw std::runtime_error(
-        "FlagDNN and muDNN pointwise output sizes differ");
+        "FlagDNN and reference pointwise output sizes differ");
   }
   Accuracy result;
   for (std::size_t index = 0; index < actual.size(); ++index) {
@@ -220,7 +223,7 @@ Accuracy compare(std::span<const float> actual,
          relative > test_case.relative_tolerance)) {
       std::ostringstream message;
       message << test_case.name << " differs at output element " << index
-              << ": FlagDNN=" << left << ", muDNN=" << right
+              << ": FlagDNN=" << left << ", " << reference_provider << '=' << right
               << ", abs=" << absolute << ", rel=" << relative
               << ", atol=" << test_case.absolute_tolerance
               << ", rtol=" << test_case.relative_tolerance;
@@ -407,10 +410,27 @@ std::size_t broadcast_offset(std::size_t logical_index,
   return offset;
 }
 
-void run_cpu_integer_pow_case(const PointwiseTestCase& test_case,
-                              flagdnn::Handle& handle,
-                              mv::Stream& stream) {
+bool supports_cpu_reference(const PointwiseTestCase& test_case) {
+  if (test_case.inputs.size() != 2) return false;
+  const auto data_type = test_case.output.data_type;
+  if (test_case.inputs[0].data_type != data_type ||
+      test_case.inputs[1].data_type != data_type) {
+    return false;
+  }
+  return (test_case.mode == FLAGDNN_POINTWISE_POW &&
+          data_type == FLAGDNN_DATA_INT32) ||
+         (reference::cpu::supports_activation_backward(test_case.mode) &&
+          (data_type == FLAGDNN_DATA_FLOAT32 || data_type == FLAGDNN_DATA_FLOAT16 ||
+           data_type == FLAGDNN_DATA_BFLOAT16));
+}
+
+Accuracy run_cpu_reference_case(const PointwiseTestCase& test_case,
+                                flagdnn::Handle& handle,
+                                mv::Stream& stream) {
   validate_pointwise_case(test_case);
+  if (!supports_cpu_reference(test_case)) {
+    throw std::invalid_argument("CPU pointwise reference is unavailable");
+  }
   auto production = build_flagdnn_pointwise(handle, test_case);
   std::vector<std::vector<float>> logical_inputs;
   for (std::size_t index = 0; index < test_case.inputs.size(); ++index) {
@@ -420,44 +440,108 @@ void run_cpu_integer_pow_case(const PointwiseTestCase& test_case,
   PreparedExecution state = prepare_execution(
       test_case, logical_inputs, *production, stream);
 
-  // Read the encoded GPU inputs as integers, and leave the output padding
-  // sentinel intact. Neither the oracle nor the comparison passes through float.
-  std::vector<std::uint8_t> expected = state.output.bytes;
-  const auto output_offsets = io::logical_offsets(test_case.output);
-  for (std::size_t index = 0; index < output_offsets.size(); ++index) {
-    std::array<std::int32_t, 2> operands;
-    for (std::size_t input = 0; input < operands.size(); ++input) {
-      const auto offset = broadcast_offset(
-          index, test_case.inputs[input], test_case.output);
-      std::memcpy(&operands[input],
-                  state.inputs[input].bytes.data() +
-                      offset * sizeof(std::int32_t),
-                  sizeof(std::int32_t));
+  const bool integer = test_case.output.data_type == FLAGDNN_DATA_INT32;
+  std::vector<std::uint8_t> expected_bytes;
+  std::vector<float> expected_values;
+  if (integer) {
+    // Read encoded GPU inputs as integers. Neither the integer oracle nor
+    // its comparison passes through float, which would lose bits above 2^24.
+    expected_bytes = state.output.bytes;
+    const auto output_offsets = io::logical_offsets(test_case.output);
+    for (std::size_t index = 0; index < output_offsets.size(); ++index) {
+      std::array<std::int32_t, 2> operands;
+      for (std::size_t input = 0; input < operands.size(); ++input) {
+        const auto offset = broadcast_offset(
+            index, test_case.inputs[input], test_case.output);
+        std::memcpy(&operands[input],
+                    state.inputs[input].bytes.data() +
+                        offset * sizeof(std::int32_t),
+                    sizeof(std::int32_t));
+      }
+      const auto value = reference::cpu::pointwise_integer_reference(
+          test_case.mode, operands[0], operands[1], false, 1);
+      std::memcpy(expected_bytes.data() + output_offsets[index] * sizeof(value),
+                  &value, sizeof(value));
     }
-    const auto value = reference::cpu::pointwise_integer_reference(
-        test_case.mode, operands[0], operands[1], false, 1);
-    std::memcpy(expected.data() + output_offsets[index] * sizeof(value),
-                &value, sizeof(value));
+  } else {
+    std::array<std::vector<float>, 2> quantized_inputs;
+    for (std::size_t index = 0; index < quantized_inputs.size(); ++index) {
+      quantized_inputs[index] = io::gather(
+          io::decode(state.inputs[index].bytes,
+                     test_case.inputs[index].data_type),
+          test_case.inputs[index]);
+    }
+    const auto expected = reference::cpu::evaluate_activation_backward(
+        test_case.mode, quantized_inputs[0], quantized_inputs[1],
+        mv::normalize_frontend_pointwise_attributes(test_case.attributes));
+    expected_values = io::decode(
+        io::encode(expected, test_case.output.data_type),
+        test_case.output.data_type);
   }
 
+  Accuracy accuracy;
+  const auto verify = [&] {
+    std::vector<std::vector<std::uint8_t>> observed_inputs;
+    for (std::size_t index = 0; index < test_case.inputs.size(); ++index) {
+      observed_inputs.push_back(
+          read_back(state.inputs[index], test_case.inputs[index], stream));
+    }
+    const auto observed_output =
+        read_back(state.output, test_case.output, stream);
+    stream.synchronize();
+    for (std::size_t index = 0; index < test_case.inputs.size(); ++index) {
+      io::require_bytes_equal(
+          test_case.name + " input " + std::to_string(index),
+          observed_inputs[index], state.inputs[index].bytes);
+    }
+    io::require_padding_unchanged("FlagDNN pointwise", observed_output,
+                                  test_case.output);
+    if (integer) {
+      io::require_bytes_equal(test_case.name + " FlagDNN vs CPU INT32 output",
+                              observed_output, expected_bytes);
+      accuracy = {};
+      return;
+    }
+    accuracy = compare(
+        io::gather(io::decode(observed_output, test_case.output.data_type),
+                   test_case.output),
+        expected_values, test_case, "CPU");
+  };
   stream.synchronize();
   enqueue(*production, state, stream);
-  std::vector<std::vector<std::uint8_t>> observed_inputs;
-  for (std::size_t index = 0; index < test_case.inputs.size(); ++index) {
-    observed_inputs.push_back(
-        read_back(state.inputs[index], test_case.inputs[index], stream));
+  verify();
+  // CPU reference calculation and readback stay outside GPU timing.
+  if (mv::benchmark_enabled()) {
+    std::vector<std::uint8_t> reset_bytes;
+    if (integer) {
+      reset_bytes = expected_bytes;
+      for (const auto offset : io::logical_offsets(test_case.output)) {
+        std::uint32_t value;
+        std::memcpy(&value, reset_bytes.data() + offset * sizeof(value),
+                    sizeof(value));
+        value ^= 1U;  // Every logical output differs from its expected value.
+        std::memcpy(reset_bytes.data() + offset * sizeof(value), &value,
+                    sizeof(value));
+      }
+    } else {
+      std::vector<float> reset_values;
+      reset_values.reserve(expected_values.size());
+      for (const float value : expected_values) {
+        reset_values.push_back(value >= 0.0F ? -1.0F : 1.0F);
+      }
+      reset_bytes = io::encode(io::scatter(reset_values, test_case.output),
+                               test_case.output.data_type);
+    }
+    const auto reset_outputs = [&] {
+      state.output.device->copy_from_host_at(
+          reset_bytes.data(), reset_bytes.size(),
+          test_case.output.binding_byte_offset, stream.get());
+    };
+    mv::equivalent::run(
+        test_case, stream, [&] { enqueue(*production, state, stream); },
+        verify, reset_outputs);
   }
-  const auto observed_output = read_back(state.output, test_case.output, stream);
-  stream.synchronize();
-  for (std::size_t index = 0; index < test_case.inputs.size(); ++index) {
-    io::require_bytes_equal(
-        test_case.name + " input " + std::to_string(index),
-        observed_inputs[index], state.inputs[index].bytes);
-  }
-  io::require_padding_unchanged("FlagDNN pointwise", observed_output,
-                                test_case.output);
-  io::require_bytes_equal(test_case.name + " FlagDNN vs CPU INT32 output",
-                          observed_output, expected);
+  return accuracy;
 }
 
 std::string case_filter_name(std::string_view suite_name) {
@@ -504,20 +588,17 @@ int run_pointwise_functional_test(int argc, char** argv,
                   << accuracy.maximum_absolute
                   << " max_rel=" << accuracy.maximum_relative << '\n';
       } catch (const mv::ReferenceUnsupported& error) {
-        // Only replace the known muDNN INT32 POW skips in accuracy runs.
-        // This executable also serves native benchmarks, which still need muDNN.
-        if (!mv::benchmark_enabled() &&
-            test_case.mode == FLAGDNN_POINTWISE_POW &&
-            test_case.inputs.size() == 2 &&
-            test_case.inputs[0].data_type == FLAGDNN_DATA_INT32 &&
-            test_case.inputs[1].data_type == FLAGDNN_DATA_INT32 &&
-            test_case.output.data_type == FLAGDNN_DATA_INT32) {
-          run_cpu_integer_pow_case(test_case, handle, stream);
+        // Fall back only after an explicitly unsupported vendor reference;
+        // compiler, runtime and numerical errors still fail the test.
+        if (supports_cpu_reference(test_case)) {
+          const Accuracy accuracy =
+              run_cpu_reference_case(test_case, handle, stream);
           ++executed;
           std::cout << test_case.name
-                    << ": FlagDNN Graph vs CPU INT32 reference PASS"
-                    << " max_abs=0 max_rel=0 fallback_reason=" << error.what()
-                    << '\n';
+                    << ": FlagDNN Graph vs CPU reference PASS"
+                    << " max_abs=" << accuracy.maximum_absolute
+                    << " max_rel=" << accuracy.maximum_relative
+                    << " fallback_reason=" << error.what() << '\n';
         } else {
           ++skipped;
           mv::report_skip(test_case.name, error);

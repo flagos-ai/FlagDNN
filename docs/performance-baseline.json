@@ -584,10 +584,10 @@
       }
     },
     "mthreads": {
-      "device": null,
-      "measured_on": null,
+      "device": "MTT S5000",
+      "measured_on": "2026-10-13",
       "peaks": {
-        "vector_fp32": null,
+        "vector_fp32": 14.44443826,
         "vector_fp16": null,
         "vector_bf16": null,
         "vector_fp64": null,
@@ -598,11 +598,119 @@
         "tensor_fp64": null,
         "tensor_fp8_e4m3": null,
         "tensor_int8": null,
-        "hbm_triad": null,
-        "hbm_copy": null,
-        "hbm_read": null,
-        "hbm_write": null,
+        "hbm_triad": 1.447611626,
+        "hbm_copy": 1.354503226,
+        "hbm_read": 1.550977664,
+        "hbm_write": 1.435790867,
         "tensor_fp8_e5m2_e4m3": null
+      },
+      "architecture": "mp_31",
+      "measurement": {
+        "device_ordinal": 0,
+        "compute_units": 60,
+        "wavefront_size": 32,
+        "l2_bytes": 62914560,
+        "total_memory_bytes": 85813358592,
+        "musa_runtime_version": 40305,
+        "driver_version": 40305,
+        "compiler": "clang version 14.0.0 (git@sh-code.mthreads.com:sw/mtcc.git 23a614460b10fbb6ac5be3673102c6d8524d969a)\nmcc version 4.3.5\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /usr/local/musa/bin",
+        "collector": "tools/performance_baseline/benchmark_mthreads_vector_memory.mu",
+        "collector_sha256": "1dc779b624b4ae371c8c7333c332692221b54d04c69ee77da600f29dc8ffae54",
+        "raw_csv": "build/mthreads/performance-baseline-20261013/vector-memory.csv",
+        "raw_csv_sha256": "90886bb531a7bdbbead65ec908728316739262626e734511d0f6d47d77c0b3e2",
+        "raw_archive": "tools/performance_baseline/measurements/mthreads-20261013.tar.gz",
+        "raw_archive_sha256": "f5b28b691e3735865d49a54b08fc125f4bb2b15fb492f7ffde9b75e711a8267c",
+        "warmup_iterations": 20,
+        "rounds": 5,
+        "samples_per_round": 20,
+        "configuration_count": 54,
+        "sample_count": 5400,
+        "validation": "All FP32 output elements checked exactly after every round. Memory head/middle/tail windows and 64 read checksums sampled after every round; all passed.",
+        "scope": "Device GPU 0 held exclusively during collection. FP32 vector and logical device-memory peaks only; unmeasured vector/tensor precision peaks remain null. The 256/1024 MiB per-buffer scans exceed the 60 MiB L2.",
+        "summary": "tools/performance_baseline/measurements/mthreads-20261013.json",
+        "timing_method": "musa_events_per_kernel",
+        "statistic": "maximum_across_configurations_of_all_sample_median_throughput",
+        "device_ir_validation": "256 scalar musa.fma.rte.f calls in the runtime compute loop; no matrix intrinsic."
+      },
+      "scaling": {
+        "case_policies": {
+          "elu_backward": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "supported_dtypes": [
+              "fp32",
+              "fp16",
+              "bfloat16"
+            ],
+            "reason": "cuDNN and MThreads evaluate these backward activations in FP32, including FP16/BF16 storage. FP32 FMA peak is an explicit special-function approximation, not a measured exp/sigmoid throughput or established bottleneck. Launch overhead and cache effects may dominate small cases. Applies only when a matching validated NVIDIA record exists and muDNN has no usable native counterpart.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/mthreads/dispatch/activation_backward.py",
+              "kernels/common/activation_backward.py"
+            ]
+          },
+          "softplus_backward": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "supported_dtypes": [
+              "fp32",
+              "fp16",
+              "bfloat16"
+            ],
+            "reason": "cuDNN and MThreads evaluate these backward activations in FP32, including FP16/BF16 storage. FP32 FMA peak is an explicit special-function approximation, not a measured exp/sigmoid throughput or established bottleneck. Launch overhead and cache effects may dominate small cases. Applies only when a matching validated NVIDIA record exists and muDNN has no usable native counterpart.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/mthreads/dispatch/activation_backward.py",
+              "kernels/common/activation_backward.py"
+            ]
+          },
+          "swish_backward": {
+            "scale_metric": "vector_fp32",
+            "status": "fp32_fma_proxy",
+            "supported_dtypes": [
+              "fp32",
+              "fp16",
+              "bfloat16"
+            ],
+            "reason": "cuDNN and MThreads evaluate these backward activations in FP32, including FP16/BF16 storage. FP32 FMA peak is an explicit special-function approximation, not a measured exp/sigmoid throughput or established bottleneck. Launch overhead and cache effects may dominate small cases. Applies only when a matching validated NVIDIA record exists and muDNN has no usable native counterpart.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/mthreads/dispatch/activation_backward.py",
+              "kernels/common/activation_backward.py"
+            ]
+          },
+          "relu_backward": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "supported_dtypes": [
+              "fp32",
+              "fp16",
+              "bfloat16"
+            ],
+            "reason": "Two floating inputs and one same-dtype output use logical triad bandwidth as an explicit approximation. ReLU derivative comparison/select and optional slope multiplication are simple per-element operations, but this is not a measured HBM bottleneck; launch overhead and cache effects may dominate small or repeated buffers. Match exact attributes and storage widths; traffic_ratio is 1 for the supported same-width floating records. Applies only when muDNN has no usable native counterpart.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/mthreads/dispatch/activation_backward.py",
+              "kernels/common/activation_backward.py"
+            ]
+          },
+          "leaky_relu_backward": {
+            "scale_metric": "hbm_triad",
+            "status": "logical_bandwidth_proxy",
+            "supported_dtypes": [
+              "fp32",
+              "fp16",
+              "bfloat16"
+            ],
+            "reason": "Two floating inputs and one same-dtype output use logical triad bandwidth as an explicit approximation. ReLU derivative comparison/select and optional slope multiplication are simple per-element operations, but this is not a measured HBM bottleneck; launch overhead and cache effects may dominate small or repeated buffers. Match exact attributes and storage widths; traffic_ratio is 1 for the supported same-width floating records. Applies only when muDNN has no usable native counterpart.",
+            "compute_sources": [
+              "backends/nvidia/validation/benchmark/pointwise.cpp",
+              "backends/mthreads/dispatch/activation_backward.py",
+              "kernels/common/activation_backward.py"
+            ]
+          }
+        },
+        "selection_note": "MThreads-only policies selected from operator semantics and compute precision before equivalent performance results. Does not change shared NVIDIA references, other platforms, or the 0.8 efficiency threshold. INT32 pow has no valid NVIDIA timing record and is not enabled."
       }
     },
     "thead": {

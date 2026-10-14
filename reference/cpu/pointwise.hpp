@@ -50,6 +50,15 @@ namespace flagdnn::reference::cpu {
     std::span<const std::int64_t> right_dimensions,
     std::span<const std::int64_t> output_dimensions, std::int32_t alpha = 1);
 
+// Activation gradients use logical, equally sized DY and X values, after
+// input-dtype quantization. The caller quantizes the returned DX to its dtype.
+[[nodiscard]] bool supports_activation_backward(
+    flagdnnPointwiseMode_t mode) noexcept;
+
+[[nodiscard]] std::vector<float> evaluate_activation_backward(
+    flagdnnPointwiseMode_t mode, std::span<const float> dy,
+    std::span<const float> x, const flagdnnPointwiseAttributes_t& attributes);
+
 [[nodiscard]] std::int32_t pointwise_integer_reference(
     flagdnnPointwiseMode_t mode, std::int32_t left, std::int32_t right,
     bool predicate, std::int32_t alpha);

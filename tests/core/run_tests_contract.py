@@ -517,7 +517,7 @@ def check_platform_batch_report_hooks(runner) -> None:
         ("no-hook", NoHook()),
         ("disabled-hook", DisabledHook()),
     ]
-    for platform in ("nvidia", "ascend", "thead", "iluvatar", "mthreads"):
+    for platform in ("nvidia", "ascend", "thead", "iluvatar"):
         adapter = runner.load_platform_adapter(platform)
         require(adapter is not None, f"missing {platform} test adapter")
         require(
@@ -865,6 +865,18 @@ def check_operator_presets(runner) -> None:
 
 def check_batch_runner(runner) -> None:
     """Exercise concurrent CTest processes and the public archive protocol."""
+    for marker in ("[skip]", "[SKIP]", "SKIP"):
+        case = "relu_backward_attributes_fp32_1x1x65"
+        reason = "muDNN cannot express clipped ReLU gradients"
+        records = runner.accuracy_records("relu_backward", {
+            "stdout": f"96: {marker} case={case} provider=mudnn reason={reason}\n",
+            "stderr": "", "case_counts": {"passed": 0, "failed": 0, "skipped": 1},
+        })
+        require(len(records) == 1, "named skip duplicated as native accounting")
+        record = next(iter(records.values()))
+        require(record["params"] == {"case": case}
+                and record["skipped_reason"] == reason,
+                "skip parser lost case identity or truncated its reason")
     with tempfile.TemporaryDirectory(prefix="flagdnn-batch-contract-") as tmp:
         root = Path(tmp)
         build = root / "build"
@@ -2661,8 +2673,37 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
                 if key != "hbm_copy"),
         "Ascend must own its measured copy peak and FP8-only identity policy",
     )
+    mthreads = platforms["mthreads"]
+    mthreads_policies = mthreads["scaling"]["case_policies"]
+    require(
+        {op: policy["scale_metric"] for op, policy in mthreads_policies.items()}
+        == {
+            "elu_backward": "vector_fp32",
+            "softplus_backward": "vector_fp32",
+            "swish_backward": "vector_fp32",
+            "relu_backward": "hbm_triad",
+            "leaky_relu_backward": "hbm_triad",
+        },
+        "MThreads-owned policies changed their operator/metric assignments",
+    )
+    require(
+        all(
+            set(policy["supported_dtypes"]) == {"fp32", "fp16", "bfloat16"}
+            for policy in mthreads_policies.values()
+        )
+        and mthreads["device"] == "MTT S5000"
+        and mthreads["architecture"] == "mp_31"
+        and all(
+            isinstance(mthreads["peaks"][metric], (int, float))
+            and mthreads["peaks"][metric] > 0
+            for metric in {"vector_fp32", "hbm_triad"}
+        )
+        and mthreads["measurement"]["sample_count"] > 0
+        and mthreads["measurement"]["raw_archive_sha256"],
+        "MThreads policies must retain their measured device evidence and dtype scope",
+    )
     for name, platform in platforms.items():
-        if name in {"hygon", "ascend"}:
+        if name in {"hygon", "ascend", "mthreads"}:
             continue
         require(
             not platform.get("scaling", {}).get("case_policies"),

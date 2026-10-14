@@ -2,6 +2,7 @@
 
 #include "reference/cpu/pointwise.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -188,6 +189,128 @@ void verify_integer() {
   }
 }
 
+void expect_near(std::string_view name, const std::vector<float>& actual,
+                 const std::vector<float>& expected, double tolerance = 1e-6) {
+  if (actual.size() != expected.size()) {
+    throw std::runtime_error(std::string(name) + " size differs");
+  }
+  for (std::size_t index = 0; index < actual.size(); ++index) {
+    if (!std::isfinite(actual[index]) ||
+        std::abs(actual[index] - expected[index]) >
+            tolerance * std::max(1.0F, std::abs(expected[index]))) {
+      throw std::runtime_error(std::string(name) + " differs at " +
+                               std::to_string(index));
+    }
+  }
+}
+
+void verify_activation_backward() {
+  const auto evaluate = [](auto mode, const std::vector<float>& dy,
+                            const std::vector<float>& x,
+                            flagdnnPointwiseAttributes_t attributes =
+                                FLAGDNN_POINTWISE_ATTRIBUTES_INITIALIZER) {
+    return cpu::evaluate_activation_backward(mode, dy, x, attributes);
+  };
+  flagdnnPointwiseAttributes_t attributes =
+      FLAGDNN_POINTWISE_ATTRIBUTES_INITIALIZER;
+  expect_values<float>("ReLU lower boundary",
+      evaluate(FLAGDNN_POINTWISE_RELU_BWD, {2, 3, -4}, {-1, 0, 1}),
+      {0, 0, -4});
+
+  attributes.flags = FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP |
+                     FLAGDNN_POINTWISE_ATTRIBUTE_RELU_UPPER_CLIP |
+                     FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP_SLOPE;
+  attributes.relu_lower_clip = -1;
+  attributes.relu_upper_clip = 2;
+  attributes.relu_lower_clip_slope = 0.25;
+  expect_values<float>("clipped leaky ReLU boundaries",
+      evaluate(FLAGDNN_POINTWISE_RELU_BWD, {2, 2, -3, 4, 5},
+               {-2, -1, 0, 2, 3}, attributes), {0.5F, 0.5F, -3, 0, 0});
+  attributes.relu_lower_clip_slope = -2;
+  expect_values<float>("clipping applies to the lower forward branch",
+      evaluate(FLAGDNN_POINTWISE_RELU_BWD, {2, 3}, {-3, -2}, attributes),
+      {0, -6});
+
+  attributes = FLAGDNN_POINTWISE_ATTRIBUTES_INITIALIZER;
+  attributes.flags = FLAGDNN_POINTWISE_ATTRIBUTE_ELU_ALPHA;
+  attributes.elu_alpha = 0.25;
+  expect_near("ELU alpha and lower boundary",
+      evaluate(FLAGDNN_POINTWISE_ELU_BWD, {2, 3, -4}, {-1, 0, 1}, attributes),
+      {static_cast<float>(0.5 / std::exp(1.0)), 0.75F, -4});
+  attributes = FLAGDNN_POINTWISE_ATTRIBUTES_INITIALIZER;
+  attributes.flags = FLAGDNN_POINTWISE_ATTRIBUTE_SOFTPLUS_BETA;
+  attributes.softplus_beta = 2;
+  expect_near("softplus beta and stable tails",
+      evaluate(FLAGDNN_POINTWISE_SOFTPLUS_BWD, {2, -4, 3, 5},
+               {-1000, 0, 1000, -1}, attributes),
+      {0, -2, 3, static_cast<float>(5.0 / (1.0 + std::exp(2.0)))});
+  attributes = FLAGDNN_POINTWISE_ATTRIBUTES_INITIALIZER;
+  attributes.flags = FLAGDNN_POINTWISE_ATTRIBUTE_SWISH_BETA;
+  attributes.swish_beta = 0;
+  expect_values<float>("swish beta zero",
+      evaluate(FLAGDNN_POINTWISE_SWISH_BWD, {2, -4, 3}, {-1, 0, 1},
+               attributes), {1, -2, 1.5F});
+  attributes.swish_beta = 2;
+  expect_values<float>("swish saturated tails",
+      evaluate(FLAGDNN_POINTWISE_SWISH_BWD, {2, -4}, {-1000, 1000},
+               attributes), {0, -4});
+
+  // A separate central difference of the forward functions checks smooth
+  // gradients without copying the implementation's derivative expression.
+  constexpr double step = 1e-4;
+  const std::vector<float> x = {-3.0F, -0.75F, 0.25F, 2.0F};
+  for (const auto mode : {FLAGDNN_POINTWISE_ELU_BWD,
+                           FLAGDNN_POINTWISE_SOFTPLUS_BWD,
+                           FLAGDNN_POINTWISE_SWISH_BWD}) {
+    attributes = FLAGDNN_POINTWISE_ATTRIBUTES_INITIALIZER;
+    const auto forward = [&](double value) {
+      if (mode == FLAGDNN_POINTWISE_ELU_BWD)
+        return value > 0 ? value : std::expm1(value);
+      if (mode == FLAGDNN_POINTWISE_SOFTPLUS_BWD)
+        return std::log1p(std::exp(value));
+      return value / (1.0 + std::exp(-value));
+    };
+    std::vector<float> derivative;
+    for (const float value : x) {
+      derivative.push_back(static_cast<float>(
+          (forward(value + step) - forward(value - step)) / (2 * step)));
+    }
+    expect_near("forward finite difference",
+        evaluate(mode, {1, 1, 1, 1}, x), derivative);
+  }
+
+  attributes = FLAGDNN_POINTWISE_ATTRIBUTES_INITIALIZER;
+  attributes.elu_alpha = 5;  // Unflagged values must not change the public API.
+  expect_values<float>("unflagged alpha keeps the default",
+      evaluate(FLAGDNN_POINTWISE_ELU_BWD, {2}, {0}, attributes), {2});
+  expect_error("unsupported gradient", [&] {
+    (void)evaluate(FLAGDNN_POINTWISE_ADD, {1}, {2});
+  });
+  expect_error("gradient input size", [&] {
+    (void)evaluate(FLAGDNN_POINTWISE_ELU_BWD, {1, 2}, {2});
+  });
+  expect_error("empty gradient input", [&] {
+    (void)evaluate(FLAGDNN_POINTWISE_ELU_BWD, {}, {});
+  });
+  attributes.flags = FLAGDNN_POINTWISE_ATTRIBUTE_SOFTPLUS_BETA;
+  attributes.softplus_beta = 0;
+  expect_error("non-positive softplus beta", [&] {
+    (void)evaluate(FLAGDNN_POINTWISE_SOFTPLUS_BWD, {1}, {2}, attributes);
+  });
+  expect_error("gradient attributes for another mode", [&] {
+    (void)evaluate(FLAGDNN_POINTWISE_ELU_BWD, {1}, {2}, attributes);
+  });
+  attributes = FLAGDNN_POINTWISE_ATTRIBUTES_INITIALIZER;
+  attributes.flags = FLAGDNN_POINTWISE_ATTRIBUTE_ELU_ALPHA;
+  attributes.elu_alpha = std::numeric_limits<double>::infinity();
+  expect_error("non-finite activation attribute", [&] {
+    (void)evaluate(FLAGDNN_POINTWISE_ELU_BWD, {1}, {2}, attributes);
+  });
+  if (cpu::supports_activation_backward(FLAGDNN_POINTWISE_NOT_SET)) {
+    throw std::runtime_error("unset activation gradient reported supported");
+  }
+}
+
 template <typename T, typename Evaluate>
 void verify_invalid_inputs(Evaluate evaluate) {
   const std::vector<T> one = {1};
@@ -224,6 +347,7 @@ int main() {
     verify_float();
     verify_legacy_float_special_values();
     verify_integer();
+    verify_activation_backward();
     verify_invalid_inputs<float>([](auto mode, const auto& a, const auto& a_shape,
                                     const auto& b, const auto& b_shape,
                                     const auto& shape) {

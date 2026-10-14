@@ -1977,7 +1977,9 @@ def accuracy_records(operator: str, task: dict[str, Any]) -> dict[str, Any]:
             continue
         match = re.match(r"^(\S+): .*\b(PASS|FAIL)\b", line)
         skip = re.search(
-            r"(?:^SKIP |^\[SKIP\].*?\s)case=(\S+).*?reason=(\S+)", line
+            r"(?:^SKIP |^\[SKIP\].*?\s)case=(\S+).*?reason=(\S.*)",
+            line,
+            re.IGNORECASE,
         )
         if match:
             case, outcome = match.groups()

@@ -239,6 +239,124 @@ std::vector<std::int32_t> evaluate_binary_pointwise_int32(
   return output;
 }
 
+bool supports_activation_backward(flagdnnPointwiseMode_t mode) noexcept {
+  switch (mode) {
+    case FLAGDNN_POINTWISE_RELU_BWD:
+    case FLAGDNN_POINTWISE_ELU_BWD:
+    case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
+    case FLAGDNN_POINTWISE_SWISH_BWD:
+      return true;
+    default:
+      return false;
+  }
+}
+
+std::vector<float> evaluate_activation_backward(
+    flagdnnPointwiseMode_t mode, std::span<const float> dy,
+    std::span<const float> x, const flagdnnPointwiseAttributes_t& attributes) {
+  if (!supports_activation_backward(mode)) {
+    throw std::invalid_argument(
+        "CPU reference does not support this activation backward mode");
+  }
+  if (dy.empty() || dy.size() != x.size()) {
+    throw std::invalid_argument("activation backward DY and X sizes must match");
+  }
+  std::uint64_t allowed_flags = 0;
+  switch (mode) {
+    case FLAGDNN_POINTWISE_RELU_BWD:
+      allowed_flags = FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP |
+                      FLAGDNN_POINTWISE_ATTRIBUTE_RELU_UPPER_CLIP |
+                      FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP_SLOPE;
+      break;
+    case FLAGDNN_POINTWISE_ELU_BWD:
+      allowed_flags = FLAGDNN_POINTWISE_ATTRIBUTE_ELU_ALPHA;
+      break;
+    case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
+      allowed_flags = FLAGDNN_POINTWISE_ATTRIBUTE_SOFTPLUS_BETA;
+      break;
+    case FLAGDNN_POINTWISE_SWISH_BWD:
+      allowed_flags = FLAGDNN_POINTWISE_ATTRIBUTE_SWISH_BETA;
+      break;
+    default:
+      break;
+  }
+  if (attributes.struct_size != sizeof(attributes) ||
+      attributes.version != FLAGDNN_POINTWISE_ATTRIBUTES_VERSION ||
+      (attributes.flags & ~allowed_flags) != 0) {
+    throw std::invalid_argument("activation backward attribute ABI is invalid");
+  }
+  // The public API applies fields only when their presence bit is set.
+  const auto attribute = [&](std::uint64_t flag, double value,
+                             double fallback) {
+    if ((attributes.flags & flag) == 0) return fallback;
+    if (!std::isfinite(value)) {
+      throw std::invalid_argument("activation backward attribute is not finite");
+    }
+    return value;
+  };
+  const double lower = attribute(FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP,
+                                 attributes.relu_lower_clip, 0.0);
+  const double slope =
+      attribute(FLAGDNN_POINTWISE_ATTRIBUTE_RELU_LOWER_CLIP_SLOPE,
+                attributes.relu_lower_clip_slope, 0.0);
+  const bool has_upper =
+      (attributes.flags & FLAGDNN_POINTWISE_ATTRIBUTE_RELU_UPPER_CLIP) != 0;
+  const double upper = attribute(FLAGDNN_POINTWISE_ATTRIBUTE_RELU_UPPER_CLIP,
+                                 attributes.relu_upper_clip, 0.0);
+  const double elu_alpha = attribute(FLAGDNN_POINTWISE_ATTRIBUTE_ELU_ALPHA,
+                                     attributes.elu_alpha, 1.0);
+  const double swish_beta = attribute(FLAGDNN_POINTWISE_ATTRIBUTE_SWISH_BETA,
+                                      attributes.swish_beta, 1.0);
+  const double softplus_beta =
+      attribute(FLAGDNN_POINTWISE_ATTRIBUTE_SOFTPLUS_BETA,
+                attributes.softplus_beta, 1.0);
+  if ((has_upper && upper < lower) || softplus_beta <= 0.0) {
+    throw std::invalid_argument("activation backward attributes are invalid");
+  }
+  const auto sigmoid = [](double value) {
+    // Both branches avoid exponential overflow, including at the tails.
+    if (value >= 0.0) return 1.0 / (1.0 + std::exp(-value));
+    const double exponential = std::exp(value);
+    return exponential / (1.0 + exponential);
+  };
+  std::vector<float> result(x.size());
+  for (std::size_t index = 0; index < x.size(); ++index) {
+    const double value = x[index];
+    double derivative = 0.0;
+    switch (mode) {
+      case FLAGDNN_POINTWISE_RELU_BWD: {
+        // At the lower boundary use the lower-branch slope. Clipping at
+        // the upper boundary suppresses the derivative there as well.
+        const double forward =
+            value < lower ? lower + slope * (value - lower) : value;
+        derivative = has_upper && forward >= upper
+                         ? 0.0
+                         : (value > lower ? 1.0 : slope);
+        break;
+      }
+      case FLAGDNN_POINTWISE_ELU_BWD:
+        derivative = value > 0.0 ? 1.0 : elu_alpha * std::exp(value);
+        break;
+      case FLAGDNN_POINTWISE_SOFTPLUS_BWD:
+        derivative = sigmoid(softplus_beta * value);
+        break;
+      case FLAGDNN_POINTWISE_SWISH_BWD: {
+        const double scaled = swish_beta * value;
+        const double probability = sigmoid(scaled);
+        derivative = probability;
+        if (probability != 0.0 && probability != 1.0) {
+          derivative += scaled * probability * (1.0 - probability);
+        }
+        break;
+      }
+      default:
+        throw std::logic_error("validated activation backward mode is invalid");
+    }
+    result[index] = static_cast<float>(dy[index] * derivative);
+  }
+  return result;
+}
+
 std::int32_t pointwise_integer_reference(flagdnnPointwiseMode_t mode,
                                          std::int32_t left, std::int32_t right,
                                          bool predicate, std::int32_t alpha) {

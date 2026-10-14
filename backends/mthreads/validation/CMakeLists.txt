@@ -158,12 +158,21 @@ add_library(
   mudnn_pointwise.cpp
   mudnn_reduction.cpp
   musa_driver.cpp
-  tensor_io.cpp)
+  tensor_io.cpp
+  equivalent_pointwise.cpp
+  benchmark/equivalent_baseline.cpp
+  "${PROJECT_SOURCE_DIR}/src/runtime/json.cpp")
 target_compile_features(
   flagdnn_validation_mthreads_support PUBLIC cxx_std_20)
 target_include_directories(
   flagdnn_validation_mthreads_support
-  PUBLIC "${PROJECT_SOURCE_DIR}")
+  PUBLIC "${PROJECT_SOURCE_DIR}"
+  PRIVATE "${PROJECT_SOURCE_DIR}/src"
+          "${PROJECT_SOURCE_DIR}/tests"
+          "${PROJECT_SOURCE_DIR}/benchmark")
+target_compile_definitions(
+  flagdnn_validation_mthreads_support PRIVATE
+  FLAGDNN_PERFORMANCE_BASELINE_FILE="${PROJECT_SOURCE_DIR}/docs/performance-baseline.json")
 target_include_directories(
   flagdnn_validation_mthreads_support
   SYSTEM PUBLIC
@@ -198,6 +207,22 @@ if(NOT TARGET flagdnn_validation_cpu_reference)
   add_subdirectory(
     "${PROJECT_SOURCE_DIR}/reference/cpu"
     "${CMAKE_CURRENT_BINARY_DIR}/cpu-reference")
+endif()
+
+if(FLAGDNN_BUILD_TESTS)
+  add_executable(
+    flagdnn_test_mthreads_pointwise_attributes
+    functional/pointwise_attributes_contract.cpp)
+  target_link_libraries(
+    flagdnn_test_mthreads_pointwise_attributes
+    PRIVATE flagdnn_validation_cpu_reference)
+  flagdnn_enable_warnings(flagdnn_test_mthreads_pointwise_attributes)
+  add_test(
+    NAME integration.mthreads.pointwise_attributes_contract
+    COMMAND flagdnn_test_mthreads_pointwise_attributes)
+  set_tests_properties(
+    integration.mthreads.pointwise_attributes_contract
+    PROPERTIES LABELS "integration;mthreads;cpu;pointwise;contract" TIMEOUT 60)
 endif()
 
 add_library(
@@ -369,6 +394,28 @@ if(NOT FLAGDNN_BUILD_TESTS)
 endif()
 
 if(FLAGDNN_BUILD_BENCHMARKS)
+  add_executable(
+    flagdnn_benchmark_mthreads_baseline_contract
+    benchmark/equivalent_baseline_contract.cpp)
+  target_compile_features(
+    flagdnn_benchmark_mthreads_baseline_contract PRIVATE cxx_std_20)
+  target_include_directories(
+    flagdnn_benchmark_mthreads_baseline_contract
+    PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_link_libraries(
+    flagdnn_benchmark_mthreads_baseline_contract
+    PRIVATE flagdnn_test_mthreads_adapter flagdnn_benchmark_cases)
+  flagdnn_enable_warnings(flagdnn_benchmark_mthreads_baseline_contract)
+  add_test(
+    NAME integration.mthreads.equivalent_performance_baseline
+    COMMAND flagdnn_benchmark_mthreads_baseline_contract
+      "${PROJECT_SOURCE_DIR}/docs/performance-baseline.json")
+  set_tests_properties(
+    integration.mthreads.equivalent_performance_baseline PROPERTIES
+    LABELS "integration;mthreads;benchmark;cpu"
+    TIMEOUT 120
+    ENVIRONMENT "LD_LIBRARY_PATH=${_flagdnn_mthreads_test_library_path_value}")
+
   add_library(
     flagdnn_benchmark_mthreads_adapter STATIC
     benchmark/add_runner.cpp)
@@ -378,12 +425,14 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     flagdnn_benchmark_mthreads_adapter
     PUBLIC
       "${PROJECT_SOURCE_DIR}"
-      "${PROJECT_SOURCE_DIR}/benchmark")
+      "${PROJECT_SOURCE_DIR}/benchmark"
+    PRIVATE "${PROJECT_SOURCE_DIR}/src")
   target_link_libraries(
     flagdnn_benchmark_mthreads_adapter
     PUBLIC
       flagdnn_benchmark_cases
-      flagdnn_validation_mthreads_support)
+      flagdnn_validation_mthreads_support
+      flagdnn_validation_cpu_reference)
   flagdnn_enable_warnings(flagdnn_benchmark_mthreads_adapter)
 
   set(_flagdnn_mthreads_benchmark_operators ${FLAGDNN_BENCHMARK_OPERATORS})

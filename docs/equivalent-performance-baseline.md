@@ -55,5 +55,6 @@ passed = measured_us <= limit_us
 
 - **Hygon**：按本平台 `case_policies` 启用等效路径。显式传入 `--min-speedup` 才启用性能失败门槛，等效用例要求 `max(0.8, --min-speedup)`；原生用例按原生加速比判定。
 - **Ascend**：当前仅对 identity 的 FP8 E4M3/E5M2 用例启用 `hbm_copy` 等效策略，不支持 `--min-speedup`。其他 FP8 布局或拼接不能借用 identity 的参考耗时。
+- **MThreads**：按本平台策略为 muDNN 不支持且参考完整的用例启用等效路径；`--min-speedup` 门槛规则同 Hygon。待补参考见[补测说明](nvidia-supplemental-baselines-mthreads-20261014.md)。
 
 峰值采集、构建和复测命令见[性能基准工具说明](../tools/performance_baseline/README.md)；具体覆盖范围、峰值数值和测量来源以正式 JSON 为准。
