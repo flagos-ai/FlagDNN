@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <span>
 #include <vector>
 namespace flagdnn::reference::cpu {
 struct NormalizationParameters {
@@ -18,5 +19,22 @@ void populate_normalization_statistics(
 std::vector<std::vector<float>> evaluate_normalization(
     const NormalizationParameters& parameters,
     const std::vector<std::vector<float>>& inputs);
+// Logical row-major inputs; results are output, mean, inverse standard deviation.
+std::vector<std::vector<float>> evaluate_row_normalization(
+    bool rms, std::span<const float> input, std::span<const float> scale,
+    std::span<const float> bias, double epsilon);
+std::vector<float> evaluate_batchnorm_inference(
+    std::span<const float> input, std::size_t spatial,
+    std::span<const float> mean, std::span<const float> inverse_std,
+    std::span<const float> scale, std::span<const float> bias);
+// output, mean, inverse standard deviation, running mean, running variance.
+// Saved statistics are FP32; running variance uses the unbiased estimate.
+std::vector<std::vector<float>> evaluate_batchnorm_training(
+    std::span<const float> input, std::size_t spatial,
+    std::span<const float> scale, std::span<const float> bias,
+    std::span<const float> previous_mean, std::span<const float> previous_variance,
+    double epsilon, double momentum);
+void variance_to_inverse_standard_deviation(std::span<float> variance,
+                                            double epsilon);
 }  // namespace flagdnn::reference::cpu
 #endif

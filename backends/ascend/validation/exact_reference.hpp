@@ -3,6 +3,8 @@
 #ifndef FLAGDNN_BACKENDS_ASCEND_VALIDATION_EXACT_REFERENCE_HPP_
 #define FLAGDNN_BACKENDS_ASCEND_VALIDATION_EXACT_REFERENCE_HPP_
 
+#include "validation/tensor_io.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -15,6 +17,19 @@
 #include <vector>
 
 namespace flagdnn::validation::ascend {
+
+// Only physical buffer placement belongs to the backend. CPU operator math
+// produces contiguous logical values in reference/cpu.
+template <class Tensor>
+inline void store_logical_reference(std::span<const float> logical,
+                                    std::span<float> storage,
+                                    const Tensor& tensor) {
+  if (logical.size() != tensor_io::element_count(tensor) ||
+      storage.size() < tensor_io::storage_element_count(tensor))
+    throw std::invalid_argument("CPU reference output storage size is invalid");
+  for (std::size_t index = 0; index < logical.size(); ++index)
+    storage[tensor_io::physical_offset_unchecked(index, tensor)] = logical[index];
+}
 
 class ExactReferenceCoverage {
  public:

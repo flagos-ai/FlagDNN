@@ -3,6 +3,8 @@
 #include "validation/batchnorm_validation.hpp"
 
 #include "validation/tensor_io.hpp"
+#include "validation/exact_reference.hpp"
+#include "reference/cpu/normalization.hpp"
 
 #include <algorithm>
 #include <array>
@@ -302,18 +304,7 @@ std::vector<BenchmarkCase> make_ascend_batchnorm_benchmark_cases(
 
 void batchnorm_reference_variance_to_invstd(
     std::span<float> saved_variance, double epsilon) {
-  if (!std::isfinite(epsilon) || epsilon <= 0.0) {
-    throw std::invalid_argument(
-        "ACLNN BatchNorm reference epsilon is invalid");
-  }
-  for (float& variance : saved_variance) {
-    if (!std::isfinite(variance) || variance < 0.0F) {
-      throw std::runtime_error(
-          "ACLNN BatchNorm returned an invalid saved variance");
-    }
-    variance = static_cast<float>(
-        1.0 / std::sqrt(static_cast<double>(variance) + epsilon));
-  }
+  reference::cpu::variance_to_inverse_standard_deviation(saved_variance, epsilon);
 }
 
 void batchnorm_host_oracle(
@@ -342,56 +333,15 @@ void batchnorm_host_oracle(
     throw std::invalid_argument("BatchNorm host oracle storage size is invalid");
   }
 
-  std::vector<double> sums(plan.channels, 0.0);
-  const std::size_t elements = io::element_count(plan.input);
-  for (std::size_t logical = 0; logical < elements; ++logical) {
-    const std::size_t channel = (logical / plan.spatial) % plan.channels;
-    sums[channel] += input_storage[
-        io::physical_offset_unchecked(logical, plan.input)];
-  }
-  for (std::size_t channel = 0; channel < plan.channels; ++channel) {
-    mean[channel] = static_cast<float>(
-        sums[channel] / static_cast<double>(plan.reduction_elements));
-  }
-
-  std::vector<double> squared_deviations(plan.channels, 0.0);
-  for (std::size_t logical = 0; logical < elements; ++logical) {
-    const std::size_t channel = (logical / plan.spatial) % plan.channels;
-    const double difference =
-        static_cast<double>(input_storage[
-            io::physical_offset_unchecked(logical, plan.input)]) -
-        static_cast<double>(mean[channel]);
-    squared_deviations[channel] += difference * difference;
-  }
-  for (std::size_t channel = 0; channel < plan.channels; ++channel) {
-    const double variance = squared_deviations[channel] /
-                            static_cast<double>(plan.reduction_elements);
-    inverse_standard_deviation[channel] =
-        static_cast<float>(1.0 / std::sqrt(variance + plan.epsilon));
-    const double unbiased_variance =
-        plan.reduction_elements > 1
-            ? squared_deviations[channel] /
-                  static_cast<double>(plan.reduction_elements - 1)
-            : 0.0;
-    next_running_mean[channel] = static_cast<float>(
-        (1.0 - plan.momentum) * previous_running_mean[channel] +
-        plan.momentum * mean[channel]);
-    next_running_variance[channel] = static_cast<float>(
-        (1.0 - plan.momentum) * previous_running_variance[channel] +
-        plan.momentum * unbiased_variance);
-  }
-
-  for (std::size_t logical = 0; logical < elements; ++logical) {
-    const std::size_t channel = (logical / plan.spatial) % plan.channels;
-    const std::size_t input_offset =
-        io::physical_offset_unchecked(logical, plan.input);
-    const std::size_t output_offset =
-        io::physical_offset_unchecked(logical, plan.output);
-    output_storage[output_offset] =
-        (input_storage[input_offset] - mean[channel]) *
-            inverse_standard_deviation[channel] * scale[channel] +
-        bias[channel];
-  }
+  const auto result = reference::cpu::evaluate_batchnorm_training(
+      io::gather(input_storage, plan.input), plan.spatial, scale, bias,
+      previous_running_mean, previous_running_variance, plan.epsilon,
+      plan.momentum);
+  store_logical_reference(result[0], output_storage, plan.output);
+  std::copy(result[1].begin(), result[1].end(), mean.begin());
+  std::copy(result[2].begin(), result[2].end(), inverse_standard_deviation.begin());
+  std::copy(result[3].begin(), result[3].end(), next_running_mean.begin());
+  std::copy(result[4].begin(), result[4].end(), next_running_variance.begin());
 }
 
 }  // namespace flagdnn::validation::ascend

@@ -10,7 +10,7 @@ correctness checks. FP8 uses the allocating _scaled_mm API; any inter-launch
 gap is retained. Other paths preallocate output. Five batches are retained;
 select
 best median across sizes rather than the fastest individual sample. See
-docs/nvidia-peak-baseline-20260920.md.
+docs/equivalent-performance-baseline.md.
 """
 import argparse
 import datetime

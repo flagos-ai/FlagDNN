@@ -3,6 +3,8 @@
 #include "validation/batchnorm_inference_validation.hpp"
 
 #include "validation/tensor_io.hpp"
+#include "validation/exact_reference.hpp"
+#include "reference/cpu/normalization.hpp"
 
 #include <algorithm>
 #include <array>
@@ -384,18 +386,10 @@ void batchnorm_inference_host_oracle(
         static_cast<std::size_t>(plan.input.dimensions[axis]),
         "BatchNorm inference inner element count");
   }
-  const std::size_t elements = tensor_io::element_count(plan.input);
-  for (std::size_t logical = 0; logical < elements; ++logical) {
-    const std::size_t channel = (logical / inner) % channels;
-    const std::size_t input_offset =
-        tensor_io::physical_offset_unchecked(logical, plan.input);
-    const std::size_t output_offset =
-        tensor_io::physical_offset_unchecked(logical, plan.output);
-    output_storage[output_offset] =
-        (input_storage[input_offset] - mean[channel]) *
-            inverse_standard_deviation[channel] * scale[channel] +
-        bias[channel];
-  }
+  const auto output = reference::cpu::evaluate_batchnorm_inference(
+      tensor_io::gather(input_storage, plan.input), inner, mean,
+      inverse_standard_deviation, scale, bias);
+  store_logical_reference(output, output_storage, plan.output);
 }
 
 }  // namespace flagdnn::validation::ascend

@@ -251,6 +251,12 @@ def _pointwise_kernel_configuration(operation, parameters, tensors):
             )
         input_pointer_type = TRITON_POINTER_TYPES.get(tensor_data_types[0])
         output_pointer_type = TRITON_POINTER_TYPES.get(tensor_data_types[1])
+        if operation == "identity" and tensor_data_types[0] in {
+            "fp8_e4m3", "fp8_e5m2", "fp8_e8m0"
+        }:
+            # Identity copies storage bits, including NaN payloads. Ascend 910B
+            # has no FP8 arithmetic requirement for this operation.
+            input_pointer_type = output_pointer_type = "*u8"
         if input_pointer_type is None or output_pointer_type is None:
             raise ValueError(
                 "unsupported unary pointwise data type: " f"{tensor_data_types[0]!r}"

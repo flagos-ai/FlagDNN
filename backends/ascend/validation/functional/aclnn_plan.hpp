@@ -58,8 +58,18 @@ public:
   using Launch = aclnnStatus (*)(void *, std::uint64_t, aclOpExecutor *,
                                  aclrtStream);
   using Builder = std::function<void(Plan &)>;
-  Plan(std::vector<TestTensor> tensors, Builder builder)
-      : specs(std::move(tensors)), builder_(std::move(builder)) {}
+  // This opt-in is only for operations that preserve element bytes (copy,
+  // reshape, permute, slice and concatenate). It does not enable FP8 math.
+  Plan(std::vector<TestTensor> tensors, Builder builder,
+       bool byte_preserving = false)
+      : specs(std::move(tensors)), builder_(std::move(builder)),
+        byte_preserving_(byte_preserving) {}
+  [[nodiscard]] bool uses_byte_storage_view() const noexcept {
+    return byte_preserving_ &&
+           std::any_of(specs.begin(), specs.end(), [](const auto &s) {
+             return io::is_fp8_storage(s.data_type);
+           });
+  }
   ~Plan() override {
     if (stream_)
       (void)aclrtSynchronizeStream(stream_);
@@ -137,8 +147,12 @@ public:
   aclTensor *tensor(const TestTensor &s, void *pointer,
                     aclFormat format = ACL_FORMAT_ND) {
     const std::int64_t storage = io::storage_element_count(s);
+    const aclDataType storage_type =
+        byte_preserving_ && io::is_fp8_storage(s.data_type)
+            ? ACL_UINT8
+            : dtype(s.data_type);
     auto *t = aclCreateTensor(s.dimensions.data(), s.dimensions.size(),
-                              dtype(s.data_type), s.strides.data(), 0, format,
+                              storage_type, s.strides.data(), 0, format,
                               &storage, 1, pointer);
     if (!t)
       throw std::runtime_error("aclCreateTensor failed");
@@ -316,6 +330,7 @@ private:
   };
   std::unordered_map<aclTensor *, Memory> memory_;
   Builder builder_;
+  bool byte_preserving_ = false;
   std::vector<Op> ops_;
   std::size_t workspace_ = 0;
   aclrtStream stream_ = nullptr;

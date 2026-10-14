@@ -176,6 +176,16 @@ void verify_integer() {
       cpu::evaluate_binary_pointwise_int32(FLAGDNN_POINTWISE_ADD,
           left, Shape{2, 1}, right, Shape{3}, Shape{2, 3}, 2),
       {16777223, 16777225, 16777207, 4, 6, -12});
+  for (const auto mode : {FLAGDNN_POINTWISE_DIV, FLAGDNN_POINTWISE_MOD}) {
+    const std::vector<std::int32_t> dividends{16777217, minimum};
+    const std::vector<std::int32_t> divisors{-1, 3, 0};
+    const auto actual = cpu::evaluate_binary_pointwise_int32(mode,
+        dividends, Shape{2,1}, divisors, Shape{3}, Shape{2,3});
+    expect_values<std::int32_t>("INT32 divmod broadcast full range", actual,
+        mode == FLAGDNN_POINTWISE_DIV
+            ? std::vector<std::int32_t>{-16777217,5592405,0,minimum,-715827882,0}
+            : std::vector<std::int32_t>{0,2,0,0,-2,0});
+  }
 }
 
 template <typename T, typename Evaluate>

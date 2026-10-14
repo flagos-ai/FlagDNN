@@ -11,6 +11,16 @@
 
 namespace flagdnn::reference::cpu {
 
+// Storage-preserving identity. No numeric conversion, including FP8 NaNs.
+[[nodiscard]] std::vector<std::uint8_t> evaluate_identity_bytes(
+    std::span<const std::uint8_t> input);
+
+[[nodiscard]] float gelu_exact(float value) noexcept;
+[[nodiscard]] float gelu_approximate_tanh(float value) noexcept;
+[[nodiscard]] float gelu_accurate_logit(float value) noexcept;
+[[nodiscard]] float sigmoid(float logit) noexcept;
+[[nodiscard]] float sigmoid_backward(float gradient, float logit) noexcept;
+
 [[nodiscard]] bool supports_binary_pointwise(
     flagdnnPointwiseMode_t mode) noexcept;
 

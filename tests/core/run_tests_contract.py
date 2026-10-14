@@ -2645,8 +2645,24 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
         # already outside the generated runtime catalog.
         "Hygon-owned policy reference coverage changed during isolation",
     )
+    ascend = platforms["ascend"]
+    ascend_policies = ascend.get("scaling", {}).get("case_policies", {})
+    require(
+        set(ascend_policies) == {"identity"}
+        and ascend_policies["identity"]["scale_metric"] == "hbm_copy"
+        and set(ascend_policies["identity"]["supported_dtypes"])
+        == {"fp8_e4m3", "fp8_e5m2"}
+        and ascend_policies["identity"].get("reason")
+        and ascend["device"] != platforms["hygon"]["device"]
+        and ascend["architecture"]
+        and ascend["measured_on"]
+        and ascend["peaks"]["hbm_copy"] > 0
+        and all(value is None for key, value in ascend["peaks"].items()
+                if key != "hbm_copy"),
+        "Ascend must own its measured copy peak and FP8-only identity policy",
+    )
     for name, platform in platforms.items():
-        if name == "hygon":
+        if name in {"hygon", "ascend"}:
             continue
         require(
             not platform.get("scaling", {}).get("case_policies"),

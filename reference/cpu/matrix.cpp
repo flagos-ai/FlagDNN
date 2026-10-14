@@ -183,17 +183,22 @@ std::vector<float> evaluate_reduction(const ReductionParameters& parameters,
     inner *= parameters.input_shape[i];
   std::vector<float> output(input.size() / extent);
   for (std::size_t index = 0; index < output.size(); ++index) {
-    double value = parameters.mode == FLAGDNN_REDUCTION_MUL ? 1.0 : 0.0;
-    for (std::size_t r = 0; r < extent; ++r) {
-      const double x =
-          input[(index / inner * extent + r) * inner + index % inner];
-      if (parameters.mode == FLAGDNN_REDUCTION_MUL)
-        value *= x;
-      else
-        value += x;
-    }
-    output[index] = static_cast<float>(
-        parameters.mode == FLAGDNN_REDUCTION_AVG ? value / extent : value);
+    const auto reduce = [&]<class Accumulator>() {
+      Accumulator value = parameters.mode == FLAGDNN_REDUCTION_MUL ? 1 : 0;
+      for (std::size_t r = 0; r < extent; ++r) {
+        const Accumulator x =
+            input[(index / inner * extent + r) * inner + index % inner];
+        if (parameters.mode == FLAGDNN_REDUCTION_MUL)
+          value *= x;
+        else
+          value += x;
+      }
+      return static_cast<float>(parameters.mode == FLAGDNN_REDUCTION_AVG
+          ? value / static_cast<Accumulator>(extent) : value);
+    };
+    output[index] = parameters.float_accumulation
+                        ? reduce.template operator()<float>()
+                        : reduce.template operator()<double>();
   }
   return output;
 }

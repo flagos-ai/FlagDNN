@@ -18,5 +18,9 @@ std::size_t layout_source_index(const LayoutParameters& parameters,
                                 std::size_t output_index);
 std::vector<float> evaluate_layout(const LayoutParameters& parameters,
                                    std::span<const float> input);
+// Logical contiguous elements; each element's bytes are copied unchanged.
+std::vector<std::uint8_t> evaluate_layout_bytes(
+    const LayoutParameters& parameters, std::span<const std::uint8_t> input,
+    std::size_t element_bytes = 1);
 }  // namespace flagdnn::reference::cpu
 #endif

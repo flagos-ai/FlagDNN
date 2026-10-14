@@ -109,6 +109,15 @@ Graph 输出。上述算子的 THead 生产路径支持精确 INT32 运算，二
 和执行错误仍判失败，未执行的 SKIP 仍计为跳过。性能测试保持 acDNN 对照策略，
 不支持的 case 继续结构化 SKIP，不生成 CPU 性能基线。
 
+本次 Ascend 适配中，用于功能对比的 CPU 算子计算放在 `reference/cpu`。Ascend 验证代码负责
+输入生成、dtype 编解码、strides 的 gather/scatter 和设备执行，再调用共享
+CPU 实现。相关实现包含字节级 identity、布局和
+拼接，以及逐点、归一化等参考。迁移时保留原有 FP32/FP64 累加、
+中间量化和统计口径，相关契约位于 `reference/tests`。Ascend 的原始存储类型
+用例在 ACLNN 可用时也额外核对 CPU 字节参考，日志以 `CPU_ORACLE` 标明；
+CPU 计算在计时区间外，不作为性能对照耗时。
+本次不迁移其他平台的 CPU 参考，也不修改其他平台的后端代码。
+
 ## 4. CMake 装配顺序
 
 根 `CMakeLists.txt` 的顺序固定为：

@@ -362,6 +362,10 @@ endif()
 string(REGEX REPLACE "^version=" "" _flagdnn_validation_cann_version
   "${_flagdnn_validation_version_line}")
 
+if(NOT TARGET flagdnn_validation_cpu_reference)
+  add_subdirectory("${PROJECT_SOURCE_DIR}/reference/cpu"
+    "${CMAKE_CURRENT_BINARY_DIR}/cpu-reference")
+endif()
 add_library(flagdnn_validation_ascend_platform INTERFACE)
 target_compile_features(flagdnn_validation_ascend_platform
   INTERFACE cxx_std_20)
@@ -369,7 +373,7 @@ target_include_directories(flagdnn_validation_ascend_platform INTERFACE
   "${_flagdnn_validation_aclnn_include}"
   "${PROJECT_SOURCE_DIR}/backends/ascend")
 target_link_libraries(flagdnn_validation_ascend_platform INTERFACE
-  Ascend::ascendcl Ascend::runtime)
+  Ascend::ascendcl Ascend::runtime flagdnn_validation_cpu_reference)
 
 add_library(flagdnn_validation_ascend_tensor_io STATIC tensor_io.cpp)
 target_compile_features(flagdnn_validation_ascend_tensor_io PUBLIC cxx_std_20)

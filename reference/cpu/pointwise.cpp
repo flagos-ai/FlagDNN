@@ -12,6 +12,49 @@
 #include <string_view>
 
 namespace flagdnn::reference::cpu {
+
+std::vector<std::uint8_t> evaluate_identity_bytes(
+    std::span<const std::uint8_t> input) {
+  return {input.begin(), input.end()};
+}
+
+float gelu_exact(float value) noexcept {
+  constexpr float inverse_sqrt_two = 0.70710678118654752440F;
+  return 0.5F * value * (1.0F + std::erf(value * inverse_sqrt_two));
+}
+
+float gelu_approximate_tanh(float value) noexcept {
+  constexpr float sqrt_two_over_pi = 0.79788456080286535588F;
+  constexpr float cubic_scale = 0.044715F;
+  const float cubic = value * value * value;
+  return 0.5F * value *
+         (1.0F + std::tanh(sqrt_two_over_pi * (value + cubic_scale * cubic)));
+}
+
+float gelu_accurate_logit(float value) noexcept {
+  const float squared = value * value;
+  float polynomial = 2.454685183586082e-6F;
+  polynomial = std::fma(polynomial, squared, -6.585686530333067e-5F);
+  polynomial = std::fma(polynomial, squared, -2.1926247170679162e-4F);
+  polynomial = std::fma(polynomial, squared, 7.286941707962942e-2F);
+  polynomial = std::fma(polynomial, squared, 1.5957015276323492F);
+  const float argument = value * polynomial;
+  return value * (argument >= 0.0F
+      ? 1.0F / (1.0F + std::exp(-argument))
+      : std::exp(argument) / (1.0F + std::exp(argument)));
+}
+
+float sigmoid(float logit) noexcept {
+  const float exponential = std::exp(-std::abs(logit));
+  return logit >= 0.0F ? 1.0F / (1.0F + exponential)
+                       : exponential / (1.0F + exponential);
+}
+
+float sigmoid_backward(float gradient, float logit) noexcept {
+  const float exponential = std::exp(-std::abs(logit));
+  const float inverse = 1.0F / (1.0F + exponential);
+  return gradient * exponential * inverse * inverse;
+}
 namespace {
 
 std::size_t checked_element_count(std::span<const std::int64_t> dimensions,

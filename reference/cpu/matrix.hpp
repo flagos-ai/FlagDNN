@@ -31,6 +31,8 @@ struct ReductionParameters {
   std::vector<std::int64_t> input_shape;
   std::int32_t axis = 0;
   flagdnnReductionMode_t mode = FLAGDNN_REDUCTION_ADD;
+  // Preserve FP32 accumulation when matching an explicitly FP32 host oracle.
+  bool float_accumulation = false;
 };
 std::vector<float> evaluate_reduction(const ReductionParameters& parameters,
                                       std::span<const float> input);

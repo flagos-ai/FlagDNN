@@ -1,13 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flagdnn.example/schemas/native-benchmark-result-v5.json",
+  "$id": "https://flagdnn.example/schemas/native-benchmark-result-v6.json",
   "title": "FlagDNN native benchmark result",
   "oneOf": [
     {"$ref": "#/$defs/v1"},
     {"$ref": "#/$defs/v2"},
     {"$ref": "#/$defs/v3"},
     {"$ref": "#/$defs/v4"},
-    {"$ref": "#/$defs/v5"}
+    {"$ref": "#/$defs/v5"},
+    {"$ref": "#/$defs/v6"}
   ],
   "$defs": {
     "positiveSamples": {
@@ -359,6 +360,180 @@
           "case": {"type": "string", "pattern": "^native/.+"}
         }}
       }]
+    },
+    "v6": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "provider",
+        "case",
+        "environment",
+        "provider_identity",
+        "benchmark_config",
+        "stream_us",
+        "submit_us",
+        "end_to_end_us",
+        "equivalent_baseline"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 6
+        },
+        "kind": {
+          "const": "steady_state"
+        },
+        "provider": {
+          "const": "flagdnn"
+        },
+        "case": {
+          "type": "string",
+          "pattern": "^identity_fp8_(e4m3|e5m2)_.+$"
+        },
+        "environment": {
+          "$ref": "#/$defs/environment"
+        },
+        "provider_identity": {
+          "$ref": "#/$defs/flagdnnIdentity"
+        },
+        "benchmark_config": {
+          "const": {
+            "warmup_iterations": 10,
+            "sample_count": 20,
+            "iterations_per_sample": 50,
+            "timing_method": "device_events_over_ascend_graph",
+            "graph_warmup_replays": 1,
+            "statistic": "nearest_rank_p50"
+          }
+        },
+        "stream_us": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/metric"
+            },
+            {
+              "properties": {
+                "samples": {
+                  "minItems": 20,
+                  "maxItems": 20
+                }
+              }
+            }
+          ]
+        },
+        "submit_us": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/metric"
+            },
+            {
+              "properties": {
+                "samples": {
+                  "minItems": 20,
+                  "maxItems": 20
+                }
+              }
+            }
+          ]
+        },
+        "end_to_end_us": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/metric"
+            },
+            {
+              "properties": {
+                "samples": {
+                  "minItems": 20,
+                  "maxItems": 20
+                }
+              }
+            }
+          ]
+        },
+        "equivalent_baseline": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "provider",
+            "reference_platform",
+            "target_platform",
+            "reference_case",
+            "scale_metric",
+            "timing_profile",
+            "traffic_ratio",
+            "reference_validation",
+            "passed",
+            "reference_time_us",
+            "reference_peak",
+            "target_peak",
+            "equivalent_time_us",
+            "limit_us",
+            "relative_efficiency",
+            "min_relative_efficiency"
+          ],
+          "properties": {
+            "provider": {
+              "const": "nvidia_equivalent"
+            },
+            "reference_platform": {
+              "const": "nvidia"
+            },
+            "target_platform": {
+              "const": "ascend"
+            },
+            "reference_case": {
+              "type": "string",
+              "pattern": "^identity_fp8_(e4m3|e5m2)_.+$"
+            },
+            "scale_metric": {
+              "const": "hbm_copy"
+            },
+            "timing_profile": {
+              "const": "native"
+            },
+            "traffic_ratio": {
+              "const": 1
+            },
+            "reference_validation": {
+              "const": "bit_exact"
+            },
+            "passed": {
+              "type": "boolean"
+            },
+            "reference_time_us": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "reference_peak": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "target_peak": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "equivalent_time_us": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "limit_us": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "relative_efficiency": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "min_relative_efficiency": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      }
     }
   }
 }

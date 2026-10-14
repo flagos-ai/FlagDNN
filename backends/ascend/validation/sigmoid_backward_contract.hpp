@@ -3,7 +3,7 @@
 #ifndef FLAGDNN_BACKENDS_ASCEND_VALIDATION_SIGMOID_BACKWARD_CONTRACT_HPP_
 #define FLAGDNN_BACKENDS_ASCEND_VALIDATION_SIGMOID_BACKWARD_CONTRACT_HPP_
 
-#include <cmath>
+#include "reference/cpu/pointwise.hpp"
 
 namespace flagdnn::validation::ascend::sigmoid_backward_contract {
 
@@ -11,17 +11,9 @@ namespace flagdnn::validation::ascend::sigmoid_backward_contract {
 // backward primitive instead consumes (gradient, sigmoid(logit)), so both the
 // direct reference and the independent host oracle share this explicit
 // semantic boundary.
-[[nodiscard]] inline float sigmoid(float logit) noexcept {
-  const float exponential = std::exp(-std::abs(logit));
-  return logit >= 0.0F
-             ? 1.0F / (1.0F + exponential)
-             : exponential / (1.0F + exponential);
-}
-
+using flagdnn::reference::cpu::sigmoid;
 [[nodiscard]] inline float evaluate(float gradient, float logit) noexcept {
-  const float exponential = std::exp(-std::abs(logit));
-  const float inverse = 1.0F / (1.0F + exponential);
-  return gradient * exponential * inverse * inverse;
+  return flagdnn::reference::cpu::sigmoid_backward(gradient, logit);
 }
 
 }  // namespace flagdnn::validation::ascend::sigmoid_backward_contract

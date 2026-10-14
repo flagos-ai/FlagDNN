@@ -109,13 +109,71 @@ float bfloat16_to_float(std::uint16_t value) {
   return std::bit_cast<float>(static_cast<std::uint32_t>(value) << 16U);
 }
 
+float fp8_decode(std::uint8_t value, flagdnnDataType_t type) {
+  if (type == FLAGDNN_DATA_FP8_E8M0)
+    return value == 255 ? std::numeric_limits<float>::quiet_NaN()
+                        : std::ldexp(1.0F, static_cast<int>(value) - 127);
+  const int bits = type == FLAGDNN_DATA_FP8_E4M3 ? 3 : 2;
+  const int bias = bits == 3 ? 7 : 15;
+  const int exponent = (value & 127) >> bits;
+  const int mantissa = value & ((1 << bits) - 1);
+  float result;
+  if ((bits == 3 && (value & 127) == 127) ||
+      (bits == 2 && exponent == 31 && mantissa != 0))
+    result = std::numeric_limits<float>::quiet_NaN();
+  else if (bits == 2 && exponent == 31)
+    result = std::numeric_limits<float>::infinity();
+  else
+    result = exponent == 0
+                 ? std::ldexp(static_cast<float>(mantissa), 1 - bias - bits)
+                 : std::ldexp(1.0F + static_cast<float>(mantissa) / (1 << bits),
+                              exponent - bias);
+  return value & 128 ? -result : result;
+}
+
+std::uint8_t fp8_encode(float value, flagdnnDataType_t type) {
+  // FP8 is a storage format in this adapter. Padding and copied NaN payloads
+  // are checked as bytes, never through floating-point equality.
+  if (value == kPaddingSentinel)
+    return kBytePaddingSentinel;
+  if (type == FLAGDNN_DATA_FP8_E8M0) {
+    if (!(value > 0.0F) || !std::isfinite(value))
+      return 255;
+    int exponent = 0;
+    const float mantissa = std::frexp(value, &exponent);
+    const int power = exponent - (mantissa == 0.5F ? 1 : 0);
+    return static_cast<std::uint8_t>(std::clamp(power + 127, 0, 255));
+  }
+  if (std::isnan(value))
+    return 255;
+  const int limit = type == FLAGDNN_DATA_FP8_E4M3 ? 126 : 123;
+  const float magnitude = std::abs(value);
+  int lo = 0, hi = limit;
+  while (lo < hi) {
+    const int mid = (lo + hi) / 2;
+    if (fp8_decode(static_cast<std::uint8_t>(mid), type) < magnitude)
+      lo = mid + 1;
+    else
+      hi = mid;
+  }
+  if (lo) {
+    const float lower =
+        magnitude - fp8_decode(static_cast<std::uint8_t>(lo - 1), type);
+    const float upper =
+        fp8_decode(static_cast<std::uint8_t>(lo), type) - magnitude;
+    if (lower < upper || (lower == upper && (lo & 1)))
+      --lo;
+  }
+  return static_cast<std::uint8_t>(lo | (std::signbit(value) ? 128 : 0));
+}
+
 void require_supported_type(flagdnnDataType_t data_type) {
   if (data_type != FLAGDNN_DATA_INT32 && data_type != FLAGDNN_DATA_FLOAT32 &&
       data_type != FLAGDNN_DATA_FLOAT16 &&
       data_type != FLAGDNN_DATA_BFLOAT16 &&
-      data_type != FLAGDNN_DATA_BOOLEAN) {
+      data_type != FLAGDNN_DATA_BOOLEAN && !is_fp8_storage(data_type)) {
     throw std::invalid_argument(
-        "Ascend tensor I/O supports FP32, FP16, BF16, and BOOLEAN only");
+        "unsupported Ascend validation tensor storage type");
   }
 }
 
@@ -126,7 +184,7 @@ std::size_t data_type_size(flagdnnDataType_t data_type) {
   if (data_type == FLAGDNN_DATA_FLOAT32 || data_type == FLAGDNN_DATA_INT32) {
     return 4U;
   }
-  if (data_type == FLAGDNN_DATA_BOOLEAN) {
+  if (data_type == FLAGDNN_DATA_BOOLEAN || is_fp8_storage(data_type)) {
     return 1U;
   }
   return 2U;
@@ -140,7 +198,9 @@ std::vector<std::uint8_t> encode(std::span<const float> values,
       checked_multiply(values.size(), element_size, "encoded tensor size"));
   for (std::size_t index = 0; index < values.size(); ++index) {
     std::uint8_t* destination = result.data() + index * element_size;
-    if (data_type == FLAGDNN_DATA_BOOLEAN) {
+    if (is_fp8_storage(data_type)) {
+      *destination = fp8_encode(values[index], data_type);
+    } else if (data_type == FLAGDNN_DATA_BOOLEAN) {
       if (values[index] == kPaddingSentinel) {
         *destination = kBooleanPaddingSentinel;
       } else if (values[index] == 0.0F) {
@@ -183,7 +243,9 @@ std::vector<float> decode(std::span<const std::uint8_t> bytes,
   std::vector<float> result(element_count_value);
   for (std::size_t index = 0; index < result.size(); ++index) {
     const std::uint8_t* source = bytes.data() + index * element_size;
-    if (data_type == FLAGDNN_DATA_BOOLEAN) {
+    if (is_fp8_storage(data_type)) {
+      result[index] = fp8_decode(*source, data_type);
+    } else if (data_type == FLAGDNN_DATA_BOOLEAN) {
       if (*source > 1U) {
         throw std::invalid_argument(
             "BOOLEAN decoding requires canonical 0/1 bytes");

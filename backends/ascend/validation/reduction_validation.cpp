@@ -3,6 +3,7 @@
 #include "validation/reduction_validation.hpp"
 
 #include "validation/tensor_io.hpp"
+#include "reference/cpu/matrix.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -53,39 +54,6 @@ ReductionTestCase make_special_case(flagdnnReductionMode_t mode) {
   return result;
 }
 
-std::vector<std::int64_t> logical_coordinates(
-    std::size_t logical_index,
-    std::span<const std::int64_t> dimensions) {
-  std::vector<std::int64_t> result(dimensions.size());
-  for (std::size_t axis = dimensions.size(); axis != 0; --axis) {
-    const std::size_t current = axis - 1;
-    const std::size_t dimension =
-        static_cast<std::size_t>(dimensions[current]);
-    result[current] = static_cast<std::int64_t>(logical_index % dimension);
-    logical_index /= dimension;
-  }
-  return result;
-}
-
-std::size_t row_major_index(
-    std::span<const std::int64_t> coordinates,
-    std::span<const std::int64_t> dimensions) {
-  if (coordinates.size() != dimensions.size()) {
-    throw std::invalid_argument(
-        "reduction host-oracle coordinate rank differs");
-  }
-  std::size_t result = 0;
-  for (std::size_t axis = 0; axis < dimensions.size(); ++axis) {
-    if (coordinates[axis] < 0 || coordinates[axis] >= dimensions[axis]) {
-      throw std::out_of_range(
-          "reduction host-oracle coordinate is out of range");
-    }
-    result = result * static_cast<std::size_t>(dimensions[axis]) +
-             static_cast<std::size_t>(coordinates[axis]);
-  }
-  return result;
-}
-
 }  // namespace
 
 std::vector<ReductionTestCase> make_ascend_reduction_cases(
@@ -133,53 +101,8 @@ std::vector<float> reduction_host_oracle(
     throw std::invalid_argument(
         "reduction host-oracle input size is invalid");
   }
-  std::int64_t axis = test_case.axis;
-  if (axis < 0) {
-    axis += static_cast<std::int64_t>(test_case.input.dimensions.size());
-  }
-  const std::size_t reduced_axis = static_cast<std::size_t>(axis);
-  const std::int64_t reduction_extent =
-      test_case.input.dimensions[reduced_axis];
-  std::vector<float> result(tensor_io::element_count(test_case.output));
-  for (std::size_t output_index = 0; output_index < result.size();
-       ++output_index) {
-    const std::vector<std::int64_t> output_coordinates =
-        logical_coordinates(output_index, test_case.output.dimensions);
-    std::vector<std::int64_t> input_coordinates(
-        test_case.input.dimensions.size());
-    if (test_case.keep_dimensions) {
-      input_coordinates = output_coordinates;
-    } else {
-      std::size_t output_axis = 0;
-      for (std::size_t input_axis = 0;
-           input_axis < input_coordinates.size();
-           ++input_axis) {
-        if (input_axis == reduced_axis) {
-          continue;
-        }
-        input_coordinates[input_axis] = output_coordinates[output_axis++];
-      }
-    }
-
-    float accumulator =
-        test_case.mode == FLAGDNN_REDUCTION_MUL ? 1.0F : 0.0F;
-    for (std::int64_t reduction_index = 0;
-         reduction_index < reduction_extent;
-         ++reduction_index) {
-      input_coordinates[reduced_axis] = reduction_index;
-      const float value = logical_input[row_major_index(
-          input_coordinates, test_case.input.dimensions)];
-      if (test_case.mode == FLAGDNN_REDUCTION_MUL) {
-        accumulator *= value;
-      } else {
-        accumulator += value;
-      }
-    }
-    if (test_case.mode == FLAGDNN_REDUCTION_AVG) {
-      accumulator /= static_cast<float>(reduction_extent);
-    }
-    result[output_index] = accumulator;
-  }
+  const auto result = reference::cpu::evaluate_reduction(
+      {test_case.input.dimensions, test_case.axis, test_case.mode, true}, logical_input);
   return tensor_io::quantize(result, test_case.output.data_type);
 }
 

@@ -1,6 +1,7 @@
 /* Copyright (c) 2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 #include "validation/functional/dtype_runner.hpp"
 #include "reference/cpu/pointwise.hpp"
+#include "reference/cpu/layout.hpp"
 #include "validation/functional/paired.hpp"
 #include <aclnnop/aclnn_abs.h>
 #include <aclnnop/aclnn_add.h>
@@ -49,9 +50,17 @@ bool pointwise_supplement(const PointwiseTestCase &c) {
   });
 }
 std::optional<std::vector<std::vector<std::uint8_t>>>
-cpu_integer_divmod_reference(
+cpu_raw_pointwise_reference(
     const PointwiseTestCase &c,
     const std::vector<std::vector<std::uint8_t>> &inputs) {
+  if (c.mode == FLAGDNN_POINTWISE_IDENTITY &&
+      io::is_raw_storage(c.output.data_type)) {
+    if (inputs.size() != 1)
+      throw std::invalid_argument("CPU identity requires one input");
+    return std::vector<std::vector<std::uint8_t>>{
+        reference::cpu::evaluate_identity_bytes(
+            logical_bytes(inputs[0], c.inputs[0]))};
+  }
   if ((c.mode != FLAGDNN_POINTWISE_DIV && c.mode != FLAGDNN_POINTWISE_MOD) ||
       c.output.data_type != FLAGDNN_DATA_INT32 ||
       std::any_of(c.inputs.begin(), c.inputs.end(), [](const auto &t) {
@@ -59,32 +68,14 @@ cpu_integer_divmod_reference(
       }))
     return std::nullopt;
   validate_pointwise_case(c);
-  for (std::size_t k = 0; k < c.inputs.size(); ++k)
-    if (inputs[k].size() != io::encoded_byte_count(c.inputs[k]))
-      throw std::runtime_error("incorrect CPU reference input size");
-  const auto value_at = [&](std::size_t k, std::size_t index) {
-    const auto &t = c.inputs[k];
-    const auto leading = c.output.dimensions.size() - t.dimensions.size();
-    std::size_t offset = 0;
-    for (std::size_t axis = c.output.dimensions.size(); axis != 0; --axis) {
-      const auto coordinate = index % c.output.dimensions[axis - 1];
-      index /= c.output.dimensions[axis - 1];
-      if (axis - 1 >= leading && t.dimensions[axis - 1 - leading] != 1)
-        offset += coordinate * t.strides[axis - 1 - leading];
-    }
-    std::int32_t value;
-    std::memcpy(&value, inputs[k].data() + offset * sizeof(value),
-                sizeof(value));
-    return value;
-  };
-  const auto count = io::element_count(c.output);
-  std::vector<std::uint8_t> output(count * sizeof(std::int32_t));
-  for (std::size_t i = 0; i < count; ++i) {
-    // Keep the full INT32 bit pattern, including values beyond FP32 precision.
-    const auto value = reference::cpu::pointwise_integer_reference(
-        c.mode, value_at(0, i), value_at(1, i), false, 1);
-    std::memcpy(output.data() + i * sizeof(value), &value, sizeof(value));
-  }
+  if (inputs.size() != 2)
+    throw std::invalid_argument("CPU integer reference requires two inputs");
+  const auto left = logical_values<std::int32_t>(inputs[0], c.inputs[0]);
+  const auto right = logical_values<std::int32_t>(inputs[1], c.inputs[1]);
+  const auto values = reference::cpu::evaluate_binary_pointwise_int32(
+      c.mode, left, c.inputs[0].dimensions, right, c.inputs[1].dimensions,
+      c.output.dimensions);
+  auto output = value_bytes<std::int32_t>(values);
   return std::vector<std::vector<std::uint8_t>>{std::move(output)};
 }
 std::unique_ptr<TestExecutable>
@@ -95,7 +86,9 @@ reference_pointwise(const PointwiseTestCase &c) {
                       "preserve the shared full-range INT32 contract "
                       "(including values above 2^24 and zero divisors)");
   for (const auto &t : c.inputs) {
-    (void)dtype(t.data_type);
+    if (c.mode != FLAGDNN_POINTWISE_IDENTITY ||
+        !io::is_fp8_storage(t.data_type))
+      (void)dtype(t.data_type);
   }
   auto specs = c.inputs;
   specs.push_back(c.output);
@@ -277,7 +270,7 @@ reference_pointwise(const PointwiseTestCase &c) {
                                                             e);
       });
     }
-  });
+  }, c.mode == FLAGDNN_POINTWISE_IDENTITY);
 }
 struct PointwiseCase : PointwiseTestCase {
   std::vector<TestTensor> outputs;
@@ -308,6 +301,10 @@ int run_ascend_pointwise_dtype_cases(int argc, char **argv,
             inputs.push_back(ascend::integer_bytes(t, [&](std::size_t i) {
               return pointwise_integer_input(i, k, c.mode);
             }));
+          else if (t.data_type == FLAGDNN_DATA_FP8_E8M0)
+            inputs.push_back(ascend::storage_bytes(t, [](std::size_t i) {
+              return i * 37 + 19;
+            }));
           else {
             std::vector<float> v(ascend::io::element_count(t));
             for (std::size_t i = 0; i < v.size(); ++i)
@@ -327,7 +324,7 @@ int run_ascend_pointwise_dtype_cases(int argc, char **argv,
       [](const PointwiseCase &, std::size_t) {
         return ascend::PairedTolerance{0, 0};
       },
-      benchmark, cpu_integer_divmod_reference);
+      benchmark, cpu_raw_pointwise_reference);
 }
 int run_ascend_add_dtype_cases(int argc, char **argv,
                                std::span<const AddTestCase> cases) {
@@ -359,6 +356,11 @@ int run_ascend_layout_dtype_cases(int argc, char **argv,
       argc, argv, selected, "FLAGDNN_LAYOUT_CASE", build_flagdnn_layout,
       [](const LayoutCase &c) {
         const auto &t = c.input;
+        if (ascend::io::is_fp8_storage(t.data_type))
+          return std::vector<std::vector<std::uint8_t>>{
+              ascend::storage_bytes(t, [](std::size_t i) {
+                return i * 37 + 19;
+              })};
         if (t.data_type == FLAGDNN_DATA_INT32)
           return std::vector<std::vector<std::uint8_t>>{
               ascend::integer_bytes(t, [](std::size_t i) {
@@ -375,7 +377,8 @@ int run_ascend_layout_dtype_cases(int argc, char **argv,
             ascend::io::encode(ascend::io::scatter(v, t), t.data_type)};
       },
       [](const LayoutCase &c) -> std::unique_ptr<TestExecutable> {
-        (void)ascend::dtype(c.input.data_type);
+        if (!ascend::io::is_fp8_storage(c.input.data_type))
+          (void)ascend::dtype(c.input.data_type);
         auto specs = c.inputs;
         specs.insert(specs.end(), c.outputs.begin(), c.outputs.end());
         return std::make_unique<ascend::Plan>(specs, [c](ascend::Plan &p) {
@@ -419,12 +422,29 @@ int run_ascend_layout_dtype_cases(int argc, char **argv,
                         ascend::dense_strides(c.outputs[0].dimensions));
             p.copy(shaped, y);
           }
-        });
+        }, true);
       },
       [](const LayoutCase &, std::size_t) {
         return ascend::PairedTolerance{0, 0};
       },
-      benchmark);
+      benchmark,
+      [](const LayoutCase &c, const auto &inputs)
+          -> std::optional<std::vector<std::vector<std::uint8_t>>> {
+        if (!ascend::io::is_raw_storage(c.input.data_type))
+          return std::nullopt;
+        reference::cpu::LayoutParameters p;
+        p.operation = c.operation == LayoutOperation::kTranspose ? "transpose"
+                      : c.operation == LayoutOperation::kSlice ? "slice" : "reshape";
+        p.input_dimensions = c.input.dimensions;
+        p.output_dimensions = c.output.dimensions;
+        p.permutation = c.permutation;
+        p.slices = c.slices;
+        p.slice_strides = c.slice_strides;
+        return std::vector<std::vector<std::uint8_t>>{
+            reference::cpu::evaluate_layout_bytes(
+                p, ascend::logical_bytes(inputs.at(0), c.input),
+                ascend::io::data_type_size(c.input.data_type))};
+      });
 }
 int run_ascend_reduction_dtype_cases(int argc, char **argv,
                                      std::span<const ReductionTestCase> cases,

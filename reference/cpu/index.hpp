@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <span>
 #include <utility>
 #include <vector>
 namespace flagdnn::reference::cpu {
@@ -17,5 +18,9 @@ struct IndexParameters {
 // in the second component.
 std::pair<std::size_t, std::size_t> index_source(
     const IndexParameters& parameters, std::size_t output_index);
+std::vector<std::uint8_t> evaluate_concatenate_bytes(
+    const IndexParameters& parameters,
+    const std::vector<std::vector<std::uint8_t>>& inputs,
+    std::size_t element_bytes = 1);
 }  // namespace flagdnn::reference::cpu
 #endif

@@ -1,9 +1,12 @@
 /* Copyright (c) 2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 #pragma once
+#include "reference/cpu/pointwise.hpp"
 #include "runtime/json.hpp"
 #include "validation/development_environment.hpp"
 #include "validation/functional/aclnn_plan.hpp"
 #include "validation/functional/raw_io.hpp"
+#include "validation/benchmark/equivalent_baseline.hpp"
+#include "validation/benchmark/graph_replay.hpp"
 #include <cmath>
 #include <flagdnn/flagdnn.hpp>
 #include <fstream>
@@ -40,7 +43,9 @@ inline void measure(std::string_view name, std::string_view provider,
                     std::span<const flagdnnBinding_t> bindings,
                     acl::DeviceBuffer &workspace, acl::Stream &stream,
                     const std::filesystem::path &cache,
-                    const std::string &tuning_trace) {
+                    const std::string &tuning_trace,
+                    const EquivalentBaseline *equivalent = nullptr,
+                    const std::function<void(bool)> &validate = {}) {
   auto execute = [&] {
     executable.execute(bindings, workspace.opaque(),
                        executable.workspace_size(), stream.opaque());
@@ -51,12 +56,36 @@ inline void measure(std::string_view name, std::string_view provider,
   stream.synchronize();
   acl::EventTimer timer;
   std::vector<double> device, submit, complete;
+  std::unique_ptr<GraphReplay> graph;
+  if (equivalent) {
+    if (paired_benchmark_config.warmup != 10 ||
+        paired_benchmark_config.samples != 20 ||
+        paired_benchmark_config.iterations != 50 || !validate)
+      throw std::runtime_error("equivalent baseline timing profile differs");
+    graph = std::make_unique<GraphReplay>(
+        stream.get(), paired_benchmark_config.iterations, execute);
+    graph->replay();
+    stream.synchronize();
+  }
   for (int i = 0; i < paired_benchmark_config.samples; ++i) {
-    auto t = timer.measure(stream.get(), paired_benchmark_config.iterations,
-                           execute);
+    auto t = graph ? timer.measure(stream.get(), 1, [&] { graph->replay(); })
+                   : timer.measure(stream.get(), paired_benchmark_config.iterations,
+                                   execute);
+    if (graph) {
+      t.stream_us /= paired_benchmark_config.iterations;
+      t.submit_us /= paired_benchmark_config.iterations;
+      t.end_to_end_us /= paired_benchmark_config.iterations;
+    }
     device.push_back(t.stream_us);
     submit.push_back(t.submit_us);
     complete.push_back(t.end_to_end_us);
+  }
+  if (graph) {
+    validate(false);
+    validate(true);
+    graph->replay();
+    stream.synchronize();
+    validate(false);
   }
   std::filesystem::path last;
   std::filesystem::file_time_type latest{};
@@ -95,8 +124,9 @@ inline void measure(std::string_view name, std::string_view provider,
     selected +=
         stages.size() == 1 ? candidate : std::to_string(id) + ':' + candidate;
   }
-  std::cout << std::setprecision(10)
-            << "{\"schema_version\":2,\"kind\":\"steady_state\",\"provider\":\""
+  std::cout << std::setprecision(equivalent ? 17 : 10)
+            << "{\"schema_version\":" << (equivalent ? 6 : 2)
+            << ",\"kind\":\"steady_state\",\"provider\":\""
             << provider << "\",\"case\":\"" << name
             << "\",\"environment\":{\"soc_fingerprint\":\""
             << manifest.at("target").as_string()
@@ -127,12 +157,22 @@ inline void measure(std::string_view name, std::string_view provider,
             << paired_benchmark_config.warmup
             << ",\"sample_count\":" << paired_benchmark_config.samples
             << ",\"iterations_per_sample\":"
-            << paired_benchmark_config.iterations << "},";
+            << paired_benchmark_config.iterations;
+  if (equivalent)
+    std::cout << ",\"timing_method\":\"device_events_over_ascend_graph\","
+                 "\"graph_warmup_replays\":1,\"statistic\":\"nearest_rank_p50\"";
+  std::cout << "},";
   metrics("stream_us", device);
   std::cout << ',';
   metrics("submit_us", submit);
   std::cout << ',';
   metrics("end_to_end_us", complete);
+  if (equivalent) {
+    auto sorted = device;
+    std::sort(sorted.begin(), sorted.end());
+    std::cout << ",\"equivalent_baseline\":"
+              << equivalent->json(sorted[(sorted.size() - 1) / 2]);
+  }
   std::cout << "}\n";
 }
 
@@ -167,11 +207,17 @@ int run_paired_cases(int argc, char **argv, std::span<const Case> cases,
           output.strides = dense_strides(output.dimensions);
         std::unique_ptr<TestExecutable> reference_executable;
         std::optional<std::string> native_unavailable;
-        // An optional functional-only oracle returns logical output bytes.
-        // Native capability gaps must still skip performance comparisons.
+        std::optional<EquivalentBaseline> equivalent;
+        if constexpr (std::is_base_of_v<PointwiseTestCase, Case>) {
+          if (benchmark && supports_equivalent_baseline(original)) {
+            equivalent = PerformanceBaseline().lookup(
+                original, acl::soc_name(), handle.target_fingerprint());
+          }
+        }
         std::optional<std::vector<std::vector<std::uint8_t>>> cpu_expected;
         try {
-          reference_executable = reference(test_case);
+          if (!equivalent)
+            reference_executable = reference(test_case);
         } catch (const Unsupported &error) {
           if constexpr (std::is_same_v<CpuReference, std::nullptr_t>)
             throw;
@@ -180,24 +226,51 @@ int run_paired_cases(int argc, char **argv, std::span<const Case> cases,
           native_unavailable = error.what();
         }
         for (const auto &tensor : original.inputs)
-          (void)dtype(tensor.data_type);
+          (void)io::data_type_size(tensor.data_type);
         for (const auto &tensor : original.outputs)
-          (void)dtype(tensor.data_type);
+          (void)io::data_type_size(tensor.data_type);
         auto inputs = make_inputs(original);
         if (inputs.size() != original.inputs.size())
           throw std::runtime_error("incorrect input count");
+        std::optional<std::vector<std::vector<std::uint8_t>>> cpu_oracle;
+        if constexpr (!std::is_same_v<CpuReference, std::nullptr_t>) {
+          if (!equivalent)
+            cpu_oracle = cpu_reference(original, inputs);
+        }
+        if (equivalent) {
+          if constexpr (std::is_same_v<typename decltype(inputs)::value_type,
+                                       std::vector<std::uint8_t>>) {
+            const auto logical_input =
+                logical_bytes(inputs.at(0), original.inputs.at(0));
+            if (logical_input !=
+                identity_fp8_logical_bytes(original.inputs.at(0)))
+              throw std::runtime_error("FP8 identity baseline input domain differs");
+            cpu_expected = std::vector<std::vector<std::uint8_t>>{
+                flagdnn::reference::cpu::evaluate_identity_bytes(logical_input)};
+          } else {
+            throw std::runtime_error("FP8 identity requires raw CPU input bytes");
+          }
+          std::cout << "EQUIVALENT_REFERENCE case=" << original.name
+                    << " reason=ACLNN_native_FP8_identity_unavailable"
+                    << " validation=bit_exact_before_after_reset_replay\n";
+        }
         if (native_unavailable) {
-          if constexpr (!std::is_same_v<CpuReference, std::nullptr_t>)
-            cpu_expected = cpu_reference(original, inputs);
+          cpu_expected = std::move(cpu_oracle);
+          cpu_oracle.reset();
           if (!cpu_expected)
             throw Unsupported(*native_unavailable);
           std::cout << "CPU_REFERENCE case=" << original.name
                     << " reason=" << *native_unavailable << std::endl;
         }
         const char *reference_name = cpu_expected ? "CPU" : "ACLNN";
+        if (const auto *plan = dynamic_cast<const Plan *>(reference_executable.get());
+            plan && plan->uses_byte_storage_view())
+          std::cout << "ACLNN_STORAGE_VIEW case=" << original.name
+                    << " dtype=uint8 semantics=byte_preserving\n";
         std::vector<std::unique_ptr<acl::DeviceBuffer>> buffers,
             reference_buffers;
         std::vector<flagdnnBinding_t> bindings, reference_bindings;
+        std::vector<std::vector<std::uint8_t>> original_input_bytes;
         std::unique_ptr<TestExecutable> executable;
         std::unique_ptr<acl::DeviceBuffer> workspace, reference_workspace;
         // All objects are drained before freeing allocations, including errors.
@@ -220,14 +293,26 @@ int run_paired_cases(int argc, char **argv, std::span<const Case> cases,
             bytes = io::encode(io::scatter(inputs[i], t), t.data_type);
           if (bytes.size() != io::encoded_byte_count(t))
             throw std::runtime_error("incorrect encoded input size");
-          auto b = std::make_unique<acl::DeviceBuffer>(t.binding_byte_offset +
-                                                       bytes.size());
+          original_input_bytes.push_back(bytes);
+          auto b = std::make_unique<acl::DeviceBuffer>(io::allocation_byte_count(t));
           b->copy_from_host_at(bytes.data(), bytes.size(),
                                t.binding_byte_offset, stream.get());
           stream.synchronize();
           bindings.push_back({t.uid, b->opaque_at(t.binding_byte_offset)});
           buffers.push_back(std::move(b));
         }
+        auto validate_inputs = [&] {
+          for (std::size_t i = 0; i < original.inputs.size(); ++i) {
+            const auto &t = original.inputs[i];
+            std::vector<std::uint8_t> bytes(io::encoded_byte_count(t));
+            buffers[i]->copy_to_host_at(bytes.data(), bytes.size(),
+                                        t.binding_byte_offset, stream.get());
+            stream.synchronize();
+            if (bytes != original_input_bytes[i])
+              throw std::runtime_error(original.name +
+                                       " execution modified input bytes");
+          }
+        };
         reference_bindings = bindings;
         for (std::size_t i = 0; i < original.outputs.size(); ++i) {
           for (int ref = 0; ref < (cpu_expected ? 1 : 2); ++ref) {
@@ -236,8 +321,7 @@ int run_paired_cases(int argc, char **argv, std::span<const Case> cases,
                 io::encode(std::vector<float>(io::storage_element_count(t),
                                               io::kPaddingSentinel),
                            t.data_type);
-            auto b = std::make_unique<acl::DeviceBuffer>(t.binding_byte_offset +
-                                                         bytes.size());
+            auto b = std::make_unique<acl::DeviceBuffer>(io::allocation_byte_count(t));
             b->copy_from_host_at(bytes.data(), bytes.size(),
                                  t.binding_byte_offset, stream.get());
             stream.synchronize();
@@ -254,6 +338,9 @@ int run_paired_cases(int argc, char **argv, std::span<const Case> cases,
               reference_bindings, reference_workspace->opaque(),
               reference_executable->workspace_size(), stream.opaque());
           stream.synchronize();
+          // Both providers share read-only inputs. Check the native reference
+          // before FlagDNN can consume an accidentally modified input.
+          validate_inputs();
         }
         std::ostringstream tuning_trace;
         {
@@ -284,8 +371,7 @@ int run_paired_cases(int argc, char **argv, std::span<const Case> cases,
                 io::element_count(t) * io::data_type_size(t.data_type))
               throw std::runtime_error("incorrect CPU reference output size");
             expected.emplace_back();
-            if (t.data_type != FLAGDNN_DATA_INT32 &&
-                t.data_type != FLAGDNN_DATA_BOOLEAN)
+            if (!io::is_raw_storage(t.data_type))
               expected.back() =
                   io::decode(bytes, t.data_type, io::element_count(t));
             expected_bytes.push_back(std::move(bytes));
@@ -296,22 +382,34 @@ int run_paired_cases(int argc, char **argv, std::span<const Case> cases,
               bytes.data(), bytes.size(), t.binding_byte_offset, stream.get());
           stream.synchronize();
           expected_bytes.push_back(logical_bytes(bytes, t));
-          expected.push_back(
-              io::gather(io::decode_storage("ACLNN", bytes, t), t));
+          expected.push_back(io::is_raw_storage(t.data_type)
+                                 ? std::vector<float>{}
+                                 : io::gather(io::decode_storage("ACLNN", bytes, t), t));
         }
-        for (int repeat = 0; repeat < 2; ++repeat) {
-          executable->execute(bindings, workspace->opaque(),
-                              executable->workspace_size(), stream.opaque());
-          stream.synchronize();
+        if (cpu_oracle) {
+          if (*cpu_oracle != expected_bytes)
+            throw std::runtime_error(original.name +
+                                     " ACLNN output differs from CPU reference");
+          std::cout << "CPU_ORACLE case=" << original.name
+                    << " provider=reference_cpu validation=bit_exact\n";
+        }
+        auto validate_outputs = [&](bool reset) {
           for (std::size_t i = 0; i < original.outputs.size(); ++i) {
             const auto &t = original.outputs[i];
             std::vector<std::uint8_t> bytes(io::encoded_byte_count(t));
+            if (reset) {
+              bytes = io::encode(std::vector<float>(io::storage_element_count(t),
+                                                    io::kPaddingSentinel), t.data_type);
+              buffers[original.inputs.size() + i]->copy_from_host_at(
+                  bytes.data(), bytes.size(), t.binding_byte_offset, stream.get());
+              stream.synchronize();
+              continue;
+            }
             buffers[original.inputs.size() + i]->copy_to_host_at(
                 bytes.data(), bytes.size(), t.binding_byte_offset,
                 stream.get());
             stream.synchronize();
-            if (t.data_type == FLAGDNN_DATA_INT32 ||
-                t.data_type == FLAGDNN_DATA_BOOLEAN) {
+            if (io::is_raw_storage(t.data_type)) {
               check_raw_padding(bytes, t);
               const auto actual = logical_bytes(bytes, t);
               if (actual != expected_bytes[i]) {
@@ -348,13 +446,25 @@ int run_paired_cases(int argc, char **argv, std::span<const Case> cases,
                     " expected=" + std::to_string(expected[i][j]));
             }
           }
+          if (!reset)
+            validate_inputs();
+        };
+        for (int repeat = 0; repeat < 2; ++repeat) {
+          executable->execute(bindings, workspace->opaque(),
+                              executable->workspace_size(), stream.opaque());
+          stream.synchronize();
+          validate_outputs(false);
         }
         if (benchmark) {
           measure(original.name, "flagdnn", *executable, bindings, *workspace,
-                  stream, development.graph_cache(), tuning_trace.str());
-          measure(original.name, "aclnn", *reference_executable,
+                  stream, development.graph_cache(), tuning_trace.str(),
+                  equivalent ? &*equivalent : nullptr, validate_outputs);
+          validate_outputs(false);
+          if (reference_executable)
+            measure(original.name, "aclnn", *reference_executable,
                   reference_bindings, *reference_workspace, stream,
                   development.graph_cache(), tuning_trace.str());
+          validate_outputs(false);
         }
         ++passed;
         std::cout << original.name << ": FlagDNN vs " << reference_name

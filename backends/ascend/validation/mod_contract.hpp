@@ -5,6 +5,8 @@
 
 #include "validation/tensor_io.hpp"
 
+#include "reference/cpu/pointwise.hpp"
+
 #include <bit>
 #include <cmath>
 #include <cstddef>
@@ -190,7 +192,6 @@ struct ExactMultipleNeighbors {
     throw std::invalid_argument(
         "Ascend Mod semantic host input count is invalid");
   }
-  std::vector<float> result(kSentinelCount);
   for (std::size_t offset = 0; offset < kSentinelCount; ++offset) {
     if (!std::isfinite(inputs.left[offset]) ||
         !std::isfinite(inputs.right[offset]) ||
@@ -198,8 +199,12 @@ struct ExactMultipleNeighbors {
       throw std::invalid_argument(
           "Ascend Mod semantic host input is unsafe");
     }
-    result[offset] = std::fmod(inputs.left[offset], inputs.right[offset]);
-    if (!std::isfinite(result[offset])) {
+  }
+  const std::vector<std::int64_t> shape{static_cast<std::int64_t>(kSentinelCount)};
+  const auto result = flagdnn::reference::cpu::evaluate_binary_pointwise(
+      FLAGDNN_POINTWISE_MOD, inputs.left, shape, inputs.right, shape, shape);
+  for (const auto value : result) {
+    if (!std::isfinite(value)) {
       throw std::runtime_error(
           "Ascend Mod semantic host result is non-finite");
     }

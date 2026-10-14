@@ -3,6 +3,8 @@
 #include "validation/rmsnorm_validation.hpp"
 
 #include "validation/tensor_io.hpp"
+#include "validation/exact_reference.hpp"
+#include "reference/cpu/normalization.hpp"
 
 #include <algorithm>
 #include <array>
@@ -312,9 +314,6 @@ void rmsnorm_host_oracle(const RmsnormPlan& plan,
                          std::span<float> output_storage,
                          std::span<float> inverse_variance_storage) {
   validate_plan(plan);
-  const std::size_t rows = static_cast<std::size_t>(plan.rows);
-  const std::size_t normalized =
-      static_cast<std::size_t>(plan.normalized_elements);
   if (input_storage.size() < tensor_io::storage_element_count(plan.input) ||
       scale.size() != tensor_io::storage_element_count(plan.scale) ||
       bias.size() != tensor_io::storage_element_count(plan.bias) ||
@@ -324,53 +323,13 @@ void rmsnorm_host_oracle(const RmsnormPlan& plan,
     throw std::invalid_argument("RMSNorm host oracle storage size is invalid");
   }
 
-  for (std::size_t row = 0; row < rows; ++row) {
-    double square_sum = 0.0;
-    for (std::size_t column = 0; column < normalized; ++column) {
-      const std::size_t logical = row * normalized + column;
-      const float value = input_storage[
-          tensor_io::physical_offset_unchecked(logical, plan.input)];
-      if (!std::isfinite(value)) {
-        throw std::invalid_argument("RMSNorm input contains a non-finite value");
-      }
-      square_sum += static_cast<double>(value) * value;
-    }
-    const double inverse =
-        1.0 / std::sqrt(square_sum / static_cast<double>(normalized) +
-                        plan.epsilon);
-    if (!std::isfinite(inverse)) {
-      throw std::runtime_error("RMSNorm inverse variance is non-finite");
-    }
-    const std::size_t statistic_offset =
-        tensor_io::physical_offset_unchecked(row, plan.inverse_variance);
-    inverse_variance_storage[statistic_offset] = static_cast<float>(inverse);
-
-    for (std::size_t column = 0; column < normalized; ++column) {
-      const std::size_t logical = row * normalized + column;
-      const std::size_t input_offset =
-          tensor_io::physical_offset_unchecked(logical, plan.input);
-      const std::size_t scale_offset =
-          tensor_io::physical_offset_unchecked(column, plan.scale);
-      const std::size_t bias_offset =
-          tensor_io::physical_offset_unchecked(column, plan.bias);
-      const float scale_value = scale[scale_offset];
-      const float bias_value = bias[bias_offset];
-      if (!std::isfinite(scale_value) || !std::isfinite(bias_value)) {
-        throw std::invalid_argument(
-            "RMSNorm scale/bias contains a non-finite value");
-      }
-      const double value =
-          static_cast<double>(input_storage[input_offset]) * inverse *
-              scale_value +
-          bias_value;
-      if (!std::isfinite(value)) {
-        throw std::runtime_error("RMSNorm output is non-finite");
-      }
-      output_storage[tensor_io::physical_offset_unchecked(logical,
-                                                          plan.output)] =
-          static_cast<float>(value);
-    }
-  }
+  const auto result = reference::cpu::evaluate_row_normalization(
+      true, tensor_io::gather(input_storage, plan.input),
+      tensor_io::gather(scale, plan.scale), tensor_io::gather(bias, plan.bias),
+      plan.epsilon);
+  store_logical_reference(result[0], output_storage, plan.output);
+  store_logical_reference(result[2], inverse_variance_storage,
+                          plan.inverse_variance);
 }
 
 }  // namespace flagdnn::validation::ascend

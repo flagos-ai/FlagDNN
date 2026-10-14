@@ -3,6 +3,8 @@
 #include "validation/layernorm_validation.hpp"
 
 #include "validation/tensor_io.hpp"
+#include "validation/exact_reference.hpp"
+#include "reference/cpu/normalization.hpp"
 
 #include <algorithm>
 #include <array>
@@ -322,9 +324,6 @@ void layernorm_host_oracle(const LayernormPlan& plan,
                            std::span<float> mean_storage,
                            std::span<float> inverse_variance_storage) {
   validate_plan(plan);
-  const std::size_t rows = static_cast<std::size_t>(plan.rows);
-  const std::size_t normalized =
-      static_cast<std::size_t>(plan.normalized_elements);
   if (input_storage.size() < tensor_io::storage_element_count(plan.input) ||
       scale.size() != tensor_io::storage_element_count(plan.scale) ||
       bias.size() != tensor_io::storage_element_count(plan.bias) ||
@@ -336,64 +335,14 @@ void layernorm_host_oracle(const LayernormPlan& plan,
         "LayerNorm host oracle storage size is invalid");
   }
 
-  for (std::size_t row = 0; row < rows; ++row) {
-    double mean = 0.0;
-    for (std::size_t column = 0; column < normalized; ++column) {
-      const std::size_t logical = row * normalized + column;
-      const float value = input_storage[
-          tensor_io::physical_offset_unchecked(logical, plan.input)];
-      if (!std::isfinite(value)) {
-        throw std::invalid_argument(
-            "LayerNorm input contains a non-finite value");
-      }
-      mean += value;
-    }
-    mean /= static_cast<double>(normalized);
-    double variance = 0.0;
-    for (std::size_t column = 0; column < normalized; ++column) {
-      const std::size_t logical = row * normalized + column;
-      const double centered = input_storage[
-                                  tensor_io::physical_offset_unchecked(
-                                      logical, plan.input)] -
-                              mean;
-      variance += centered * centered;
-    }
-    variance /= static_cast<double>(normalized);
-    const double inverse = 1.0 / std::sqrt(variance + plan.epsilon);
-    if (!std::isfinite(mean) || !std::isfinite(inverse)) {
-      throw std::runtime_error("LayerNorm statistics are non-finite");
-    }
-    mean_storage[tensor_io::physical_offset_unchecked(row, plan.mean)] =
-        static_cast<float>(mean);
-    inverse_variance_storage[tensor_io::physical_offset_unchecked(
-        row, plan.inverse_variance)] = static_cast<float>(inverse);
-
-    for (std::size_t column = 0; column < normalized; ++column) {
-      const std::size_t logical = row * normalized + column;
-      const std::size_t input_offset =
-          tensor_io::physical_offset_unchecked(logical, plan.input);
-      const std::size_t scale_offset =
-          tensor_io::physical_offset_unchecked(column, plan.scale);
-      const std::size_t bias_offset =
-          tensor_io::physical_offset_unchecked(column, plan.bias);
-      const float scale_value = scale[scale_offset];
-      const float bias_value = bias[bias_offset];
-      if (!std::isfinite(scale_value) || !std::isfinite(bias_value)) {
-        throw std::invalid_argument(
-            "LayerNorm scale/bias contains a non-finite value");
-      }
-      const double value =
-          (static_cast<double>(input_storage[input_offset]) - mean) * inverse *
-              scale_value +
-          bias_value;
-      if (!std::isfinite(value)) {
-        throw std::runtime_error("LayerNorm output is non-finite");
-      }
-      output_storage[tensor_io::physical_offset_unchecked(logical,
-                                                          plan.output)] =
-          static_cast<float>(value);
-    }
-  }
+  const auto result = reference::cpu::evaluate_row_normalization(
+      false, tensor_io::gather(input_storage, plan.input),
+      tensor_io::gather(scale, plan.scale), tensor_io::gather(bias, plan.bias),
+      plan.epsilon);
+  store_logical_reference(result[0], output_storage, plan.output);
+  store_logical_reference(result[1], mean_storage, plan.mean);
+  store_logical_reference(result[2], inverse_variance_storage,
+                          plan.inverse_variance);
 }
 
 }  // namespace flagdnn::validation::ascend

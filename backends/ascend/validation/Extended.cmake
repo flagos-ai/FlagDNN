@@ -39,6 +39,7 @@ add_library(flagdnn_validation_ascend_extended STATIC
   benchmark/conv_bias_relu_runner.cpp
   benchmark/native_dtype.cpp
   benchmark/native_matrix.cpp
+  benchmark/equivalent_baseline.cpp
   functional/aclnn_matmul.cpp
   functional/aclnn_matmul_plan.cpp
   functional/aclnn_convolution.cpp
@@ -57,6 +58,7 @@ target_link_libraries(flagdnn_validation_ascend_extended PUBLIC FlagDNN::flagdnn
   flagdnn_validation_ascend_platform flagdnn_validation_ascend_tensor_io
   flagdnn_validation_ascend_aclnn_nn "${_ascend_validation_opapi_cv}")
 target_compile_definitions(flagdnn_validation_ascend_extended PRIVATE
+  FLAGDNN_PERFORMANCE_BASELINE_FILE="${PROJECT_SOURCE_DIR}/docs/performance-baseline.json"
   FLAGDNN_ASCEND_VALIDATION_OPAPI_CV_SHA256="${_ascend_validation_opapi_cv_sha256}"
   FLAGDNN_ASCEND_VALIDATION_CANN_ROOT="${_flagdnn_validation_cann_root}"
   FLAGDNN_ASCEND_VALIDATION_PYTHON_MODULE_ROOT="${_flagdnn_validation_python_module_root}"
@@ -67,6 +69,32 @@ target_compile_definitions(flagdnn_validation_ascend_extended PRIVATE
   FLAGDNN_ASCEND_VALIDATION_OPAPI_MATH_SHA256="${_flagdnn_validation_opapi_math_sha256}"
   FLAGDNN_ASCEND_VALIDATION_OPAPI_NN_SHA256="${_flagdnn_validation_opapi_nn_sha256}")
 flagdnn_enable_warnings(flagdnn_validation_ascend_extended)
+if(FLAGDNN_BUILD_TESTS)
+  # This evidence contract links no Ascend runtime and never touches a device.
+  add_executable(flagdnn_ascend_equivalent_baseline_contract
+    benchmark/equivalent_baseline_contract.cpp
+    benchmark/equivalent_baseline.cpp
+    "${PROJECT_SOURCE_DIR}/tests/common/pointwise.cpp"
+    "${PROJECT_SOURCE_DIR}/src/runtime/json.cpp")
+  target_compile_features(flagdnn_ascend_equivalent_baseline_contract PRIVATE cxx_std_20)
+  target_include_directories(flagdnn_ascend_equivalent_baseline_contract PRIVATE
+    "${PROJECT_SOURCE_DIR}/tests" "${PROJECT_SOURCE_DIR}/src"
+    "${PROJECT_SOURCE_DIR}/backends/ascend")
+  target_link_libraries(flagdnn_ascend_equivalent_baseline_contract PRIVATE FlagDNN::flagdnn)
+  flagdnn_enable_warnings(flagdnn_ascend_equivalent_baseline_contract)
+  add_test(NAME integration.ascend.identity_performance_baseline
+    COMMAND "${FLAGDNN_CODEGEN_PYTHON}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/benchmark/equivalent_baseline_contract.py"
+      "$<TARGET_FILE:flagdnn_ascend_equivalent_baseline_contract>"
+      "${PROJECT_SOURCE_DIR}/docs/performance-baseline.json")
+  set_tests_properties(integration.ascend.identity_performance_baseline PROPERTIES
+    LABELS "ascend;contract;performance_baseline" TIMEOUT 60)
+  add_test(NAME integration.ascend.equivalent_record_contract
+    COMMAND "${FLAGDNN_CODEGEN_PYTHON}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/equivalent_record_contract.py")
+  set_tests_properties(integration.ascend.equivalent_record_contract PROPERTIES
+    LABELS "ascend;contract;performance_baseline" TIMEOUT 60)
+endif()
 if(FLAGDNN_BUILD_TESTS)
   flagdnn_register_functional_suite(PLATFORM ascend
     ADAPTER_TARGET flagdnn_validation_ascend_extended BACKEND_TARGET flagdnn_backend_ascend

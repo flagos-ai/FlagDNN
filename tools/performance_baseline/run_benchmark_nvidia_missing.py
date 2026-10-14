@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Collect the exact Appendix 1 cases from the NVIDIA missing-case report.
+"""Collect the NVIDIA missing cases recorded in the public baseline.
 
 Both binaries must already be built. Collection is sequential and restarts
-CUDA after a failed case. This command never edits the public baseline.
+CUDA after a failed case. An explicit Markdown report can supply its Appendix 1
+inventory instead. This command never edits the public baseline.
 """
 
 import argparse
@@ -16,11 +17,39 @@ from types import SimpleNamespace
 from benchmark_nvidia_extended import run_shared
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_REPORT = ROOT / "docs/nvidia-performance-missing-cases-20261012.md"
+DEFAULT_REPORT = ROOT / "docs/performance-baseline.json"
+MEASUREMENT_ID = "nvidia-missing-20261012"
 
 
 def requested_cases(report):
-    section = report.read_text().split("## 附录一", 1)[1]
+    if report.suffix.lower() == ".json":
+        document = json.loads(report.read_text())
+        reference = document.get("reference") if isinstance(document, dict) else None
+        cases = reference.get("cases") if isinstance(reference, dict) else None
+        if not isinstance(cases, dict):
+            raise ValueError("baseline inventory requires reference.cases object")
+        result = []
+        for name, case in cases.items():
+            if not isinstance(case, dict):
+                raise ValueError("baseline case inventory entry must be an object")
+            if case.get("measurement_id") == MEASUREMENT_ID:
+                result.append((case.get("op"), name))
+    else:
+        result = markdown_requested_cases(report.read_text())
+    if any(not isinstance(value, str) or not value.strip()
+           for pair in result for value in pair):
+        raise ValueError("requested cases require nonempty operator and case names")
+    if not result or len(result) != len(set(result)):
+        raise ValueError("empty or duplicate requested case IDs")
+    if len({name for _, name in result}) != len(result):
+        raise ValueError("case names must be unique across collectors")
+    return result
+
+
+def markdown_requested_cases(text):
+    _, separator, section = text.partition("## 附录一")
+    if not separator:
+        raise ValueError("missing Appendix 1 requested case inventory")
     section = section.split("## 附录二", 1)[0]
     result = []
     operator = None
@@ -34,10 +63,6 @@ def requested_cases(report):
             if operator is None:
                 raise ValueError("case precedes its operator heading")
             result.append((operator, line.strip()))
-    if not result or len(result) != len(set(result)):
-        raise ValueError("empty or duplicate requested case IDs")
-    if len({name for _, name in result}) != len(result):
-        raise ValueError("case names must be unique across collectors")
     return result
 
 
@@ -66,7 +91,10 @@ def sha256(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
+    parser.add_argument(
+        "--report", type=Path, default=DEFAULT_REPORT,
+        help="inventory JSON baseline (default) or Markdown report with Appendix 1",
+    )
     parser.add_argument("--core-binary", type=Path, required=True)
     parser.add_argument("--aux-binary", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)

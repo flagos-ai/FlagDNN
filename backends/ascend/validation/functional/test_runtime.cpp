@@ -4,6 +4,7 @@
 
 #include "validation/acl_runtime.hpp"
 #include "validation/development_environment.hpp"
+#include "reference/cpu/pointwise.hpp"
 
 #include <flagdnn/flagdnn.hpp>
 #include <flagdnn_frontend.h>
@@ -975,11 +976,14 @@ class AddBuffers {
 
   void require_add_output(acl::Stream& stream, float right_scale) const {
     const std::vector<float> actual = read_output(stream);
+    const std::array<std::int64_t, 1> shape{
+        static_cast<std::int64_t>(left_host_.size())};
+    const auto expected = flagdnn::reference::cpu::evaluate_binary_pointwise_with_alpha(
+        FLAGDNN_POINTWISE_ADD, left_host_, shape, right_host_, shape, shape,
+        right_scale);
     for (std::size_t index = 0; index < actual.size(); ++index) {
-      const float expected =
-          left_host_[index] + right_scale * right_host_[index];
       if (!std::isfinite(actual[index]) ||
-          std::abs(actual[index] - expected) > 1.0e-6F) {
+          std::abs(actual[index] - expected[index]) > 1.0e-6F) {
         throw std::runtime_error(
             "development Add output differs at element " +
             std::to_string(index));

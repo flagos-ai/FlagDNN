@@ -8,7 +8,9 @@
 namespace flagdnn::testing {
 std::unique_ptr<TestExecutable> build_aclnn_index(const IndexTestCase &c) {
   using namespace ascend;
-  (void)dtype(c.output.data_type);
+  const bool byte_preserving = c.operation == "concatenate";
+  if (!byte_preserving || !io::is_fp8_storage(c.output.data_type))
+    (void)dtype(c.output.data_type);
   auto specs = c.inputs;
   specs.push_back(c.output);
   return std::make_unique<Plan>(std::move(specs), [c](Plan &p) {
@@ -44,6 +46,6 @@ std::unique_ptr<TestExecutable> build_aclnn_index(const IndexTestCase &c) {
         return aclnnExpandGetWorkspaceSize(indices, size, p.ports.back(), w, e);
       });
     }
-  });
+  }, byte_preserving);
 }
 } // namespace flagdnn::testing

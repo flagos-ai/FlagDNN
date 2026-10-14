@@ -1558,17 +1558,20 @@ def unary_elementwise_contiguous_kernel(
         offsets = program_base + tile_index * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
         active = offsets < n_elements
         value = tl.load(in_ptr + offsets, mask=active, other=0.0)
-        result = _apply_unary_elementwise_operation(
-            value,
-            OPERATION,
-            negative_slope,
-            lower_clip,
-            upper_clip,
-            HAS_UPPER_CLIP,
-            SWISH_BETA,
-            ELU_ALPHA,
-            SOFTPLUS_BETA,
-        )
+        if OPERATION == 5:
+            result = value
+        else:
+            result = _apply_unary_elementwise_operation(
+                value,
+                OPERATION,
+                negative_slope,
+                lower_clip,
+                upper_clip,
+                HAS_UPPER_CLIP,
+                SWISH_BETA,
+                ELU_ALPHA,
+                SOFTPLUS_BETA,
+            )
         tl.store(
             out_ptr + offsets,
             result.to(out_ptr.dtype.element_ty),
@@ -1663,17 +1666,20 @@ def unary_elementwise_strided_kernel(
             output_offsets = offsets
 
         value = tl.load(in_ptr + input_offsets, mask=active, other=0.0)
-        result = _apply_unary_elementwise_operation(
-            value,
-            OPERATION,
-            negative_slope,
-            lower_clip,
-            upper_clip,
-            HAS_UPPER_CLIP,
-            SWISH_BETA,
-            ELU_ALPHA,
-            SOFTPLUS_BETA,
-        )
+        if OPERATION == 5:
+            result = value
+        else:
+            result = _apply_unary_elementwise_operation(
+                value,
+                OPERATION,
+                negative_slope,
+                lower_clip,
+                upper_clip,
+                HAS_UPPER_CLIP,
+                SWISH_BETA,
+                ELU_ALPHA,
+                SOFTPLUS_BETA,
+            )
         tl.store(
             out_ptr + output_offsets,
             result.to(out_ptr.dtype.element_ty),

@@ -19,6 +19,17 @@ namespace flagdnn::validation::ascend::tensor_io {
 
 inline constexpr float kPaddingSentinel = -97.0F;
 inline constexpr std::uint8_t kBooleanPaddingSentinel = 0xA5U;
+inline constexpr std::uint8_t kBytePaddingSentinel = 0xA5U;
+
+[[nodiscard]] constexpr bool is_fp8_storage(flagdnnDataType_t type) noexcept {
+  return type == FLAGDNN_DATA_FP8_E4M3 || type == FLAGDNN_DATA_FP8_E5M2 ||
+         type == FLAGDNN_DATA_FP8_E8M0;
+}
+
+[[nodiscard]] constexpr bool is_raw_storage(flagdnnDataType_t type) noexcept {
+  return type == FLAGDNN_DATA_INT32 || type == FLAGDNN_DATA_BOOLEAN ||
+         is_fp8_storage(type);
+}
 
 [[nodiscard]] std::size_t data_type_size(flagdnnDataType_t data_type);
 

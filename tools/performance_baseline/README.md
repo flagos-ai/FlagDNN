@@ -1,6 +1,13 @@
 # 跨平台性能基准工具
 
-这里集中保存峰值和 cuDNN 参考耗时的测量工具。数据格式、换算公式和校验范围见 [基准说明](../../docs/nvidia-peak-baseline-20260920.md)，正式数据保存在 [performance-baseline.json](../../docs/performance-baseline.json)。
+这里集中保存峰值和 cuDNN 参考耗时的测量工具。数据格式、换算公式和校验范围见 [基准说明](../../docs/equivalent-performance-baseline.md)，正式数据保存在 [performance-baseline.json](../../docs/performance-baseline.json)。
+
+测量摘要统一保存在正式基线末尾的 `measurement_summaries.<measurement_id>`，
+包含平台峰值配置明细和 NVIDIA 补测记录。平台的 `measurement.summary` 与
+NVIDIA 补测的 `manifest` 使用 JSON Pointer 引用相应摘要；正式峰值和参考耗时仍保留原有结构。
+原始 CSV、日志、源码快照和编译产物留在本地 `build/`；已有原始归档位于
+`build/performance-baseline/evidence/`，路径和 SHA-256 保存在摘要中，不随源码分发。
+运行时只读取正式基线，不依赖本地原始归档。
 
 需要已配置的 `build/nvidia`、CUDA、cuDNN 和 cuDNN Frontend；张量峰值脚本还需要支持 CUDA 的 PyTorch。构建前设置：
 
@@ -33,7 +40,7 @@ python3 tools/performance_baseline/benchmark_nvidia_tensor.py --output /tmp/nv_t
 
 ## 2026-10-12 缺失目录补测
 
-[补测清单附录一](../../docs/nvidia-performance-missing-cases-20261012.md#附录一-剩余需-nvidia-参考路线补齐的-371-个用例)的 371 条由两个采集器提供：核心采集器覆盖 291 条主逐元素、identity 主目录和 batchnorm 训练用例；[辅助采集器](benchmark_nvidia_missing_aux.cpp)覆盖 80 条 identity copy、logical boolean 和混合输出 reduction 用例。[调度脚本](run_benchmark_nvidia_missing.py)按完整 `(op, case_name)` 匹配目录，拒绝遗漏和重复，串行运行并在失败后重启进程。
+[正式基线](../../docs/performance-baseline.json)中标记 `measurement_id=nvidia-missing-20261012` 的 371 条由两个采集器提供：核心采集器覆盖 291 条主逐元素、identity 主目录和 batchnorm 训练用例；[辅助采集器](benchmark_nvidia_missing_aux.cpp)覆盖 80 条 identity copy、logical boolean 和混合输出 reduction 用例。[调度脚本](run_benchmark_nvidia_missing.py)默认从正式基线读取这批用例，按完整 `(op, case_name)` 匹配目录，拒绝遗漏和重复，串行运行并在失败后重启进程。仍可通过 `--report` 显式指定含“附录一”的 Markdown 补测清单。
 
 构建目录须已配置 NVIDIA 后端，并启用 `FLAGDNN_BUILD_TESTS` 和 `FLAGDNN_BUILD_BENCHMARKS`；沿用上面的 CUDA/cuDNN 环境变量。辅助构建脚本只链接已有验证库，不会自动运行 CMake 构建：
 
@@ -57,7 +64,7 @@ CUDA_VISIBLE_DEVICES=0 python3 tools/performance_baseline/run_benchmark_nvidia_m
   > "$nv_missing_dir/collection.log" 2>&1
 ```
 
-两采集器均支持无 GPU 的 `--list`、JSONL `--catalog`，以及精确过滤 `--case NAME` / `--case-file PATH`。调度输出包含 `collection-manifest.json`、两组 `.cases` / `.catalog.jsonl`、测量 `.jsonl` 和 `.logs/`；失败阶段和原始日志保留，不自动修改正式基线。数值及完整写入检查包括计时前、计时后、重置输出后回放；BOOL 保留参考存储位宽，batchnorm 使用独立的 5/10/20 配置。入库前需逐项核对元数据、校验结果和计时配置；补测归档说明见 [nvidia-missing-20261012.json](measurements/nvidia-missing-20261012.json)，不能将目录条数当作测量通过数。
+两采集器均支持无 GPU 的 `--list`、JSONL `--catalog`，以及精确过滤 `--case NAME` / `--case-file PATH`。调度输出包含 `collection-manifest.json`、两组 `.cases` / `.catalog.jsonl`、测量 `.jsonl` 和 `.logs/`；失败阶段和原始日志保留，不自动修改正式基线。数值及完整写入检查包括计时前、计时后、重置输出后回放；BOOL 保留参考存储位宽，batchnorm 使用独立的 5/10/20 配置。入库前需逐项核对元数据、校验结果和计时配置；补测归档说明见[正式基线](../../docs/performance-baseline.json)的 `measurement_summaries.nvidia-missing-20261012`，不能将目录条数当作测量通过数。
 
 向量和显存带宽工具的编译/运行参数见 [benchmark_nvidia_vector_memory.cu](benchmark_nvidia_vector_memory.cu) 文件开头。CPU 采样参考自测的编译命令见 [check_benchmark_nvidia_sampled_reference.cpp](check_benchmark_nvidia_sampled_reference.cpp)。
 
@@ -81,9 +88,9 @@ mkdir -p build/hygon/performance-baseline-20261010
   2> build/hygon/performance-baseline-20261010/vector-memory.log
 ```
 
-默认扫描和计数口径与 NVIDIA 向量/带宽工具一致：8 条独立寄存器链、每轮 32 次展开的 FP32 FMA（每条 2 FLOP），内存按逻辑读写字节计数。配置峰值取 `record=summary` 的最高中位吞吐，不能取最快单样本；CSV 的 GB/s 除以 1000 后填写 JSON 的 TB/s。工具不自动修改正式基线，不测量的精度保留 `null`。首次实测全部配置摘要见 [hygon-20261010.json](measurements/hygon-20261010.json)，div 的代理指标及限制见[基准说明](../../docs/nvidia-peak-baseline-20260920.md#hygon-div-等效性能2026-10-10)。
+默认扫描和计数口径与 NVIDIA 向量/带宽工具一致：8 条独立寄存器链、每轮 32 次展开的 FP32 FMA（每条 2 FLOP），内存按逻辑读写字节计数。配置峰值取 `record=summary` 的最高中位吞吐，不能取最快单样本；CSV 的 GB/s 除以 1000 后填写 JSON 的 TB/s。工具不自动修改正式基线，不测量的精度保留 `null`。首次实测全部配置摘要见[正式基线](../../docs/performance-baseline.json)的 `measurement_summaries.hygon-20261010`，div 的代理指标及限制见[基准说明](../../docs/equivalent-performance-baseline.md#峰值选择)。
 
-Hygon 的等效性能回退现覆盖布局、索引及逐元素/激活共 40 个算子（identity 仅 FP8 E4M3/E5M2），具体指标和缺参考目录见[覆盖说明](../../docs/nvidia-peak-baseline-20260920.md#hygon-缺失性能测试的等效补齐)。换算策略仅在 `platforms.hygon.scaling.case_policies.<op>` 中显式启用，均为有局限的近似模型，不是已验证的瓶颈结论；公共 NVIDIA `reference` 保留历史 2893 条有效记录及已有峰值、profile，可追加经过校验的新测量；共享 `scale_metric` 保持 `null`。其他平台只能读取自身 `scaling.case_policies`，即使峰值齐全，没有自己的算子策略仍须报错，不能回退到 Hygon 策略或修改公共参考。已有可用 hipDNN 对照保持原样；无对照用例输出带实际样本、流量修正及 NVIDIA 验证等级的 schema v4。默认只报告性能评价，不因低于 0.8 而失败；仅显式指定 `--min-speedup` 后才启用性能失败门槛。精度错误、运行异常或无效数据仍然失败。修改退出语义后必须重建对应 benchmark 目标，原始历史报告不重写。示例：
+Hygon 的等效性能回退现覆盖布局、索引及逐元素/激活共 40 个算子（identity 仅 FP8 E4M3/E5M2），平台行为见[结果与平台支持](../../docs/equivalent-performance-baseline.md#结果与平台支持)，具体指标与覆盖范围以正式基线为准。换算策略仅在 `platforms.hygon.scaling.case_policies.<op>` 中显式启用，均为有局限的近似模型，不是已验证的瓶颈结论；公共 NVIDIA `reference` 保留历史 2893 条有效记录及已有峰值、profile，可追加经过校验的新测量；共享 `scale_metric` 保持 `null`。其他平台只能读取自身 `scaling.case_policies`，即使峰值齐全，没有自己的算子策略仍须报错，不能回退到 Hygon 策略或修改公共参考。已有可用 hipDNN 对照保持原样；无对照用例输出带实际样本、流量修正及 NVIDIA 验证等级的 schema v4。默认只报告性能评价，不因低于 0.8 而失败；仅显式指定 `--min-speedup` 后才启用性能失败门槛。精度错误、运行异常或无效数据仍然失败。修改退出语义后必须重建对应 benchmark 目标，原始历史报告不重写。示例：
 
 ```bash
 # CPU 基线契约名称沿用最初的 div，但已覆盖 40 算子的 1570 条实际目录用例。
@@ -111,3 +118,25 @@ python3 tools/run_tests.py --platform hygon --ops reshape,transpose,slice,concat
 又保留空执行/部分写入检测。日志分别标识 `last-timed-sample`、`fresh-capture`
 和 `fresh-direct-batch`；coverage 报告区分配对已输出但套件失败、部分配对、未输出
 和未运行，不因缺少 `--min-speedup` 而忽略精度或执行错误。
+
+## Ascend 峰值采集
+
+使用匹配的 `torch`、`torch_npu` 和 Ascend Triton，在已分配的空闲设备上运行：
+
+```bash
+source /usr/local/Ascend/cann-9.0.0/set_env.sh
+python3 tools/performance_baseline/benchmark_ascend_vector_memory.py \
+  --device 7 --operations hbm_copy --output-dir build/ascend/peak-measurement
+```
+
+工具拒绝覆盖已有 CSV/summary。默认扫描每缓冲区 256/1024 MiB、block 4096/8192/16384，
+并检查缓冲区大于实际 L2。copy/triad/write 分别计 2/3/1 份逻辑字节流量，单位为十进制 TB/s。
+每配置预热 20 次，Graph 内含 10 次执行，Graph 预热一次，再采样 5 轮各 20 次，
+各配置先以全样本耗时中位数计算吞吐，再取最高值作为峰值；不是先计算各样本吞吐再取中位数。编译、初始化、拷贝、捕获和校验不计时。
+内存校验覆盖首尾及 32 个分布窗口，同时检查输入与填充输出后的重新回放。
+可选 FP32 FMA 扫描独立运行并检查全部输出，不能由 copy 结果推定向量峰值。
+
+输出包含 `samples.csv`、`summary.json`、采集时源码快照和 `kernels/` 编译证据。
+只把已测指标写入对应设备基线，未测项保留 `null`，算子换算策略另行显式登记。
+2026-10-13 的 copy 测量为 6 个配置、600 个有效样本，峰值 **1.1794765684348663 TB/s**；
+见[正式基线](../../docs/performance-baseline.json)的 `measurement_summaries.ascend-20261013`，其中保留配置明细及本地原始归档的路径与哈希。

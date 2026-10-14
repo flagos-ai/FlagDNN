@@ -41,6 +41,42 @@ def tensor(uid, shape, dtype="float16"):
 
 
 class Contracts(unittest.TestCase):
+    def test_fp8_identity_emits_byte_pointers_without_enabling_fp8_math(self):
+        dispatch = importlib.import_module(package + ".dispatch.extended")
+        for dtype in ["fp8_e4m3", "fp8_e5m2", "fp8_e8m0"]:
+            for strided in [False, True]:
+                with self.subTest(dtype=dtype, strided=strided):
+                    tensors = [tensor(i, [2, 257], dtype) for i in [1, 2]]
+                    if strided:
+                        tensors[1]["strides"] = [1030, 2]
+                    parameters = dict(n_elements=514)
+                    source, config = dispatch.configuration(
+                        "identity", parameters, tensors
+                    )
+                    plan = dict(
+                        configuration=config,
+                        source=source,
+                        tensors=tensors,
+                        parameters=parameters,
+                        stage_id=0,
+                        operation="identity",
+                        source_node_ids=[0],
+                        dependencies=[],
+                    )
+                    with tempfile.TemporaryDirectory() as directory, patch.object(
+                        emitter, "plan_graph", return_value=([plan], {}, 0)
+                    ):
+                        stages, _ = emitter.emit(
+                            {}, Path(directory), {"identity_sha256": "a" * 64}
+                        )
+                    signature = stages[0]["candidates"][0]["payload"][
+                        "full_signature"
+                    ].split(",")
+                    self.assertEqual([x.split(":")[0] for x in signature[:2]],
+                                     ["*u8", "*u8"])
+                    with self.assertRaises(ValueError):
+                        dispatch.configuration("exp", parameters, tensors)
+
     def test_activation_backward_launches_resolve_for_dense_and_strided_tensors(self):
         dispatch = importlib.import_module(package + ".dispatch.extended")
         common = importlib.import_module(package + ".dispatch.common")
