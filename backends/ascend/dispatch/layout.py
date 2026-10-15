@@ -23,7 +23,9 @@ from .common import (
 
 def _is_row_major_layout(dimensions: list[int], strides: list[int]) -> bool:
     expected_stride = 1
-    for dimension, stride in zip(reversed(dimensions), reversed(strides), strict=True):
+    for dimension, stride in zip(
+        reversed(dimensions), reversed(strides), strict=True
+    ):
         if dimension == 1:
             continue
         if stride != expected_stride:
@@ -32,7 +34,9 @@ def _is_row_major_layout(dimensions: list[int], strides: list[int]) -> bool:
     return True
 
 
-def _is_dense_permutation_layout(dimensions: list[int], strides: list[int]) -> bool:
+def _is_dense_permutation_layout(
+    dimensions: list[int], strides: list[int]
+) -> bool:
     axes = sorted(
         (stride, dimension)
         for dimension, stride in zip(dimensions, strides, strict=True)
@@ -54,7 +58,8 @@ def _layout_mode(
     output_strides: list[int],
 ) -> int:
     shared_mapping = (
-        input_dimensions == output_dimensions and input_strides == output_strides
+        input_dimensions == output_dimensions
+        and input_strides == output_strides
     )
     if (
         operation == "reshape"
@@ -80,11 +85,15 @@ def _layout_meta(
     if input_tensor.data_type != output.data_type:
         raise ValueError("layout operation input/output data types must match")
     if input_tensor.data_type not in NUMERIC_STORAGE_DATA_TYPES:
-        raise ValueError("layout operation requires floating storage data types")
+        raise ValueError(
+            "layout operation requires floating storage data types"
+        )
     input_element_size = ELEMENT_SIZES[input_tensor.data_type]
     output_element_size = ELEMENT_SIZES[output.data_type]
     if input_element_size != output_element_size:
-        raise ValueError("layout operation input/output element sizes must match")
+        raise ValueError(
+            "layout operation input/output element sizes must match"
+        )
     input_dimensions = list(input_tensor.dimensions)
     input_strides = list(input_tensor.strides)
     output_dimensions = list(output.dimensions)
@@ -105,26 +114,37 @@ def _layout_meta(
             minimum=minimum,
         )
         if actual != expected:
-            raise ValueError(f"parameters.{name} is inconsistent with tensor metadata")
+            raise ValueError(
+                f"parameters.{name} is inconsistent with tensor metadata"
+            )
 
     input_base = 0
     logical_input_dimensions = input_dimensions
     logical_input_strides = input_strides
     if operation == "reshape":
         if (
-            require_integer(attributes, "input_rank", minimum=0, maximum=MAX_RANK)
+            require_integer(
+                attributes, "input_rank", minimum=0, maximum=MAX_RANK
+            )
             != input_rank
-            or require_integer(attributes, "output_rank", minimum=0, maximum=MAX_RANK)
+            or require_integer(
+                attributes, "output_rank", minimum=0, maximum=MAX_RANK
+            )
             != output_rank
         ):
             raise ValueError("reshape rank parameters are inconsistent")
-        if require_integer(attributes, "reshape_mode", minimum=2, maximum=2) != 2:
+        if (
+            require_integer(attributes, "reshape_mode", minimum=2, maximum=2)
+            != 2
+        ):
             raise ValueError("parameters.reshape_mode must be LOGICAL")
         if math.prod(input_dimensions) != math.prod(output_dimensions):
             raise ValueError("reshape input/output element counts must match")
     elif operation == "transpose":
         if input_rank == 0 or input_rank != output_rank:
-            raise ValueError("transpose input/output ranks must match in [1, 8]")
+            raise ValueError(
+                "transpose input/output ranks must match in [1, 8]"
+            )
         if (
             require_integer(attributes, "rank", minimum=1, maximum=MAX_RANK)
             != input_rank
@@ -138,9 +158,15 @@ def _layout_meta(
             maximum=input_rank - 1,
         )
         if sorted(permutation) != list(range(input_rank)):
-            raise ValueError("transpose permutation must contain each axis once")
-        if output_dimensions != [input_dimensions[axis] for axis in permutation]:
-            raise ValueError("transpose output shape does not match permutation")
+            raise ValueError(
+                "transpose permutation must contain each axis once"
+            )
+        if output_dimensions != [
+            input_dimensions[axis] for axis in permutation
+        ]:
+            raise ValueError(
+                "transpose output shape does not match permutation"
+            )
         logical_input_dimensions = output_dimensions
         logical_input_strides = [input_strides[axis] for axis in permutation]
     elif operation == "slice":
@@ -151,33 +177,46 @@ def _layout_meta(
             != input_rank
         ):
             raise ValueError("slice rank parameter is inconsistent")
-        starts = require_integer_list(attributes, "starts", input_rank, minimum=0)
-        limits = require_integer_list(attributes, "limits", input_rank, minimum=1)
+        starts = require_integer_list(
+            attributes, "starts", input_rank, minimum=0
+        )
+        limits = require_integer_list(
+            attributes, "limits", input_rank, minimum=1
+        )
         slice_strides = require_integer_list(
             attributes, "slice_strides", input_rank, minimum=1
         )
         expected_output: list[int] = []
         logical_input_strides = []
         for axis in range(input_rank):
-            if starts[axis] >= limits[axis] or limits[axis] > input_dimensions[axis]:
+            if (
+                starts[axis] >= limits[axis]
+                or limits[axis] > input_dimensions[axis]
+            ):
                 raise ValueError("slice range is outside input shape")
             span = limits[axis] - starts[axis]
             expected_output.append(1 + (span - 1) // slice_strides[axis])
             if input_strides[axis] > MAX_I64 // slice_strides[axis]:
                 raise ValueError("slice logical input stride exceeds int64")
-            logical_input_strides.append(input_strides[axis] * slice_strides[axis])
+            logical_input_strides.append(
+                input_strides[axis] * slice_strides[axis]
+            )
             base_term = starts[axis] * input_strides[axis]
             if base_term > MAX_I64 - input_base:
                 raise ValueError("slice input base exceeds int64")
             input_base += base_term
         if output_dimensions != expected_output:
-            raise ValueError("slice output shape does not match slice attributes")
+            raise ValueError(
+                "slice output shape does not match slice attributes"
+            )
         logical_input_dimensions = output_dimensions
     else:
         raise ValueError(f"unknown layout operation: {operation!r}")
 
     maximum_input_offset = input_base
-    for dimension, stride in zip(logical_input_dimensions, logical_input_strides):
+    for dimension, stride in zip(
+        logical_input_dimensions, logical_input_strides
+    ):
         extent = (dimension - 1) * stride
         if extent > MAX_I64 - maximum_input_offset:
             raise ValueError("layout input mapping exceeds int64")
@@ -258,10 +297,11 @@ def _layout_kernel_configuration(
 ) -> tuple[
     str,
     dict[str, str],
-    dict[str, int],
+    dict[str, int | float | str | bool],
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    constants: dict[str, int | float | str | bool]
     if len(tensors) != 2:
         raise ValueError("layout operation tensor count is invalid")
     input_tensor, output_tensor = tensors
@@ -279,14 +319,19 @@ def _layout_kernel_configuration(
         "fp8_e8m0": "*u8",
     }.get(data_types[0])
     if pointer_type is None:
-        raise ValueError(f"unsupported layout operation data type: {data_types[0]!r}")
+        raise ValueError(
+            f"unsupported layout operation data type: {data_types[0]!r}"
+        )
     if any(
         len(tensor["dimensions"]) > 8
-        or not _has_non_overlapping_strides(tensor["dimensions"], tensor["strides"])
+        or not _has_non_overlapping_strides(
+            tensor["dimensions"], tensor["strides"]
+        )
         for tensor in tensors
     ):
         raise ValueError(
-            "layout tensors require rank at most eight and " "non-overlapping strides"
+            "layout tensors require rank at most eight and "
+            "non-overlapping strides"
         )
 
     input_dimensions = input_tensor["dimensions"]
@@ -297,7 +342,9 @@ def _layout_kernel_configuration(
     output_rank = len(output_dimensions)
     elements = _require_integer(parameters, "n_elements")
     if elements != math.prod(output_dimensions):
-        raise ValueError("parameters.n_elements is inconsistent with layout output")
+        raise ValueError(
+            "parameters.n_elements is inconsistent with layout output"
+        )
 
     def require_metadata(
         name: str,
@@ -313,7 +360,9 @@ def _layout_kernel_configuration(
             maximum=2**63 - 1,
         )
         if value != expected:
-            raise ValueError(f"parameters.{name} is inconsistent with tensor metadata")
+            raise ValueError(
+                f"parameters.{name} is inconsistent with tensor metadata"
+            )
         return value
 
     require_metadata("input_dimensions", input_dimensions, minimum=1)
@@ -328,7 +377,9 @@ def _layout_kernel_configuration(
         if (
             _require_integer(parameters, "input_rank", minimum=0, maximum=8)
             != input_rank
-            or _require_integer(parameters, "output_rank", minimum=0, maximum=8)
+            or _require_integer(
+                parameters, "output_rank", minimum=0, maximum=8
+            )
             != output_rank
         ):
             raise ValueError("reshape rank parameters are inconsistent")
@@ -337,8 +388,13 @@ def _layout_kernel_configuration(
             raise ValueError("reshape input/output element counts must match")
     elif operation == "transpose":
         if input_rank == 0 or input_rank != output_rank:
-            raise ValueError("transpose input/output ranks must match in [1, 8]")
-        if _require_integer(parameters, "rank", minimum=1, maximum=8) != input_rank:
+            raise ValueError(
+                "transpose input/output ranks must match in [1, 8]"
+            )
+        if (
+            _require_integer(parameters, "rank", minimum=1, maximum=8)
+            != input_rank
+        ):
             raise ValueError("transpose rank parameter is inconsistent")
         permutation = _require_integer_list(
             parameters,
@@ -348,10 +404,14 @@ def _layout_kernel_configuration(
             maximum=input_rank - 1,
         )
         if sorted(permutation) != list(range(input_rank)):
-            raise ValueError("transpose permutation must contain each axis once")
+            raise ValueError(
+                "transpose permutation must contain each axis once"
+            )
         expected_output = [input_dimensions[axis] for axis in permutation]
         if output_dimensions != expected_output:
-            raise ValueError("transpose output shape does not match permutation")
+            raise ValueError(
+                "transpose output shape does not match permutation"
+            )
         logical_input_dimensions = output_dimensions
         logical_input_strides = [input_strides[axis] for axis in permutation]
         if (
@@ -382,7 +442,10 @@ def _layout_kernel_configuration(
     elif operation == "slice":
         if input_rank == 0 or input_rank != output_rank:
             raise ValueError("slice input/output ranks must match in [1, 8]")
-        if _require_integer(parameters, "rank", minimum=1, maximum=8) != input_rank:
+        if (
+            _require_integer(parameters, "rank", minimum=1, maximum=8)
+            != input_rank
+        ):
             raise ValueError("slice rank parameter is inconsistent")
         starts = _require_integer_list(
             parameters,
@@ -405,17 +468,24 @@ def _layout_kernel_configuration(
             minimum=1,
             maximum=2**63 - 1,
         )
-        expected_output: list[int] = []
+        expected_output = []
         for axis in range(input_rank):
-            if starts[axis] >= limits[axis] or limits[axis] > input_dimensions[axis]:
+            if (
+                starts[axis] >= limits[axis]
+                or limits[axis] > input_dimensions[axis]
+            ):
                 raise ValueError("slice range is outside input shape")
             expected_output.append(
                 (limits[axis] - starts[axis] + slice_strides[axis] - 1)
                 // slice_strides[axis]
             )
         if output_dimensions != expected_output:
-            raise ValueError("slice output shape does not match slice attributes")
-        input_base = sum(start * stride for start, stride in zip(starts, input_strides))
+            raise ValueError(
+                "slice output shape does not match slice attributes"
+            )
+        input_base = sum(
+            start * stride for start, stride in zip(starts, input_strides)
+        )
         logical_input_dimensions = output_dimensions
         logical_input_strides = [
             stride * step for stride, step in zip(input_strides, slice_strides)
@@ -430,7 +500,7 @@ def _layout_kernel_configuration(
     padded_output_dimensions = [1] * leading_output + output_dimensions
     padded_output_strides = [0] * leading_output + output_strides
     block = 256
-    constants: dict[str, int] = {
+    constants = {
         "INPUT_BASE": input_base,
         "BLOCK_SIZE": block,
     }

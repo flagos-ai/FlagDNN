@@ -80,7 +80,9 @@ def _require_integer(
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"parameters.{name} must be an integer")
     if value < minimum or value > maximum:
-        raise ValueError(f"parameters.{name} must be in [{minimum}, {maximum}]")
+        raise ValueError(
+            f"parameters.{name} must be in [{minimum}, {maximum}]"
+        )
     return value
 
 

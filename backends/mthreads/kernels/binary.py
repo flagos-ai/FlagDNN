@@ -37,9 +37,13 @@ def _apply_binary_operation(
     ALPHA: tl.constexpr,
 ):
     if OP_KIND == POINTWISE_ADD:
-        result = left + (int(ALPHA) if left.dtype == tl.int32 else ALPHA) * right
+        result = (
+            left + (int(ALPHA) if left.dtype == tl.int32 else ALPHA) * right
+        )
     elif OP_KIND == POINTWISE_SUB:
-        result = left - (int(ALPHA) if left.dtype == tl.int32 else ALPHA) * right
+        result = (
+            left - (int(ALPHA) if left.dtype == tl.int32 else ALPHA) * right
+        )
     elif OP_KIND == POINTWISE_MUL:
         result = left * right
     elif OP_KIND == POINTWISE_SIGMOID_BWD:

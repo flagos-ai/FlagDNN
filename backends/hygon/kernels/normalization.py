@@ -97,11 +97,7 @@ def layer_norm_kernel(
             merged_count = running_count + chunk_count
             delta = chunk_mean - running_mean
             running_m2 += chunk_m2 + (
-                delta
-                * delta
-                * running_count
-                * chunk_count
-                / merged_count
+                delta * delta * running_count * chunk_count / merged_count
             )
             running_mean += delta * chunk_count / merged_count
             running_count = merged_count
@@ -250,11 +246,7 @@ def batch_norm_nchw_kernel(
         delta = chunk_mean - batch_mean
         batch_m2 += (
             chunk_m2
-            + delta
-            * delta
-            * sample_count
-            * chunk_count
-            / merged_count
+            + delta * delta * sample_count * chunk_count / merged_count
         )
         batch_mean += delta * chunk_count / merged_count
         sample_count = merged_count
@@ -391,11 +383,7 @@ def batch_norm_kernel(
         delta = chunk_mean - batch_mean
         batch_m2 += (
             chunk_m2
-            + delta
-            * delta
-            * sample_count
-            * chunk_count
-            / merged_count
+            + delta * delta * sample_count * chunk_count / merged_count
         )
         batch_mean += delta * chunk_count / merged_count
         sample_count = merged_count

@@ -38,12 +38,14 @@ def _compile_extended(
     source_bytes = kernel_registry.materialize_kernel_source(source, candidate)
     if operation == "concatenate":
         source_bytes = materialize_concatenate_source(
-            source_bytes, tensors,
+            source_bytes,
+            tensors,
             request["graph"]["nodes"][0]["attributes"]["axis"],
         )
     argument_tensors = (
         list({tensor["uid"]: tensor for tensor in tensors}.values())
-        if operation == "concatenate" else tensors
+        if operation == "concatenate"
+        else tensors
     )
     definition = next(
         node
@@ -67,12 +69,10 @@ def _compile_extended(
                 tensor = argument_tensors[tensor_index]
                 tensor_index += 1
                 copy_bits = operation == "concatenate"
-                tokens.append(_tensor_pointer_signature(
-                    tensor, copy_bits=copy_bits
-                ))
-                arguments.append(_tensor_argument(
-                    tensor, copy_bits=copy_bits
-                ))
+                tokens.append(
+                    _tensor_pointer_signature(tensor, copy_bits=copy_bits)
+                )
+                arguments.append(_tensor_argument(tensor, copy_bits=copy_bits))
             else:
                 raise ValueError(
                     f"unsupported extended argument layout: {kind}"

@@ -1877,7 +1877,10 @@ def parse_convolution_request(
         or node.compute_data_type != "float32"
     ):
         raise ValueError(
-            "convolution requires matching floating storage and float32 compute"
+            (
+                "convolution requires matching floating storage and float32 "
+                "compute"
+            )
         )
 
     attributes = node.attributes
@@ -2937,6 +2940,7 @@ def parse_attention_request(
     expected_target: str,
     expected_identity: str,
 ) -> ParsedAttentionRequest:
+    output_names: tuple[str, ...]
     envelope = _parse_envelope(
         request_bytes,
         expected_target=expected_target,

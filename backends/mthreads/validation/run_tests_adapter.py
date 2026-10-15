@@ -12,8 +12,10 @@ REPORT_DEVICE = "musa"
 PREFLIGHT_BY_DEFAULT = True
 SUPPORTS_MIN_SPEEDUP = True
 
-# Consume the public manifests without filtering by the discovered CTest catalog.
-# This makes a missing MThreads target fail closed instead of silently shrinking an
+# Consume the public manifests without filtering by the discovered CTest
+# catalog.
+# This makes a missing MThreads target fail closed instead of silently
+# shrinking an
 # explicit --ops all run.
 FILTER_REGISTERED_TESTS = False
 
@@ -115,7 +117,7 @@ def _accounting_record(
         r"(PASS|SKIP)\s+cases=(\d+)\s+"
         r"executed=(\d+)\s+skipped=(\d+)\s*$"
     )
-    records: list[tuple[str, str, str, str]] = []
+    records: list[tuple[str, ...]] = []
     for raw_line in output.splitlines():
         line = re.sub(r"^\s*\d+:\s?", "", raw_line).strip()
         match = pattern.fullmatch(line)
@@ -276,8 +278,15 @@ def validate_benchmark_record(
 ) -> dict[str, dict[str, Any]]:
     """Accept measured v4 samples with a separate peak-scaled reference."""
     fields = {
-        "schema_version", "kind", "provider", "case", "unit", "median",
-        "p90", "samples", "equivalent_baseline",
+        "schema_version",
+        "kind",
+        "provider",
+        "case",
+        "unit",
+        "median",
+        "p90",
+        "samples",
+        "equivalent_baseline",
     }
     if (
         set(record) != fields
@@ -292,33 +301,49 @@ def validate_benchmark_record(
         raise ValueError("unsupported MThreads equivalent benchmark record")
     baseline = record["equivalent_baseline"]
     identities = {
-        "provider": "nvidia_equivalent", "platform": "nvidia",
-        "target_platform": "mthreads", "timing_profile": "native",
+        "provider": "nvidia_equivalent",
+        "platform": "nvidia",
+        "target_platform": "mthreads",
+        "timing_profile": "native",
         "reference_validation": "cpu_full",
     }
     numeric = {
-        "reference_time_us", "reference_peak", "target_peak",
-        "min_relative_efficiency", "equivalent_time_us", "limit_us",
-        "relative_efficiency", "traffic_ratio",
+        "reference_time_us",
+        "reference_peak",
+        "target_peak",
+        "min_relative_efficiency",
+        "equivalent_time_us",
+        "limit_us",
+        "relative_efficiency",
+        "traffic_ratio",
     }
     if (
         not isinstance(baseline, dict)
-        or set(baseline) != set(identities) | numeric | {"scale_metric", "passed"}
+        or set(baseline)
+        != set(identities) | numeric | {"scale_metric", "passed"}
         or any(baseline[key] != value for key, value in identities.items())
         or baseline["scale_metric"] not in ("vector_fp32", "hbm_triad")
     ):
         raise ValueError("invalid MThreads equivalent baseline identity")
     expected_metric = (
-        "hbm_triad" if record["case"].startswith(
+        "hbm_triad"
+        if record["case"].startswith(
             ("relu_backward_attributes_", "leaky_relu_backward_attributes_")
-        ) else "vector_fp32"
+        )
+        else "vector_fp32"
     )
     if baseline["scale_metric"] != expected_metric:
-        raise ValueError("equivalent scale metric differs from the operator policy")
+        raise ValueError(
+            "equivalent scale metric differs from the operator policy"
+        )
 
     def positive(value: Any) -> bool:
         try:
-            return type(value) in (int, float) and math.isfinite(value) and value > 0
+            return (
+                type(value) in (int, float)
+                and math.isfinite(value)
+                and value > 0
+            )
         except OverflowError:
             return False
 
@@ -335,9 +360,15 @@ def validate_benchmark_record(
         raise ValueError("invalid equivalent timings, peaks or native profile")
     ordered = sorted(record["samples"])
     for key, rank in (("median", 9), ("p90", 17)):
-        if not math.isclose(record[key], ordered[rank], rel_tol=1e-9, abs_tol=1e-12):
+        if not math.isclose(
+            record[key], ordered[rank], rel_tol=1e-9, abs_tol=1e-12
+        ):
             raise ValueError(f"equivalent {key} differs from measured samples")
-    equivalent = baseline["reference_time_us"] * baseline["reference_peak"] / baseline["target_peak"]
+    equivalent = (
+        baseline["reference_time_us"]
+        * baseline["reference_peak"]
+        / baseline["target_peak"]
+    )
     derived = {
         "equivalent_time_us": equivalent,
         "limit_us": equivalent / baseline["min_relative_efficiency"],
@@ -345,14 +376,21 @@ def validate_benchmark_record(
     }
     for key, expected in derived.items():
         if not positive(expected) or not math.isclose(
-            baseline[key], expected, rel_tol=1e-12, abs_tol=0,
+            baseline[key],
+            expected,
+            rel_tol=1e-12,
+            abs_tol=0,
         ):
             raise ValueError(f"equivalent {key} differs from the peak formula")
     if type(baseline["passed"]) is not bool or baseline["passed"] != (
         record["median"] <= baseline["limit_us"]
     ):
-        raise ValueError("equivalent baseline verdict differs from measured limit")
-    return {"timing": {key: record[key] for key in ("median", "p90", "samples")}}
+        raise ValueError(
+            "equivalent baseline verdict differs from measured limit"
+        )
+    return {
+        "timing": {key: record[key] for key in ("median", "p90", "samples")}
+    }
 
 
 def postprocess_result(
@@ -513,7 +551,8 @@ def finalize(
 
 
 def _equivalent_summary(
-    results: dict[str, dict[str, Any]], threshold: float | None,
+    results: dict[str, dict[str, Any]],
+    threshold: float | None,
 ) -> dict[str, Any]:
     cases = []
     for operator, suites in results.items():
@@ -535,30 +574,43 @@ def _equivalent_summary(
             limit = baseline["limit_us"]
             if required > minimum:
                 limit = min(limit, baseline["equivalent_time_us"] / required)
-            cases.append({
-                "operator": operator, "case": case,
-                "flagdnn_median_us": record["median"],
-                "equivalent_baseline": dict(baseline),
-                "relative_efficiency": baseline["relative_efficiency"],
-                "required_relative_efficiency": required,
-                "passed": record["median"] <= limit,
-            })
+            cases.append(
+                {
+                    "operator": operator,
+                    "case": case,
+                    "flagdnn_median_us": record["median"],
+                    "equivalent_baseline": dict(baseline),
+                    "relative_efficiency": baseline["relative_efficiency"],
+                    "required_relative_efficiency": required,
+                    "passed": record["median"] <= limit,
+                }
+            )
     cases.sort(key=lambda row: (row["relative_efficiency"], row["case"]))
     failures = [row for row in cases if not row["passed"]]
     return {
         "metric": EQUIVALENT_METRIC,
         "requested_min_speedup": threshold,
         "gate_enabled": threshold is not None,
-        "gate_passed": not failures if threshold is not None and cases else None,
-        "case_count": len(cases), "passed_case_count": len(cases) - len(failures),
+        "gate_passed": (
+            not failures if threshold is not None and cases else None
+        ),
+        "case_count": len(cases),
+        "passed_case_count": len(cases) - len(failures),
         "failed_case_count": len(failures),
-        "minimum_relative_efficiency": cases[0]["relative_efficiency"] if cases else None,
-        "cases": cases, "failures": failures,
+        "minimum_relative_efficiency": (
+            cases[0]["relative_efficiency"] if cases else None
+        ),
+        "cases": cases,
+        "failures": failures,
     }
 
 
-def _apply_equivalent_gates(results: dict[str, Any], equivalent: dict[str, Any]) -> None:
-    gates = {(row["operator"], row["case"]): row for row in equivalent["cases"]}
+def _apply_equivalent_gates(
+    results: dict[str, Any], equivalent: dict[str, Any]
+) -> None:
+    gates = {
+        (row["operator"], row["case"]): row for row in equivalent["cases"]
+    }
     enabled = equivalent["gate_enabled"]
     for operator, suites in results.items():
         performance = suites.get("performance", {})
@@ -568,9 +620,14 @@ def _apply_equivalent_gates(results: dict[str, Any], equivalent: dict[str, Any])
                 if gate is None:
                     continue
                 row["performance_gate"] = {
-                    "enabled": enabled, "metric": EQUIVALENT_METRIC,
+                    "enabled": enabled,
+                    "metric": EQUIVALENT_METRIC,
                     "relative_efficiency": gate["relative_efficiency"],
-                    "required_relative_efficiency": gate["required_relative_efficiency"] if enabled else None,
+                    "required_relative_efficiency": (
+                        gate["required_relative_efficiency"]
+                        if enabled
+                        else None
+                    ),
                     "passed": gate["passed"] if enabled else None,
                 }
                 if enabled and not gate["passed"]:
@@ -578,11 +635,15 @@ def _apply_equivalent_gates(results: dict[str, Any], equivalent: dict[str, Any])
                     performance.update(status="Failed", exit_code=1)
 
 
-def _apply_native_gates(results: dict[str, Any], speedup: dict[str, Any]) -> None:
+def _apply_native_gates(
+    results: dict[str, Any], speedup: dict[str, Any]
+) -> None:
     if speedup.get("threshold") is None:
         return
     for failure in speedup.get("failures", []):
-        performance = results.get(failure["operator"], {}).get("performance", {})
+        performance = results.get(failure["operator"], {}).get(
+            "performance", {}
+        )
         for entry in performance.get("data", {}).values():
             if failure["case"] in entry.get("details", {}):
                 entry["result"] = "FAIL"
@@ -590,13 +651,19 @@ def _apply_native_gates(results: dict[str, Any], speedup: dict[str, Any]) -> Non
 
 
 def postprocess_report(
-    *, report: dict[str, Any], platform_summary: dict[str, Any],
+    *,
+    report: dict[str, Any],
+    platform_summary: dict[str, Any],
     exit_code: int | None,
 ) -> bool:
     equivalent = platform_summary.get("equivalent_performance")
-    has_equivalent = isinstance(equivalent, dict) and equivalent.get("case_count")
+    has_equivalent = isinstance(equivalent, dict) and equivalent.get(
+        "case_count"
+    )
     speedup = platform_summary.get("speedup", {})
-    has_native_failure = speedup.get("threshold") is not None and speedup.get("failures")
+    has_native_failure = speedup.get("threshold") is not None and speedup.get(
+        "failures"
+    )
     if not has_equivalent and not has_native_failure:
         return False
     if has_equivalent:
@@ -611,11 +678,16 @@ def postprocess_report(
 
 
 def postprocess_batch_report(
-    *, partitions: dict[int, dict[str, Any]], report: dict[str, Any],
-    platform_summary: dict[str, Any], exit_code: int | None,
+    *,
+    partitions: dict[int, dict[str, Any]],
+    report: dict[str, Any],
+    platform_summary: dict[str, Any],
+    exit_code: int | None,
 ) -> bool:
     changed = postprocess_report(
-        report=report, platform_summary=platform_summary, exit_code=exit_code,
+        report=report,
+        platform_summary=platform_summary,
+        exit_code=exit_code,
     )
     if changed:
         for partition in partitions.values():
@@ -633,5 +705,6 @@ def status_is_success(status: str) -> bool:
 def select_operator_manifests(
     manifests: dict[str, list[str]]
 ) -> dict[str, list[str]]:
-    # All Graph operators are represented, including explicit muDNN capability skips.
+    # All Graph operators are represented, including explicit muDNN capability
+    # skips.
     return {**manifests, "benchmark": list(manifests["functional"])}

@@ -7,7 +7,9 @@ import math
 
 
 def _effective_jit_warps(metadata: Any, requested: int, cached: bool) -> int:
-    """Cached specialization uses the compiled total, not just producer warps."""
+    """
+    Cached specialization uses the compiled total, not just producer warps.
+    """
     effective = metadata.num_warps
     if (
         type(effective) is not int
@@ -21,7 +23,7 @@ def _effective_jit_warps(metadata: Any, requested: int, cached: bool) -> int:
 
 
 def _launch_scratch_size(
-    metadata: Any, grid: tuple[int, int, int], minimum: int = 0
+    metadata: Any, grid: tuple[int, ...], minimum: int = 0
 ) -> int:
     # Triton reports bytes per CTA, not bytes per CUDA launch. TMA descriptors
     # are indexed with the linear CTA ID in the generated PTX.

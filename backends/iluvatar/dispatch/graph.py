@@ -38,7 +38,9 @@ def _fused_conv_bias_relu_node(
     ):
         return None
 
-    bias_uid = next(uid for uid in bias_add["input_uids"] if uid != convolution_uid)
+    bias_uid = next(
+        uid for uid in bias_add["input_uids"] if uid != convolution_uid
+    )
     output_uid = relu["output_uids"][0]
     bias = tensor_registry[bias_uid]
     output = tensor_registry[output_uid]
@@ -151,7 +153,9 @@ def _workspace_layout(
         offset += size
     if offset:
         offset = (
-            (offset + minimum_alignment - 1) // minimum_alignment * minimum_alignment
+            (offset + minimum_alignment - 1)
+            // minimum_alignment
+            * minimum_alignment
         )
     return result, offset
 
@@ -162,14 +166,14 @@ def _nn_workspace_layout(
     maximum_tensor_uid: int,
 ) -> tuple[
     dict[int, nn_dispatch.NodePlan],
-    dict[int, dict[str, dict[str, int]]],
+    dict[int, dict[str, dict[str, int | str]]],
     int,
 ]:
     alignment = nn_dispatch.WORKSPACE_ALIGNMENT
     offset = initial_offset
     next_uid = maximum_tensor_uid + 1
     plans: dict[int, nn_dispatch.NodePlan] = {}
-    workspaces: dict[int, dict[str, dict[str, int]]] = {}
+    workspaces: dict[int, dict[str, dict[str, int | str]]] = {}
     for node in nodes:
         if node["operation"] not in nn_dispatch.SUPPORTED_OPERATIONS:
             continue
@@ -181,13 +185,17 @@ def _nn_workspace_layout(
                 tensor.alignment < alignment
                 or tensor.alignment & (tensor.alignment - 1) != 0
             ):
-                raise ValueError("Iluvatar NN workspace tensor alignment is invalid")
+                raise ValueError(
+                    "Iluvatar NN workspace tensor alignment is invalid"
+                )
             node_alignment = max(node_alignment, tensor.alignment)
         if offset > 2**63 - 1 - (node_alignment - 1):
             raise ValueError("Iluvatar NN workspace alignment overflows int64")
-        offset = (offset + node_alignment - 1) // node_alignment * node_alignment
+        offset = (
+            (offset + node_alignment - 1) // node_alignment * node_alignment
+        )
         node_base = offset
-        named: dict[str, dict[str, int]] = {}
+        named: dict[str, dict[str, int | str]] = {}
         for tensor in plan.workspace_tensors:
             if tensor.name in named:
                 raise ValueError("duplicate Iluvatar NN workspace tensor name")
@@ -197,9 +205,13 @@ def _nn_workspace_layout(
                 or tensor.offset > plan.workspace_size
                 or tensor.size > plan.workspace_size - tensor.offset
             ):
-                raise ValueError("Iluvatar NN workspace tensor layout is invalid")
+                raise ValueError(
+                    "Iluvatar NN workspace tensor layout is invalid"
+                )
             if next_uid > 2**63 - 1:
-                raise ValueError("Iluvatar NN workspace tensor UID overflows int64")
+                raise ValueError(
+                    "Iluvatar NN workspace tensor UID overflows int64"
+                )
             named[tensor.name] = {
                 "kind": "workspace_tensor",
                 "uid": next_uid,

@@ -649,6 +649,13 @@ std::vector<PointwiseTestCase> make_binary_pointwise_cases(
                                           : definition.input_domain;
   for (const Shape& shape : shapes) {
     for (const flagdnnDataType_t data_type : data_types) {
+      if (definition.mode == FLAGDNN_POINTWISE_POW &&
+          data_type == FLAGDNN_DATA_INT32) {
+        // cuDNN POW does not implement the exact INT32 contract. Omit these
+        // shared cases while preserving the existing floating tensor UIDs.
+        uid += 3;
+        continue;
+      }
       PointwiseTestCase test_case;
       test_case.name = definition.operation_name + "_" +
                        data_type_name(data_type) + "_" + shape_name(shape);
@@ -747,8 +754,9 @@ std::vector<PointwiseTestCase> make_binary_pointwise_cases(
       uid += 3;
     }
   }
-  if (std::find(data_types.begin(), data_types.end(), FLAGDNN_DATA_INT32) !=
-      data_types.end()) {
+  if (definition.mode != FLAGDNN_POINTWISE_POW &&
+      std::find(data_types.begin(), data_types.end(), FLAGDNN_DATA_INT32) !=
+          data_types.end()) {
     PointwiseTestCase test_case;
     test_case.name =
         definition.operation_name + "_int32_broadcast_padded_2x3x17";

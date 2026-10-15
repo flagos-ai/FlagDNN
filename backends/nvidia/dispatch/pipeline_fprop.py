@@ -13,7 +13,12 @@ def _expand_fprop_group(
     tensor_registry: dict[int, dict[str, Any]],
     next_uid: int,
 ) -> tuple[list[ExecutionGroup], int]:
-    """Select fprop stages in priority order; return the unchanged group if unmatched."""
+    """
+    Select fprop stages in priority order; return the unchanged group if
+    unmatched.
+    """
+    columns: dict[str, Any]
+    partial: dict[str, Any]
     parameters = group["parameters"]
     tensors = group["tensors"]
     result: list[ExecutionGroup] = []
@@ -242,7 +247,8 @@ def _expand_fprop_group(
                 and output_area >= 4096
             ):
                 # The entire 3x3x3 reduction fits one FP32 dot tile. Reuse the
-                # spatial kernel and avoid writing/reading a large im2col buffer.
+                # spatial kernel and avoid writing/reading a large im2col
+                # buffer.
                 return [
                     {
                         **group,

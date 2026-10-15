@@ -3,7 +3,7 @@
 from __future__ import annotations
 from typing import Any
 import math
-from .attention_common import (
+from .attention_common import (  # noqa: F401
     _attention_broadcast_strides,
     _attention_flag,
     _attention_runtime_f32,
@@ -31,6 +31,8 @@ def _sdpa_backward_kernel_configuration(
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    constants: dict[str, int | float | str | bool]
+    layout: list[tuple[str, str | int | None]]
     stage = parameters.get("_sdpa_bwd_stage")
     # FP32 dot operands need smaller tiles to fit the shared-memory budget.
     fp32 = bool(tensors) and tensors[0]["data_type"] == "float32"
@@ -116,7 +118,9 @@ def _sdpa_backward_kernel_configuration(
             else:
                 _attention_runtime_i32(parameters, name, value)
         if has_bias:
-            bias_strides = _attention_broadcast_strides(tensors[bias_index], "bias_")
+            bias_strides = _attention_broadcast_strides(
+                tensors[bias_index], "bias_"
+            )
         else:
             bias_strides = {
                 "stride_bias_b": 0,
@@ -125,7 +129,7 @@ def _sdpa_backward_kernel_configuration(
                 "stride_bias_n": 0,
             }
         pointer_type = TRITON_POINTER_TYPES[q["data_type"]]
-        constants: dict[str, int | float | str | bool] = {
+        constants = {
             "HKV": value_heads,
             **_attention_strides(q, "q", "bhmd"),
             **_attention_strides(k, "k", "bhnd"),
@@ -143,7 +147,9 @@ def _sdpa_backward_kernel_configuration(
             ),
             "BLOCK_DV_OUT": min(
                 block_d_out,
-                max(minimum_dot_dimension, _next_power_of_two(value_dimension)),
+                max(
+                    minimum_dot_dimension, _next_power_of_two(value_dimension)
+                ),
             ),
             "FULL_ATTENTION": False,
             "HAS_BIAS": has_bias,
@@ -225,7 +231,9 @@ def _sdpa_backward_kernel_configuration(
 
     has_banded = _attention_flag(parameters, "banded")
     causal_top_left = _attention_flag(parameters, "causal_top_left")
-    block_d_full = max(minimum_dot_dimension, _next_power_of_two(head_dimension))
+    block_d_full = max(
+        minimum_dot_dimension, _next_power_of_two(head_dimension)
+    )
     block_dv = max(minimum_dot_dimension, _next_power_of_two(value_dimension))
 
     def bias_constants(bias: dict[str, Any] | None) -> dict[str, int]:
@@ -271,7 +279,7 @@ def _sdpa_backward_kernel_configuration(
         delta = tensors[delta_index]
         dq = tensors[dq_index]
         dbias = tensors[dbias_index] if dbias_index is not None else None
-        constants: dict[str, int | float | str | bool] = {
+        constants = {
             "HQ": heads,
             "q_per_k": heads // key_heads,
             "q_per_v": heads // value_heads,
@@ -356,7 +364,9 @@ def _sdpa_backward_kernel_configuration(
     offset = 3 + int(has_bias)
     if stage == "dkdv":
         if len(tensors) != 8 + int(has_bias):
-            raise ValueError("SDPA backward dK/dV stage tensor count is invalid")
+            raise ValueError(
+                "SDPA backward dK/dV stage tensor count is invalid"
+            )
         doutput_index = offset
         stats_index = offset + 1
         delta_index = offset + 2
@@ -425,7 +435,9 @@ def _sdpa_backward_kernel_configuration(
             (
                 _ceil_div(sequence_kv, int(constants["BLOCK_N"])),
                 _ceil_div(head_dimension, int(constants["BLOCK_D_OUT"])),
-                batch * key_heads * int(parameters.get("_sdpa_partial_count", 1)),
+                batch
+                * key_heads
+                * int(parameters.get("_sdpa_partial_count", 1)),
             ),
             layout,
         )

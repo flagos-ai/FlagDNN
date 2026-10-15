@@ -27,7 +27,7 @@ def _matmul_p5_pipeline_kernel_configuration(
 ) -> tuple[
     str,
     dict[str, str],
-    dict[str, int],
+    dict[str, int | float | str | bool],
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
@@ -129,10 +129,11 @@ def _matmul_kernel_configuration(
 ) -> tuple[
     str,
     dict[str, str],
-    dict[str, int | bool],
+    dict[str, int | float | str | bool],
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    constants: dict[str, int | float | str | bool]
     if parameters.get("_matmul_tf32_pack") is True:
         return _tf32_pack_kernel_configuration(
             parameters, tensors, architecture
@@ -361,7 +362,7 @@ def _matmul_kernel_configuration(
     block_m = 32 if m < 64 else 64
     block_n = 32 if n < 64 else 64
     block_k = 32
-    constants: dict[str, int | bool] = {
+    constants = {
         "M": m,
         "N": n,
         "K": k,

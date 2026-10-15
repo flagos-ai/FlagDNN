@@ -43,10 +43,14 @@ def _build_stage(
     worker_count: int,
 ) -> dict[str, Any]:
     if not configurations:
-        raise ValueError(f"Ascend {plan.operation} tuning produced no candidates")
+        raise ValueError(
+            f"Ascend {plan.operation} tuning produced no candidates"
+        )
     if not enable_autotune:
         configurations = _order_stage_configurations(plan, configurations)
-    effective_configurations = configurations if enable_autotune else configurations[:1]
+    effective_configurations = (
+        configurations if enable_autotune else configurations[:1]
+    )
     tuning_enabled = enable_autotune and len(effective_configurations) > 1
     candidate_entries: list[dict[str, Any]] = []
     tuning_candidate_descriptors: list[dict[str, Any]] = []
@@ -71,7 +75,9 @@ def _build_stage(
             }
         )
         if tuning_enabled:
-            descriptor = _autotune_candidate_descriptor(candidate_id, configuration)
+            descriptor = _autotune_candidate_descriptor(
+                candidate_id, configuration
+            )
             if plan.kernel_family in {
                 "matmul",
                 "convolution_fprop",
@@ -91,9 +97,9 @@ def _build_stage(
                 )
                 if plan.kernel_family == "matmul":
                     block_size = int(configuration.meta["BLOCK_SIZE"])
-                    tiles = ((int(plan.meta["M"]) + block_size - 1) // block_size) * (
-                        (int(plan.meta["N"]) + block_size - 1) // block_size
-                    )
+                    tiles = (
+                        (int(plan.meta["M"]) + block_size - 1) // block_size
+                    ) * ((int(plan.meta["N"]) + block_size - 1) // block_size)
                     descriptor["grid"] = [
                         min(tiles * int(plan.meta["BATCH"]), worker_count),
                         1,

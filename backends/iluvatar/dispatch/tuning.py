@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 import hashlib
 import itertools
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 
 def _load_pointwise_tuning(
@@ -45,7 +45,9 @@ def _load_pointwise_tuning(
                 "num_stages": "stages",
             }
             if param_map != expected_map:
-                raise ValueError("Iluvatar pointwise tuning param_map is invalid")
+                raise ValueError(
+                    "Iluvatar pointwise tuning param_map is invalid"
+                )
             dimensions: list[list[int]] = []
             for name in ("block_size", "warps", "stages"):
                 values = entry.get(name)
@@ -59,7 +61,9 @@ def _load_pointwise_tuning(
                         for value in values
                     )
                 ):
-                    raise ValueError(f"Iluvatar tuning parameter {name} is invalid")
+                    raise ValueError(
+                        f"Iluvatar tuning parameter {name} is invalid"
+                    )
                 dimensions.append(values)
             for block_size, warps, stages in itertools.product(*dimensions):
                 expanded.append(
@@ -121,7 +125,9 @@ def _load_pointwise_tuning(
             seen.add(encoded)
             configurations.append(configuration)
     if not 2 <= len(configurations) <= 1024:
-        raise ValueError("Iluvatar autotune needs between 2 and 1024 candidates")
+        raise ValueError(
+            "Iluvatar autotune needs between 2 and 1024 candidates"
+        )
     selected_payload = {
         "schema_version": 1,
         "table": candidate.tuning.table,
@@ -185,7 +191,9 @@ def _load_tensor_tuning(
             raise ValueError("Iluvatar tensor tuning META values are invalid")
         num_warps = entry.get("num_warps", 4)
         num_stages = entry.get("num_stages", 1)
-        kernel_configuration.variant(meta, num_warps=num_warps, num_stages=num_stages)
+        kernel_configuration.variant(
+            meta, num_warps=num_warps, num_stages=num_stages
+        )
         configuration = {
             "META": dict(meta),
             "num_warps": num_warps,
@@ -196,7 +204,9 @@ def _load_tensor_tuning(
             seen.add(encoded)
             configurations.append(configuration)
     if not 2 <= len(configurations) <= 1024:
-        raise ValueError("Iluvatar autotune needs between 2 and 1024 candidates")
+        raise ValueError(
+            "Iluvatar autotune needs between 2 and 1024 candidates"
+        )
     selected_payload = {
         "schema_version": 1,
         "table": tuning.table,
@@ -221,13 +231,16 @@ def _wgrad_dot_tuning_fits_shared_memory(
     token = configuration.runtime_signature.get("dy_ptr")
     element_bytes = _WGRAD_DOT_ELEMENT_BYTES.get(token)
     if element_bytes is None:
-        raise ValueError("Iluvatar WGrad dot stage has an invalid dy_ptr ABI token")
+        raise ValueError(
+            "Iluvatar WGrad dot stage has an invalid dy_ptr ABI token"
+        )
 
     required_meta = ("BLOCK_M", "BLOCK_OC", right_meta)
     missing_meta = [name for name in required_meta if name not in meta]
     if missing_meta:
         raise ValueError(
-            "Iluvatar WGrad dot tuning META is missing: " + ", ".join(missing_meta)
+            "Iluvatar WGrad dot tuning META is missing: "
+            + ", ".join(missing_meta)
         )
     values = [meta[name] for name in required_meta]
     if any(
@@ -301,7 +314,8 @@ def _load_nn_tuning(
             configuration.operation == "batchnorm"
             and configuration.function_name == "batch_norm_nchw_kernel"
             and "BLOCK_SIZE" in meta
-            and meta["BLOCK_SIZE"] < configuration.constants.get("BLOCK_SIZE", 1)
+            and meta["BLOCK_SIZE"]
+            < configuration.constants.get("BLOCK_SIZE", 1)
         ):
             continue
         num_warps = entry.get("num_warps", 4)
@@ -317,7 +331,9 @@ def _load_nn_tuning(
             seen.add(encoded)
             configurations.append(projected)
     if not 2 <= len(configurations) <= 1024:
-        raise ValueError("Iluvatar NN autotune needs between 2 and 1024 candidates")
+        raise ValueError(
+            "Iluvatar NN autotune needs between 2 and 1024 candidates"
+        )
     selected_payload = {
         "schema_version": 1,
         "table": tuning.table,

@@ -6,7 +6,7 @@ import itertools
 from pathlib import Path
 from typing import Any
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 _TUNING_ROOT_KEYS = {"schema_version", "backend", "defaults", "tables"}
 

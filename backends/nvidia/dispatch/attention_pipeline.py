@@ -5,12 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from .attention_common import _attention_flag
-from .common import _is_row_major_contiguous
+from .common import ExecutionGroup, _is_row_major_contiguous
 
 
 def _expand_sdpa_fp8_forward_group(
-    group: dict[str, Any],
-) -> list[dict[str, Any]]:
+    group: ExecutionGroup,
+) -> list[ExecutionGroup]:
     parameters = group["parameters"]
     tensors = group["tensors"]
     has_bias = _attention_flag(parameters, "has_bias")
@@ -50,8 +50,8 @@ def _expand_sdpa_fp8_forward_group(
 
 
 def _expand_sdpa_fp8_backward_group(
-    group: dict[str, Any],
-) -> list[dict[str, Any]]:
+    group: ExecutionGroup,
+) -> list[ExecutionGroup]:
     parameters = group["parameters"]
     tensors = group["tensors"]
     if len(tensors) != 25:
@@ -172,10 +172,11 @@ def _expand_sdpa_fp8_backward_group(
 
 
 def _expand_sdpa_backward_group(
-    group: dict[str, Any],
+    group: ExecutionGroup,
     tensor_registry: dict[int, dict[str, Any]],
     next_uid: int,
-) -> tuple[list[dict[str, Any]], int]:
+) -> tuple[list[ExecutionGroup], int]:
+    delta: dict[str, Any]
     parameters = group["parameters"]
     tensors = group["tensors"]
     has_bias = _attention_flag(parameters, "has_bias")
@@ -222,7 +223,7 @@ def _expand_sdpa_backward_group(
     if bias is not None:
         common_inputs.append(bias)
 
-    stages: list[dict[str, Any]] = []
+    stages: list[ExecutionGroup] = []
     if dbias_reduce:
         stages.append(
             {

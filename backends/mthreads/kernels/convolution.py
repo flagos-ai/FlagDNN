@@ -287,14 +287,10 @@ def _conv_fprop2d_im2col_kernel(
     kernel_h = kernel_hw // KW
     kernel_w = kernel_hw - kernel_h * KW
     input_h = (
-        output_h[None, :] * STRIDE_H
-        - PAD_TOP
-        + kernel_h[:, None] * DIL_H
+        output_h[None, :] * STRIDE_H - PAD_TOP + kernel_h[:, None] * DIL_H
     )
     input_w = (
-        output_w[None, :] * STRIDE_W
-        - PAD_LEFT
-        + kernel_w[:, None] * DIL_W
+        output_w[None, :] * STRIDE_W - PAD_LEFT + kernel_w[:, None] * DIL_W
     )
     valid = (
         (packed_k[:, None] < reduction_extent)
@@ -319,8 +315,7 @@ def _conv_fprop2d_im2col_kernel(
         + packed_k[:, None] * COL_STRIDE_K
         + output_m[None, :] * COL_STRIDE_M,
         values,
-        mask=(packed_k[:, None] < reduction_extent)
-        & (output_m[None, :] < M),
+        mask=(packed_k[:, None] < reduction_extent) & (output_m[None, :] < M),
     )
 
 
@@ -362,9 +357,7 @@ def _conv_fprop2d_im2col_mm_kernel(
     reduction = tl.arange(0, BLOCK_K)
     reduction_extent: tl.constexpr = CIN_PER_GROUP * KH * KW
     weight_ptrs = (
-        w_ptr
-        + output_channels[:, None] * W_STRIDE_K
-        + reduction[None, :]
+        w_ptr + output_channels[:, None] * W_STRIDE_K + reduction[None, :]
     )
     column_ptrs = (
         columns_ptr
@@ -388,13 +381,9 @@ def _conv_fprop2d_im2col_mm_kernel(
             other=0.0,
         )
         if INPUT_PRECISION == 1:
-            accumulator += tl.dot(
-                weights, columns, input_precision="tf32"
-            )
+            accumulator += tl.dot(weights, columns, input_precision="tf32")
         else:
-            accumulator += tl.dot(
-                weights, columns, input_precision="ieee"
-            )
+            accumulator += tl.dot(weights, columns, input_precision="ieee")
         weight_ptrs += BLOCK_K
         column_ptrs += BLOCK_K * COL_STRIDE_K
 
@@ -410,6 +399,7 @@ def _conv_fprop2d_im2col_mm_kernel(
         mask=(output_channels[:, None] < COUT_PER_GROUP)
         & (output_m[None, :] < M),
     )
+
 
 @triton.jit
 def conv3d_spatial_ncdhw_m_kernel(
@@ -680,11 +670,7 @@ def _conv_dgrad_nd_impl(
             )
             loss11 = tl.load(
                 loss_base + DY_STRIDE_H + DY_STRIDE_W,
-                mask=(
-                    loss_mask
-                    & active_h1[:, None]
-                    & active_w1[:, None]
-                ),
+                mask=(loss_mask & active_h1[:, None] & active_w1[:, None]),
                 other=0.0,
             )
             weight_base = (
@@ -972,13 +958,9 @@ def _conv_dgrad_nd_impl(
                 other=0.0,
             )
             if INPUT_PRECISION == 1:
-                accumulator += tl.dot(
-                    losses, weights, input_precision="tf32"
-                )
+                accumulator += tl.dot(losses, weights, input_precision="tf32")
             else:
-                accumulator += tl.dot(
-                    losses, weights, input_precision="ieee"
-                )
+                accumulator += tl.dot(losses, weights, input_precision="ieee")
 
         tl.store(
             dx_ptr
@@ -991,7 +973,6 @@ def _conv_dgrad_nd_impl(
             mask=(rows[:, None] < M)
             & (input_channels[None, :] < CIN_PER_GROUP),
         )
-
 
 
 @triton.jit
@@ -1054,21 +1035,14 @@ def _conv_dgrad_stride2_parity(
         active_co = output_channels < COUT_PER_GROUP
         losses = tl.load(
             loss_origin[:, None]
-            + (group * COUT_PER_GROUP + output_channels[None, :])
-            * DY_STRIDE_C
+            + (group * COUT_PER_GROUP + output_channels[None, :]) * DY_STRIDE_C
             + neighbor_h[None, :] * DY_STRIDE_H
             + neighbor_w[None, :] * DY_STRIDE_W,
             mask=(
                 active_rows[:, None]
                 & active_co[None, :]
-                & (
-                    (neighbor_h[None, :] == 0)
-                    | active_h1[:, None]
-                )
-                & (
-                    (neighbor_w[None, :] == 0)
-                    | active_w1[:, None]
-                )
+                & ((neighbor_h[None, :] == 0) | active_h1[:, None])
+                & ((neighbor_w[None, :] == 0) | active_w1[:, None])
             ),
             other=0.0,
         )
@@ -1076,8 +1050,7 @@ def _conv_dgrad_stride2_parity(
         weight_w = 1 + parity_w - 2 * parity_w * neighbor_w
         weights = tl.load(
             weight_origin[None, :]
-            + (group * COUT_PER_GROUP + output_channels[:, None])
-            * W_STRIDE_K
+            + (group * COUT_PER_GROUP + output_channels[:, None]) * W_STRIDE_K
             + weight_h[:, None] * W_STRIDE_H
             + weight_w[:, None] * W_STRIDE_W,
             mask=active_co[:, None] & active_ci[None, :],
@@ -1103,12 +1076,8 @@ def _conv_dgrad2d_pack_filter_kernel(
     BLOCK_CO: tl.constexpr,
     BLOCK_CIT: tl.constexpr,
 ):
-    output_channels = (
-        tl.program_id(0) * BLOCK_CO + tl.arange(0, BLOCK_CO)
-    )
-    packed_columns = (
-        tl.program_id(1) * BLOCK_CIT + tl.arange(0, BLOCK_CIT)
-    )
+    output_channels = tl.program_id(0) * BLOCK_CO + tl.arange(0, BLOCK_CO)
+    packed_columns = tl.program_id(1) * BLOCK_CIT + tl.arange(0, BLOCK_CIT)
     input_channel = packed_columns // 9
     tap = packed_columns - input_channel * 9
     kernel_h = tap // 3
@@ -1181,17 +1150,12 @@ def _conv_dgrad2d_packed_parity_kernel(
         active_co = output_channels < COUT_PER_GROUP
         for neighbor_h in tl.static_range(0, parity_h + 1):
             for neighbor_w in tl.static_range(0, parity_w + 1):
-                weight_h = (
-                    1 + parity_h - 2 * parity_h * neighbor_h
-                )
-                weight_w = (
-                    1 + parity_w - 2 * parity_w * neighbor_w
-                )
+                weight_h = 1 + parity_h - 2 * parity_h * neighbor_h
+                weight_w = 1 + parity_w - 2 * parity_w * neighbor_w
                 tap = weight_h * 3 + weight_w
                 weights = tl.load(
                     packed_filter_ptr
-                    + (input_channels[:, None] * 9 + tap)
-                    * COUT_PER_GROUP
+                    + (input_channels[:, None] * 9 + tap) * COUT_PER_GROUP
                     + output_channels[None, :],
                     mask=active_ci[:, None] & active_co[None, :],
                     other=0.0,
@@ -1271,31 +1235,22 @@ def _conv_dgrad2d_packed_parity_split_kernel(
     loss_w = loss_hw - loss_h * OW
     parity_h: tl.constexpr = PARITY // 2
     parity_w: tl.constexpr = PARITY - parity_h * 2
-    channels_per_split: tl.constexpr = tl.cdiv(
-        COUT_PER_GROUP, NUM_SPLITS
-    )
+    channels_per_split: tl.constexpr = tl.cdiv(COUT_PER_GROUP, NUM_SPLITS)
     split_start = split * channels_per_split
     split_end = tl.minimum(split_start + channels_per_split, COUT_PER_GROUP)
     accumulator = tl.zeros((BLOCK_CI, BLOCK_M), dtype=tl.float32)
 
     for local_start in range(0, channels_per_split, BLOCK_K):
-        output_channels = (
-            split_start + local_start + tl.arange(0, BLOCK_K)
-        )
+        output_channels = split_start + local_start + tl.arange(0, BLOCK_K)
         active_co = output_channels < split_end
         for neighbor_h in tl.static_range(0, parity_h + 1):
             for neighbor_w in tl.static_range(0, parity_w + 1):
-                weight_h = (
-                    1 + parity_h - 2 * parity_h * neighbor_h
-                )
-                weight_w = (
-                    1 + parity_w - 2 * parity_w * neighbor_w
-                )
+                weight_h = 1 + parity_h - 2 * parity_h * neighbor_h
+                weight_w = 1 + parity_w - 2 * parity_w * neighbor_w
                 tap = weight_h * 3 + weight_w
                 weights = tl.load(
                     packed_filter_ptr
-                    + (input_channels[:, None] * 9 + tap)
-                    * COUT_PER_GROUP
+                    + (input_channels[:, None] * 9 + tap) * COUT_PER_GROUP
                     + output_channels[None, :],
                     mask=active_ci[:, None] & active_co[None, :],
                     other=0.0,
@@ -1388,11 +1343,7 @@ def _conv_dgrad2d_packed_reduce_kernel(
         + output_h * X_STRIDE_H
         + output_w * X_STRIDE_W,
         accumulator.to(output_ptr.dtype.element_ty),
-        mask=(
-            active
-            & (output_h < XH)
-            & (output_w < XW)
-        ),
+        mask=(active & (output_h < XH) & (output_w < XW)),
     )
 
 
@@ -1409,9 +1360,7 @@ def _conv_dgrad2d_dense_pack_filter_kernel(
     BLOCK_ROW: tl.constexpr,
     BLOCK_K: tl.constexpr,
 ):
-    matrix_rows = (
-        tl.program_id(0) * BLOCK_ROW + tl.arange(0, BLOCK_ROW)
-    )
+    matrix_rows = tl.program_id(0) * BLOCK_ROW + tl.arange(0, BLOCK_ROW)
     packed_k = tl.program_id(1) * BLOCK_K + tl.arange(0, BLOCK_K)
     parity = matrix_rows // CIN_PER_GROUP
     input_channel = matrix_rows - parity * CIN_PER_GROUP
@@ -1421,19 +1370,14 @@ def _conv_dgrad2d_dense_pack_filter_kernel(
     parity_w = parity - parity_h * 2
     neighbor_h = neighbor // 2
     neighbor_w = neighbor - neighbor_h * 2
-    allowed = (
-        (neighbor_h[None, :] <= parity_h[:, None])
-        & (neighbor_w[None, :] <= parity_w[:, None])
+    allowed = (neighbor_h[None, :] <= parity_h[:, None]) & (
+        neighbor_w[None, :] <= parity_w[:, None]
     )
     weight_h = (
-        1
-        + parity_h[:, None]
-        - 2 * parity_h[:, None] * neighbor_h[None, :]
+        1 + parity_h[:, None] - 2 * parity_h[:, None] * neighbor_h[None, :]
     )
     weight_w = (
-        1
-        + parity_w[:, None]
-        - 2 * parity_w[:, None] * neighbor_w[None, :]
+        1 + parity_w[:, None] - 2 * parity_w[:, None] * neighbor_w[None, :]
     )
     active_row = matrix_rows < 4 * CIN_PER_GROUP
     active_k = packed_k < 4 * COUT_PER_GROUP
@@ -1488,11 +1432,7 @@ def _conv_dgrad2d_dense_pack_loss_kernel(
     active_k = packed_k < 4 * COUT_PER_GROUP
     active_rows = rows < M
     active = active_k[:, None] & active_rows[None, :]
-    valid = (
-        active
-        & (neighbor_loss_h < OH)
-        & (neighbor_loss_w < OW)
-    )
+    valid = active & (neighbor_loss_h < OH) & (neighbor_loss_w < OW)
     values = tl.load(
         loss_ptr
         + batch[None, :] * DY_STRIDE_N
@@ -1503,10 +1443,7 @@ def _conv_dgrad2d_dense_pack_loss_kernel(
         other=0.0,
     )
     tl.store(
-        packed_ptr
-        + PACKED_OFFSET
-        + packed_k[:, None] * M
-        + rows[None, :],
+        packed_ptr + PACKED_OFFSET + packed_k[:, None] * M + rows[None, :],
         values,
         mask=active,
     )
@@ -1704,18 +1641,10 @@ def _conv_dgrad_concat_experiment(
             + loss_w * DY_STRIDE_W
         )
         weight_origin = w_ptr + input_channels * W_STRIDE_C
-        accumulator00 = tl.zeros(
-            (BLOCK_M, BLOCK_CI), dtype=tl.float32
-        )
-        accumulator01 = tl.zeros(
-            (BLOCK_M, BLOCK_CI), dtype=tl.float32
-        )
-        accumulator10 = tl.zeros(
-            (BLOCK_M, BLOCK_CI), dtype=tl.float32
-        )
-        accumulator11 = tl.zeros(
-            (BLOCK_M, BLOCK_CI), dtype=tl.float32
-        )
+        accumulator00 = tl.zeros((BLOCK_M, BLOCK_CI), dtype=tl.float32)
+        accumulator01 = tl.zeros((BLOCK_M, BLOCK_CI), dtype=tl.float32)
+        accumulator10 = tl.zeros((BLOCK_M, BLOCK_CI), dtype=tl.float32)
+        accumulator11 = tl.zeros((BLOCK_M, BLOCK_CI), dtype=tl.float32)
 
         for start in range(0, COUT_PER_GROUP, BLOCK_K):
             reduction00 = tl.arange(0, BLOCK_K)
@@ -1743,9 +1672,7 @@ def _conv_dgrad_concat_experiment(
 
             reduction01 = tl.arange(0, 2 * BLOCK_K)
             tap_w01 = reduction01 // BLOCK_K
-            output_channels01 = (
-                start + reduction01 - tap_w01 * BLOCK_K
-            )
+            output_channels01 = start + reduction01 - tap_w01 * BLOCK_K
             active_co01 = output_channels01 < COUT_PER_GROUP
             losses01 = tl.load(
                 loss_origin[:, None]
@@ -1755,10 +1682,7 @@ def _conv_dgrad_concat_experiment(
                 mask=(
                     active_rows[:, None]
                     & active_co01[None, :]
-                    & (
-                        (tap_w01[None, :] == 0)
-                        | active_w1[:, None]
-                    )
+                    & ((tap_w01[None, :] == 0) | active_w1[:, None])
                 ),
                 other=0.0,
             )
@@ -1777,9 +1701,7 @@ def _conv_dgrad_concat_experiment(
 
             reduction10 = tl.arange(0, 2 * BLOCK_K)
             tap_h10 = reduction10 // BLOCK_K
-            output_channels10 = (
-                start + reduction10 - tap_h10 * BLOCK_K
-            )
+            output_channels10 = start + reduction10 - tap_h10 * BLOCK_K
             active_co10 = output_channels10 < COUT_PER_GROUP
             losses10 = tl.load(
                 loss_origin[:, None]
@@ -1789,10 +1711,7 @@ def _conv_dgrad_concat_experiment(
                 mask=(
                     active_rows[:, None]
                     & active_co10[None, :]
-                    & (
-                        (tap_h10[None, :] == 0)
-                        | active_h1[:, None]
-                    )
+                    & ((tap_h10[None, :] == 0) | active_h1[:, None])
                 ),
                 other=0.0,
             )
@@ -1813,9 +1732,7 @@ def _conv_dgrad_concat_experiment(
             tap_h11 = reduction11 // (2 * BLOCK_K)
             remaining11 = reduction11 - tap_h11 * (2 * BLOCK_K)
             tap_w11 = remaining11 // BLOCK_K
-            output_channels11 = (
-                start + remaining11 - tap_w11 * BLOCK_K
-            )
+            output_channels11 = start + remaining11 - tap_w11 * BLOCK_K
             active_co11 = output_channels11 < COUT_PER_GROUP
             losses11 = tl.load(
                 loss_origin[:, None]
@@ -1826,14 +1743,8 @@ def _conv_dgrad_concat_experiment(
                 mask=(
                     active_rows[:, None]
                     & active_co11[None, :]
-                    & (
-                        (tap_h11[None, :] == 0)
-                        | active_h1[:, None]
-                    )
-                    & (
-                        (tap_w11[None, :] == 0)
-                        | active_w1[:, None]
-                    )
+                    & ((tap_h11[None, :] == 0) | active_h1[:, None])
+                    & ((tap_w11[None, :] == 0) | active_w1[:, None])
                 ),
                 other=0.0,
             )
@@ -1853,8 +1764,7 @@ def _conv_dgrad_concat_experiment(
         output_base = (
             dx_ptr
             + batch[:, None] * X_STRIDE_N
-            + (group * CIN_PER_GROUP + input_channels[None, :])
-            * X_STRIDE_C
+            + (group * CIN_PER_GROUP + input_channels[None, :]) * X_STRIDE_C
         )
         output_mask = active_rows[:, None] & active_ci[None, :]
         tl.store(
@@ -2040,18 +1950,14 @@ def conv_dgrad_nd_kernel(
         active_ci = input_channels < CIN_PER_GROUP
         batch = rows // base_width
         base_w = rows - batch * base_width
-        accumulator = tl.zeros(
-            (BLOCK_M, 2 * BLOCK_CI), dtype=tl.float32
-        )
+        accumulator = tl.zeros((BLOCK_M, 2 * BLOCK_CI), dtype=tl.float32)
 
         for start in range(0, COUT_PER_GROUP, BLOCK_K):
             reduction = tl.arange(0, 4 * BLOCK_K)
             neighbor = reduction // BLOCK_K
             active_neighbor = neighbor < 3
             output_channels = start + reduction - neighbor * BLOCK_K
-            neighbor_output_w = (
-                base_w[:, None] + neighbor[None, :] - 1
-            )
+            neighbor_output_w = base_w[:, None] + neighbor[None, :] - 1
             active_co = output_channels < COUT_PER_GROUP
             losses = tl.load(
                 dy_ptr
@@ -2069,11 +1975,7 @@ def conv_dgrad_nd_kernel(
                 other=0.0,
             )
             allowed = neighbor[:, None] >= parity[None, :]
-            weight_w = (
-                4
-                + parity[None, :]
-                - 2 * neighbor[:, None]
-            )
+            weight_w = 4 + parity[None, :] - 2 * neighbor[:, None]
             weights = tl.load(
                 w_ptr
                 + (group * COUT_PER_GROUP + output_channels[:, None])
@@ -2096,15 +1998,10 @@ def conv_dgrad_nd_kernel(
         tl.store(
             dx_ptr
             + batch[:, None] * X_STRIDE_N
-            + (group * CIN_PER_GROUP + input_channels[None, :])
-            * X_STRIDE_C
+            + (group * CIN_PER_GROUP + input_channels[None, :]) * X_STRIDE_C
             + output_w * X_STRIDE_W,
             accumulator.to(dx_ptr.dtype.element_ty),
-            mask=(
-                active_rows[:, None]
-                & active_ci[None, :]
-                & (output_w < XW)
-            ),
+            mask=(active_rows[:, None] & active_ci[None, :] & (output_w < XW)),
         )
     elif packed_stride2_2d and CIN_PER_GROUP <= 4:
         tile = tl.program_id(0)
@@ -2162,20 +2059,13 @@ def conv_dgrad_nd_kernel(
                 mask=(
                     active_rows[:, None]
                     & active_co[None, :]
-                    & (
-                        (neighbor_h[None, :] == 0)
-                        | active_h1[:, None]
-                    )
-                    & (
-                        (neighbor_w[None, :] == 0)
-                        | active_w1[:, None]
-                    )
+                    & ((neighbor_h[None, :] == 0) | active_h1[:, None])
+                    & ((neighbor_w[None, :] == 0) | active_w1[:, None])
                 ),
                 other=0.0,
             )
-            allowed = (
-                (neighbor_h[:, None] <= parity_h[None, :])
-                & (neighbor_w[:, None] <= parity_w[None, :])
+            allowed = (neighbor_h[:, None] <= parity_h[None, :]) & (
+                neighbor_w[:, None] <= parity_w[None, :]
             )
             weight_h = (
                 1
@@ -2194,11 +2084,7 @@ def conv_dgrad_nd_kernel(
                 + input_channels[None, :] * W_STRIDE_C
                 + weight_h * W_STRIDE_H
                 + weight_w * W_STRIDE_W,
-                mask=(
-                    active_co[:, None]
-                    & active_ci[None, :]
-                    & allowed
-                ),
+                mask=(active_co[:, None] & active_ci[None, :] & allowed),
                 other=0.0,
             )
             accumulator = _conv_dgrad_dot(
@@ -2210,8 +2096,7 @@ def conv_dgrad_nd_kernel(
         tl.store(
             dx_ptr
             + batch[:, None] * X_STRIDE_N
-            + (group * CIN_PER_GROUP + input_channels[None, :])
-            * X_STRIDE_C
+            + (group * CIN_PER_GROUP + input_channels[None, :]) * X_STRIDE_C
             + output_h * X_STRIDE_H
             + output_w * X_STRIDE_W,
             accumulator.to(dx_ptr.dtype.element_ty),
@@ -2255,8 +2140,7 @@ def conv_dgrad_nd_kernel(
         output_base = (
             dx_ptr
             + batch[:, None] * X_STRIDE_N
-            + (group * CIN_PER_GROUP + input_channels[None, :])
-            * X_STRIDE_C
+            + (group * CIN_PER_GROUP + input_channels[None, :]) * X_STRIDE_C
         )
         output_mask = active_rows[:, None] & active_ci[None, :]
 
@@ -2381,20 +2265,53 @@ def conv_dgrad_nd_kernel(
         )
     else:
         _conv_dgrad_nd_impl(
-            dy_ptr, w_ptr, dx_ptr,
-            XD, XH, XW, OD, OH, OW, KD, KH, KW,
-            CIN_PER_GROUP, COUT_PER_GROUP,
-            STRIDE_D, STRIDE_H, STRIDE_W,
-            PAD_FRONT, PAD_TOP, PAD_LEFT,
-            DIL_D, DIL_H, DIL_W, FLIP_FILTER,
-            DY_STRIDE_N, DY_STRIDE_C, DY_STRIDE_D,
-            DY_STRIDE_H, DY_STRIDE_W,
-            X_STRIDE_N, X_STRIDE_C, X_STRIDE_D,
-            X_STRIDE_H, X_STRIDE_W,
-            W_STRIDE_K, W_STRIDE_C, W_STRIDE_D,
-            W_STRIDE_H, W_STRIDE_W,
-            INPUT_PRECISION, M, BLOCK_M, BLOCK_CI, BLOCK_K, GROUP_M,
+            dy_ptr,
+            w_ptr,
+            dx_ptr,
+            XD,
+            XH,
+            XW,
+            OD,
+            OH,
+            OW,
+            KD,
+            KH,
+            KW,
+            CIN_PER_GROUP,
+            COUT_PER_GROUP,
+            STRIDE_D,
+            STRIDE_H,
+            STRIDE_W,
+            PAD_FRONT,
+            PAD_TOP,
+            PAD_LEFT,
+            DIL_D,
+            DIL_H,
+            DIL_W,
+            FLIP_FILTER,
+            DY_STRIDE_N,
+            DY_STRIDE_C,
+            DY_STRIDE_D,
+            DY_STRIDE_H,
+            DY_STRIDE_W,
+            X_STRIDE_N,
+            X_STRIDE_C,
+            X_STRIDE_D,
+            X_STRIDE_H,
+            X_STRIDE_W,
+            W_STRIDE_K,
+            W_STRIDE_C,
+            W_STRIDE_D,
+            W_STRIDE_H,
+            W_STRIDE_W,
+            INPUT_PRECISION,
+            M,
+            BLOCK_M,
+            BLOCK_CI,
+            BLOCK_K,
+            GROUP_M,
         )
+
 
 @triton.jit
 def conv_wgrad_nd_kernel(
@@ -2500,8 +2417,7 @@ def conv_wgrad_nd_kernel(
         inputs = tl.load(
             x_ptr
             + batch[:, None] * X_STRIDE_N
-            + (group * CIN_PER_GROUP + input_channels[None, :])
-            * X_STRIDE_C
+            + (group * CIN_PER_GROUP + input_channels[None, :]) * X_STRIDE_C
             + input_d[:, None] * X_STRIDE_D
             + input_h[:, None] * X_STRIDE_H
             + input_w[:, None] * X_STRIDE_W,
@@ -2624,6 +2540,7 @@ def _conv_wgrad2d_stem_split_kernel(
         & (packed_k[None, :] < reduction_extent),
     )
 
+
 @triton.jit
 def _conv_wgrad2d_direct_split_kernel(
     dy_ptr,
@@ -2690,19 +2607,14 @@ def _conv_wgrad2d_direct_split_kernel(
             + output_channels[:, None] * DY_STRIDE_C
             + output_h[None, :] * DY_STRIDE_H
             + output_w[None, :] * DY_STRIDE_W,
-            mask=(output_channels[:, None] < COUT_PER_GROUP)
-            & active[None, :],
+            mask=(output_channels[:, None] < COUT_PER_GROUP) & active[None, :],
             other=0.0,
         )
         input_h = (
-            output_h[:, None] * STRIDE_H
-            - PAD_TOP
-            + kernel_h[None, :] * DIL_H
+            output_h[:, None] * STRIDE_H - PAD_TOP + kernel_h[None, :] * DIL_H
         )
         input_w = (
-            output_w[:, None] * STRIDE_W
-            - PAD_LEFT
-            + kernel_w[None, :] * DIL_W
+            output_w[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
         )
         inputs = tl.load(
             x_ptr
@@ -2780,8 +2692,7 @@ def _conv_wgrad2d_1x1_split_kernel(
             + batch[None, :] * (C_OUT * HW)
             + global_oc[:, None] * HW
             + spatial[None, :],
-            mask=(output_channels[:, None] < COUT_PER_GROUP)
-            & active[None, :],
+            mask=(output_channels[:, None] < COUT_PER_GROUP) & active[None, :],
             other=0.0,
         )
         inputs = tl.load(
@@ -2789,8 +2700,7 @@ def _conv_wgrad2d_1x1_split_kernel(
             + batch[:, None] * (C_IN * HW)
             + global_ci[None, :] * HW
             + spatial[:, None],
-            mask=active[:, None]
-            & (input_channels[None, :] < CIN_PER_GROUP),
+            mask=active[:, None] & (input_channels[None, :] < CIN_PER_GROUP),
             other=0.0,
         )
         if DTYPE_ID == 0:
@@ -2808,7 +2718,6 @@ def _conv_wgrad2d_1x1_split_kernel(
         mask=(output_channels[:, None] < COUT_PER_GROUP)
         & (input_channels[None, :] < CIN_PER_GROUP),
     )
-
 
 
 @triton.jit
@@ -2902,19 +2811,12 @@ def _conv_wgrad2d_im2row_kernel(
     kernel_h = kernel_hw // KW
     kernel_w = kernel_hw - kernel_h * KW
     input_h = (
-        output_h[:, None] * STRIDE_H
-        - PAD_TOP
-        + kernel_h[None, :] * DIL_H
+        output_h[:, None] * STRIDE_H - PAD_TOP + kernel_h[None, :] * DIL_H
     )
     input_w = (
-        output_w[:, None] * STRIDE_W
-        - PAD_LEFT
-        + kernel_w[None, :] * DIL_W
+        output_w[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
     )
-    active = (
-        (output_m[:, None] < M)
-        & (packed_k[None, :] < reduction_extent)
-    )
+    active = (output_m[:, None] < M) & (packed_k[None, :] < reduction_extent)
     valid = (
         active
         & (input_h >= 0)
@@ -2986,8 +2888,7 @@ def _conv_wgrad2d_rowmajor_kernel(
             + batch * DY_STRIDE_N
             + output_channels[:, None] * DY_STRIDE_C
             + output_m[None, :] * DY_STRIDE_W,
-            mask=(output_channels[:, None] < COUT_PER_GROUP)
-            & active[None, :],
+            mask=(output_channels[:, None] < COUT_PER_GROUP) & active[None, :],
             other=0.0,
         )
         linear_row = batch * M + output_m
@@ -2996,8 +2897,7 @@ def _conv_wgrad2d_rowmajor_kernel(
             + COL_OFFSET
             + linear_row[:, None] * COL_STRIDE_R
             + packed_k[None, :] * COL_STRIDE_K,
-            mask=active[:, None]
-            & (packed_k[None, :] < reduction_extent),
+            mask=active[:, None] & (packed_k[None, :] < reduction_extent),
             other=0.0,
         )
         if DTYPE_ID == 0:
@@ -3075,10 +2975,7 @@ def _conv_wgrad_nd_im2row_kernel(
     input_d = output_d[:, None] * STRIDE_D - PAD_D + kernel_d[None, :] * DIL_D
     input_h = output_h[:, None] * STRIDE_H - PAD_H + kernel_h[None, :] * DIL_H
     input_w = output_w[:, None] * STRIDE_W - PAD_W + kernel_w[None, :] * DIL_W
-    active = (
-        (output_m[:, None] < M)
-        & (packed_k[None, :] < reduction_extent)
-    )
+    active = (output_m[:, None] < M) & (packed_k[None, :] < reduction_extent)
     valid = (
         active
         & (input_d >= 0)
@@ -3155,8 +3052,7 @@ def _conv_wgrad_nd_rowmajor_kernel(
             + batch[None, :] * DY_STRIDE_N
             + output_channels[:, None] * DY_STRIDE_C
             + output_m[None, :] * DY_STRIDE_SPATIAL,
-            mask=(output_channels[:, None] < COUT_PER_GROUP)
-            & active[None, :],
+            mask=(output_channels[:, None] < COUT_PER_GROUP) & active[None, :],
             other=0.0,
         )
         columns = tl.load(
@@ -3164,8 +3060,7 @@ def _conv_wgrad_nd_rowmajor_kernel(
             + COL_OFFSET
             + linear_row[:, None] * COL_STRIDE_R
             + packed_k[None, :] * COL_STRIDE_K,
-            mask=active[:, None]
-            & (packed_k[None, :] < REDUCTION_EXTENT),
+            mask=active[:, None] & (packed_k[None, :] < REDUCTION_EXTENT),
             other=0.0,
         )
         if DTYPE_ID == 0:
@@ -3300,14 +3195,12 @@ def _conv_wgrad2d_p5_mm_kernel(
         reduction_offsets = start + reduction
         loss = tl.load(
             loss_ptrs,
-            mask=(rows[:, None] < M)
-            & (reduction_offsets[None, :] < K),
+            mask=(rows[:, None] < M) & (reduction_offsets[None, :] < K),
             other=0.0,
         )
         packed = tl.load(
             packed_ptrs,
-            mask=(reduction_offsets[:, None] < K)
-            & (columns[None, :] < N),
+            mask=(reduction_offsets[:, None] < K) & (columns[None, :] < N),
             other=0.0,
         )
         if DTYPE_ID == 0:

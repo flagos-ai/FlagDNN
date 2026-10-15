@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Sequence
+
 import ast
 from ..dispatch.common import (
     GRAPH_WORKSPACE_ALIGNMENT,
@@ -305,84 +307,42 @@ def _validate_kernel_function(
         for node in module.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    expected = (
-        _CONVOLUTION_IM2COL_PARAMETERS
-        if function_name == "convolution_fprop_im2col_kernel"
-        else (
-            _CONVOLUTION_FPROP_PARAMETERS
-            if function_name == "convolution_fprop_persistent_kernel"
-            else (
-                _MATMUL_PARAMETERS
-                if function_name == "matmul_strided_kernel"
-                else (
-                    _BATCHNORM_TRAINING_PARAMETERS
-                    if function_name == "batchnorm_training_persistent_kernel"
-                    else (
-                        _LAYERNORM_PARAMETERS
-                        if function_name == "layernorm_persistent_kernel"
-                        else (
-                            _RMSNORM_PARAMETERS
-                            if function_name == "rmsnorm_persistent_kernel"
-                            else (
-                                _BATCHNORM_NCHW_PARAMETERS
-                                if function_name
-                                == "batchnorm_inference_nchw_persistent_kernel"
-                                else (
-                                    _BATCHNORM_STRIDED_PARAMETERS
-                                    if function_name
-                                    == "batchnorm_inference_strided_persistent_kernel"
-                                    else (
-                                        _CONTIGUOUS_PARAMETERS
-                                        if function_name == "binary_contiguous_kernel"
-                                        else (
-                                            _STRIDED_PARAMETERS
-                                            if function_name == "binary_strided_kernel"
-                                            else (
-                                                _UNARY_CONTIGUOUS_PARAMETERS
-                                                if function_name
-                                                == "unary_pointwise_contiguous_kernel"
-                                                else (
-                                                    _UNARY_STRIDED_PARAMETERS
-                                                    if function_name
-                                                    == "unary_pointwise_strided_kernel"
-                                                    else (
-                                                        _TERNARY_CONTIGUOUS_PARAMETERS
-                                                        if function_name
-                                                        == "binary_select_contiguous_kernel"
-                                                        else (
-                                                            _TERNARY_STRIDED_PARAMETERS
-                                                            if function_name
-                                                            == "binary_select_strided_kernel"
-                                                            else (
-                                                                _LAYOUT_PARAMETERS
-                                                                if function_name
-                                                                == "layout_copy_kernel"
-                                                                else (
-                                                                    _REDUCTION_3D_PARAMETERS
-                                                                    if function_name
-                                                                    == "reduction_3d_persistent_kernel"
-                                                                    else (
-                                                                        _REDUCTION_STRIDED_PARAMETERS
-                                                                        if function_name
-                                                                        == "reduction_strided_persistent_kernel"
-                                                                        else None
-                                                                    )
-                                                                )
-                                                            )
-                                                        )
-                                                    )
-                                                )
-                                            )
-                                        )
-                                    )
-                                )
-                            )
-                        )
-                    )
-                )
-            )
-        )
-    )
+    if function_name == "convolution_fprop_im2col_kernel":
+        expected = _CONVOLUTION_IM2COL_PARAMETERS
+    elif function_name == "convolution_fprop_persistent_kernel":
+        expected = _CONVOLUTION_FPROP_PARAMETERS
+    elif function_name == "matmul_strided_kernel":
+        expected = _MATMUL_PARAMETERS
+    elif function_name == "batchnorm_training_persistent_kernel":
+        expected = _BATCHNORM_TRAINING_PARAMETERS
+    elif function_name == "layernorm_persistent_kernel":
+        expected = _LAYERNORM_PARAMETERS
+    elif function_name == "rmsnorm_persistent_kernel":
+        expected = _RMSNORM_PARAMETERS
+    elif function_name == "batchnorm_inference_nchw_persistent_kernel":
+        expected = _BATCHNORM_NCHW_PARAMETERS
+    elif function_name == "batchnorm_inference_strided_persistent_kernel":
+        expected = _BATCHNORM_STRIDED_PARAMETERS
+    elif function_name == "binary_contiguous_kernel":
+        expected = _CONTIGUOUS_PARAMETERS
+    elif function_name == "binary_strided_kernel":
+        expected = _STRIDED_PARAMETERS
+    elif function_name == "unary_pointwise_contiguous_kernel":
+        expected = _UNARY_CONTIGUOUS_PARAMETERS
+    elif function_name == "unary_pointwise_strided_kernel":
+        expected = _UNARY_STRIDED_PARAMETERS
+    elif function_name == "binary_select_contiguous_kernel":
+        expected = _TERNARY_CONTIGUOUS_PARAMETERS
+    elif function_name == "binary_select_strided_kernel":
+        expected = _TERNARY_STRIDED_PARAMETERS
+    elif function_name == "layout_copy_kernel":
+        expected = _LAYOUT_PARAMETERS
+    elif function_name == "reduction_3d_persistent_kernel":
+        expected = _REDUCTION_3D_PARAMETERS
+    elif function_name == "reduction_strided_persistent_kernel":
+        expected = _REDUCTION_STRIDED_PARAMETERS
+    else:
+        expected = None
     if expected is None or definitions.get(function_name) != expected:
         raise ValueError(
             "Ascend kernel declaration does not match its raw ABI " "contract"
@@ -390,9 +350,13 @@ def _validate_kernel_function(
 
 
 def _ascend_full_signature(
-    stage: PointwiseStagePlan, meta: dict[str, int | float]
+    stage: PointwiseStagePlan, meta: dict[str, int | float | str | bool]
 ) -> str:
-    def pointer_signature(tensor: TensorPlan, token_override: str | None = None) -> str:
+    names: Sequence[str]
+
+    def pointer_signature(
+        tensor: TensorPlan, token_override: str | None = None
+    ) -> str:
         token = (
             token_override
             if token_override is not None
@@ -408,7 +372,8 @@ def _ascend_full_signature(
         element_size = int(meta["ELEMENT_SIZE_BYTES"])
         layout_pointer_token = "*i16" if element_size == 2 else "*i32"
     tokens = [
-        pointer_signature(tensor, layout_pointer_token) for tensor in stage.tensors
+        pointer_signature(tensor, layout_pointer_token)
+        for tensor in stage.tensors
     ]
     tokens.append("i32")
     if stage.function_name == "binary_strided_kernel":
@@ -520,8 +485,12 @@ def _ascend_full_signature(
         )
         tokens.extend(str(meta[name]) for name in names)
     elif stage.function_name == "batchnorm_inference_nchw_persistent_kernel":
-        tokens.extend(str(meta[name]) for name in ("RANK", "CHANNELS", "SPATIAL"))
-    elif stage.function_name == "batchnorm_inference_strided_persistent_kernel":
+        tokens.extend(
+            str(meta[name]) for name in ("RANK", "CHANNELS", "SPATIAL")
+        )
+    elif (
+        stage.function_name == "batchnorm_inference_strided_persistent_kernel"
+    ):
         names = (
             ["RANK", "CHANNELS", "SPATIAL"]
             + [f"DIM_{axis}" for axis in range(MAX_RANK)]
@@ -550,7 +519,8 @@ def _ascend_full_signature(
         "layernorm_persistent_kernel",
     }:
         tokens.extend(
-            str(meta[name]) for name in ("ROWS", "NORMALIZED_ELEMENTS", "EPSILON")
+            str(meta[name])
+            for name in ("ROWS", "NORMALIZED_ELEMENTS", "EPSILON")
         )
     if stage.kernel_family == "binary":
         tokens.extend(
@@ -579,6 +549,7 @@ def _ascend_full_signature(
 def _runtime_argument_abi(
     stage: PointwiseStagePlan,
 ) -> list[dict[str, int | str]]:
+    pointer_names: tuple[str, ...]
     if stage.kernel_family == "binary":
         pointer_names = ("x_ptr", "y_ptr", "out_ptr")
     elif stage.kernel_family == "unary":

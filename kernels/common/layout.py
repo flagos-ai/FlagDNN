@@ -20,7 +20,9 @@ def matrix_transpose_kernel(
     COLUMNS: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    """Materialize a compact matrix transpose with coalesced reads and writes."""
+    """
+    Materialize a compact matrix transpose with coalesced reads and writes.
+    """
     row = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
     column = tl.program_id(1).to(tl.int64) * BLOCK_SIZE + tl.arange(
         0, BLOCK_SIZE

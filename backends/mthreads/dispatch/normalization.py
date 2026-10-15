@@ -15,6 +15,7 @@ from .graph import (
     ParsedBatchnormInferenceRequest,
     ParsedBatchnormRequest,
     ParsedNormalizationRequest,
+    TensorSpec,
 )
 from .program import (
     AutotuneSpec,
@@ -30,6 +31,7 @@ from .tuning import _load_tuning
 def _normalization_runtime_arguments(
     request: ParsedNormalizationRequest,
 ) -> tuple[RuntimeArgument, ...]:
+    tensors: tuple[tuple[str, TensorSpec], ...]
     if request.operation == "layernorm":
         if request.mean is None:
             raise ValueError("LayerNorm request is missing mean output")
@@ -67,6 +69,8 @@ def _normalization_full_signature(
     *,
     block_size: int,
 ) -> str:
+    tensors: tuple[TensorSpec, ...]
+    constants: tuple[int | str, ...]
     if request.operation == "layernorm":
         if request.mean is None:
             raise ValueError("LayerNorm request is missing mean output")

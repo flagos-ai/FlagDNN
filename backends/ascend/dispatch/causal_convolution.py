@@ -11,8 +11,12 @@ from .common import (
 
 def _causal_conv1d_kernel_configuration(parameters, tensors):
     bias = _require_integer(parameters, "has_bias", minimum=0, maximum=1) == 1
-    activation = _require_integer(parameters, "activation", minimum=0, maximum=1)
-    precision = _require_integer(parameters, "input_precision", minimum=0, maximum=2)
+    activation = _require_integer(
+        parameters, "activation", minimum=0, maximum=1
+    )
+    precision = _require_integer(
+        parameters, "input_precision", minimum=0, maximum=2
+    )
     dilation = _require_integer(parameters, "dilation")
     if len(tensors) != (4 if bias else 3):
         raise ValueError("causal_conv1d tensor count is inconsistent")
@@ -32,7 +36,9 @@ def _causal_conv1d_kernel_configuration(parameters, tensors):
     ):
         raise ValueError("causal_conv1d input dtype or precision is invalid")
     for tensor in tensors:
-        if tensor["data_type"] != x["data_type"] or not _has_non_overlapping_strides(
+        if tensor["data_type"] != x[
+            "data_type"
+        ] or not _has_non_overlapping_strides(
             tensor["dimensions"], tensor["strides"]
         ):
             raise ValueError(
@@ -47,7 +53,10 @@ def _causal_conv1d_kernel_configuration(parameters, tensors):
     if bias and tensors[2]["dimensions"] != [channels]:
         raise ValueError("causal_conv1d bias requires shape [C]")
     elements = _require_integer(parameters, "n_elements")
-    if elements != math.prod(x["dimensions"]) or (width - 1) * dilation > 2**63 - 1:
+    if (
+        elements != math.prod(x["dimensions"])
+        or (width - 1) * dilation > 2**63 - 1
+    ):
         raise ValueError("causal_conv1d sizes are inconsistent or too large")
     constants = {
         "ELEMENTS": elements,

@@ -1,7 +1,9 @@
 # Copyright 2026 FlagOS Contributors
 # SPDX-License-Identifier: Apache-2.0
 
-"""Host-only contracts for portable kernel ownership and source dependencies."""
+"""
+Host-only contracts for portable kernel ownership and source dependencies.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +15,7 @@ import unittest
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "compiler"))
-from flagdnn_codegen.kernel_registry import (
+from flagdnn_codegen.kernel_registry import (  # noqa: E402
     iter_kernel_candidates,
     resolve_kernel_source,
     select_kernel_candidate,

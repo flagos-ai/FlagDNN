@@ -209,6 +209,7 @@ def _batchnorm_kernel_configuration(
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    constants: dict[str, int | float | str | bool]
     if len(tensors) != 10:
         raise ValueError("batchnorm tensor count is invalid")
     (
@@ -294,7 +295,7 @@ def _batchnorm_kernel_configuration(
     if any(pointer_type is None for pointer_type in pointer_types):
         raise ValueError("unsupported batchnorm data type")
     block = 256
-    constants: dict[str, int | float | str | bool] = {
+    constants = {
         "eps": epsilon,
         "momentum": momentum,
         "BLOCK_SIZE": block,
@@ -405,6 +406,7 @@ def _batchnorm_inference_kernel_configuration(
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    constants: dict[str, int | float | str | bool]
     if len(tensors) != 6:
         raise ValueError("batchnorm inference tensor count is invalid")
     x, mean, inv_variance, scale, bias, y = tensors
@@ -468,7 +470,7 @@ def _batchnorm_inference_kernel_configuration(
     if any(pointer_type is None for pointer_type in pointer_types):
         raise ValueError("unsupported batchnorm inference data type")
     block = 256
-    constants: dict[str, int | float | str | bool] = {
+    constants = {
         "eps": 0.0,
         "BLOCK_SIZE": block,
         "HAS_WEIGHT": True,

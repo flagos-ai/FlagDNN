@@ -32,6 +32,9 @@ def _sdpa_forward_kernel_configuration(
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    pointer_layout: list[tuple[str, str | int | None]]
+    scalar_layout: list[tuple[str, str | int | None]]
+    constants: dict[str, int | float | str | bool]
     has_bias = _attention_flag(parameters, "has_bias")
     if len(tensors) != (6 if has_bias else 5):
         raise ValueError("SDPA forward tensor count is invalid")
@@ -148,7 +151,7 @@ def _sdpa_forward_kernel_configuration(
         runtime_signature[name] = "i32"
 
     block_m = 64
-    constants: dict[str, int | float | str | bool] = {
+    constants = {
         "HEAD_DIM": head_dimension,
         "V_DIM": value_dimension,
         "ELEM_SIZE": 4 if q["data_type"] == "float32" else 2,
@@ -191,6 +194,8 @@ def _sdpa_fp8_forward_kernel_configuration(
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    scalar_layout: list[tuple[str, str | int | None]]
+    constants: dict[str, int | float | str | bool]
     stage = parameters.get("_sdpa_fp8_stage")
     if stage == "zero_amax":
         if len(tensors) != 2:
@@ -357,7 +362,7 @@ def _sdpa_fp8_forward_kernel_configuration(
         runtime_signature[name] = "i32"
 
     block_m = 64
-    constants: dict[str, int | float | str | bool] = {
+    constants = {
         "HEAD_DIM": head_dimension,
         "V_DIM": value_dimension,
         "BLOCK_M": block_m,

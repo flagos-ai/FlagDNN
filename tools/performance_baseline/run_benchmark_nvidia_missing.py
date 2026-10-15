@@ -24,21 +24,32 @@ MEASUREMENT_ID = "nvidia-missing-20261012"
 def requested_cases(report):
     if report.suffix.lower() == ".json":
         document = json.loads(report.read_text())
-        reference = document.get("reference") if isinstance(document, dict) else None
+        reference = (
+            document.get("reference") if isinstance(document, dict) else None
+        )
         cases = reference.get("cases") if isinstance(reference, dict) else None
         if not isinstance(cases, dict):
-            raise ValueError("baseline inventory requires reference.cases object")
+            raise ValueError(
+                "baseline inventory requires reference.cases object"
+            )
         result = []
         for name, case in cases.items():
             if not isinstance(case, dict):
-                raise ValueError("baseline case inventory entry must be an object")
+                raise ValueError(
+                    "baseline case inventory entry must be an object"
+                )
             if case.get("measurement_id") == MEASUREMENT_ID:
                 result.append((case.get("op"), name))
     else:
         result = markdown_requested_cases(report.read_text())
-    if any(not isinstance(value, str) or not value.strip()
-           for pair in result for value in pair):
-        raise ValueError("requested cases require nonempty operator and case names")
+    if any(
+        not isinstance(value, str) or not value.strip()
+        for pair in result
+        for value in pair
+    ):
+        raise ValueError(
+            "requested cases require nonempty operator and case names"
+        )
     if not result or len(result) != len(set(result)):
         raise ValueError("empty or duplicate requested case IDs")
     if len({name for _, name in result}) != len(result):
@@ -92,8 +103,13 @@ def sha256(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--report", type=Path, default=DEFAULT_REPORT,
-        help="inventory JSON baseline (default) or Markdown report with Appendix 1",
+        "--report",
+        type=Path,
+        default=DEFAULT_REPORT,
+        help=(
+            "inventory JSON baseline (default) or Markdown report with "
+            "Appendix 1"
+        ),
     )
     parser.add_argument("--core-binary", type=Path, required=True)
     parser.add_argument("--aux-binary", type=Path, required=True)

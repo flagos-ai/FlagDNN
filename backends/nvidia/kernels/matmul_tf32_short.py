@@ -8,7 +8,7 @@ overlap loads and math; an empty slot requires both consumers to release it.
 TensorMaps perform TF32-RNE on FP32 storage. All launches use libtriton_jit.
 """
 
-import triton
+import triton  # noqa: F401
 import triton.experimental.gluon as g
 import triton.experimental.gluon.language as gl
 from triton.experimental.gluon.language import (
@@ -121,7 +121,8 @@ def _consume(
             acc = warpgroup_mma(
                 b, a_shared.index(slot).permute([1, 0]), acc, is_async=True
             )
-            # No register operand crosses a loop boundary while still in flight.
+            # No register operand crosses a loop boundary while still in
+            # flight.
             acc = warpgroup_mma_wait(0, (acc,))
             mbarrier.arrive(empty.index(slot))
         values = gl.convert_layout(acc.T, output)

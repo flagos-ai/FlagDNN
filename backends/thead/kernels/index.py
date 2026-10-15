@@ -68,7 +68,16 @@ def concatenate_kernel(
         0, BLOCK_SIZE
     )
     _concatenate_region(
-        input_ptr, output_ptr, logical, N_ELEMENTS, OUTPUT_DIMS,
-        INPUT_STRIDES, OUTPUT_STRIDES, AXIS, 0, OUTPUT_DIMS[AXIS],
-        STORAGE, BLOCK_SIZE,
+        input_ptr,
+        output_ptr,
+        logical,
+        N_ELEMENTS,
+        OUTPUT_DIMS,
+        INPUT_STRIDES,
+        OUTPUT_STRIDES,
+        AXIS,
+        0,
+        OUTPUT_DIMS[AXIS],
+        STORAGE,
+        BLOCK_SIZE,
     )

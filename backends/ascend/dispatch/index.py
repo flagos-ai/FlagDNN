@@ -17,7 +17,9 @@ _STORAGE_POINTERS = {
 
 
 def _validate_tensor(tensor):
-    if not 1 <= len(tensor["dimensions"]) <= 8 or not _has_non_overlapping_strides(
+    if not 1 <= len(
+        tensor["dimensions"]
+    ) <= 8 or not _has_non_overlapping_strides(
         tensor["dimensions"], tensor["strides"]
     ):
         raise ValueError(
@@ -44,11 +46,13 @@ def _expand_concatenate_group(group):
     axis = _require_integer(
         parameters, "axis", minimum=0, maximum=len(output["dimensions"]) - 1
     )
-    if not inputs or _require_integer(parameters, "input_count") != len(inputs):
-        raise ValueError("concatenate input count is inconsistent")
-    if _require_integer(parameters, "n_elements", maximum=2**63 - 1) != math.prod(
-        output["dimensions"]
+    if not inputs or _require_integer(parameters, "input_count") != len(
+        inputs
     ):
+        raise ValueError("concatenate input count is inconsistent")
+    if _require_integer(
+        parameters, "n_elements", maximum=2**63 - 1
+    ) != math.prod(output["dimensions"]):
         raise ValueError("concatenate element count is inconsistent")
     result, extent = [], 0
     for source in inputs:
@@ -56,10 +60,14 @@ def _expand_concatenate_group(group):
         if source["data_type"] != output["data_type"] or len(
             source["dimensions"]
         ) != len(output["dimensions"]):
-            raise ValueError("concatenate input/output ranks and data types must match")
+            raise ValueError(
+                "concatenate input/output ranks and data types must match"
+            )
         if any(
             a != b
-            for i, (a, b) in enumerate(zip(source["dimensions"], output["dimensions"]))
+            for i, (a, b) in enumerate(
+                zip(source["dimensions"], output["dimensions"])
+            )
             if i != axis
         ):
             raise ValueError("concatenate non-axis dimensions must match")
@@ -78,7 +86,9 @@ def _expand_concatenate_group(group):
         )
         extent += source["dimensions"][axis]
     if extent != output["dimensions"][axis]:
-        raise ValueError("concatenate output axis is not the sum of its inputs")
+        raise ValueError(
+            "concatenate output axis is not the sum of its inputs"
+        )
     return result
 
 
@@ -101,10 +111,15 @@ def _index_kernel_configuration(operation, parameters, tensors):
             or elements != math.prod(output["dimensions"])
         ):
             raise ValueError("invalid gen_index tensor metadata")
-        if output["data_type"] == "int32" and output["dimensions"][axis] > 2**31:
+        if (
+            output["data_type"] == "int32"
+            and output["dimensions"][axis] > 2**31
+        ):
             raise ValueError("gen_index axis does not fit INT32")
         constants.update(
-            _shape_constants(output["dimensions"], output["strides"], "OUTPUT_STRIDE")
+            _shape_constants(
+                output["dimensions"], output["strides"], "OUTPUT_STRIDE"
+            )
         )
         constants.update(
             {
@@ -114,7 +129,11 @@ def _index_kernel_configuration(operation, parameters, tensors):
         )
         return (
             "gen_index_kernel",
-            {"output_ptr": ("*i32" if output["data_type"] == "int32" else "*fp32")},
+            {
+                "output_ptr": (
+                    "*i32" if output["data_type"] == "int32" else "*fp32"
+                )
+            },
             constants,
             ((elements + block - 1) // block, 1, 1),
             [("tensor", None)],
@@ -124,9 +143,13 @@ def _index_kernel_configuration(operation, parameters, tensors):
         or len(tensors) != 2
         or parameters.get("_concatenate_copy") is not True
     ):
-        raise ValueError("concatenate must be expanded before kernel selection")
+        raise ValueError(
+            "concatenate must be expanded before kernel selection"
+        )
     source = tensors[0]
-    offset = _require_integer(parameters, "axis_offset", minimum=0, maximum=2**63 - 1)
+    offset = _require_integer(
+        parameters, "axis_offset", minimum=0, maximum=2**63 - 1
+    )
     if source["data_type"] != output["data_type"] or elements != math.prod(
         source["dimensions"]
     ):
@@ -135,17 +158,23 @@ def _index_kernel_configuration(operation, parameters, tensors):
         len(source["dimensions"]) != len(output["dimensions"])
         or any(
             a != b
-            for i, (a, b) in enumerate(zip(source["dimensions"], output["dimensions"]))
+            for i, (a, b) in enumerate(
+                zip(source["dimensions"], output["dimensions"])
+            )
             if i != axis
         )
         or offset + source["dimensions"][axis] > output["dimensions"][axis]
     ):
         raise ValueError("concatenate copy region is outside output")
     constants.update(
-        _shape_constants(source["dimensions"], source["strides"], "INPUT_STRIDE")
+        _shape_constants(
+            source["dimensions"], source["strides"], "INPUT_STRIDE"
+        )
     )
     constants.update(
-        _shape_constants(source["dimensions"], output["strides"], "OUTPUT_STRIDE")
+        _shape_constants(
+            source["dimensions"], output["strides"], "OUTPUT_STRIDE"
+        )
     )
     constants["OUTPUT_BASE"] = offset * output["strides"][axis]
     pointer = _STORAGE_POINTERS[source["data_type"]]

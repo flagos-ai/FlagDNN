@@ -41,7 +41,8 @@ MAX_FLOAT32 = 3.4028234663852886e38
 UNBOUNDED_DIAGONAL = 1 << 30
 
 
-# Provider integration must preserve this policy. The installed IX CoreX backend
+# Provider integration must preserve this policy. The installed IX CoreX
+# backend
 # defaults tl.dot to IEEE and the convolution entries also hard-code IEEE.
 STRICT_DOT_INPUT_PRECISION = "ieee"
 
@@ -583,7 +584,9 @@ class GridSpec:
             block_s = min(_next_power_of_two(spatial), block)
             block_c = max(1, block // block_s)
             result = (
-                batch * _ceil_div(channels, block_c) * _ceil_div(spatial, block_s),
+                batch
+                * _ceil_div(channels, block_c)
+                * _ceil_div(spatial, block_s),
                 1,
                 1,
             )
@@ -682,7 +685,9 @@ class GridSpec:
             sequence_kv, value_dimension, batch_heads = self.extents
             result = (
                 _ceil_div(sequence_kv, _meta_int(constants, "BLOCK_N")),
-                _ceil_div(value_dimension, _meta_int(constants, "BLOCK_DV_OUT")),
+                _ceil_div(
+                    value_dimension, _meta_int(constants, "BLOCK_DV_OUT")
+                ),
                 batch_heads,
             )
         elif self.kind in ("sdpa_fp8_dq", "sdpa_fp8_dkdv"):
@@ -768,8 +773,14 @@ class KernelStagePlan:
             )
         constants = dict(self.constants)
         for name, value in meta.items():
-            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-                raise ValueError(f"tuning META.{name} must be a positive integer")
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value <= 0
+            ):
+                raise ValueError(
+                    f"tuning META.{name} must be a positive integer"
+                )
             if name.startswith("BLOCK") and value & (value - 1):
                 raise ValueError(f"tuning META.{name} must be a power of two")
             constants[name] = value
@@ -843,7 +854,9 @@ def _require_integer(
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"parameters.{name} must be an integer")
     if value < minimum or value > maximum:
-        raise ValueError(f"parameters.{name} must be in [{minimum}, {maximum}]")
+        raise ValueError(
+            f"parameters.{name} must be in [{minimum}, {maximum}]"
+        )
     return value
 
 
@@ -886,7 +899,8 @@ def _require_integer_list(
         for item in raw
     ):
         raise ValueError(
-            f"parameters.{name} values must be integers in " f"[{minimum}, {maximum}]"
+            f"parameters.{name} values must be integers in "
+            f"[{minimum}, {maximum}]"
         )
     return list(raw)
 
@@ -941,7 +955,9 @@ def _validate_tensor(tensor_value: object, name: str) -> Mapping[str, Any]:
     data_type = tensor.get("data_type")
     if not isinstance(data_type, str) or data_type not in POINTER_TYPES:
         raise ValueError(f"{name} data type is unsupported: {data_type!r}")
-    dimensions = _require_sequence(tensor.get("dimensions"), f"{name}.dimensions")
+    dimensions = _require_sequence(
+        tensor.get("dimensions"), f"{name}.dimensions"
+    )
     strides = _require_sequence(tensor.get("strides"), f"{name}.strides")
     if len(dimensions) != len(strides) or len(dimensions) > MAX_RANK:
         raise ValueError(f"{name} rank must be in [0, {MAX_RANK}]")
@@ -987,17 +1003,23 @@ def _parse_port(
 ) -> tuple[int, Mapping[str, Any]]:
     port = _require_object(port_value, f"node.{direction}")
     if port.get("name") != expected_name:
-        raise ValueError(f"node {direction} port must be named {expected_name!r}")
+        raise ValueError(
+            f"node {direction} port must be named {expected_name!r}"
+        )
     optional = port.get("optional", False)
     if not isinstance(optional, bool) or optional:
-        raise ValueError("present Iluvatar NN tensor ports must be non-optional")
+        raise ValueError(
+            "present Iluvatar NN tensor ports must be non-optional"
+        )
     uid = port.get("uid")
     if isinstance(uid, bool) or not isinstance(uid, int) or uid <= 0:
         raise ValueError(f"node {direction} UID is invalid")
     try:
         tensor = tensor_registry[uid]
     except KeyError as error:
-        raise ValueError(f"node references unknown tensor UID {uid}") from error
+        raise ValueError(
+            f"node references unknown tensor UID {uid}"
+        ) from error
     return uid, _validate_tensor(tensor, f"tensor {uid}")
 
 
@@ -1015,7 +1037,9 @@ def _resolved_ports(
     if operation in ("sdpa_fp8", "sdpa_fp8_backward"):
         if "has_bias" in parameters and _require_flag(parameters, "has_bias"):
             raise ValueError(f"{operation} does not support bias")
-        if "has_dbias" in parameters and _require_flag(parameters, "has_dbias"):
+        if "has_dbias" in parameters and _require_flag(
+            parameters, "has_dbias"
+        ):
             raise ValueError(f"{operation} does not support bias gradients")
     return inputs, outputs
 
@@ -1039,7 +1063,9 @@ def _metadata_array(
         parameters, name, len(expected), minimum=1, maximum=MAX_I64
     )
     if result != list(expected):
-        raise ValueError(f"parameters.{name} is inconsistent with tensor metadata")
+        raise ValueError(
+            f"parameters.{name} is inconsistent with tensor metadata"
+        )
     return result
 
 
@@ -1077,7 +1103,9 @@ def _make_stage(
         if argument_name in runtime_signature or argument_name in specialized:
             raise ValueError(f"duplicate kernel argument {argument_name!r}")
         if not token.startswith("*"):
-            raise ValueError(f"pointer argument {argument_name!r} is not a pointer")
+            raise ValueError(
+                f"pointer argument {argument_name!r} is not a pointer"
+            )
         if kind not in ("tensor", "workspace_tensor"):
             raise ValueError(f"invalid pointer ABI kind {kind!r}")
         runtime_signature[argument_name] = token
@@ -1105,9 +1133,14 @@ def _make_stage(
             layout_kind = "scalar_i32"
         elif token == "fp32":
             if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise ValueError(f"runtime scalar {argument_name!r} must be numeric")
+                raise ValueError(
+                    f"runtime scalar {argument_name!r} must be numeric"
+                )
             runtime_value = float(value)
-            if not math.isfinite(runtime_value) or abs(runtime_value) > MAX_FLOAT32:
+            if (
+                not math.isfinite(runtime_value)
+                or abs(runtime_value) > MAX_FLOAT32
+            ):
                 raise ValueError(
                     f"runtime scalar {argument_name!r}={value!r} cannot be "
                     "represented by the Iluvatar scalar_f32 artifact ABI"
@@ -1115,7 +1148,8 @@ def _make_stage(
             layout_kind = "scalar_f32"
         else:
             raise ValueError(
-                f"unsupported runtime scalar token {token!r} for " f"{argument_name!r}"
+                f"unsupported runtime scalar token {token!r} for "
+                f"{argument_name!r}"
             )
         runtime_signature[argument_name] = token
         runtime_values[argument_name] = runtime_value
@@ -1127,7 +1161,9 @@ def _make_stage(
         strategy=tuning.strategy,
         warmup=tuning.warmup,
         repetitions=tuning.repetitions,
-        meta_keys=tuple(name for name in tuning.meta_keys if name in specialized),
+        meta_keys=tuple(
+            name for name in tuning.meta_keys if name in specialized
+        ),
     )
     _validate_launch(num_warps, num_stages)
     default_grid = grid_spec.evaluate(specialized)
@@ -1214,7 +1250,9 @@ def _workspace_tensor(
     offset: int = 0,
 ) -> WorkspaceTensor:
     typed_dimensions = tuple(int(value) for value in dimensions)
-    elements = _checked_product(list(typed_dimensions), f"{name} workspace elements")
+    elements = _checked_product(
+        list(typed_dimensions), f"{name} workspace elements"
+    )
     size = elements * ELEMENT_SIZES[data_type]
     if size <= 0 or offset < 0 or offset + size > MAX_I64:
         raise ValueError(f"{name} workspace size is invalid")

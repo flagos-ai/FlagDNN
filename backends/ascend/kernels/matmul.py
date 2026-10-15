@@ -52,14 +52,20 @@ def matmul_strided_kernel(
     BLOCK_SIZE: tl.constexpr,
     WORKER_COUNT: tl.constexpr,
 ):
-    wide_tiles: tl.constexpr = M >= BLOCK_SIZE and N >= BLOCK_SIZE * 2 and K >= 512
-    small_k_wide_n: tl.constexpr = K <= 64 and M <= BLOCK_SIZE and N >= BLOCK_SIZE * 2
+    wide_tiles: tl.constexpr = (
+        M >= BLOCK_SIZE and N >= BLOCK_SIZE * 2 and K >= 512
+    )
+    small_k_wide_n: tl.constexpr = (
+        K <= 64 and M <= BLOCK_SIZE and N >= BLOCK_SIZE * 2
+    )
     # Keep the externally attested tuning configuration unchanged while
     # avoiding mostly masked 128-wide tiles for genuinely tiny matrices.
     tiny_matrix: tl.constexpr = M <= 64 and N <= 64 and K <= 128
     # RGB stem im2col produces K=27 and a very wide spatial dimension. A wider
     # N tile halves the persistent task waves without enlarging M past 64.
-    very_small_k_very_wide_n: tl.constexpr = K <= 32 and M <= 64 and N >= BLOCK_SIZE * 8
+    very_small_k_very_wide_n: tl.constexpr = (
+        K <= 32 and M <= 64 and N >= BLOCK_SIZE * 8
+    )
     narrow_n_tiles: tl.constexpr = BLOCK_SIZE == 128 and N <= 64
     narrow_m_tiles: tl.constexpr = (
         BLOCK_SIZE == 128 and M <= 64 and N >= 128 and K >= 128
@@ -94,9 +100,15 @@ def matmul_strided_kernel(
         and K <= 1024
     )
     fp32_tall_residual: tl.constexpr = (
-        INPUT_IS_FLOAT32 and BATCH == 16 and M == 1024 and N == 1024 and K == 1024
+        INPUT_IS_FLOAT32
+        and BATCH == 16
+        and M == 1024
+        and N == 1024
+        and K == 1024
     )
-    transposed_small_k: tl.constexpr = K < 512 and A_STRIDE_M == 1 and B_STRIDE_K == 1
+    transposed_small_k: tl.constexpr = (
+        K < 512 and A_STRIDE_M == 1 and B_STRIDE_K == 1
+    )
     block_m: tl.constexpr = (
         (16 if M <= 16 else (32 if M <= 32 else 64))
         if tiny_matrix
@@ -114,7 +126,11 @@ def matmul_strided_kernel(
                     BLOCK_SIZE
                     if medium_n_tiles
                     else (
-                        (16 if M <= 16 else (32 if M <= 32 else BLOCK_SIZE // 2))
+                        (
+                            16
+                            if M <= 16
+                            else (32 if M <= 32 else BLOCK_SIZE // 2)
+                        )
                         if narrow_m_tiles
                         else BLOCK_SIZE
                     )
@@ -157,11 +173,17 @@ def matmul_strided_kernel(
                         else (
                             (
                                 128
-                                if (K >= 512 or narrow_n_tiles or narrow_m_tiles)
+                                if (
+                                    K >= 512
+                                    or narrow_n_tiles
+                                    or narrow_m_tiles
+                                )
                                 else 64
                             )
                             if INPUT_IS_FLOAT32
-                            else (128 if medium_n_tiles and K % 512 != 0 else 256)
+                            else (
+                                128 if medium_n_tiles and K % 512 != 0 else 256
+                            )
                         )
                     )
                 )
@@ -197,7 +219,11 @@ def matmul_strided_kernel(
         and K <= 2304
     )
     fp32_residual_group: tl.constexpr = (
-        INPUT_IS_FLOAT32 and BATCH == 16 and M == 1024 and N == 1024 and K == 1024
+        INPUT_IS_FLOAT32
+        and BATCH == 16
+        and M == 1024
+        and N == 1024
+        and K == 1024
     )
     schedule_group_m: tl.constexpr = (
         4
@@ -237,13 +263,17 @@ def matmul_strided_kernel(
                 tiles_per_group = schedule_group_m * tiles_n
                 group = tile // tiles_per_group
                 tile_in_group = tile % tiles_per_group
-                tile_m = group * schedule_group_m + tile_in_group % schedule_group_m
+                tile_m = (
+                    group * schedule_group_m + tile_in_group % schedule_group_m
+                )
                 tile_n = tile_in_group // schedule_group_m
             else:
                 tiles_per_group = schedule_group_m * tiles_n
                 group = tile // tiles_per_group
                 first_tile_m = group * schedule_group_m
-                group_m = tl.minimum(scheduled_tiles_m - first_tile_m, schedule_group_m)
+                group_m = tl.minimum(
+                    scheduled_tiles_m - first_tile_m, schedule_group_m
+                )
                 tile_in_group = tile % tiles_per_group
                 tile_m = first_tile_m + tile_in_group % group_m
                 tile_n = tile_in_group // group_m
@@ -315,7 +345,9 @@ def matmul_strided_kernel(
             order=(0, 1) if B_STRIDE_K == 1 else (1, 0),
         )
         accumulator = tl.zeros((block_m, block_n), dtype=tl.float32)
-        reduction_tiles: tl.constexpr = (K + reduction_block - 1) // reduction_block
+        reduction_tiles: tl.constexpr = (
+            K + reduction_block - 1
+        ) // reduction_block
         full_input_tiles: tl.constexpr = (
             M % block_m == 0 and N % block_n == 0 and K % reduction_block == 0
         )
@@ -361,9 +393,13 @@ def matmul_strided_kernel(
                 )
                 reused_a = tl.load(reused_a_tile_ptr)
                 reused_next_a = tl.load(reused_next_a_tile_ptr)
-                reused_accumulator = tl.zeros((block_m, block_n), dtype=tl.float32)
+                reused_accumulator = tl.zeros(
+                    (block_m, block_n), dtype=tl.float32
+                )
                 reused_accumulator = tl.dot(reused_a, b, reused_accumulator)
-                reused_accumulator = tl.dot(reused_next_a, next_b, reused_accumulator)
+                reused_accumulator = tl.dot(
+                    reused_next_a, next_b, reused_accumulator
+                )
                 reused_output_tile_ptr = tl.make_block_ptr(
                     base=output_ptr + c_batch_offset,
                     shape=(M, N),
@@ -382,8 +418,12 @@ def matmul_strided_kernel(
         else:
             if reduction_tiles % 2 == 0:
                 for _ in range(0, K, reduction_block * 2):
-                    next_a_tile_ptr = tl.advance(a_tile_ptr, (0, reduction_block))
-                    next_b_tile_ptr = tl.advance(b_tile_ptr, (reduction_block, 0))
+                    next_a_tile_ptr = tl.advance(
+                        a_tile_ptr, (0, reduction_block)
+                    )
+                    next_b_tile_ptr = tl.advance(
+                        b_tile_ptr, (reduction_block, 0)
+                    )
                     if full_input_tiles:
                         a = tl.load(a_tile_ptr)
                         b = tl.load(b_tile_ptr)
@@ -426,8 +466,12 @@ def matmul_strided_kernel(
                     else:
                         accumulator = tl.dot(a, b, accumulator)
                         accumulator = tl.dot(next_a, next_b, accumulator)
-                    a_tile_ptr = tl.advance(a_tile_ptr, (0, reduction_block * 2))
-                    b_tile_ptr = tl.advance(b_tile_ptr, (reduction_block * 2, 0))
+                    a_tile_ptr = tl.advance(
+                        a_tile_ptr, (0, reduction_block * 2)
+                    )
+                    b_tile_ptr = tl.advance(
+                        b_tile_ptr, (reduction_block * 2, 0)
+                    )
             else:
                 for _ in range(0, K, reduction_block):
                     if full_input_tiles:
@@ -679,9 +723,9 @@ def moe_matmul_kernel(
     )
     end = tl.minimum(
         tl.maximum(
-            tl.load(offsets_ptr + (expert + 1) * OS, expert + 1 < EXPERTS, ROUTED).to(
-                tl.int32
-            ),
+            tl.load(
+                offsets_ptr + (expert + 1) * OS, expert + 1 < EXPERTS, ROUTED
+            ).to(tl.int32),
             begin,
         ),
         ROUTED,
@@ -733,7 +777,10 @@ def moe_matmul_kernel(
                 (16, 32),
             )
             w = tl.load(
-                matrix_ptr + expert * ME + reduction[:, None] * MK + col[None, :] * MN,
+                matrix_ptr
+                + expert * ME
+                + reduction[:, None] * MK
+                + col[None, :] * MN,
                 (reduction[:, None] < K) & (col[None, :] < N),
                 0.0,
             )
@@ -743,7 +790,10 @@ def moe_matmul_kernel(
             rank = tl.load(ks_ptr + slot * KS, valid, -1).to(tl.int32)
             destination = token * TOP_K + rank
             valid = valid & (
-                (token >= 0) & (token < ROUTED // TOP_K) & (rank >= 0) & (rank < TOP_K)
+                (token >= 0)
+                & (token < ROUTED // TOP_K)
+                & (rank >= 0)
+                & (rank < TOP_K)
             )
         else:
             destination = slot
@@ -809,9 +859,9 @@ def moe_matmul_forward_kernel(
     correction = tl.full((16,), 0.0, tl.float32)
     for k in range(K):
         x = tl.load(token_ptr + source * TM + k * TK, valid, 0).to(tl.float32)
-        w = tl.load(matrix_ptr + expert * ME + k * MK + col * MN, col < N, 0).to(
-            tl.float32
-        )
+        w = tl.load(
+            matrix_ptr + expert * ME + k * MK + col * MN, col < N, 0
+        ).to(tl.float32)
         # Preserve exact FP32 products of FP16/BF16 inputs and the residual
         # from each addition, including values close to output rounding ties.
         acc, correction = _compensated_add(acc, correction, x * w, 0.0)
@@ -829,5 +879,7 @@ def moe_matmul_forward_kernel(
     else:
         destination = slot
     tl.store(
-        output_ptr + destination * OM + col * ON, acc + correction, valid & (col < N)
+        output_ptr + destination * OM + col * ON,
+        acc + correction,
+        valid & (col < N),
     )

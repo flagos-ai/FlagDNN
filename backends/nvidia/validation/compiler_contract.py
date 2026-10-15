@@ -12,7 +12,10 @@ import unittest
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "compiler"))
-from flagdnn_codegen.provider_loader import _load_provider, get_provider
+from flagdnn_codegen.provider_loader import (  # noqa: E402
+    _load_provider,
+    get_provider,
+)  # noqa: E402
 
 
 def tensor(uid, dimensions, virtual=False):
@@ -247,7 +250,7 @@ class PlanningContracts(unittest.TestCase):
                         before["identity_sha256"], after["identity_sha256"]
                     )
 
-    def test_relocated_provider_identity_tracks_nested_modules_and_initializers(
+    def test_relocated_identity_tracks_nested_modules_and_initializers(
         self,
     ):
         original = self.compiler.compiler_identity("sm_90")
@@ -639,7 +642,10 @@ class PlanningContracts(unittest.TestCase):
         self.assertEqual(
             resources._launch_scratch_size(SimpleNamespace(), (1000, 1, 1)), 0
         )
-        launch = lambda size: {"launch": {"global_scratch_size": size}}
+
+        def launch(size):
+            return {"launch": {"global_scratch_size": size}}
+
         self.assertEqual(
             resources._program_scratch_size(
                 [
@@ -687,7 +693,8 @@ class PlanningContracts(unittest.TestCase):
                 isolation.enter_context(
                     patch.dict(os.environ, {"TRITON_CACHE_DIR": cache})
                 )
-                # FlagTree's optional hint resolver probes the active device even
+                # FlagTree's optional hint resolver probes the active device
+                # even
                 # for explicit-target compilation. Isolate only that discovery;
                 # the NVIDIA hint handler and the actual compiler still run.
                 if (

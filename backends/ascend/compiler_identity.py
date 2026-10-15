@@ -34,9 +34,9 @@ MAXIMUM_AI_CORE_COUNT = 65535
 _FALSE_VALUES = {"", "0", "false", "off", "no"}
 
 
-def _load_target_policy() -> tuple[
-    tuple[str, ...], tuple[str, ...], dict[str, str]
-]:
+def _load_target_policy() -> (
+    tuple[tuple[str, ...], tuple[str, ...], dict[str, str]]
+):
     path = Path(__file__).with_name("capabilities.json")
     try:
         encoded = path.read_bytes()
@@ -53,8 +53,7 @@ def _load_target_policy() -> tuple[
         not isinstance(arches, list)
         or not arches
         or any(
-            not isinstance(arch, str)
-            or _CODEGEN_ARCH.fullmatch(arch) is None
+            not isinstance(arch, str) or _CODEGEN_ARCH.fullmatch(arch) is None
             for arch in arches
         )
         or len(set(arches)) != len(arches)
@@ -71,8 +70,7 @@ def _load_target_policy() -> tuple[
         or any(arch not in arches for arch in runtime_detected)
         or len(set(runtime_detected)) != len(runtime_detected)
         or not isinstance(compatibility, dict)
-        or set(compatibility)
-        != {"environment", "runtime_soc", "codegen_arch"}
+        or set(compatibility) != {"environment", "runtime_soc", "codegen_arch"}
         or not isinstance(compatibility.get("environment"), str)
         or _ENVIRONMENT_NAME.fullmatch(compatibility["environment"]) is None
         or compatibility.get("runtime_soc") not in arches
@@ -90,9 +88,7 @@ def _load_target_policy() -> tuple[
     COMPATIBILITY_ALIAS,
 ) = _load_target_policy()
 SUPPORTED_TARGET_SOCS = SUPPORTED_CODEGEN_ARCHES
-_COMPATIBILITY_ENVIRONMENT = (
-    COMPATIBILITY_ALIAS["environment"]
-)
+_COMPATIBILITY_ENVIRONMENT = COMPATIBILITY_ALIAS["environment"]
 
 _CODEGEN_ENVIRONMENT_KEYS = (
     "ASCEND_HOME_PATH",
@@ -154,8 +150,7 @@ def _canonical_ascend_home() -> Path | None:
     if not configured:
         return None
     resolved = [
-        Path(value).expanduser().resolve(strict=True)
-        for value in configured
+        Path(value).expanduser().resolve(strict=True) for value in configured
     ]
     if any(not value.is_dir() for value in resolved):
         raise ValueError("configured CANN root is not a directory")
@@ -191,9 +186,7 @@ def codegen_arch_from_target(target_name: str) -> str:
     match = _VERSIONED_TARGET.fullmatch(target_name)
     assert match is not None
     target_soc = match.group("arch")
-    compatibility = os.environ.get(
-        _COMPATIBILITY_ENVIRONMENT
-    )
+    compatibility = os.environ.get(_COMPATIBILITY_ENVIRONMENT)
     if compatibility not in {None, "", "0", "1"}:
         raise ValueError(
             f"{_COMPATIBILITY_ENVIRONMENT} must be unset, '0', or '1'"
@@ -354,9 +347,9 @@ def _package_versions() -> dict[str, str]:
 
 def _package_source_files() -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
-    required = os.environ.get(
-        "FLAGDNN_ASCEND_REQUIRE_COMPILER_MODULES", "0"
-    ) == "1"
+    required = (
+        os.environ.get("FLAGDNN_ASCEND_REQUIRE_COMPILER_MODULES", "0") == "1"
+    )
     roots: dict[str, Path] = {}
     for package in ("torch", "triton", "yaml", "torch_npu"):
         specification = importlib.util.find_spec(package)
@@ -388,8 +381,8 @@ def _package_source_files() -> dict[str, dict[str, Any]]:
         for path in sorted(candidates):
             if path.is_file():
                 relative = path.relative_to(triton_root).as_posix()
-                result[f"module:triton/{relative}"] = (
-                    _external_file_identity(path)
+                result[f"module:triton/{relative}"] = _external_file_identity(
+                    path
                 )
         if required and not (ascend_backend / "driver.py").is_file():
             raise ValueError("pinned Triton has no Ascend compiler backend")
@@ -473,9 +466,12 @@ def _configured_external_files() -> dict[str, dict[str, Any]]:
             for path in (include_directory / "triton_jit").rglob("*")
             if path.is_file() and path.suffix in {".h", ".hpp"}
         )
-        if not public_headers or not (
-            include_directory / "triton_jit/kernel_metadata.h"
-        ).is_file():
+        if (
+            not public_headers
+            or not (
+                include_directory / "triton_jit/kernel_metadata.h"
+            ).is_file()
+        ):
             raise ValueError("NPU TritonJIT public headers are incomplete")
         for path in public_headers:
             relative = path.relative_to(include_directory).as_posix()
@@ -524,9 +520,7 @@ def build_compiler_identity(
             "kernel_registry.py"
         ),
         "provider_add_plan:ascend": provider_path.with_name("add_plan.py"),
-        "provider_tuning:ascend": provider_path.with_name(
-            "tuning_decoder.py"
-        ),
+        "provider_tuning:ascend": provider_path.with_name("tuning_decoder.py"),
         "capabilities": provider_path.with_name("capabilities.json"),
     }
     for package in ("codegen", "dispatch", "kernels"):
@@ -558,7 +552,9 @@ def build_compiler_identity(
         "values": codegen_environment,
     }
     environment_digest = hashlib.sha256(
-        canonical_json_bytes(environment_payload, "Ascend compiler environment")
+        canonical_json_bytes(
+            environment_payload, "Ascend compiler environment"
+        )
     ).hexdigest()
 
     payload: dict[str, Any] = {

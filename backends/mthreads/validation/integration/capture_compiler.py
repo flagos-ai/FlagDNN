@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Validation-only compiler endpoint that preserves one public Graph request."""
+"""
+Validation-only compiler endpoint that preserves one public Graph request.
+"""
 
 from __future__ import annotations
 
@@ -38,9 +40,7 @@ def main() -> int:
         )
         return 0
 
-    capture_value = os.environ.get(
-        "FLAGDNN_MTHREADS_CAPTURE_REQUEST", ""
-    )
+    capture_value = os.environ.get("FLAGDNN_MTHREADS_CAPTURE_REQUEST", "")
     if (
         not capture_value
         or arguments.request is None
@@ -56,4 +56,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

@@ -12,7 +12,9 @@ from typing import Any
 import math
 
 
-def _has_non_overlapping_strides(dimensions: list[int], strides: list[int]) -> bool:
+def _has_non_overlapping_strides(
+    dimensions: list[int], strides: list[int]
+) -> bool:
     axes = sorted(
         (stride, dimension)
         for dimension, stride in zip(dimensions, strides)
@@ -93,8 +95,12 @@ def _parse_tensor_table(graph: dict[str, Any]) -> dict[int, dict[str, Any]]:
             or alignment > 2**31
             or alignment & (alignment - 1) != 0
         ):
-            raise ValueError(f"tensor {uid} alignment must be a positive power of two")
-        dimensions = _require_list(tensor.get("dimensions"), f"tensor {uid} dimensions")
+            raise ValueError(
+                f"tensor {uid} alignment must be a positive power of two"
+            )
+        dimensions = _require_list(
+            tensor.get("dimensions"), f"tensor {uid} dimensions"
+        )
         strides = _require_list(tensor.get("strides"), f"tensor {uid} strides")
         if len(dimensions) > 8 or len(dimensions) != len(strides):
             raise ValueError(f"tensor {uid} rank is invalid")
@@ -129,17 +135,23 @@ def _parse_port(
 ) -> tuple[int, dict[str, Any]]:
     port = _require_object(port_value, f"node.{direction}")
     if port.get("name") != expected_name:
-        raise ValueError(f"node {direction} port must be named {expected_name!r}")
+        raise ValueError(
+            f"node {direction} port must be named {expected_name!r}"
+        )
     optional = port.get("optional", False)
     if not isinstance(optional, bool) or optional:
-        raise ValueError("Iluvatar pointwise operations require every tensor port")
+        raise ValueError(
+            "Iluvatar pointwise operations require every tensor port"
+        )
     uid = port.get("uid")
     if isinstance(uid, bool) or not isinstance(uid, int) or uid <= 0:
         raise ValueError(f"node {direction} UID is invalid")
     try:
         tensor = tensor_registry[uid]
     except KeyError as error:
-        raise ValueError(f"node references unknown tensor UID {uid}") from error
+        raise ValueError(
+            f"node references unknown tensor UID {uid}"
+        ) from error
     return uid, tensor
 
 

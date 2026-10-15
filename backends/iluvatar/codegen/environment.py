@@ -50,8 +50,13 @@ def _torch_version() -> str:
     source = (_module_path("torch").parent / "version.py").read_text()
     for node in ast.parse(source).body:
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            if any(isinstance(t, ast.Name) and t.id == "__version__" for t in targets):
+            targets = (
+                node.targets if isinstance(node, ast.Assign) else [node.target]
+            )
+            if any(
+                isinstance(t, ast.Name) and t.id == "__version__"
+                for t in targets
+            ):
                 value = ast.literal_eval(node.value)
                 if isinstance(value, str):
                     return value
@@ -60,10 +65,12 @@ def _torch_version() -> str:
 
 def collect_environment_identity() -> dict[str, Any]:
     import triton
-    import yaml
+    import yaml  # type: ignore[import-untyped]
 
     hashes = {
-        path.name + ":" + str(index): hashlib.sha256(path.read_bytes()).hexdigest()
+        path.name
+        + ":"
+        + str(index): hashlib.sha256(path.read_bytes()).hexdigest()
         for index, path in enumerate(module_dependency_paths())
     }
     return {

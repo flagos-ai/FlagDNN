@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from typing import Callable
+
 import argparse
 import functools
 import hashlib
@@ -72,7 +74,7 @@ def _request_identity_and_target(request_path: Path) -> tuple[str, str, str]:
 def _identity_dependencies(
     provider: Any, target: str, execution_engine: str
 ) -> tuple[list[str], bool]:
-    values: list[object] = [
+    values: list[Any] = [
         Path(__file__),
         Path(_provider_loader.__file__),
         Path(provider.__file__),
@@ -170,14 +172,15 @@ def _read_dependency_digest(dependency: str, fingerprint: str) -> str:
 
 # A compiler subprocess is short-lived. Reuse content only within this process,
 # with all lstat/link/stat fields in the key, and never cache a racing read.
-_cached_dependency_digest = functools.lru_cache(maxsize=4096)(
-    _read_dependency_digest
-)
+_cached_dependency_digest: Callable[[str, str], str] = functools.lru_cache(
+    maxsize=4096
+)(_read_dependency_digest)
 
 
 def _dependency_snapshots(
     dependencies: list[str],
 ) -> list[dict[str, str]]:
+    digest: Callable[[str, str], str]
     snapshots: list[dict[str, str]] = []
     for dependency in dependencies:
         snapshot = {
@@ -193,11 +196,16 @@ def _dependency_snapshots(
                 # Coarse filesystem timestamps can alias consecutive writes.
                 # Recent/future files must be read again even if their metadata
                 # looks unchanged; installed toolchains normally predate this.
-                stable = time.time_ns() - max(
-                    status.st_mtime_ns, status.st_ctime_ns
-                ) >= 2_000_000_000
-                digest = (_cached_dependency_digest if stable
-                          else _read_dependency_digest)
+                stable = (
+                    time.time_ns()
+                    - max(status.st_mtime_ns, status.st_ctime_ns)
+                    >= 2_000_000_000
+                )
+                digest = (
+                    _cached_dependency_digest
+                    if stable
+                    else _read_dependency_digest
+                )
                 snapshot["content_sha256"] = digest(
                     dependency, snapshot["fingerprint"]
                 )
@@ -325,10 +333,13 @@ def main() -> int:
         )
         provider = get_provider(backend)
         try:
-            identity_before, dependencies, snapshots_before, complete_before = (
-                _stable_compiler_identity(
-                    provider, target, arguments.execution_engine
-                )
+            (
+                identity_before,
+                dependencies,
+                snapshots_before,
+                complete_before,
+            ) = _stable_compiler_identity(
+                provider, target, arguments.execution_engine
             )
             if identity_before.get("identity_sha256") != requested_identity:
                 raise ValueError(

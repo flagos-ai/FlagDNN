@@ -79,6 +79,7 @@ def measured_record(
 
 
 def check_synthetic(validator: Draft202012Validator) -> dict[str, int]:
+    value: object
     baseline = json.loads(
         (ROOT / "docs/performance-baseline.json").read_text()
     )
@@ -96,7 +97,9 @@ def check_synthetic(validator: Draft202012Validator) -> dict[str, int]:
         operator = reference["op"]
         if operator in thead.EQUIVALENT_SCALE_METRICS:
             record = measured_record(
-                case, "thead", thead.EQUIVALENT_SCALE_METRICS[operator],
+                case,
+                "thead",
+                thead.EQUIVALENT_SCALE_METRICS[operator],
                 reference["validation"],
             )
             validator.validate(record)
@@ -108,15 +111,19 @@ def check_synthetic(validator: Draft202012Validator) -> dict[str, int]:
                 "case_policies"
             ][operator]
             record = measured_record(
-                case, "hygon", policy["scale_metric"],
+                case,
+                "hygon",
+                policy["scale_metric"],
                 reference["validation"],
                 8.0 if case.startswith("identity_bool_") else 1.0,
             )
             validator.validate(record)
             hygon.validate_benchmark_record(record)
             accepted["hygon"] += 1
-    require(accepted == {"thead": 115, "hygon": 1968},
-            f"unexpected supported equivalent scope: {accepted}")
+    require(
+        accepted == {"thead": 115, "hygon": 1968},
+        f"unexpected supported equivalent scope: {accepted}",
+    )
     require(last_thead is not None, "no Thead equivalent fixtures")
 
     # Every explicit NVIDIA concatenation exclusion must remain invalid.
@@ -124,15 +131,19 @@ def check_synthetic(validator: Draft202012Validator) -> dict[str, int]:
     for case, reference in baseline["reference"]["unavailable_cases"].items():
         if reference["op"] == "concatenate":
             record = measured_record(case, "thead", "hbm_copy", "sanity")
-            require(not validator.is_valid(record),
-                    f"unmeasured concatenation accepted: {case}")
+            require(
+                not validator.is_valid(record),
+                f"unmeasured concatenation accepted: {case}",
+            )
             excluded += 1
     require(excluded == 70, "concatenation exclusion scope changed")
 
     # Original div v4 records predate explicit traffic/validation metadata.
     legacy = measured_record(
         "div_perf_fp32_1x1x1024_by_1x1x1024",
-        "hygon", "vector_fp32", "cpu_full",
+        "hygon",
+        "vector_fp32",
+        "cpu_full",
     )
     legacy["equivalent_baseline"].pop("traffic_ratio")
     legacy["equivalent_baseline"].pop("reference_validation")
@@ -141,7 +152,8 @@ def check_synthetic(validator: Draft202012Validator) -> dict[str, int]:
 
     invalid = []
     for field, value in (
-        ("samples", [1.0] * 19), ("provider", "nvidia_equivalent")
+        ("samples", [1.0] * 19),
+        ("provider", "nvidia_equivalent"),
     ):
         record = copy.deepcopy(last_thead)
         record[field] = value
@@ -168,13 +180,18 @@ def check_synthetic(validator: Draft202012Validator) -> dict[str, int]:
         ("concatenate_fp32_1_axis0", "hbm_copy", "cpu_full"),
         ("gen_index_int32_3_axis0", "hbm_copy", "sanity"),
         ("gen_index_int32_3_axis0", "hbm_write", "cpu_full"),
-        ("gelu_approx_tanh_backward_perf_fp32_1x1x1024_by_1x1x1024",
-         "vector_fp32", "sanity"),
+        (
+            "gelu_approx_tanh_backward_perf_fp32_1x1x1024_by_1x1x1024",
+            "vector_fp32",
+            "sanity",
+        ),
     ):
         invalid.append(measured_record(case, "thead", metric, validation))
     for record in invalid:
-        require(not validator.is_valid(record),
-                "schema accepted mismatched Thead equivalent metadata")
+        require(
+            not validator.is_valid(record),
+            "schema accepted mismatched Thead equivalent metadata",
+        )
     return {**accepted, "rejected_unmeasured_concatenate": excluded}
 
 
@@ -192,8 +209,9 @@ def check_logs(
             if record.get("kind") != "steady_state":
                 continue
             errors = list(validator.iter_errors(record))
-            require(not errors,
-                    f"{path}:{number} violates result schema: {errors}")
+            require(
+                not errors, f"{path}:{number} violates result schema: {errors}"
+            )
             count += 1
         require(count > 0, f"{path} has no native timing records")
         counts[str(path)] = count

@@ -21,24 +21,33 @@ def _convolution_backward_kernel_configuration(
 ) -> tuple[
     str,
     dict[str, str],
-    dict[str, int | bool | str],
+    dict[str, int | float | str | bool],
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    constants: dict[str, int | float | str | bool]
+    pointer_abi: list[tuple[str, str | int | None]]
+    stride1_constants: dict[str, int | float | str | bool]
     if operation not in {"convolution_dgrad", "convolution_wgrad"}:
         raise ValueError("unknown convolution backward operation")
     if len(tensors) != 3:
         raise ValueError("convolution backward tensor count is invalid")
     data_types = [tensor["data_type"] for tensor in tensors]
     if len(set(data_types)) != 1 or data_types[0] not in FLOAT_DATA_TYPES:
-        raise ValueError("convolution backward tensors must use one floating data type")
+        raise ValueError(
+            "convolution backward tensors must use one floating data type"
+        )
     pointer_type = TRITON_POINTER_TYPES[data_types[0]]
-    spatial_rank = _require_integer(parameters, "spatial_rank", minimum=1, maximum=3)
+    spatial_rank = _require_integer(
+        parameters, "spatial_rank", minimum=1, maximum=3
+    )
     tensor_rank = spatial_rank + 2
     if any(
         len(tensor["dimensions"]) != tensor_rank
         or any(dimension > 2**31 - 1 for dimension in tensor["dimensions"])
-        or not _has_non_overlapping_strides(tensor["dimensions"], tensor["strides"])
+        or not _has_non_overlapping_strides(
+            tensor["dimensions"], tensor["strides"]
+        )
         for tensor in tensors
     ):
         raise ValueError(
@@ -52,8 +61,12 @@ def _convolution_backward_kernel_configuration(
     post_padding = _require_integer_list(
         parameters, "post_padding", spatial_rank, minimum=0
     )
-    stride = _require_integer_list(parameters, "stride", spatial_rank, minimum=1)
-    dilation = _require_integer_list(parameters, "dilation", spatial_rank, minimum=1)
+    stride = _require_integer_list(
+        parameters, "stride", spatial_rank, minimum=1
+    )
+    dilation = _require_integer_list(
+        parameters, "dilation", spatial_rank, minimum=1
+    )
     groups = _require_integer(parameters, "groups")
     convolution_mode = _require_integer(
         parameters, "convolution_mode", minimum=0, maximum=1
@@ -70,13 +83,17 @@ def _convolution_backward_kernel_configuration(
     n, c = image["dimensions"][:2]
     k, filter_channels = filter_tensor["dimensions"][:2]
     if dy["dimensions"][:2] != [n, k]:
-        raise ValueError("convolution backward loss batch/channels are inconsistent")
+        raise ValueError(
+            "convolution backward loss batch/channels are inconsistent"
+        )
     if c % groups != 0 or k % groups != 0:
         raise ValueError("convolution backward channels must divide groups")
     channels_per_group = c // groups
     outputs_per_group = k // groups
     if filter_channels != channels_per_group:
-        raise ValueError("convolution backward filter channels are inconsistent")
+        raise ValueError(
+            "convolution backward filter channels are inconsistent"
+        )
     expected_loss = [n, k]
     for axis in range(spatial_rank):
         image_extent = image["dimensions"][axis + 2]
@@ -84,8 +101,12 @@ def _convolution_backward_kernel_configuration(
         effective_filter = dilation[axis] * (filter_extent - 1) + 1
         padded_image = image_extent + pre_padding[axis] + post_padding[axis]
         if padded_image < effective_filter:
-            raise ValueError("convolution backward filter is larger than padded image")
-        expected_loss.append((padded_image - effective_filter) // stride[axis] + 1)
+            raise ValueError(
+                "convolution backward filter is larger than padded image"
+            )
+        expected_loss.append(
+            (padded_image - effective_filter) // stride[axis] + 1
+        )
     if dy["dimensions"] != expected_loss:
         raise ValueError("convolution backward loss metadata is inconsistent")
     expected_output = (
@@ -94,7 +115,9 @@ def _convolution_backward_kernel_configuration(
         else filter_tensor["dimensions"]
     )
     if math.prod(expected_output) != outputs:
-        raise ValueError("parameters.n_outputs is inconsistent with backward output")
+        raise ValueError(
+            "parameters.n_outputs is inconsistent with backward output"
+        )
 
     def padded_spatial(values: list[int], fill: int) -> list[int]:
         return [fill] * (3 - spatial_rank) + list(values)
@@ -109,7 +132,7 @@ def _convolution_backward_kernel_configuration(
     filter_strides = padded_spatial(filter_tensor["strides"][2:], 0)
     loss_strides = padded_spatial(dy["strides"][2:], 0)
 
-    constants: dict[str, int | bool | str] = {
+    constants = {
         "XD": image_spatial[0],
         "XH": image_spatial[1],
         "XW": image_spatial[2],
@@ -148,7 +171,7 @@ def _convolution_backward_kernel_configuration(
         "W_STRIDE_W": filter_strides[2],
         "INPUT_PRECISION": 1 if data_types[0] == "float32" else 0,
     }
-    pointer_abi: list[tuple[str, str | int | None]] = [
+    pointer_abi = [
         ("tensor", None),
         ("tensor", None),
         ("tensor", None),
@@ -175,15 +198,27 @@ def _convolution_backward_kernel_configuration(
             and not direct_ieee
         ):
             block_m = 128
-            constants.update(M=m, BLOCK_M=block_m, BLOCK_CI=1, BLOCK_K=32, GROUP_M=8)
+            constants.update(
+                M=m, BLOCK_M=block_m, BLOCK_CI=1, BLOCK_K=32, GROUP_M=8
+            )
             phase_rows = (
-                n * _ceil_div(image_spatial[1], 2) * _ceil_div(image_spatial[2], 2)
+                n
+                * _ceil_div(image_spatial[1], 2)
+                * _ceil_div(image_spatial[2], 2)
             )
             return (
                 "conv_dgrad_stem_vector_kernel",
-                {"dy_ptr": pointer_type, "w_ptr": pointer_type, "dx_ptr": pointer_type},
+                {
+                    "dy_ptr": pointer_type,
+                    "w_ptr": pointer_type,
+                    "dx_ptr": pointer_type,
+                },
                 constants,
-                (_ceil_div(phase_rows, block_m), 4, groups * channels_per_group),
+                (
+                    _ceil_div(phase_rows, block_m),
+                    4,
+                    groups * channels_per_group,
+                ),
                 pointer_abi,
             )
         is_contiguous_1x1_2d = (
@@ -214,13 +249,16 @@ def _convolution_backward_kernel_configuration(
                     "CIN_PER_GROUP": channels_per_group,
                     "COUT_PER_GROUP": outputs_per_group,
                     "GROUPS": groups,
-                    "INPUT_PRECISION": (1 if data_types[0] == "float32" else 0),
+                    "INPUT_PRECISION": (
+                        1 if data_types[0] == "float32" else 0
+                    ),
                     "BLOCK_M": block_m,
                     "BLOCK_CI": block_ci,
                     "BLOCK_CO": block_co,
                 },
                 (
-                    _ceil_div(hw, block_m) * _ceil_div(channels_per_group, block_ci),
+                    _ceil_div(hw, block_m)
+                    * _ceil_div(channels_per_group, block_ci),
                     n * groups,
                     1,
                 ),
@@ -308,7 +346,9 @@ def _convolution_backward_kernel_configuration(
         )
 
     m = n * math.prod(loss_spatial)
-    if _is_row_major_contiguous(filter_tensor) and (m >= 8192 or outputs >= 65536):
+    if _is_row_major_contiguous(filter_tensor) and (
+        m >= 8192 or outputs >= 65536
+    ):
         # Large filters have enough tiles to fill the device at 32 x 32.
         # Retain smaller tiles for stems with only a few input channels.
         tile = 32 if outputs >= 262144 else 16
@@ -321,7 +361,11 @@ def _convolution_backward_kernel_configuration(
         )
         return (
             "conv_wgrad_contiguous_kernel",
-            {"dy_ptr": pointer_type, "x_ptr": pointer_type, "dw_ptr": pointer_type},
+            {
+                "dy_ptr": pointer_type,
+                "x_ptr": pointer_type,
+                "dw_ptr": pointer_type,
+            },
             constants,
             (
                 _ceil_div(outputs_per_group, tile)
@@ -331,10 +375,16 @@ def _convolution_backward_kernel_configuration(
             ),
             pointer_abi,
         )
-    constants.update(M=m, OUTPUT_ELEMENTS=outputs, BLOCK_OUTPUT=8, BLOCK_REDUCE=128)
+    constants.update(
+        M=m, OUTPUT_ELEMENTS=outputs, BLOCK_OUTPUT=8, BLOCK_REDUCE=128
+    )
     return (
         "conv_wgrad_nd_kernel",
-        {"dy_ptr": pointer_type, "x_ptr": pointer_type, "dw_ptr": pointer_type},
+        {
+            "dy_ptr": pointer_type,
+            "x_ptr": pointer_type,
+            "dw_ptr": pointer_type,
+        },
         constants,
         (_ceil_div(outputs, 8), 1, 1),
         pointer_abi,

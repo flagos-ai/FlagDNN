@@ -38,7 +38,9 @@ def _convolution_fprop_meta(
             + list(tensor.dimensions[2:])
         )
         strides = (
-            list(tensor.strides[:2]) + [0] * missing_spatial + list(tensor.strides[2:])
+            list(tensor.strides[:2])
+            + [0] * missing_spatial
+            + list(tensor.strides[2:])
         )
         for axis in range(5):
             result[f"{name}_DIM_{axis}"] = dimensions[axis]

@@ -40,10 +40,14 @@ def _expand_sdpa_backward_group(
 
     dbias_reduce = bool(
         dbias is not None
-        and (dbias["dimensions"][0] != batch or dbias["dimensions"][1] != heads)
+        and (
+            dbias["dimensions"][0] != batch or dbias["dimensions"][1] != heads
+        )
     )
     if dbias_reduce and not _is_row_major_contiguous(dbias):
-        raise ValueError("SDPA broadcast dBias reduction requires contiguous storage")
+        raise ValueError(
+            "SDPA broadcast dBias reduction requires contiguous storage"
+        )
     pipeline_parameters = {
         **parameters,
         "dbias_reduce": int(dbias_reduce),

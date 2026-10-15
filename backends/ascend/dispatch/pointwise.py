@@ -28,17 +28,23 @@ from .common import (
 )
 
 
-def _broadcast_dimensions(left: TensorPlan, right: TensorPlan) -> tuple[int, ...]:
+def _broadcast_dimensions(
+    left: TensorPlan, right: TensorPlan
+) -> tuple[int, ...]:
     rank = max(len(left.dimensions), len(right.dimensions))
     if rank < 1 or rank > MAX_RANK:
         raise ValueError("binary pointwise broadcast rank must be in [1, 8]")
     result = [1] * rank
     for trailing in range(rank):
         left_dimension = (
-            left.dimensions[-1 - trailing] if trailing < len(left.dimensions) else 1
+            left.dimensions[-1 - trailing]
+            if trailing < len(left.dimensions)
+            else 1
         )
         right_dimension = (
-            right.dimensions[-1 - trailing] if trailing < len(right.dimensions) else 1
+            right.dimensions[-1 - trailing]
+            if trailing < len(right.dimensions)
+            else 1
         )
         if (
             left_dimension != right_dimension
@@ -58,7 +64,9 @@ def _can_use_contiguous_kernel(
     return (
         left.dimensions == right.dimensions == output.dimensions
         and left.strides == right.strides == output.strides
-        and all(_is_physically_dense(tensor) for tensor in (left, right, output))
+        and all(
+            _is_physically_dense(tensor) for tensor in (left, right, output)
+        )
     )
 
 
@@ -68,7 +76,9 @@ def _can_use_unary_contiguous_kernel(
     return (
         input_tensor.dimensions == output.dimensions
         and input_tensor.strides == output.strides
-        and all(_is_physically_dense(tensor) for tensor in (input_tensor, output))
+        and all(
+            _is_physically_dense(tensor) for tensor in (input_tensor, output)
+        )
     )
 
 
@@ -108,7 +118,9 @@ def _strided_meta(
     return result
 
 
-def _unary_strided_meta(input_tensor: TensorPlan, output: TensorPlan) -> dict[str, int]:
+def _unary_strided_meta(
+    input_tensor: TensorPlan, output: TensorPlan
+) -> dict[str, int]:
     rank = len(output.dimensions)
     leading = MAX_RANK - rank
     dimensions = [1] * leading + list(output.dimensions)
@@ -153,11 +165,17 @@ def _ternary_strided_meta(
     return result
 
 
-def _optional_mode(attributes: dict[str, Any], name: str, expected: int) -> None:
+def _optional_mode(
+    attributes: dict[str, Any], name: str, expected: int
+) -> None:
     if name not in attributes:
         return
     value = attributes[name]
-    if isinstance(value, bool) or not isinstance(value, int) or value != expected:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value != expected
+    ):
         raise ValueError(f"parameters.{name} is inconsistent with operation")
 
 
@@ -191,18 +209,21 @@ def _parse_unary_attributes(
     ):
         raise ValueError("parameters.has_upper_clip must be zero or one")
     if has_upper_clip and upper_clip < lower_clip:
-        raise ValueError("parameters.upper_clip must not be less than lower_clip")
+        raise ValueError(
+            "parameters.upper_clip must not be less than lower_clip"
+        )
 
     _optional_equal_f32(attributes, "relu_lower_clip_slope", negative_slope)
     _optional_equal_f32(attributes, "relu_lower_clip", lower_clip)
     _optional_equal_f32(attributes, "relu_upper_clip", upper_clip)
     if "relu_upper_clip_set" in attributes:
         raw_upper_clip_set = attributes["relu_upper_clip_set"]
-        if not isinstance(raw_upper_clip_set, bool) or raw_upper_clip_set != bool(
-            has_upper_clip
-        ):
+        if not isinstance(
+            raw_upper_clip_set, bool
+        ) or raw_upper_clip_set != bool(has_upper_clip):
             raise ValueError(
-                "parameters.relu_upper_clip_set disagrees with " "has_upper_clip"
+                "parameters.relu_upper_clip_set disagrees with "
+                "has_upper_clip"
             )
 
     swish_beta = require_f32(attributes, "swish_beta", default=1.0)
@@ -215,7 +236,9 @@ def _parse_unary_attributes(
         or (operation != "elu" and elu_alpha != 1.0)
         or (operation != "softplus" and softplus_beta != 1.0)
     ):
-        raise ValueError("unary operation contains attributes for another mode")
+        raise ValueError(
+            "unary operation contains attributes for another mode"
+        )
     if operation != "relu" and (
         negative_slope != 0.0
         or lower_clip != 0.0
@@ -241,9 +264,12 @@ def _pointwise_kernel_configuration(operation, parameters, tensors):
             raise ValueError("unary pointwise tensor count is invalid")
         if operation == "logical_not":
             if tensor_data_types != ["boolean", "boolean"]:
-                raise ValueError("logical_not input/output data types must be boolean")
+                raise ValueError(
+                    "logical_not input/output data types must be boolean"
+                )
         elif len(set(tensor_data_types)) != 1 or (
-            operation != "identity" and tensor_data_types[0] not in FLOAT_DATA_TYPES
+            operation != "identity"
+            and tensor_data_types[0] not in FLOAT_DATA_TYPES
         ):
             raise ValueError(
                 "numeric unary pointwise tensor data types must match and "
@@ -252,20 +278,24 @@ def _pointwise_kernel_configuration(operation, parameters, tensors):
         input_pointer_type = TRITON_POINTER_TYPES.get(tensor_data_types[0])
         output_pointer_type = TRITON_POINTER_TYPES.get(tensor_data_types[1])
         if operation == "identity" and tensor_data_types[0] in {
-            "fp8_e4m3", "fp8_e5m2", "fp8_e8m0"
+            "fp8_e4m3",
+            "fp8_e5m2",
+            "fp8_e8m0",
         }:
             # Identity copies storage bits, including NaN payloads. Ascend 910B
             # has no FP8 arithmetic requirement for this operation.
             input_pointer_type = output_pointer_type = "*u8"
         if input_pointer_type is None or output_pointer_type is None:
             raise ValueError(
-                "unsupported unary pointwise data type: " f"{tensor_data_types[0]!r}"
+                "unsupported unary pointwise data type: "
+                f"{tensor_data_types[0]!r}"
             )
         elements = _require_integer(parameters, "n_elements")
         expected_elements = math.prod(tensors[0]["dimensions"])
         if elements != expected_elements:
             raise ValueError(
-                "parameters.n_elements is inconsistent with unary " "pointwise input"
+                "parameters.n_elements is inconsistent with unary "
+                "pointwise input"
             )
         has_upper_clip_value = parameters.get("has_upper_clip", 0)
         if (
@@ -274,18 +304,26 @@ def _pointwise_kernel_configuration(operation, parameters, tensors):
             or has_upper_clip_value < 0
             or has_upper_clip_value > 1
         ):
-            raise ValueError("parameters.has_upper_clip must be either zero or one")
+            raise ValueError(
+                "parameters.has_upper_clip must be either zero or one"
+            )
         has_upper_clip = has_upper_clip_value
-        negative_slope = _require_number(parameters, "negative_slope", default=0.0)
+        negative_slope = _require_number(
+            parameters, "negative_slope", default=0.0
+        )
         lower_clip = _require_number(parameters, "lower_clip", default=0.0)
         upper_clip = _require_number(parameters, "upper_clip", default=0.0)
         swish_beta = _require_number(parameters, "swish_beta", default=1.0)
         elu_alpha = _require_number(parameters, "elu_alpha", default=1.0)
-        softplus_beta = _require_number(parameters, "softplus_beta", default=1.0)
+        softplus_beta = _require_number(
+            parameters, "softplus_beta", default=1.0
+        )
         if softplus_beta <= 0.0:
             raise ValueError("parameters.softplus_beta must be positive")
         if has_upper_clip and upper_clip < lower_clip:
-            raise ValueError("parameters.upper_clip must not be less than lower_clip")
+            raise ValueError(
+                "parameters.upper_clip must not be less than lower_clip"
+            )
         block = 256
         constants: dict[str, int | float | str | bool] = {
             "OPERATION": UNARY_POINTWISE_MODES[operation],
@@ -351,30 +389,36 @@ def _pointwise_kernel_configuration(operation, parameters, tensors):
         ):
             raise ValueError("activation gradients must be floating")
         pointer_types = [
-            TRITON_POINTER_TYPES.get(data_type) for data_type in tensor_data_types
+            TRITON_POINTER_TYPES.get(data_type)
+            for data_type in tensor_data_types
         ]
         if any(pointer_type is None for pointer_type in pointer_types):
             raise ValueError(
-                "unsupported binary pointwise data type: " f"{tensor_data_types[0]!r}"
+                "unsupported binary pointwise data type: "
+                f"{tensor_data_types[0]!r}"
             )
         elements = _require_integer(parameters, "n_elements")
         expected_elements = math.prod(tensors[2]["dimensions"])
         if elements != expected_elements:
             raise ValueError(
-                "parameters.n_elements is inconsistent with binary " "pointwise output"
+                "parameters.n_elements is inconsistent with binary "
+                "pointwise output"
             )
         pointwise_mode = _require_integer(
             parameters, "pointwise_mode", minimum=1, maximum=48
         )
         if BINARY_ELEMENTWISE_MODES.get(operation) != pointwise_mode:
             raise ValueError(
-                "parameters.pointwise_mode is inconsistent with " "binary operation"
+                "parameters.pointwise_mode is inconsistent with "
+                "binary operation"
             )
         block = 256
         strided_constants = _binary_pointwise_tensor_constants(tensors)
         alpha = _require_number(parameters, "alpha", default=1.0)
         if operation not in ("add", "sub") and alpha != 1.0:
-            raise ValueError("pointwise alpha is only supported by add and sub")
+            raise ValueError(
+                "pointwise alpha is only supported by add and sub"
+            )
 
         if tensor_data_types[0] == "int32":
             if alpha != math.trunc(alpha) or not -(2**31) <= alpha < 2**31:
@@ -390,7 +434,9 @@ def _pointwise_kernel_configuration(operation, parameters, tensors):
                 tensors[0]["dimensions"] != tensors[1]["dimensions"]
                 or tensors[0]["dimensions"] != tensors[2]["dimensions"]
             ):
-                raise ValueError("activation gradient tensor shapes must match")
+                raise ValueError(
+                    "activation gradient tensor shapes must match"
+                )
             constants.update(
                 {
                     "NEGATIVE_SLOPE": _require_number(
@@ -410,7 +456,9 @@ def _pointwise_kernel_configuration(operation, parameters, tensors):
                     "SWISH_BETA": _require_number(
                         parameters, "swish_beta", default=1.0
                     ),
-                    "ELU_ALPHA": _require_number(parameters, "elu_alpha", default=1.0),
+                    "ELU_ALPHA": _require_number(
+                        parameters, "elu_alpha", default=1.0
+                    ),
                     "SOFTPLUS_BETA": _require_number(
                         parameters, "softplus_beta", default=1.0
                     ),
@@ -462,14 +510,16 @@ def _pointwise_kernel_configuration(operation, parameters, tensors):
                 "and a boolean T predicate"
             )
         pointer_types = [
-            TRITON_POINTER_TYPES.get(data_type) for data_type in tensor_data_types
+            TRITON_POINTER_TYPES.get(data_type)
+            for data_type in tensor_data_types
         ]
         if any(pointer_type is None for pointer_type in pointer_types):
             raise ValueError("unsupported binary_select data type")
         elements = _require_integer(parameters, "n_elements")
         if elements != math.prod(tensors[3]["dimensions"]):
             raise ValueError(
-                "parameters.n_elements is inconsistent with binary_select " "output"
+                "parameters.n_elements is inconsistent with binary_select "
+                "output"
             )
         block = 256
         constants: dict[str, int] = {"BLOCK_SIZE": block}

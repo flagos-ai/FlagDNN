@@ -221,7 +221,9 @@ def binary_select_elementwise_strided_kernel(
     OUTPUT_STRIDE_7: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    offsets = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    offsets = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
     active = offsets < n_elements
     remaining = offsets
     left_offsets = tl.zeros((BLOCK_SIZE,), dtype=tl.int64)
@@ -305,4 +307,6 @@ def binary_select_tensor_kernel(
     input1 = tl.load(input1_ptr + offsets, mask=active)
     mask_value = tl.load(mask_ptr + offsets, mask=active, other=0)
     result = tl.where(mask_value != 0, input0, input1)
-    tl.store(out_ptr + offsets, result.to(out_ptr.dtype.element_ty), mask=active)
+    tl.store(
+        out_ptr + offsets, result.to(out_ptr.dtype.element_ty), mask=active
+    )

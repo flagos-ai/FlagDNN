@@ -13,11 +13,18 @@ def _genstats_kernel_configuration(parameters, tensors):
     if len(tensors) != 3:
         raise ValueError("genstats requires an input and two outputs")
     x, total, square = tensors
-    if x["data_type"] not in FLOAT_DATA_TYPES or not 2 <= len(x["dimensions"]) <= 8:
+    if (
+        x["data_type"] not in FLOAT_DATA_TYPES
+        or not 2 <= len(x["dimensions"]) <= 8
+    ):
         raise ValueError("genstats requires a floating tensor of rank 2..8")
     for tensor in tensors:
-        if not _has_non_overlapping_strides(tensor["dimensions"], tensor["strides"]):
-            raise ValueError("genstats tensors must have non-overlapping strides")
+        if not _has_non_overlapping_strides(
+            tensor["dimensions"], tensor["strides"]
+        ):
+            raise ValueError(
+                "genstats tensors must have non-overlapping strides"
+            )
     channels = _require_integer(parameters, "channels")
     reduction = _require_integer(parameters, "reduction")
     if channels != x["dimensions"][1] or channels * reduction != math.prod(
@@ -27,7 +34,8 @@ def _genstats_kernel_configuration(parameters, tensors):
     shape = [1] * len(x["dimensions"])
     shape[1] = channels
     if any(
-        t["dimensions"] != shape or t["data_type"] != "float32" for t in [total, square]
+        t["dimensions"] != shape or t["data_type"] != "float32"
+        for t in [total, square]
     ):
         raise ValueError("genstats outputs must be FP32 channel statistics")
     constants = {
@@ -57,7 +65,9 @@ def _genstats_kernel_configuration(parameters, tensors):
 
 
 def _bn_finalize_kernel_configuration(parameters, tensors):
-    running = _require_integer(parameters, "has_running", minimum=0, maximum=1) == 1
+    running = (
+        _require_integer(parameters, "has_running", minimum=0, maximum=1) == 1
+    )
     if len(tensors) != (12 if running else 8):
         raise ValueError("bn_finalize tensor count is inconsistent")
     shape = tensors[0]["dimensions"]
@@ -85,10 +95,14 @@ def _bn_finalize_kernel_configuration(parameters, tensors):
         parameters.get(k) for k in ("accum_count", "epsilon", "momentum")
     )
     if any(
-        isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
+        isinstance(v, bool)
+        or not isinstance(v, (int, float))
+        or not math.isfinite(v)
         for v in (count, epsilon, momentum)
     ):
-        raise ValueError("bn_finalize scalar attributes must be finite numbers")
+        raise ValueError(
+            "bn_finalize scalar attributes must be finite numbers"
+        )
     if (
         not 1 <= count <= 2**53
         or count != math.floor(count)

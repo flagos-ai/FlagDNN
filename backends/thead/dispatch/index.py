@@ -49,19 +49,20 @@ def _index_kernel_configuration(operation, parameters, tensors):
         raise ValueError("index launch grid exceeds THead limits")
     if operation == "gen_index":
         if len(tensors) != 1 or output["data_type"] not in {
-            "float32", "int32"
+            "float32",
+            "int32",
         }:
             raise ValueError(
                 "gen_index requires a single FP32 or INT32 output"
             )
-        dimensions = (
-            [1] * (8 - len(output["dimensions"])) + output["dimensions"]
-        )
+        dimensions = [1] * (8 - len(output["dimensions"])) + output[
+            "dimensions"
+        ]
         strides = [0] * (8 - len(output["strides"])) + output["strides"]
         constants = {
             "N_ELEMENTS": elements,
             "AXIS_EXTENT": output["dimensions"][axis],
-            "INNER": math.prod(output["dimensions"][axis + 1:]),
+            "INNER": math.prod(output["dimensions"][axis + 1 :]),
             "BLOCK_SIZE": block,
         }
         for dimension in range(8):
@@ -70,7 +71,9 @@ def _index_kernel_configuration(operation, parameters, tensors):
         return (
             "gen_index_kernel",
             {"output_ptr": TRITON_POINTER_TYPES[output["data_type"]]},
-            constants, grid, [("tensor", None)],
+            constants,
+            grid,
+            [("tensor", None)],
         )
     if operation != "concatenate":
         raise ValueError("unsupported index operation")
@@ -86,9 +89,11 @@ def _index_kernel_configuration(operation, parameters, tensors):
             or len(source["dimensions"]) != len(output["dimensions"])
             or any(
                 a != b
-                for i, (a, b) in enumerate(zip(
-                    source["dimensions"], output["dimensions"], strict=True
-                ))
+                for i, (a, b) in enumerate(
+                    zip(
+                        source["dimensions"], output["dimensions"], strict=True
+                    )
+                )
                 if i != axis
             )
         ):
@@ -98,17 +103,21 @@ def _index_kernel_configuration(operation, parameters, tensors):
         raise ValueError("concatenate output axis differs from summed inputs")
     # A repeated input shares one runtime pointer. Keep the artifact ABI's
     # unique boundary UID contract while preserving every logical region.
-    unique_tensors = list({
-        tensor["uid"]: tensor for tensor in tensors
-    }.values())
+    unique_tensors = list(
+        {tensor["uid"]: tensor for tensor in tensors}.values()
+    )
     names = [f"input_{index}" for index in range(len(unique_tensors) - 1)] + [
         "output_ptr"
     ]
     return (
         "concatenate_kernel",
-        dict(zip(names, (
-            TRITON_POINTER_TYPES[t["data_type"]] for t in unique_tensors
-        ))),
-        {"BLOCK_SIZE": block}, grid,
+        dict(
+            zip(
+                names,
+                (TRITON_POINTER_TYPES[t["data_type"]] for t in unique_tensors),
+            )
+        ),
+        {"BLOCK_SIZE": block},
+        grid,
         [("tensor", None)] * len(unique_tensors),
     )

@@ -41,7 +41,10 @@ def run(
             + result.stderr
         )
     if not expect_success and result.returncode == 0:
-        fail("negative compiler command unexpectedly passed: " + " ".join(command))
+        fail(
+            "negative compiler command unexpectedly passed: "
+            + " ".join(command)
+        )
     return result
 
 
@@ -205,7 +208,9 @@ def main() -> int:
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     environment["FLAGDNN_BACKEND_ROOT"] = str(source_root / "backends")
 
-    with tempfile.TemporaryDirectory(prefix="flagdnn-iluvatar-compiler-") as tmp:
+    with tempfile.TemporaryDirectory(
+        prefix="flagdnn-iluvatar-compiler-"
+    ) as tmp:
         root = Path(tmp)
         identity_output = root / "identity.txt"
         identify = [
@@ -234,14 +239,18 @@ def main() -> int:
         external[external.index("libtriton_jit")] = "external_artifact"
         run(external, expect_success=False, environment=environment)
         run(identify, expect_success=True, environment=environment)
-        identity_lines = identity_output.read_text(encoding="utf-8").splitlines()
+        identity_lines = identity_output.read_text(
+            encoding="utf-8"
+        ).splitlines()
         if not identity_lines or len(identity_lines[0]) != 64:
             fail("compiler identity output is malformed")
         identity = identity_lines[0]
         if any(character not in "0123456789abcdef" for character in identity):
             fail("compiler identity is not lowercase SHA-256")
         metadata = json.loads(identity_lines[1])
-        if not metadata.get("dependencies_complete") or not metadata.get("snapshots"):
+        if not metadata.get("dependencies_complete") or not metadata.get(
+            "snapshots"
+        ):
             fail("compiler identity dependency closure is incomplete")
 
         malformed = root / "malformed.json"
@@ -324,13 +333,16 @@ def main() -> int:
         if (
             fused_program["stage_count"] != 1
             or fused_stage["source_node_ids"] != [0, 1, 2]
-            or fused_stage["kernel"]["function"] != "conv2d_spatial_nchw_kernel"
+            or fused_stage["kernel"]["function"]
+            != "conv2d_spatial_nchw_kernel"
             or fused_tensor_uids != [1, 2, 3, 6]
         ):
             fail("Conv-Bias-ReLU did not lower to one fused stage")
 
         leaky_document = json.loads(json.dumps(fused_document))
-        leaky_document["graph"]["nodes"][2]["attributes"]["negative_slope"] = 0.25
+        leaky_document["graph"]["nodes"][2]["attributes"][
+            "negative_slope"
+        ] = 0.25
         leaky_path = root / "unfused-conv-bias-leaky-relu.json"
         leaky_output = root / "unfused-conv-bias-leaky-relu"
         write_request(leaky_path, leaky_document)
@@ -376,7 +388,9 @@ def main() -> int:
             or manifest.get("program", {}).get("stage_count") != 1
         ):
             fail("Add manifest identity/schema is invalid")
-        descriptor = manifest["program"]["stages"][0]["kernel"]["materialized_source"]
+        descriptor = manifest["program"]["stages"][0]["kernel"][
+            "materialized_source"
+        ]
         if descriptor.get("path") != "generated_stage_0.py":
             fail("Add kernel source was not materialized relatively")
         source = first["generated_stage_0.py"]
@@ -400,7 +414,9 @@ def main() -> int:
             expect_success=True,
             environment=environment,
         )
-        integer_manifest = json.loads((integer_output / "manifest.json").read_text())
+        integer_manifest = json.loads(
+            (integer_output / "manifest.json").read_text()
+        )
         signature = integer_manifest["program"]["stages"][0]["variants"][0][
             "full_signature"
         ]
@@ -410,14 +426,20 @@ def main() -> int:
         write_request(integer_path, integer)
         run(
             compile_prefix
-            + [str(integer_path), "--output-dir", str(root / "fractional-alpha")]
+            + [
+                str(integer_path),
+                "--output-dir",
+                str(root / "fractional-alpha"),
+            ]
             + compile_suffix,
             expect_success=False,
             environment=environment,
         )
 
         # Codegen/dispatch resources must participate in cache invalidation.
-        dependency_paths = [snapshot["path"] for snapshot in metadata["snapshots"]]
+        dependency_paths = [
+            snapshot["path"] for snapshot in metadata["snapshots"]
+        ]
         for relative in (
             "dispatch/extended.py",
             "dispatch/convolution.py",
@@ -425,9 +447,12 @@ def main() -> int:
             "codegen/environment.py",
         ):
             if not any(
-                path.endswith("/iluvatar/" + relative) for path in dependency_paths
+                path.endswith("/iluvatar/" + relative)
+                for path in dependency_paths
             ):
-                fail("new compiler module is missing from identity: " + relative)
+                fail(
+                    "new compiler module is missing from identity: " + relative
+                )
 
         forbidden_roots = {
             str(source_root),

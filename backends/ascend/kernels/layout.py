@@ -70,7 +70,9 @@ def layout_copy_kernel(
         while linear_start < n_elements:
             logical = linear_start + tl.arange(0, copy_block_size)
             active = logical < n_elements
-            value = tl.load(input_ptr + INPUT_BASE + logical, mask=active, other=0)
+            value = tl.load(
+                input_ptr + INPUT_BASE + logical, mask=active, other=0
+            )
             tl.store(output_ptr + logical, value, mask=active)
             linear_start += worker_stride
 
@@ -99,15 +101,21 @@ def layout_copy_kernel(
                 coordinate = output_remaining % OUTPUT_DIM_1
                 output_remaining = output_remaining // OUTPUT_DIM_1
                 output_row_offset += coordinate * OUTPUT_STRIDE_1
-                output_row_offset += (output_remaining % OUTPUT_DIM_0) * OUTPUT_STRIDE_0
+                output_row_offset += (
+                    output_remaining % OUTPUT_DIM_0
+                ) * OUTPUT_STRIDE_0
 
                 column_start = row * 0
                 while column_start < OUTPUT_DIM_7:
                     column = column_start + tl.arange(0, BLOCK_SIZE)
                     active = column < OUTPUT_DIM_7
-                    output_offsets = output_row_offset + column * OUTPUT_STRIDE_7
+                    output_offsets = (
+                        output_row_offset + column * OUTPUT_STRIDE_7
+                    )
                     input_offsets = INPUT_BASE + output_offsets
-                    value = tl.load(input_ptr + input_offsets, mask=active, other=0)
+                    value = tl.load(
+                        input_ptr + input_offsets, mask=active, other=0
+                    )
                     tl.store(output_ptr + output_offsets, value, mask=active)
                     column_start += BLOCK_SIZE
                 row += WORKER_COUNT
@@ -123,24 +131,38 @@ def layout_copy_kernel(
                 output_remaining_i32 = row_i32
                 coordinate_i32 = output_remaining_i32 % OUTPUT_DIM_6
                 output_remaining_i32 //= OUTPUT_DIM_6
-                output_row_offset = coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_6
+                output_row_offset = (
+                    coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_6
+                )
                 coordinate_i32 = output_remaining_i32 % OUTPUT_DIM_5
                 output_remaining_i32 //= OUTPUT_DIM_5
-                output_row_offset += coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_5
+                output_row_offset += (
+                    coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_5
+                )
                 coordinate_i32 = output_remaining_i32 % OUTPUT_DIM_4
                 output_remaining_i32 //= OUTPUT_DIM_4
-                output_row_offset += coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_4
+                output_row_offset += (
+                    coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_4
+                )
                 coordinate_i32 = output_remaining_i32 % OUTPUT_DIM_3
                 output_remaining_i32 //= OUTPUT_DIM_3
-                output_row_offset += coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_3
+                output_row_offset += (
+                    coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_3
+                )
                 coordinate_i32 = output_remaining_i32 % OUTPUT_DIM_2
                 output_remaining_i32 //= OUTPUT_DIM_2
-                output_row_offset += coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_2
+                output_row_offset += (
+                    coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_2
+                )
                 coordinate_i32 = output_remaining_i32 % OUTPUT_DIM_1
                 output_remaining_i32 //= OUTPUT_DIM_1
-                output_row_offset += coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_1
+                output_row_offset += (
+                    coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_1
+                )
                 coordinate_i32 = output_remaining_i32 % OUTPUT_DIM_0
-                output_row_offset += coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_0
+                output_row_offset += (
+                    coordinate_i32.to(tl.int64) * OUTPUT_STRIDE_0
+                )
 
                 columns = tl.arange(0, column_block)
                 active = columns < OUTPUT_DIM_7
@@ -229,9 +251,13 @@ def matrix_transpose_kernel(
     COLUMNS: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    """Materialize a compact matrix transpose with coalesced reads and writes."""
+    """
+    Materialize a compact matrix transpose with coalesced reads and writes.
+    """
     row = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
-    column = tl.program_id(1).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    column = tl.program_id(1).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
     active = (row[:, None] < ROWS) & (column[None, :] < COLUMNS)
     value = tl.load(
         input_ptr + row[:, None] * COLUMNS + column[None, :], active, other=0
@@ -283,7 +309,9 @@ def layout_strided_copy_kernel(
     OUTPUT_STRIDE_7: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    logical = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    logical = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
     active = logical < n_elements
     input_remaining = logical
     output_remaining = logical

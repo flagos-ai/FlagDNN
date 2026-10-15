@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import functools
 import hashlib
 import importlib
@@ -17,7 +19,11 @@ import sysconfig
 from types import ModuleType
 from typing import Any
 
-from .triton_compat import configure_triton_path, ppu_codegen_backend, ppu_distribution
+from .triton_compat import (
+    configure_triton_path,
+    ppu_codegen_backend,
+    ppu_distribution,
+)
 
 # External codegen and embedded Python must resolve the selected package alike.
 if os.environ.get("FLAGDNN_THEAD_TRITON_ROOT"):
@@ -48,7 +54,9 @@ def _required_file(path: Path, description: str) -> Path:
 def _module_file(module: ModuleType) -> Path:
     origin = getattr(module, "__file__", None)
     if not isinstance(origin, str) or not origin:
-        raise RuntimeError(f"Python module has no file origin: {module.__name__}")
+        raise RuntimeError(
+            f"Python module has no file origin: {module.__name__}"
+        )
     return _required_file(Path(origin), f"Python module {module.__name__}")
 
 
@@ -142,7 +150,9 @@ def _validate_triton(root: Path) -> dict[str, ModuleType]:
         marker not in compiler_source
         for marker in ("PPU_SDK", "llvm-irformatter", "--ppu-backend-options")
     ):
-        raise RuntimeError("Triton CUDA compiler lacks the PPU compatibility path")
+        raise RuntimeError(
+            "Triton CUDA compiler lacks the PPU compatibility path"
+        )
     distribution, _ = ppu_distribution(root)
     if "ppu" not in distribution.version.lower():
         raise RuntimeError(
@@ -170,17 +180,20 @@ def _distribution_files(root: Path) -> tuple[Path, ...]:
     distribution, _ = ppu_distribution(root)
     files = tuple(
         sorted(
-            Path(distribution.locate_file(entry)).resolve(strict=True)
+            Path(cast(Any, distribution.locate_file(entry))).resolve(
+                strict=True
+            )
             for entry in distribution.files or ()
             if entry.parent.name.endswith(".dist-info")
-            and entry.name
-            not in {"RECORD"}
+            and entry.name not in {"RECORD"}
         )
     )
     if not files or any(
         not path.is_file() or not path.is_relative_to(root) for path in files
     ):
-        raise RuntimeError("Triton distribution metadata escaped its configured root")
+        raise RuntimeError(
+            "Triton distribution metadata escaped its configured root"
+        )
     return files
 
 
@@ -281,9 +294,7 @@ def collect_environment_identity() -> dict[str, Any]:
                 "hgbin" if ppu_codegen_backend(root) == "ppu" else "cubin"
             ),
             "ppu_compatibility": "cuda",
-            "package_tree_sha256": _tree_sha256(
-                package_root, package_files
-            ),
+            "package_tree_sha256": _tree_sha256(package_root, package_files),
             "module_sha256": dict(sorted(module_hashes.items())),
         },
         "environment": _cache_invalidating_environment(),

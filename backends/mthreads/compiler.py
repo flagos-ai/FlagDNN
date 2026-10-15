@@ -24,14 +24,14 @@ from .codegen.io import _compiler_entry_path, _publish_artifact
 from .codegen.resources import _materialize_mthreads_kernel_source
 
 # Keep parser entry points available to existing compiler-contract consumers.
-from .dispatch.graph import parse_add_request as parse_add_request
-from .dispatch.graph import parse_compiler_request as parse_compiler_request
-from .dispatch.graph import (
-    parse_convolution_request as parse_convolution_request,
+from .dispatch.graph import parse_add_request  # noqa: F401
+from .dispatch.graph import parse_compiler_request
+from .dispatch.graph import (  # noqa: F401
+    parse_convolution_request,
 )
-from .dispatch.graph import parse_matmul_request as parse_matmul_request
-from .dispatch.graph import parse_pointwise_request as parse_pointwise_request
-from .dispatch.graph import parse_reduction_request as parse_reduction_request
+from .dispatch.graph import parse_matmul_request  # noqa: F401
+from .dispatch.graph import parse_pointwise_request  # noqa: F401
+from .dispatch.graph import parse_reduction_request  # noqa: F401
 from .dispatch.selection import _plan, select_source
 
 

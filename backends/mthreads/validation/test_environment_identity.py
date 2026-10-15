@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from typing import Any
+
 import hashlib
-import json
+import json  # noqa: F401
 import sys
 import tempfile
 import unittest
@@ -9,7 +11,7 @@ from pathlib import Path
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import environment_identity
+import environment_identity  # noqa: E402
 
 
 def _sha256(path: Path) -> str:
@@ -18,7 +20,7 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _file_record(path: Path, **extra: object) -> dict[str, object]:
+def _file_record(path: Path, **extra: object) -> dict[str, Any]:
     resolved = path.resolve(strict=True)
     return {
         "requested_path": str(path.absolute()),
@@ -29,7 +31,7 @@ def _file_record(path: Path, **extra: object) -> dict[str, object]:
     }
 
 
-def _directory_record(path: Path) -> dict[str, object]:
+def _directory_record(path: Path) -> dict[str, Any]:
     return {
         "requested_path": str(path.absolute()),
         "realpath": str(path.resolve(strict=True)),
@@ -71,15 +73,8 @@ class EnvironmentContract(unittest.TestCase):
             / "cmake"
             / "TritonJIT"
             / "TritonJITConfig.cmake",
-            self.jit_root
-            / "include"
-            / "triton_jit"
-            / "triton_jit_function.h",
-            self.jit_root
-            / "share"
-            / "triton_jit"
-            / "scripts"
-            / "gen_ssig.py",
+            self.jit_root / "include" / "triton_jit" / "triton_jit_function.h",
+            self.jit_root / "share" / "triton_jit" / "scripts" / "gen_ssig.py",
             self.jit_root
             / "share"
             / "triton_jit"
@@ -93,13 +88,15 @@ class EnvironmentContract(unittest.TestCase):
         self.module_paths: dict[str, Path] = {}
         for name in ("torch", "torch_musa", "triton", "yaml"):
             path = self.python_root / "modules" / f"{name}.py"
-            path.write_text(f"__version__ = 'fixture-{name}'\n", encoding="utf-8")
+            path.write_text(
+                f"__version__ = 'fixture-{name}'\n", encoding="utf-8"
+            )
             self.module_paths[name] = path
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def valid_document(self) -> dict[str, object]:
+    def valid_document(self) -> dict[str, Any]:
         resources = {
             "musa_root": _directory_record(self.musa_root),
             "musa_runtime_header": _file_record(
@@ -114,9 +111,7 @@ class EnvironmentContract(unittest.TestCase):
             "musa_runtime": _file_record(
                 self.musa_root / "lib" / "libmusart.so"
             ),
-            "musa_driver": _file_record(
-                self.root / "system" / "libmusa.so"
-            ),
+            "musa_driver": _file_record(self.root / "system" / "libmusa.so"),
             "mudnn": _file_record(self.musa_root / "lib" / "libmudnn.so"),
             "mcc": _file_record(self.musa_root / "bin" / "mcc"),
             "patchelf": _file_record(
@@ -179,7 +174,7 @@ class EnvironmentContract(unittest.TestCase):
                 / "standalone_compile.py"
             ),
         }
-        document: dict[str, object] = {
+        document: dict[str, Any] = {
             "schema_version": 2,
             "platform": "mthreads",
             "resources": resources,
@@ -220,10 +215,11 @@ class EnvironmentContract(unittest.TestCase):
 
     def test_valid_fixture_has_no_errors(self) -> None:
         self.assertEqual(
-            environment_identity.validate_environment(self.valid_document()), []
+            environment_identity.validate_environment(self.valid_document()),
+            [],
         )
 
-    def build_tree_document(self) -> dict[str, object]:
+    def build_tree_document(self) -> dict[str, Any]:
         document = self.valid_document()
         build_root = self.root / "jit-build"
         build_root.mkdir()
@@ -235,12 +231,17 @@ class EnvironmentContract(unittest.TestCase):
             destination = build_root / original.name
             destination.write_bytes(original.read_bytes())
             resources[name] = {**old_record, **_file_record(destination)}
-        document["identity_sha256"] = environment_identity.identity_sha256(document)
+        document["identity_sha256"] = environment_identity.identity_sha256(
+            document
+        )
         return document
 
     def test_build_tree_can_be_outside_source_prefix(self) -> None:
         self.assertEqual(
-            environment_identity.validate_environment(self.build_tree_document()), []
+            environment_identity.validate_environment(
+                self.build_tree_document()
+            ),
+            [],
         )
 
     def test_build_tree_rejects_library_from_another_build(self) -> None:
@@ -248,7 +249,9 @@ class EnvironmentContract(unittest.TestCase):
         outside = self.root / "system" / "libtriton_jit.so"
         outside.write_bytes(b"wrong-build\n")
         document["resources"]["triton_jit"].update(_file_record(outside))
-        document["identity_sha256"] = environment_identity.identity_sha256(document)
+        document["identity_sha256"] = environment_identity.identity_sha256(
+            document
+        )
         self.assertIn(
             "TritonJIT resources do not share the selected prefix",
             environment_identity.validate_environment(document),
@@ -259,7 +262,9 @@ class EnvironmentContract(unittest.TestCase):
         outside = self.root / "jit-build" / "gen_ssig.py"
         outside.write_bytes(b"wrong-source\n")
         document["resources"]["triton_jit_gen_ssig"] = _file_record(outside)
-        document["identity_sha256"] = environment_identity.identity_sha256(document)
+        document["identity_sha256"] = environment_identity.identity_sha256(
+            document
+        )
         self.assertIn(
             "TritonJIT resources do not share the selected prefix",
             environment_identity.validate_environment(document),
@@ -345,7 +350,9 @@ class EnvironmentContract(unittest.TestCase):
             document
         )
         self.assertEqual(document["identity_sha256"], original_identity)
-        self.assertEqual(environment_identity.validate_environment(document), [])
+        self.assertEqual(
+            environment_identity.validate_environment(document), []
+        )
 
     def test_errors_are_sorted_and_deduplicated(self) -> None:
         document = self.valid_document()

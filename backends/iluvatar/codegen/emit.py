@@ -47,6 +47,7 @@ def _specialize_pointwise_compute_source(
     materialized source and candidate identities encode compute_data_type.
     """
 
+    cast_names: tuple[str, ...]
     compute_data_type = node["compute_data_type"]
     schema: PointwiseSchema = node["schema"]
     try:
@@ -61,7 +62,10 @@ def _specialize_pointwise_compute_source(
     if source.startswith(marker):
         raise ValueError("pointwise kernel source is already specialized")
 
-    if node["operation"] == "identity" or node["tensors"][0]["data_type"] == "int32":
+    if (
+        node["operation"] == "identity"
+        or node["tensors"][0]["data_type"] == "int32"
+    ):
         # Identity performs no arithmetic.  Every supported input value is
         # already representable in FP32, and a direct copy additionally keeps
         # signed zero and NaN payload bits intact instead of round-tripping
@@ -163,11 +167,15 @@ def _compile_pointwise_stage(
         raise ValueError(
             "Iluvatar pointwise kernel ownership/provider contract is invalid"
         )
-    function_name, signature, constants, default_grid = _pointwise_configuration(node)
+    function_name, signature, constants, default_grid = (
+        _pointwise_configuration(node)
+    )
     source_path = resolve_kernel_source(compiler_path, candidate)
     source_bytes = source_path.read_bytes()
     generated_bytes = materialize_kernel_source(source_path, candidate)
-    generated_bytes = _specialize_pointwise_compute_source(generated_bytes, node)
+    generated_bytes = _specialize_pointwise_compute_source(
+        generated_bytes, node
+    )
     if (
         not source_bytes
         or not generated_bytes
@@ -188,7 +196,9 @@ def _compile_pointwise_stage(
     argument_abi = _argument_abi(
         pointwise_layout, tensors, node["tensor_roles"], parameters, workspace
     )
-    runtime_signature = _jit_runtime_signature(function, signature, argument_abi)
+    runtime_signature = _jit_runtime_signature(
+        function, signature, argument_abi
+    )
     artifact_arguments = _artifact_arguments(argument_abi)
     registry_source_hash = hashlib.sha256(source_bytes).hexdigest()
     generated_source_hash = hashlib.sha256(generated_bytes).hexdigest()
@@ -256,7 +266,9 @@ def _compile_pointwise_stage(
             for name, value in configuration["META"].items():
                 variant_constants[name] = int(value)
             block_size = int(variant_constants["BLOCK_SIZE"])
-            tiles_per_program = int(variant_constants.get("TILES_PER_PROGRAM", 1))
+            tiles_per_program = int(
+                variant_constants.get("TILES_PER_PROGRAM", 1)
+            )
             pack_factor = int(variant_constants.get("PACK_FACTOR", 1))
             elements_per_program = block_size * tiles_per_program * pack_factor
             grid = (
@@ -290,7 +302,9 @@ def _compile_pointwise_stage(
             "strategy": candidate.tuning.strategy,
             "configurations": configurations,
         }
-        base_candidate_identity = hashlib.sha256(_canonical(base_identity)).hexdigest()
+        base_candidate_identity = hashlib.sha256(
+            _canonical(base_identity)
+        ).hexdigest()
         rendered_identity = {
             "schema_version": 1,
             "engine": "libtriton_jit",
@@ -390,7 +404,9 @@ def _compile_tensor_stage(
 
     function_name = configuration.function_name
     if function_name not in candidate.functions:
-        raise RuntimeError("kernel registry and Iluvatar tensor planner disagree")
+        raise RuntimeError(
+            "kernel registry and Iluvatar tensor planner disagree"
+        )
     function = getattr(module, function_name)
     argument_abi = _argument_abi(
         configuration.argument_layout,
@@ -497,7 +513,9 @@ def _compile_tensor_stage(
             "strategy": tuning.strategy,
             "configurations": configurations,
         }
-        base_candidate_identity = hashlib.sha256(_canonical(base_identity)).hexdigest()
+        base_candidate_identity = hashlib.sha256(
+            _canonical(base_identity)
+        ).hexdigest()
         rendered_identity = {
             "schema_version": 1,
             "engine": "libtriton_jit",
@@ -578,7 +596,9 @@ def _compile_nn_stage(
         )
         != expected_candidate_contract
     ):
-        raise ValueError("Iluvatar NN kernel ownership/provider contract is invalid")
+        raise ValueError(
+            "Iluvatar NN kernel ownership/provider contract is invalid"
+        )
     source_path = resolve_kernel_source(compiler_path, candidate)
     source_bytes = source_path.read_bytes()
     generated_bytes = materialize_kernel_source(source_path, candidate)
@@ -702,7 +722,9 @@ def _compile_nn_stage(
             "strategy": tuning.strategy,
             "configurations": configurations,
         }
-        base_candidate_identity = hashlib.sha256(_canonical(base_identity)).hexdigest()
+        base_candidate_identity = hashlib.sha256(
+            _canonical(base_identity)
+        ).hexdigest()
         rendered_identity = {
             "schema_version": 1,
             "engine": "libtriton_jit",

@@ -12,7 +12,9 @@ from .codegen.identity import ARTIFACT_SCHEMA_VERSION
 from .codegen.identity import EXECUTION_PROGRAM_VERSION
 from .codegen.identity import PROVIDER_NAME
 from .codegen.identity import build_compiler_identity
-from .codegen.identity import compiler_identity_dependencies as _identity_dependencies
+from .codegen.identity import (
+    compiler_identity_dependencies as _identity_dependencies,
+)
 from .codegen.io import _atomic_write
 from .codegen.io import _compiler_entry_path
 from .dispatch import nn as nn_dispatch
@@ -71,12 +73,16 @@ def compile_request(
         raise ValueError("Iluvatar provider received another backend")
     target_name = request.get("target")
     if target_name != SUPPORTED_TARGET:
-        raise ValueError(f"Iluvatar provider supports only target {SUPPORTED_TARGET!r}")
+        raise ValueError(
+            f"Iluvatar provider supports only target {SUPPORTED_TARGET!r}"
+        )
 
     identity = compiler_identity(target_name, execution_engine)
     if request.get("compiler_identity") != identity["identity_sha256"]:
         raise ValueError("request compiler identity does not match provider")
-    build_options = _require_object(request.get("build_options"), "build_options")
+    build_options = _require_object(
+        request.get("build_options"), "build_options"
+    )
     enable_autotune = build_options.get("autotune", False)
     if not isinstance(enable_autotune, bool):
         raise ValueError("build_options.autotune must be a boolean")
@@ -117,7 +123,9 @@ def compile_request(
             if tensor_registry[uid]["virtual"] and producer is None:
                 raise ValueError("virtual tensor input has no producer")
             if producer is not None and node_positions[producer] >= position:
-                raise ValueError("graph nodes are not in topological execution order")
+                raise ValueError(
+                    "graph nodes are not in topological execution order"
+                )
     if not any(not tensor["virtual"] for tensor in tensor_registry.values()):
         raise ValueError("graph has no externally bound tensors")
     if not has_external_output:
@@ -138,7 +146,9 @@ def compile_request(
         raise ValueError("Iluvatar execution workspace size overflows int64")
     workspace_size = packed_workspace_size + LIBTRITON_JIT_GLOBAL_SCRATCH_SIZE
     if workspace_size > 2**63 - workspace_alignment:
-        raise ValueError("Iluvatar aligned workspace requirement overflows int64")
+        raise ValueError(
+            "Iluvatar aligned workspace requirement overflows int64"
+        )
     if workspace_size:
         workspace_size = (
             (workspace_size + workspace_alignment - 1)
@@ -166,7 +176,9 @@ def compile_request(
             for configuration in plan.stages:
                 stage_id = len(stages)
                 dependencies = (
-                    external_dependencies if not local_stage_ids else [stage_id - 1]
+                    external_dependencies
+                    if not local_stage_ids
+                    else [stage_id - 1]
                 )
                 stages.append(
                     _compile_nn_stage(
@@ -183,7 +195,9 @@ def compile_request(
                 )
                 local_stage_ids[configuration.stage_name] = stage_id
             if not local_stage_ids:
-                raise ValueError("Iluvatar NN node produced no execution stages")
+                raise ValueError(
+                    "Iluvatar NN node produced no execution stages"
+                )
             producer_stage = len(stages) - 1
         else:
             stage_id = len(stages)
@@ -252,7 +266,9 @@ def compile_request(
     }
     _atomic_write(
         output_directory / "manifest.json",
-        (json.dumps(manifest, sort_keys=True, indent=2) + "\n").encode("utf-8"),
+        (json.dumps(manifest, sort_keys=True, indent=2) + "\n").encode(
+            "utf-8"
+        ),
     )
     return {
         "schema_version": ARTIFACT_SCHEMA_VERSION,

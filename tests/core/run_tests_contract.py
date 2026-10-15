@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from collections import Counter
 import contextlib
 import importlib.util
@@ -172,6 +174,8 @@ def check_real_ctest_selectors(adapter) -> None:
 def check_legacy_summary(runner) -> None:
     # These keys and values are the public contract of the former runner,
     # independent of the native diagnostic document and its internal names.
+    functional: dict[str, Any]
+    expected: str | tuple[int, int]
     report = runner
     case = "add_perf_bfloat16_2x3_by_2x3"
     pair = {
@@ -643,7 +647,10 @@ def check_platform_batch_report_hooks(runner) -> None:
             adapter = runner.load_platform_adapter(platform)
             require(
                 callable(getattr(adapter, "postprocess_batch_report", None)),
-                f"{platform} equivalent reporting did not opt into the generic hook",
+                (
+                    f"{platform} equivalent reporting "
+                    f"did not opt into the generic hook"
+                ),
             )
             for summary in (
                 {},
@@ -754,7 +761,10 @@ def check_platform_batch_report_hooks(runner) -> None:
 
 
 def check_operator_presets(runner) -> None:
-    """Both presets retain their order and use the shared manifest validation."""
+    """
+    Both presets retain their order and use the shared manifest validation.
+    """
+    expected: list[Any] | bool
     manifests = runner.load_platform_adapter(
         "nvidia"
     ).select_operator_manifests(runner.operator_manifests())
@@ -768,7 +778,10 @@ def check_operator_presets(runner) -> None:
         )
         require(
             selected == {suite: expected for suite in runner.VALID_SUITES},
-            f"operator preset lost its order or selected the wrong list: {appoint=}",
+            (
+                f"operator preset lost its order or "
+                f"selected the wrong list: {appoint=}"
+            ),
         )
         missing = expected[-1]
         incomplete = {
@@ -866,18 +879,30 @@ def check_operator_presets(runner) -> None:
 
 def check_batch_runner(runner) -> None:
     """Exercise concurrent CTest processes and the public archive protocol."""
+    merged: dict[str, Any]
     for marker in ("[skip]", "[SKIP]", "SKIP"):
         case = "relu_backward_attributes_fp32_1x1x65"
         reason = "muDNN cannot express clipped ReLU gradients"
-        records = runner.accuracy_records("relu_backward", {
-            "stdout": f"96: {marker} case={case} provider=mudnn reason={reason}\n",
-            "stderr": "", "case_counts": {"passed": 0, "failed": 0, "skipped": 1},
-        })
-        require(len(records) == 1, "named skip duplicated as native accounting")
+        records = runner.accuracy_records(
+            "relu_backward",
+            {
+                "stdout": (
+                    f"96: {marker} case={case} pro"
+                    f"vider=mudnn reason={reason}\n"
+                ),
+                "stderr": "",
+                "case_counts": {"passed": 0, "failed": 0, "skipped": 1},
+            },
+        )
+        require(
+            len(records) == 1, "named skip duplicated as native accounting"
+        )
         record = next(iter(records.values()))
-        require(record["params"] == {"case": case}
-                and record["skipped_reason"] == reason,
-                "skip parser lost case identity or truncated its reason")
+        require(
+            record["params"] == {"case": case}
+            and record["skipped_reason"] == reason,
+            "skip parser lost case identity or truncated its reason",
+        )
     with tempfile.TemporaryDirectory(prefix="flagdnn-batch-contract-") as tmp:
         root = Path(tmp)
         build = root / "build"
@@ -1237,6 +1262,7 @@ else:
 
 def check_batch_cache_environment(runner) -> None:
     """Check cache and THead device policy through workers and CTest."""
+    assigned: set[str]
     with tempfile.TemporaryDirectory(prefix="flagdnn-batch-cache-") as tmp:
         root = Path(tmp)
         build = root / "build"
@@ -1419,6 +1445,7 @@ print('FLAGDNN_' + sys.argv[1].upper() +
 
 
 def check_hygon_native_timing(runner, hygon) -> None:
+    incompatible_pairs: list[tuple[Any, ...]]
     case = "add_perf_fp32_8x16x32_by_8x16x32"
     metadata_keys = ("timing_mode", "timing_reason", "benchmark_config")
 
@@ -1465,7 +1492,9 @@ def check_hygon_native_timing(runner, hygon) -> None:
         hygon.postprocess_result(
             result=task,
             ctest_reported_status="passed",
-            output="FLAGDNN_ADD_BENCHMARK: PASS cases=1 executed=1 skipped=0\n",
+            output=(
+                "FLAGDNN_ADD_BENCHMARK: PASS c" "ases=1 executed=1 skipped=0\n"
+            ),
             operator="add",
             suite="benchmark",
             records=records,
@@ -1511,7 +1540,10 @@ def check_hygon_native_timing(runner, hygon) -> None:
             and public["data"]["fp32"]["result"] == "OK"
             and row["speedup"] == 0.5
             and performance["minimum_speedup"] == 0.5,
-            "native v5 metadata changed speedup math or enabled a default gate",
+            (
+                "native v5 metadata changed speed"
+                "up math or enabled a default gate"
+            ),
         )
         with contextlib.redirect_stdout(io.StringIO()):
             default = hygon.finalize(
@@ -1615,7 +1647,8 @@ def check_hygon_native_timing(runner, hygon) -> None:
     malformed.append({**native(direct=True), "timing_reason": "standard"})
     for record in malformed:
         rejected, errors = runner.benchmark_records(json.dumps(record), hygon)
-        # A record not claiming the timing protocol remains unrelated diagnostics.
+        # A record not claiming the timing protocol remains unrelated
+        # diagnostics.
         require(
             not rejected and (errors or "kind" not in record),
             "malformed native v5 timing was accepted: " + repr(record),
@@ -1701,7 +1734,10 @@ def check_hygon_native_timing(runner, hygon) -> None:
                 and batch["data"] == {}
                 and "speedup" not in log
                 and json.dumps(task, sort_keys=True) == snapshot,
-                "incompatible timing pair produced a ratio/fake OK or lost raw diagnostics",
+                (
+                    "incompatible timing pair produced a "
+                    "ratio/fake OK or lost raw diagnostics"
+                ),
             )
         good_case = case + "_compatible"
         compatible = {
@@ -2368,6 +2404,7 @@ def check_equivalent_performance(runner, hygon) -> None:
 
 def check_hygon_baseline_skip_scope(runner, hygon) -> None:
     """Only known auxiliary cases can claim a missing NVIDIA baseline."""
+    allowed: dict[str, list[str]]
     boolean_shapes = (
         "1x1x16",
         "2x8x8",
@@ -2486,7 +2523,10 @@ def check_hygon_baseline_skip_scope(runner, hygon) -> None:
             task["status"] == "failed"
             and task.get("skip_record_errors")
             and outcome["coverage"]["nvidia_baseline_skips"] == 0,
-            "newly measured auxiliary BOOL cases retained a missing-NVIDIA exemption",
+            (
+                "newly measured auxiliary BOOL cases"
+                " retained a missing-NVIDIA exemption"
+            ),
         )
     variable = "FLAGDNN_PERFORMANCE_BASELINE"
     previous_baseline = os.environ.get(variable)
@@ -2546,7 +2586,7 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
     cases = reference["cases"]
     require(
         reference["platform"] == "nvidia"
-        and len(cases) == reference["coverage"]["case_count"] == 3264
+        and len(cases) == reference["coverage"]["case_count"] == 3354
         and len({case["op"] for case in cases.values()})
         == reference["coverage"]["operator_count"]
         == 82,
@@ -2649,15 +2689,14 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
             if case["op"] in policies
         )
         == {
-            "vector_fp32": 1022,
+            "vector_fp32": 1112,
             "hbm_copy": 444,
             "hbm_triad": 480,
             "hbm_write": 28,
         },
-        # This is policy-by-op reference coverage (1974), not the runtime
-        # catalog (1941). Six old backward-attribute records remain outside
-        # the new BF16-perf-only scope; 27 older reference-only cases were
-        # already outside the generated runtime catalog.
+        # Policy-by-op reference coverage is now 2064 after the 90 native
+        # ELU/softplus measurements. The generated Hygon runtime catalog
+        # remains 1941; adding reference evidence does not expand it.
         "Hygon-owned policy reference coverage changed during isolation",
     )
     ascend = platforms["ascend"]
@@ -2672,14 +2711,20 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
         and ascend["architecture"]
         and ascend["measured_on"]
         and ascend["peaks"]["hbm_copy"] > 0
-        and all(value is None for key, value in ascend["peaks"].items()
-                if key != "hbm_copy"),
+        and all(
+            value is None
+            for key, value in ascend["peaks"].items()
+            if key != "hbm_copy"
+        ),
         "Ascend must own its measured copy peak and FP8-only identity policy",
     )
     mthreads = platforms["mthreads"]
     mthreads_policies = mthreads["scaling"]["case_policies"]
     require(
-        {op: policy["scale_metric"] for op, policy in mthreads_policies.items()}
+        {
+            op: policy["scale_metric"]
+            for op, policy in mthreads_policies.items()
+        }
         == {
             "elu_backward": "vector_fp32",
             "softplus_backward": "vector_fp32",
@@ -2703,7 +2748,10 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
         )
         and mthreads["measurement"]["sample_count"] > 0
         and mthreads["measurement"]["raw_archive_sha256"],
-        "MThreads policies must retain their measured device evidence and dtype scope",
+        (
+            "MThreads policies must retain their measured device evidence and "
+            "dtype scope"
+        ),
     )
     # Thead owns an explicit, narrower policy set. These policies must not
     # inherit Hygon's other operators or alter the shared NVIDIA references.
@@ -2717,13 +2765,23 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
         }
         and all(
             policy != policies[op]
-            and all(policy.get(field) for field in ("scope", "rationale", "limitations"))
+            and all(
+                policy.get(field)
+                for field in ("scope", "rationale", "limitations")
+            )
             for op, policy in thead_policies.items()
         ),
-        "Thead-owned policies changed scope or inherited Hygon-specific policies",
+        (
+            "Thead-owned policies changed scope or inherited Hygon-specific "
+            "policies"
+        ),
     )
     require(
-        Counter(case["op"] for case in cases.values() if case["op"] in thead_policies)
+        Counter(
+            case["op"]
+            for case in cases.values()
+            if case["op"] in thead_policies
+        )
         == {
             "concatenate": 42,
             "gen_index": 28,
@@ -2742,6 +2800,8 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
 
 def check_general_equivalent_performance(runner, hygon) -> None:
     """Exercise bandwidth normalization and mixed native/equivalent suites."""
+
+    mixed_task: dict[str, Any]
 
     def measured(
         case,
@@ -2793,6 +2853,7 @@ def check_general_equivalent_performance(runner, hygon) -> None:
     seen = set()
     accepted_references = 0
     supplemental_references = 0
+    activation_native_references = 0
     for case, reference in catalog["reference"]["cases"].items():
         operator = reference["op"]
         if operator not in hygon.EQUIVALENT_OPERATORS:
@@ -2801,13 +2862,19 @@ def check_general_equivalent_performance(runner, hygon) -> None:
             require(
                 operator in {"relu_backward", "swish_backward"}
                 and case.startswith(operator + "_attributes_"),
-                f"unexpected policy/reference case outside runtime scope: {case}",
+                (
+                    f"unexpected policy/reference case outside runtime scope: "
+                    f"{case}"
+                ),
             )
             continue
         seen.add(operator)
         accepted_references += 1
         supplemental_references += (
             reference.get("measurement_id") == "nvidia-missing-20261012"
+        )
+        activation_native_references += (
+            reference.get("measurement_id") == "nvidia-supplement-20261015"
         )
         record = measured(
             case,
@@ -2827,9 +2894,13 @@ def check_general_equivalent_performance(runner, hygon) -> None:
     require(
         len(seen) == 59
         and seen == hygon.EQUIVALENT_OPERATORS
-        and accepted_references == 1968
-        and supplemental_references == 371,
-        "equivalent validation must cover 1968 reference records across 59 ops, including all 371 supplemental records",
+        and accepted_references == 2058
+        and supplemental_references == 371
+        and activation_native_references == 90,
+        (
+            "equivalent validation must cover 2058 references across 59 ops, "
+            "including 371 supplemental and 90 native activation records"
+        ),
     )
 
     examples = (
@@ -3039,7 +3110,10 @@ def check_general_equivalent_performance(runner, hygon) -> None:
         bn_task["status"] == "passed"
         and hygon.complete_benchmark(bn_task)
         and len(bn_task.get("performance_warnings", [])) == 1,
-        "below-baseline BatchNorm became an execution failure without a CLI gate",
+        (
+            "below-baseline BatchNorm became an execution failure without a "
+            "CLI gate"
+        ),
     )
     bn_results = {"batchnorm": {"benchmark": bn_task}}
     bn_native = hygon.benchmark_speedup_summary(bn_results, None)
@@ -3060,7 +3134,10 @@ def check_general_equivalent_performance(runner, hygon) -> None:
         and bn_detail["equivalent_baseline"]
         == bn_equivalent["equivalent_baseline"]
         and len(bn_records[bn_equivalent_case]["flagdnn"]["samples"]) == 10,
-        "BatchNorm profile in the public report or measured samples in raw records were lost",
+        (
+            "BatchNorm profile in the public report or measured samples in "
+            "raw records were lost"
+        ),
     )
     bn_legacy = runner.performance_file("batchnorm", bn_task, bn_public)
     require(
@@ -3907,7 +3984,10 @@ def main() -> int:
             "pair_not_emitted",
             "not_run",
         ],
-        "comparable coverage confused complete-but-excluded, partial, absent, and unrun cases",
+        (
+            "comparable coverage confused complete-but-excluded, partial, "
+            "absent, and unrun cases"
+        ),
     )
     diagnostics = io.StringIO()
     with contextlib.redirect_stdout(diagnostics):
@@ -3924,7 +4004,10 @@ def main() -> int:
         and "raw_complete=1" in diagnostics.getvalue()
         and "reason=pair_present_but_suite_failed" in diagnostics.getvalue()
         and "missing comparable pair" not in diagnostics.getvalue(),
-        "coverage diagnostics still describe complete-but-excluded pairs as missing output",
+        (
+            "coverage diagnostics still describe complete-but-excluded pairs "
+            "as missing output"
+        ),
     )
     require(
         hygon.hygon_comparable_coverage(
@@ -4839,7 +4922,7 @@ def main() -> int:
         ("batchnorm_inference", "batchnorm"),
         ("sdpa_backward", "sdpa"),
     ):
-        overlapping: dict[str, dict[str, dict[str, object]]] = {
+        overlapping: dict[str, dict[str, dict[str, Any]]] = {
             f"{longer}_fp32_case": {
                 "flagdnn": {},
                 "hipdnn": {},
@@ -4856,7 +4939,7 @@ def main() -> int:
         operator = f"conv_{direction}"
         for spatial_rank in (1, 2, 3):
             case = f"conv{spatial_rank}d_{direction}_fp32_case"
-            convolution_records: dict[str, dict[str, dict[str, object]]] = {
+            convolution_records: dict[str, dict[str, dict[str, Any]]] = {
                 case: {"flagdnn": {}, "hipdnn": {}}
             }
             require(

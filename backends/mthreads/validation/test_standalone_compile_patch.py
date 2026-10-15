@@ -5,6 +5,10 @@
 
 from __future__ import annotations
 
+from typing import cast
+
+from typing import Any
+
 import contextlib
 import importlib.util
 import io
@@ -102,7 +106,7 @@ class StandaloneCompilePatchContract(unittest.TestCase):
         compile_error=None,
         patched=True,
     ):
-        triton = ModuleType("triton")
+        triton: Any = ModuleType("triton")
         triton.compile = mock.Mock(
             return_value=SimpleNamespace(asm=asm, cache_dir=str(self.cache)),
             side_effect=compile_error,
@@ -117,7 +121,7 @@ class StandaloneCompilePatchContract(unittest.TestCase):
             "triton._C": ModuleType("triton._C"),
             "triton._C.libtriton": bindings,
         }
-        namespace = {"get_backend": lambda: backend}
+        namespace: dict[str, Any] = {"get_backend": lambda: backend}
         source = PATCHER.patch_source(UPSTREAM) if patched else UPSTREAM
         with mock.patch.dict(sys.modules, modules), contextlib.redirect_stderr(
             self.stderr
@@ -147,7 +151,7 @@ class StandaloneCompilePatchContract(unittest.TestCase):
                     data = (
                         value.encode("utf-8")
                         if isinstance(value, str)
-                        else bytes(value)
+                        else bytes(cast(bytes | bytearray, value))
                     )
                     self.write_artifacts({suffix: data})
                     self.assertEqual(
@@ -187,6 +191,7 @@ class StandaloneCompilePatchContract(unittest.TestCase):
         self.assertEqual(self.stderr.getvalue(), "")
 
     def test_missing_empty_or_unverifiable_artifacts_fail(self) -> None:
+        cases: tuple[tuple[str, dict[str, bytes], dict[str, Any]], ...]
         cases = (
             ("missing", {}, {"mubin": b"compiled"}),
             ("empty", {"mubin": b""}, {"mubin": b""}),
@@ -256,7 +261,7 @@ class StandaloneCompilePatchContract(unittest.TestCase):
         self.assertEqual(self.stderr.getvalue(), "")
 
     def test_splitter_preserves_descriptor_and_tuple_groups(self) -> None:
-        namespace = {}
+        namespace: dict[str, Any] = {}
         with mock.patch.dict(sys.modules, {"triton": ModuleType("triton")}):
             exec(PATCHER.patch_source(UPSTREAM), namespace)
         split = namespace["_bracket_aware_split"]

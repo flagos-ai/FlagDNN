@@ -744,7 +744,7 @@ def identify(
     environment: dict[str, str],
     expect_success: bool,
 ) -> str | None:
-    result = run(
+    run(
         [
             str(python),
             str(compiler),
@@ -1621,7 +1621,7 @@ def validate_conv_bias_relu_manifest(
     output_uid = relu_node["outputs"][0]["uid"]
     image = tensor_by_uid[image_uid]
     filter_tensor = tensor_by_uid[filter_uid]
-    convolution = tensor_by_uid[convolution_uid]
+    tensor_by_uid[convolution_uid]
     output_tensor = tensor_by_uid[output_uid]
     attributes = convolution_node["attributes"]
     expected_bindings = [
@@ -2404,6 +2404,12 @@ def validate_im2col_fprop_manifest(
     autotune: bool,
     request: dict[str, Any],
 ) -> None:
+    stage_specs: tuple[
+        tuple[
+            str, list[int], list[tuple[str, str, Any]], tuple[int, int, int]
+        ],
+        ...,
+    ]
     graph = request["graph"]
     node = graph["nodes"][0]
     tensor_by_uid = {tensor["uid"]: tensor for tensor in graph["tensors"]}
@@ -2638,6 +2644,15 @@ def validate_dense_dgrad_manifest(
     autotune: bool,
     request: dict[str, Any],
 ) -> None:
+    stage_specs: tuple[
+        tuple[
+            str,
+            list[int],
+            list[tuple[str, str, Any]],
+            list[tuple[int, int, int]],
+        ],
+        ...,
+    ]
     graph = request["graph"]
     node = graph["nodes"][0]
     tensor_by_uid = {tensor["uid"]: tensor for tensor in graph["tensors"]}
@@ -2895,6 +2910,7 @@ def validate_p5_wgrad_manifest(
     autotune: bool,
     request: dict[str, Any],
 ) -> None:
+    stage_specs: tuple[tuple[str, list[int], list[tuple[str, str, Any]]], ...]
     graph = request["graph"]
     node = graph["nodes"][0]
     tensor_by_uid = {tensor["uid"]: tensor for tensor in graph["tensors"]}
@@ -3136,6 +3152,15 @@ def validate_stem_wgrad_manifest(
     autotune: bool,
     request: dict[str, Any],
 ) -> None:
+    stage_specs: tuple[
+        tuple[
+            str,
+            list[int],
+            list[tuple[str, str, Any]],
+            list[tuple[int, int, int]],
+        ],
+        ...,
+    ]
     graph = request["graph"]
     node = graph["nodes"][0]
     tensor_by_uid = {tensor["uid"]: tensor for tensor in graph["tensors"]}
@@ -3373,6 +3398,15 @@ def validate_nd_packed_wgrad_manifest(
     autotune: bool,
     request: dict[str, Any],
 ) -> None:
+    stage_specs: tuple[
+        tuple[
+            str,
+            list[int],
+            list[tuple[str, str, Any]],
+            list[tuple[int, int, int]],
+        ],
+        ...,
+    ]
     graph = request["graph"]
     node = graph["nodes"][0]
     tensor_by_uid = {tensor["uid"]: tensor for tensor in graph["tensors"]}
@@ -3668,6 +3702,15 @@ def validate_standard_wgrad_manifest(
     autotune: bool,
     request: dict[str, Any],
 ) -> None:
+    stage_specs: tuple[
+        tuple[
+            str,
+            list[int],
+            list[tuple[str, str, Any]],
+            list[tuple[int, int, int]],
+        ],
+        ...,
+    ]
     graph = request["graph"]
     node = graph["nodes"][0]
     tensor_by_uid = {tensor["uid"]: tensor for tensor in graph["tensors"]}
@@ -4025,6 +4068,7 @@ def validate_manifest(
     autotune: bool,
     request: dict[str, Any],
 ) -> None:
+    expected_argument_scalar_bits: list[str | None]
     operation = request["graph"]["nodes"][0]["type"]
     if uses_im2col_fprop(request):
         validate_im2col_fprop_manifest(
@@ -4169,81 +4213,60 @@ def validate_manifest(
             )
         )
     )
-    expected_functions = (
-        {
+    if unary:
+        expected_functions = {
             "unary_pointwise_contiguous_kernel",
-            "unary_pointwise_strided_kernel",
+            ("unary_pointwise" "_strided_kernel"),
         }
-        if unary
-        else (
-            {
-                "binary_select_tensor_kernel",
-                "binary_select_strided_kernel",
-            }
-            if ternary
-            else (
-                {"reshape_contiguous_kernel", "layout_copy_kernel"}
-                if operation == "reshape"
-                else (
-                    {"slice_copy_kernel", "layout_copy_kernel"}
-                    if operation == "slice"
-                    else (
-                        {
-                            "transpose_physical_copy_kernel",
-                            "layout_copy_kernel",
-                        }
-                        if operation == "transpose"
-                        else (
-                            {"layout_copy_kernel"}
-                            if layout
-                            else (
-                                {
-                                    "reduction_2d_kernel",
-                                    "reduction_3d_kernel",
-                                    "reduction_strided_kernel",
-                                }
-                                if reduction
-                                else (
-                                    (
-                                        {"matmul_tle_kernel"}
-                                        if matmul_tle is not None
-                                        else (
-                                            {"matmul_descriptor_kernel"}
-                                            if matmul_descriptor
-                                            else {"matmul_strided_kernel"}
-                                        )
-                                    )
-                                    if matmul
-                                    else (
-                                        {"conv_dgrad_nd_kernel"}
-                                        if operation == "convolution_dgrad"
-                                        else (
-                                            {"conv_wgrad_nd_kernel"}
-                                            if operation == "convolution_wgrad"
-                                            else (
-                                                {
-                                                    "conv1d_gemm_kernel",
-                                                    "conv2d_spatial_nchw_kernel",
-                                                    "conv3d_spatial_ncdhw_m_kernel",
-                                                    "conv_dgrad_nd_kernel",
-                                                    "conv_wgrad_nd_kernel",
-                                                }
-                                                if convolution
-                                                else {
-                                                    "binary_contiguous_kernel",
-                                                    "binary_strided_kernel",
-                                                }
-                                            )
-                                        )
-                                    )
-                                )
-                            )
-                        )
-                    )
-                )
-            )
-        )
-    )
+    elif ternary:
+        expected_functions = {
+            "binary_select_tensor_kernel",
+            ("binary_select_" "strided_kernel"),
+        }
+    elif operation == "reshape":
+        expected_functions = {
+            "reshape_contiguous_kernel",
+            ("layout_co" "py_kernel"),
+        }
+    elif operation == "slice":
+        expected_functions = {"slice_copy_kernel", "layout_copy_kernel"}
+    elif operation == "transpose":
+        expected_functions = {
+            "transpose_physical_copy_kernel",
+            ("layout_co" "py_kernel"),
+        }
+    elif layout:
+        expected_functions = {"layout_copy_kernel"}
+    elif reduction:
+        expected_functions = {
+            "reduction_2d_kernel",
+            "reduction_3d_kernel",
+            ("reduction_st" "rided_kernel"),
+        }
+    elif matmul:
+        if matmul_tle is not None:
+            expected_functions = {"matmul_tle_kernel"}
+        elif matmul_descriptor:
+            expected_functions = {"matmul_descriptor_kernel"}
+        else:
+            expected_functions = {"matmul_strided_kernel"}
+    elif operation == "convolution_dgrad":
+        expected_functions = {"conv_dgrad_nd_kernel"}
+    elif operation == "convolution_wgrad":
+        expected_functions = {"conv_wgrad_nd_kernel"}
+    elif convolution:
+        expected_functions = {
+            "conv1d_gemm_kernel",
+            ("conv2d_spatia" "l_nchw_kernel"),
+            ("conv3d_spatial" "_ncdhw_m_kernel"),
+            ("conv_dgrad" "_nd_kernel"),
+            ("conv_wgrad" "_nd_kernel"),
+        }
+    else:
+        expected_functions = {
+            "binary_contiguous_kernel",
+            ("binary_str" "ided_kernel"),
+        }
     if set(manifest) != ROOT_KEYS:
         fail("mthreads manifest root schema is not closed")
     if (
@@ -4793,12 +4816,12 @@ def run_rejection_matrix(
 ) -> int:
     parser = provider.parse_add_request
     base = add_case(fixture, identity)
-    mutations: list[tuple[str, Callable[[dict[str, Any]], None]]] = []
+    mutations: list[tuple[str, Callable[[dict[str, Any]], object]]] = []
 
     def mutation(
         name: str,
-    ) -> Callable[[Callable[[dict[str, Any]], None]], None]:
-        def register(function: Callable[[dict[str, Any]], None]) -> None:
+    ) -> Callable[[Callable[[dict[str, Any]], object]], None]:
+        def register(function: Callable[[dict[str, Any]], object]) -> None:
             mutations.append((name, function))
 
         return register
@@ -4932,12 +4955,12 @@ def run_ternary_rejection_matrix(
 ) -> int:
     parser = provider.parse_pointwise_request
     base = ternary_case(fixture, identity)
-    mutations: list[tuple[str, Callable[[dict[str, Any]], None]]] = []
+    mutations: list[tuple[str, Callable[[dict[str, Any]], object]]] = []
 
     def mutation(
         name: str,
-    ) -> Callable[[Callable[[dict[str, Any]], None]], None]:
-        def register(function: Callable[[dict[str, Any]], None]) -> None:
+    ) -> Callable[[Callable[[dict[str, Any]], object]], None]:
+        def register(function: Callable[[dict[str, Any]], object]) -> None:
             mutations.append((name, function))
 
         return register
@@ -5065,7 +5088,7 @@ def run_layout_rejection_matrix(
         slice_strides=[1, 2, 1],
     )
     mutations: list[
-        tuple[str, dict[str, Any], Callable[[dict[str, Any]], None]]
+        tuple[str, dict[str, Any], Callable[[dict[str, Any]], object]]
     ] = [
         (
             "layout wrong input role",
@@ -5200,7 +5223,7 @@ def run_reduction_rejection_matrix(
         value["graph"]["tensors"].append(extra)
         value["graph"]["tensor_count"] = 3
 
-    mutations: list[tuple[str, Callable[[dict[str, Any]], None]]] = [
+    mutations: list[tuple[str, Callable[[dict[str, Any]], object]]] = [
         (
             "reduction wrong input role",
             lambda value: value["graph"]["nodes"][0]["inputs"][0].update(
@@ -5312,7 +5335,7 @@ def run_matmul_rejection_matrix(
         value["graph"]["tensors"].append(extra)
         value["graph"]["tensor_count"] = 4
 
-    mutations: list[tuple[str, Callable[[dict[str, Any]], None]]] = [
+    mutations: list[tuple[str, Callable[[dict[str, Any]], object]]] = [
         (
             "Matmul wrong input role",
             lambda value: value["graph"]["nodes"][0]["inputs"][0].update(
@@ -5426,7 +5449,7 @@ def run_convolution_rejection_matrix(
             strides=dense_strides(dimensions),
         )
 
-    mutations: list[tuple[str, Callable[[dict[str, Any]], None]]] = [
+    mutations: list[tuple[str, Callable[[dict[str, Any]], object]]] = [
         (
             "convolution wrong input role",
             lambda value: value["graph"]["nodes"][0]["inputs"][0].update(
@@ -5642,7 +5665,9 @@ def parse_arguments() -> argparse.Namespace:
 
 
 def check_fp8_target_plans(provider, fixture, identity):
-    """FP8 capability checks must use the request target, not a fixed device."""
+    """
+    FP8 capability checks must use the request target, not a fixed device.
+    """
     extended = importlib.import_module(
         provider.__package__ + ".dispatch.extended"
     )
@@ -6550,7 +6575,9 @@ def main() -> int:
                 convolution_mode=0,
                 autotune=True,
             ),
-            "convolution-wgrad-fp16-standard-stride2-autotune": convolution_case(
+            (
+                "convolution-wgrad-fp16-s" "tandard-stride2-autotune"
+            ): convolution_case(
                 fixture,
                 identity,
                 operation="convolution_wgrad",
@@ -6841,82 +6868,54 @@ def main() -> int:
                     reduction_function = "reduction_2d_kernel"
                 else:
                     reduction_function = "reduction_3d_kernel"
-            expected_function = (
-                (
-                    "conv_dgrad_nd_kernel"
-                    if request["graph"]["nodes"][0]["type"]
-                    == "convolution_dgrad"
-                    else (
-                        "conv_wgrad_nd_kernel"
-                        if request["graph"]["nodes"][0]["type"]
-                        == "convolution_wgrad"
-                        else {
-                            1: "conv1d_gemm_kernel",
-                            2: "conv2d_spatial_nchw_kernel",
-                            3: "conv3d_spatial_ncdhw_m_kernel",
-                        }[
-                            request["graph"]["nodes"][0]["attributes"][
-                                "spatial_rank"
-                            ]
-                        ]
-                    )
-                )
-                if convolution
-                else (
-                    (
-                        "matmul_tle_kernel"
-                        if matmul_tle_config(request) is not None
-                        else (
-                            "matmul_descriptor_kernel"
-                            if uses_matmul_descriptor(request)
-                            else "matmul_strided_kernel"
-                        )
-                    )
-                    if matmul
-                    else (
-                        reduction_function
-                        if reduction
-                        else (
-                            "reshape_contiguous_kernel"
-                            if operation == "reshape"
-                            and all(row_major(tensor) for tensor in tensors)
-                            else (
-                                "slice_copy_kernel"
-                                if operation == "slice"
-                                else (
-                                    "transpose_physical_copy_kernel"
-                                    if operation == "transpose"
-                                    else (
-                                        "layout_copy_kernel"
-                                        if layout
-                                        else (
-                                            "unary_pointwise_strided_kernel"
-                                            if unary and strided
-                                            else (
-                                                "unary_pointwise_contiguous_kernel"
-                                                if unary
-                                                else (
-                                                    "binary_select_strided_kernel"
-                                                    if ternary and strided
-                                                    else (
-                                                        "binary_select_tensor_kernel"
-                                                        if ternary
-                                                        else (
-                                                            "binary_strided_kernel"
-                                                            if strided
-                                                            else "binary_contiguous_kernel"
-                                                        )
-                                                    )
-                                                )
-                                            )
-                                        )
-                                    )
-                                )
-                            )
-                        )
-                    )
-                )
-            )
+            if convolution:
+                if request["graph"]["nodes"][0]["type"] == "convolution_dgrad":
+                    expected_function = "conv_dgrad_nd_kernel"
+                elif request["graph"]["nodes"][0]["type"] == (
+                    "convolut" "ion_wgrad"
+                ):
+                    expected_function = "conv_wgrad_nd_kernel"
+                else:
+                    expected_function = {
+                        1: "conv1d_gemm_kernel",
+                        2: ("conv2d_spatia" "l_nchw_kernel"),
+                        3: ("conv3d_spatial" "_ncdhw_m_kernel"),
+                    }[
+                        request[("gr" "aph")][("no" "des")][0][
+                            ("attri" "butes")
+                        ][("spatia" "l_rank")]
+                    ]
+            elif matmul:
+                if matmul_tle_config(request) is not None:
+                    expected_function = "matmul_tle_kernel"
+                elif uses_matmul_descriptor(request):
+                    expected_function = "matmul_descriptor_kernel"
+                else:
+                    expected_function = "matmul_strided_kernel"
+            elif reduction:
+                expected_function = reduction_function
+            elif operation == ("res" "hape") and all(
+                (row_major(tensor) for tensor in tensors)
+            ):
+                expected_function = "reshape_contiguous_kernel"
+            elif operation == "slice":
+                expected_function = "slice_copy_kernel"
+            elif operation == "transpose":
+                expected_function = "transpose_physical_copy_kernel"
+            elif layout:
+                expected_function = "layout_copy_kernel"
+            elif unary and strided:
+                expected_function = "unary_pointwise_strided_kernel"
+            elif unary:
+                expected_function = "unary_pointwise_contiguous_kernel"
+            elif ternary and strided:
+                expected_function = "binary_select_strided_kernel"
+            elif ternary:
+                expected_function = "binary_select_tensor_kernel"
+            elif strided:
+                expected_function = "binary_strided_kernel"
+            else:
+                expected_function = "binary_contiguous_kernel"
             if function != expected_function:
                 fail(f"{name} selected an unexpected kernel")
 

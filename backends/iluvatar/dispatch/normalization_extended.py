@@ -34,7 +34,9 @@ def _extended_normalization_configuration(operation, parameters, tensors):
             )
         if len(tensor["dimensions"]) > rank:
             raise ValueError("normalization tensor rank cannot exceed X rank")
-    parameter_shape = [1] * (rank - len(scale["dimensions"])) + scale["dimensions"]
+    parameter_shape = [1] * (rank - len(scale["dimensions"])) + scale[
+        "dimensions"
+    ]
     if any(p not in (1, d) for p, d in zip(parameter_shape, shape)):
         raise ValueError("normalization scale cannot broadcast to X")
     if operation.startswith("batchnorm"):
@@ -61,7 +63,9 @@ def _extended_normalization_configuration(operation, parameters, tensors):
         _require_integer(parameters, "groups") != groups
         or _require_integer(parameters, "reduction") != reduction
     ):
-        raise ValueError("normalization group/reduction sizes are inconsistent")
+        raise ValueError(
+            "normalization group/reduction sizes are inconsistent"
+        )
     statistics_shape = [1 if i in axes else d for i, d in enumerate(shape)]
 
     def same(tensor, dimensions, data_type=None):
@@ -80,9 +84,13 @@ def _extended_normalization_configuration(operation, parameters, tensors):
         for tensor in tensors[-2:]:
             same(tensor, scale["dimensions"])
             if tensor["data_type"] not in ("float32", scale["data_type"]):
-                raise ValueError("normalization affine gradient type is invalid")
+                raise ValueError(
+                    "normalization affine gradient type is invalid"
+                )
         roles = ["DY", "X", "SCALE", "MEAN", "INV", "DX", "DSCALE", "DBIAS"]
-        abi_tensors = tensors[:3] + [tensors[3]] + tensors[3:] if rms else tensors
+        abi_tensors = (
+            tensors[:3] + [tensors[3]] + tensors[3:] if rms else tensors
+        )
         arguments = (
             [("tensor", None)] * 3
             + ([("tensor_alias", 3)] if rms else [])
@@ -96,7 +104,10 @@ def _extended_normalization_configuration(operation, parameters, tensors):
         roles = ["X", "SCALE", "BIAS", "Y", "MEAN", "INV"]
         abi_tensors = tensors
         arguments = [("tensor", None)] * len(tensors)
-    if all(_is_row_major_contiguous(t) for t in tensors) and reduction <= 65536:
+    if (
+        all(_is_row_major_contiguous(t) for t in tensors)
+        and reduction <= 65536
+    ):
         signature = {
             role.lower() + "_ptr": TRITON_POINTER_TYPES[tensor["data_type"]]
             for role, tensor in zip(roles, abi_tensors)
@@ -124,7 +135,9 @@ def _extended_normalization_configuration(operation, parameters, tensors):
                 or not math.isfinite(epsilon)
                 or epsilon <= 0
             ):
-                raise ValueError("normalization epsilon must be finite and positive")
+                raise ValueError(
+                    "normalization epsilon must be finite and positive"
+                )
             mode = (
                 0
                 if operation == "instancenorm"
@@ -151,13 +164,18 @@ def _extended_normalization_configuration(operation, parameters, tensors):
         "REDUCTION": reduction,
         "AXES": sum(1 << (i + 8 - rank) for i in axes),
         "PARAM_AXES": sum(
-            1 << (i + 8 - rank) for i, p in enumerate(parameter_shape) if p == 1
+            1 << (i + 8 - rank)
+            for i, p in enumerate(parameter_shape)
+            if p == 1
         ),
         "PARAMETERS": parameter_count,
         "AFFINE_REDUCTION": affine_reduction,
         "BLOCK_SIZE": min(
             1024,
-            1 << (max(reduction, affine_reduction if backward else 1) - 1).bit_length(),
+            1
+            << (
+                max(reduction, affine_reduction if backward else 1) - 1
+            ).bit_length(),
         ),
     }
     if backward:
@@ -169,7 +187,9 @@ def _extended_normalization_configuration(operation, parameters, tensors):
             or not math.isfinite(epsilon)
             or epsilon <= 0
         ):
-            raise ValueError("normalization epsilon must be finite and positive")
+            raise ValueError(
+                "normalization epsilon must be finite and positive"
+            )
         constants["EPSILON"] = float(epsilon)
     for i, dim in enumerate([1] * (8 - rank) + shape):
         constants[f"DIM_{i}"] = dim

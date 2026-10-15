@@ -72,14 +72,10 @@ def conv_bias_relu_2d_kernel(
         kernel_h = kernel_hw // KW
         kernel_w = kernel_hw % KW
         input_h = (
-            output_h[:, None] * STRIDE_H
-            - PAD_TOP
-            + kernel_h[None, :] * DIL_H
+            output_h[:, None] * STRIDE_H - PAD_TOP + kernel_h[None, :] * DIL_H
         )
         input_w = (
-            output_w[:, None] * STRIDE_W
-            - PAD_LEFT
-            + kernel_w[None, :] * DIL_W
+            output_w[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
         )
         input_values = tl.load(
             x_ptr
@@ -97,8 +93,7 @@ def conv_bias_relu_2d_kernel(
         )
         weights = tl.load(
             w_ptr
-            + (group * COUT_PER_GROUP + output_channels[:, None])
-            * W_STRIDE_K
+            + (group * COUT_PER_GROUP + output_channels[:, None]) * W_STRIDE_K
             + input_channel[None, :] * W_STRIDE_C
             + kernel_h[None, :] * W_STRIDE_R
             + kernel_w[None, :] * W_STRIDE_S,

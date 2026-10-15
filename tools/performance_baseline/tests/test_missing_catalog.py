@@ -28,30 +28,72 @@ class MissingCatalogTests(unittest.TestCase):
     def test_json_inventory_selects_only_the_measurement_cases(self):
         with tempfile.TemporaryDirectory() as directory:
             report = Path(directory) / "baseline.json"
-            report.write_text(json.dumps({"reference": {
-                "cases": {
-                    "copy": {"op": "identity", "measurement_id": MEASUREMENT_ID},
-                    "sum": {"op": "reduction", "measurement_id": MEASUREMENT_ID},
-                    "old": {"op": "identity", "measurement_id": "another-run"},
-                    "unlabeled": {"op": "relu"},
-                },
-                "unavailable_cases": {
-                    "excluded": {"op": "identity", "measurement_id": MEASUREMENT_ID},
-                },
-            }}))
-            self.assertEqual(requested_cases(report),
-                             [("identity", "copy"), ("reduction", "sum")])
+            report.write_text(
+                json.dumps(
+                    {
+                        "reference": {
+                            "cases": {
+                                "copy": {
+                                    "op": "identity",
+                                    "measurement_id": MEASUREMENT_ID,
+                                },
+                                "sum": {
+                                    "op": "reduction",
+                                    "measurement_id": MEASUREMENT_ID,
+                                },
+                                "old": {
+                                    "op": "identity",
+                                    "measurement_id": "another-run",
+                                },
+                                "unlabeled": {"op": "relu"},
+                            },
+                            "unavailable_cases": {
+                                "excluded": {
+                                    "op": "identity",
+                                    "measurement_id": MEASUREMENT_ID,
+                                },
+                            },
+                        }
+                    }
+                )
+            )
+            self.assertEqual(
+                requested_cases(report),
+                [("identity", "copy"), ("reduction", "sum")],
+            )
 
     def test_malformed_json_inventory_is_rejected(self):
-        documents = [None, {}, {"reference": {"cases": []}},
-                     {"reference": {"cases": {"copy": None}}}]
+        documents = [
+            None,
+            {},
+            {"reference": {"cases": []}},
+            {"reference": {"cases": {"copy": None}}},
+        ]
         for op in (None, "", " ", ["identity"]):
-            documents.append({"reference": {"cases": {
-                "copy": {"op": op, "measurement_id": MEASUREMENT_ID},
-            }}})
-        documents.append({"reference": {"cases": {
-            "": {"op": "identity", "measurement_id": MEASUREMENT_ID},
-        }}})
+            documents.append(
+                {
+                    "reference": {
+                        "cases": {
+                            "copy": {
+                                "op": op,
+                                "measurement_id": MEASUREMENT_ID,
+                            },
+                        }
+                    }
+                }
+            )
+        documents.append(
+            {
+                "reference": {
+                    "cases": {
+                        "": {
+                            "op": "identity",
+                            "measurement_id": MEASUREMENT_ID,
+                        },
+                    }
+                }
+            }
+        )
         with tempfile.TemporaryDirectory() as directory:
             report = Path(directory) / "baseline.json"
             for document in documents:
@@ -63,9 +105,20 @@ class MissingCatalogTests(unittest.TestCase):
     def test_json_inventory_requires_cases_from_the_measurement(self):
         with tempfile.TemporaryDirectory() as directory:
             report = Path(directory) / "baseline.json"
-            report.write_text(json.dumps({"reference": {"cases": {
-                "copy": {"op": "identity", "measurement_id": "another-run"},
-            }}}))
+            report.write_text(
+                json.dumps(
+                    {
+                        "reference": {
+                            "cases": {
+                                "copy": {
+                                    "op": "identity",
+                                    "measurement_id": "another-run",
+                                },
+                            }
+                        }
+                    }
+                )
+            )
             with self.assertRaisesRegex(ValueError, "empty"):
                 requested_cases(report)
 
@@ -77,8 +130,10 @@ class MissingCatalogTests(unittest.TestCase):
                 "### reduction 1 个\n```text\nsum\n```\n"
                 "## 附录二\n### relu 1 个\n```text\nexcluded\n```\n"
             )
-            self.assertEqual(requested_cases(report),
-                             [("identity", "copy"), ("reduction", "sum")])
+            self.assertEqual(
+                requested_cases(report),
+                [("identity", "copy"), ("reduction", "sum")],
+            )
 
     def test_malformed_markdown_inventory_is_rejected(self):
         reports = (

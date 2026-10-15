@@ -39,7 +39,9 @@ def batch_norm_inference_nchw_kernel(
         active = spatial < S
         offsets = (batch * C + channel) * S + spatial
 
-        values = tl.load(x_ptr + offsets, mask=active, other=0.0).to(tl.float32)
+        values = tl.load(x_ptr + offsets, mask=active, other=0.0).to(
+            tl.float32
+        )
         mean = tl.load(mean_ptr + channel).to(tl.float32)
         statistic = tl.load(stat_ptr + channel).to(tl.float32)
         inv_variance = (
@@ -71,7 +73,9 @@ def batch_norm_inference_nchw_kernel(
         active = channel_active & (spatial < S)
         offsets = (batch * C + channels) * S + spatial
 
-        values = tl.load(x_ptr + offsets, mask=active, other=0.0).to(tl.float32)
+        values = tl.load(x_ptr + offsets, mask=active, other=0.0).to(
+            tl.float32
+        )
         mean = tl.load(mean_ptr + channels, mask=channel_active, other=0.0).to(
             tl.float32
         )
@@ -196,13 +200,13 @@ def batch_norm_inference_kernel(
         input_offsets = logical
         output_offsets = logical
 
-    values = tl.load(
-        x_ptr + input_offsets, mask=active, other=0.0
-    ).to(tl.float32)
+    values = tl.load(x_ptr + input_offsets, mask=active, other=0.0).to(
+        tl.float32
+    )
     mean = tl.load(mean_ptr + channel, mask=active, other=0.0).to(tl.float32)
-    statistic = tl.load(
-        stat_ptr + channel, mask=active, other=0.0
-    ).to(tl.float32)
+    statistic = tl.load(stat_ptr + channel, mask=active, other=0.0).to(
+        tl.float32
+    )
     inv_variance = (
         statistic if STAT_IS_INV_VARIANCE else tl.rsqrt(statistic + eps)
     )

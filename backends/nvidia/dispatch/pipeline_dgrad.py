@@ -13,7 +13,10 @@ def _expand_dgrad_group(
     tensor_registry: dict[int, dict[str, Any]],
     next_uid: int,
 ) -> tuple[list[ExecutionGroup], int]:
-    """Select dgrad stages in priority order; return the unchanged group if unmatched."""
+    """
+    Select dgrad stages in priority order; return the unchanged group if
+    unmatched.
+    """
     parameters = group["parameters"]
     tensors = group["tensors"]
     result: list[ExecutionGroup] = []

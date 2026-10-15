@@ -551,7 +551,8 @@ def thead_equivalent_coverage(
     they never become required measured cases or fabricated passing records.
     """
     selected = [
-        operator for operator in dict.fromkeys(selected_benchmark_operators)
+        operator
+        for operator in dict.fromkeys(selected_benchmark_operators)
         if operator in EQUIVALENT_SCALE_METRICS
     ]
     required: list[dict[str, str]] = []
@@ -581,29 +582,45 @@ def thead_equivalent_coverage(
             and providers["flagdnn"].get("schema_version") == 4
         ):
             continue
-        missing.append({
-            **item, "benchmark_status": str(benchmark.get("status", "not_run"))
-        })
+        missing.append(
+            {
+                **item,
+                "benchmark_status": str(benchmark.get("status", "not_run")),
+            }
+        )
     for item in unavailable:
         benchmark = results.get(item["operator"], {}).get("benchmark", {})
         observed = {
-            record.get("case") for record in benchmark.get("baseline_skip_records", [])
+            record.get("case")
+            for record in benchmark.get("baseline_skip_records", [])
             if record.get("op") == item["operator"]
         }
         if item["case"] not in observed:
             missing_skips.append(item)
     required_names = {(item["operator"], item["case"]) for item in required}
     for operator in selected:
-        for case, providers in results.get(operator, {}).get("benchmark", {}).get("records", {}).items():
+        for case, providers in (
+            results.get(operator, {})
+            .get("benchmark", {})
+            .get("records", {})
+            .items()
+        ):
             if (
                 set(providers) == {"flagdnn"}
                 and providers["flagdnn"].get("schema_version") == 4
                 and (operator, case) not in required_names
             ):
                 unexpected.append({"operator": operator, "case": case})
-    missing_operators = [operator for operator in selected if operator not in catalog["operators"]]
+    missing_operators = [
+        operator
+        for operator in selected
+        if operator not in catalog["operators"]
+    ]
     return {
-        "source": "repository-owned THead benchmark catalog and explicit equivalent scope",
+        "source": (
+            "repository-owned THead benchmark catalog and explicit equivalent "
+            "scope"
+        ),
         "selected_operators": selected,
         "required_cases": required,
         "required_case_count": len(required),
@@ -612,26 +629,37 @@ def thead_equivalent_coverage(
         "missing_case_count": len(missing),
         "expected_reference_skip_cases": unavailable,
         "expected_reference_skip_case_count": len(unavailable),
-        "observed_reference_skip_case_count": len(unavailable) - len(missing_skips),
+        "observed_reference_skip_case_count": len(unavailable)
+        - len(missing_skips),
         "missing_reference_skip_cases": missing_skips,
         "unexpected_cases": unexpected,
         "missing_operators": missing_operators,
-        "verified": not (missing or missing_skips or unexpected or missing_operators),
+        "verified": not (
+            missing or missing_skips or unexpected or missing_operators
+        ),
     }
 
 
 def validate_benchmark_record(record: dict[str, Any]) -> dict[str, Any]:
     """Validate measured FlagDNN samples and an unsampled NVIDIA estimate."""
     expected = {
-        "schema_version", "kind", "provider", "case", "unit", "median",
-        "p90", "samples", "equivalent_baseline",
+        "schema_version",
+        "kind",
+        "provider",
+        "case",
+        "unit",
+        "median",
+        "p90",
+        "samples",
+        "equivalent_baseline",
     }
     if not isinstance(record, dict) or set(record) != expected:
         raise ValueError("fields do not match THead benchmark schema v4")
     case = record["case"]
     match = (
         EQUIVALENT_CASE_PATTERN.fullmatch(case)
-        if isinstance(case, str) else None
+        if isinstance(case, str)
+        else None
     )
     if (
         type(record["schema_version"]) is not int
@@ -661,9 +689,14 @@ def validate_benchmark_record(record: dict[str, Any]) -> dict[str, Any]:
         ),
     }
     numeric = {
-        "reference_time_us", "reference_peak", "target_peak",
-        "min_relative_efficiency", "equivalent_time_us", "limit_us",
-        "relative_efficiency", "traffic_ratio",
+        "reference_time_us",
+        "reference_peak",
+        "target_peak",
+        "min_relative_efficiency",
+        "equivalent_time_us",
+        "limit_us",
+        "relative_efficiency",
+        "traffic_ratio",
     }
     if (
         not isinstance(baseline, dict)
@@ -708,8 +741,10 @@ def validate_benchmark_record(record: dict[str, Any]) -> dict[str, Any]:
         )
     try:
         equivalent = (
-            baseline["reference_time_us"] * baseline["reference_peak"]
-            / baseline["target_peak"] * baseline["traffic_ratio"]
+            baseline["reference_time_us"]
+            * baseline["reference_peak"]
+            / baseline["target_peak"]
+            * baseline["traffic_ratio"]
         )
         derived = {
             "equivalent_time_us": equivalent,
@@ -936,6 +971,7 @@ def apply_equivalent_report_gates(
     results: dict[str, Any], equivalent: dict[str, Any]
 ) -> None:
     """Keep the measured baseline verdict distinct from the final CLI gate."""
+    incomplete: dict[str, list[dict[str, Any]]]
     gates = {
         (record["operator"], record["case"]): record
         for record in equivalent["cases"]
@@ -943,22 +979,32 @@ def apply_equivalent_report_gates(
     enabled = equivalent.get("gate_enabled", False)
     coverage = equivalent.get("coverage") or {}
     incomplete = {}
-    for field in ("missing_cases", "missing_reference_skip_cases", "unexpected_cases"):
+    for field in (
+        "missing_cases",
+        "missing_reference_skip_cases",
+        "unexpected_cases",
+    ):
         for item in coverage.get(field, []):
-            incomplete.setdefault(item["operator"], []).append({"kind": field, **item})
+            incomplete.setdefault(item["operator"], []).append(
+                {"kind": field, **item}
+            )
     for operator in coverage.get("missing_operators", []):
-        incomplete.setdefault(operator, []).append({"kind": "missing_operator"})
+        incomplete.setdefault(operator, []).append(
+            {"kind": "missing_operator"}
+        )
     for operator, result in results.items():
         performance = result.get("performance", {})
         if operator in incomplete:
             performance["coverage_errors"] = incomplete[operator]
             # Preserve an existing timeout or execution failure and its code.
-            # Coverage must only turn an otherwise successful report into failure.
+            # Coverage must only turn an otherwise successful report into
+            # failure.
             if performance.get("status") in {"Passed", "Skipped", "NotFound"}:
                 performance["status"] = "Failed"
                 performance["exit_code"] = 1
         skips = [
-            record for record in equivalent.get("reference_skips", [])
+            record
+            for record in equivalent.get("reference_skips", [])
             if record.get("op") == operator
         ]
         if skips:
@@ -1420,17 +1466,31 @@ def finalize(
             print(
                 "equivalent coverage gate: "
                 f"{equivalent_coverage['observed_required_case_count']}/"
-                f"{equivalent_coverage['required_case_count']} required measurements; "
+                f"{equivalent_coverage['required_case_count']} "
+                "required measurements; "
                 f"{equivalent_coverage['observed_reference_skip_case_count']}/"
                 f"{equivalent_coverage['expected_reference_skip_case_count']} "
                 "unavailable references explicitly reported",
                 flush=True,
             )
-            for field in ("missing_cases", "missing_reference_skip_cases", "unexpected_cases"):
+            for field in (
+                "missing_cases",
+                "missing_reference_skip_cases",
+                "unexpected_cases",
+            ):
                 for item in equivalent_coverage[field]:
-                    print(f"  FAIL {field} op={item['operator']} case={item['case']}", flush=True)
+                    print(
+                        (
+                            f"  FAIL {field} op={item['operator']} "
+                            f"case={item['case']}"
+                        ),
+                        flush=True,
+                    )
             for operator in equivalent_coverage["missing_operators"]:
-                print(f"  FAIL missing equivalent catalog operator={operator}", flush=True)
+                print(
+                    f"  FAIL missing equivalent catalog operator={operator}",
+                    flush=True,
+                )
             failed = True
 
     performance = (
@@ -1440,7 +1500,8 @@ def finalize(
     )
     equivalent = (
         equivalent_performance_summary(results, min_speedup)
-        if "benchmark" in suites else None
+        if "benchmark" in suites
+        else None
     )
     if equivalent is not None:
         equivalent["coverage"] = equivalent_coverage

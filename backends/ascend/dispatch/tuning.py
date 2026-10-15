@@ -15,7 +15,9 @@ from typing import (
 )
 
 
-def _autotune_candidate_id(operation: str, configuration: TuningConfiguration) -> str:
+def _autotune_candidate_id(
+    operation: str, configuration: TuningConfiguration
+) -> str:
     return "config_" + canonical_sha256(
         {
             "operation": operation,
@@ -43,6 +45,7 @@ def _f64_identity(value: float) -> str:
 def _stage_semantic_attributes(
     plan: PointwiseStagePlan,
 ) -> dict[str, Any]:
+    roles: tuple[str, ...]
     if plan.kernel_family == "binary":
         return {"alpha": _f64_identity(plan.alpha)}
     if plan.kernel_family == "unary":
@@ -71,7 +74,9 @@ def _stage_semantic_attributes(
     if plan.kernel_family == "matmul":
         roles = ("a", "b", "output")
         return {
-            "arguments": [dict(argument) for argument in plan.argument_sources],
+            "arguments": [
+                dict(argument) for argument in plan.argument_sources
+            ],
             "batch": int(plan.meta["BATCH"]),
             "m": int(plan.meta["M"]),
             "n": int(plan.meta["N"]),
@@ -92,7 +97,9 @@ def _stage_semantic_attributes(
     if plan.kernel_family == "convolution_fprop":
         roles = ("input", "filter", "output")
         return {
-            "arguments": [dict(argument) for argument in plan.argument_sources],
+            "arguments": [
+                dict(argument) for argument in plan.argument_sources
+            ],
             "meta": {
                 name.lower(): int(value)
                 for name, value in plan.meta.items()
@@ -115,7 +122,9 @@ def _stage_semantic_attributes(
     if plan.kernel_family == "batchnorm_inference":
         roles = ("x", "mean", "inv_variance", "scale", "bias", "y")
         return {
-            "arguments": [dict(argument) for argument in plan.argument_sources],
+            "arguments": [
+                dict(argument) for argument in plan.argument_sources
+            ],
             "channels": int(plan.meta["CHANNELS"]),
             "n_elements": plan.n_elements,
             "rank": int(plan.meta["RANK"]),
@@ -147,7 +156,9 @@ def _stage_semantic_attributes(
             "next_running_variance",
         )
         return {
-            "arguments": [dict(argument) for argument in plan.argument_sources],
+            "arguments": [
+                dict(argument) for argument in plan.argument_sources
+            ],
             "batch": int(plan.meta["BATCH"]),
             "channels": int(plan.meta["CHANNELS"]),
             "epsilon": _f64_identity(float(plan.meta["EPSILON"])),
@@ -172,7 +183,9 @@ def _stage_semantic_attributes(
     if plan.kernel_family == "rmsnorm":
         roles = ("x", "scale", "bias", "y", "inv_variance")
         return {
-            "arguments": [dict(argument) for argument in plan.argument_sources],
+            "arguments": [
+                dict(argument) for argument in plan.argument_sources
+            ],
             "epsilon": _f64_identity(float(plan.meta["EPSILON"])),
             "normalized_elements": int(plan.meta["NORMALIZED_ELEMENTS"]),
             "rows": int(plan.meta["ROWS"]),
@@ -199,7 +212,9 @@ def _stage_semantic_attributes(
             "inv_variance",
         )
         return {
-            "arguments": [dict(argument) for argument in plan.argument_sources],
+            "arguments": [
+                dict(argument) for argument in plan.argument_sources
+            ],
             "epsilon": _f64_identity(float(plan.meta["EPSILON"])),
             "normalized_elements": int(plan.meta["NORMALIZED_ELEMENTS"]),
             "rows": int(plan.meta["ROWS"]),
@@ -253,7 +268,9 @@ def _order_stage_configurations(
     preferred = (
         min(covering, key=lambda value: int(value.meta["BLOCK_SIZE"]))
         if covering
-        else max(configurations, key=lambda value: int(value.meta["BLOCK_SIZE"]))
+        else max(
+            configurations, key=lambda value: int(value.meta["BLOCK_SIZE"])
+        )
     )
     return (preferred,) + tuple(
         configuration

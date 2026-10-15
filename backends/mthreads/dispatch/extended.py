@@ -1,11 +1,13 @@
-"""Lower additional public Graph operators to the MUSA execution-program ABI."""
+"""
+Lower additional public Graph operators to the MUSA execution-program ABI.
+"""
 
 from __future__ import annotations
 
 import ast
 import hashlib
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path  # noqa: F401
 from typing import Any
 
 from flagdnn_codegen.kernel_registry import (
@@ -169,6 +171,7 @@ def _configuration(operation, parameters, tensors, architecture):
 def plan_extended(
     request: ParsedExtendedRequest, source_sha256: str
 ) -> ExecutionPlan:
+    groups: list[dict[str, Any]]
     candidate = select_kernel_candidate(
         "mthreads",
         "matmul_fp8" if request.operation == "matmul" else request.operation,

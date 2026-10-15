@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Callable, cast
+
 from functools import partial
 from typing import Any
 
@@ -174,6 +176,13 @@ def _expand_execution_pipelines(
     architecture: int = 0,
 ) -> list[ExecutionGroup]:
     """Expand operator plans while owning graph-wide workspace tensor UIDs."""
+    expanders: dict[
+        str,
+        Callable[
+            [ExecutionGroup, dict[int, dict[str, Any]], int],
+            tuple[list[ExecutionGroup], int],
+        ],
+    ]
     result: list[ExecutionGroup] = []
     next_uid = max(tensor_registry) + 1
     expanders = {
@@ -189,7 +198,9 @@ def _expand_execution_pipelines(
             "fp8_e4m3",
             "fp8_e5m2",
         }:
-            result.append(dict(group, operation="matmul_fp8"))
+            result.append(
+                cast(ExecutionGroup, dict(group, operation="matmul_fp8"))
+            )
         elif group["parameters"].get(
             "input_precision", 0
         ) != 0 and operation in {

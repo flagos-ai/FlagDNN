@@ -13,10 +13,6 @@ int run_index_functional_test(int argc, char** argv,
                               bool benchmark) {
   std::vector<PairedIndexCase> paired;
   for (const auto& test_case : cases) {
-    const auto type = test_case.output.data_type;
-    if (test_case.operation == "concatenate" && type != FLAGDNN_DATA_FLOAT32 &&
-        type != FLAGDNN_DATA_FLOAT16 && type != FLAGDNN_DATA_BFLOAT16)
-      continue;
     paired.push_back({test_case, {test_case.output}});
   }
   return cuda::run_paired_cases<PairedIndexCase>(

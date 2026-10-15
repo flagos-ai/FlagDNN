@@ -110,10 +110,14 @@ def batchnorm_training_persistent_kernel(
         and (DIM_4 == 1 or X_STRIDE_4 == DIM_5 * DIM_6 * DIM_7)
         and (DIM_3 == 1 or X_STRIDE_3 == DIM_4 * DIM_5 * DIM_6 * DIM_7)
         and (DIM_2 == 1 or X_STRIDE_2 == DIM_3 * DIM_4 * DIM_5 * DIM_6 * DIM_7)
-        and (DIM_1 == 1 or X_STRIDE_1 == DIM_2 * DIM_3 * DIM_4 * DIM_5 * DIM_6 * DIM_7)
+        and (
+            DIM_1 == 1
+            or X_STRIDE_1 == DIM_2 * DIM_3 * DIM_4 * DIM_5 * DIM_6 * DIM_7
+        )
         and (
             DIM_0 == 1
-            or X_STRIDE_0 == DIM_1 * DIM_2 * DIM_3 * DIM_4 * DIM_5 * DIM_6 * DIM_7
+            or X_STRIDE_0
+            == DIM_1 * DIM_2 * DIM_3 * DIM_4 * DIM_5 * DIM_6 * DIM_7
         )
     )
     dense_y: tl.constexpr = (
@@ -123,10 +127,14 @@ def batchnorm_training_persistent_kernel(
         and (DIM_4 == 1 or Y_STRIDE_4 == DIM_5 * DIM_6 * DIM_7)
         and (DIM_3 == 1 or Y_STRIDE_3 == DIM_4 * DIM_5 * DIM_6 * DIM_7)
         and (DIM_2 == 1 or Y_STRIDE_2 == DIM_3 * DIM_4 * DIM_5 * DIM_6 * DIM_7)
-        and (DIM_1 == 1 or Y_STRIDE_1 == DIM_2 * DIM_3 * DIM_4 * DIM_5 * DIM_6 * DIM_7)
+        and (
+            DIM_1 == 1
+            or Y_STRIDE_1 == DIM_2 * DIM_3 * DIM_4 * DIM_5 * DIM_6 * DIM_7
+        )
         and (
             DIM_0 == 1
-            or Y_STRIDE_0 == DIM_1 * DIM_2 * DIM_3 * DIM_4 * DIM_5 * DIM_6 * DIM_7
+            or Y_STRIDE_0
+            == DIM_1 * DIM_2 * DIM_3 * DIM_4 * DIM_5 * DIM_6 * DIM_7
         )
     )
     channel_tile: tl.constexpr = 8
@@ -147,7 +155,9 @@ def batchnorm_training_persistent_kernel(
             channel_mask = channels < CHANNELS
             mask = batch_mask & channel_mask[None, :]
             offset = batches * CHANNELS + channels[None, :]
-            value = tl.load(x_ptr + offset, mask=mask, other=0.0).to(tl.float32)
+            value = tl.load(x_ptr + offset, mask=mask, other=0.0).to(
+                tl.float32
+            )
             channel_mean = tl.sum(value, axis=0) / REDUCTION_ELEMENTS
             centered = tl.where(mask, value - channel_mean[None, :], 0.0)
             variance = tl.sum(centered * centered, axis=0) / REDUCTION_ELEMENTS
@@ -188,7 +198,8 @@ def batchnorm_training_persistent_kernel(
             )
             tl.store(
                 next_running_variance_ptr + channels,
-                previous_variance * (1.0 - MOMENTUM) + unbiased_variance * MOMENTUM,
+                previous_variance * (1.0 - MOMENTUM)
+                + unbiased_variance * MOMENTUM,
                 mask=channel_mask,
             )
 
@@ -199,7 +210,9 @@ def batchnorm_training_persistent_kernel(
                 bias_ptr + channels, mask=channel_mask, other=0.0
             ).to(tl.float32)
             result = (
-                centered * channel_inv_variance[None, :] * channel_scale[None, :]
+                centered
+                * channel_inv_variance[None, :]
+                * channel_scale[None, :]
                 + channel_bias[None, :]
             )
             tl.store(
@@ -220,23 +233,27 @@ def batchnorm_training_persistent_kernel(
             batch_mask = batches < BATCH
             value_sum = 0.0
             for spatial_base in range(0, SPATIAL, spatial_block):
-                spatial = spatial_base + tl.arange(0, spatial_block)[None, :].to(
-                    tl.int64
-                )
+                spatial = spatial_base + tl.arange(0, spatial_block)[
+                    None, :
+                ].to(tl.int64)
                 mask = batch_mask & (spatial < SPATIAL)
                 offset = (batches * CHANNELS + channel) * SPATIAL + spatial
-                value = tl.load(x_ptr + offset, mask=mask, other=0.0).to(tl.float32)
+                value = tl.load(x_ptr + offset, mask=mask, other=0.0).to(
+                    tl.float32
+                )
                 value_sum += tl.sum(tl.reshape(value, (BLOCK_SIZE,)), axis=0)
             channel_mean = value_sum / REDUCTION_ELEMENTS
 
             square_sum = 0.0
             for spatial_base in range(0, SPATIAL, spatial_block):
-                spatial = spatial_base + tl.arange(0, spatial_block)[None, :].to(
-                    tl.int64
-                )
+                spatial = spatial_base + tl.arange(0, spatial_block)[
+                    None, :
+                ].to(tl.int64)
                 mask = batch_mask & (spatial < SPATIAL)
                 offset = (batches * CHANNELS + channel) * SPATIAL + spatial
-                value = tl.load(x_ptr + offset, mask=mask, other=0.0).to(tl.float32)
+                value = tl.load(x_ptr + offset, mask=mask, other=0.0).to(
+                    tl.float32
+                )
                 centered = tl.where(mask, value - channel_mean, 0.0)
                 square_sum += tl.sum(
                     tl.reshape(centered * centered, (BLOCK_SIZE,)), axis=0
@@ -275,7 +292,9 @@ def batchnorm_training_persistent_kernel(
                         X_STRIDE_6,
                         X_STRIDE_7,
                     )
-                value = tl.load(x_ptr + x_offset, mask=mask, other=0.0).to(tl.float32)
+                value = tl.load(x_ptr + x_offset, mask=mask, other=0.0).to(
+                    tl.float32
+                )
                 value_sum += value
                 reduction_base += BLOCK_SIZE
             channel_mean = tl.sum(value_sum, axis=0) / REDUCTION_ELEMENTS
@@ -312,7 +331,9 @@ def batchnorm_training_persistent_kernel(
                         X_STRIDE_6,
                         X_STRIDE_7,
                     )
-                value = tl.load(x_ptr + x_offset, mask=mask, other=0.0).to(tl.float32)
+                value = tl.load(x_ptr + x_offset, mask=mask, other=0.0).to(
+                    tl.float32
+                )
                 centered = tl.where(mask, value - channel_mean, 0.0)
                 square_sum += centered * centered
                 reduction_base += BLOCK_SIZE
@@ -320,15 +341,20 @@ def batchnorm_training_persistent_kernel(
         variance_with_epsilon = variance + EPSILON
         channel_inv_variance = tl.rsqrt(variance_with_epsilon)
         channel_inv_variance *= 1.5 - (
-            0.5 * variance_with_epsilon * channel_inv_variance * channel_inv_variance
+            0.5
+            * variance_with_epsilon
+            * channel_inv_variance
+            * channel_inv_variance
         )
         tl.store(mean_ptr + channel, channel_mean)
         tl.store(inv_variance_ptr + channel, channel_inv_variance)
 
-        previous_mean = tl.load(previous_running_mean_ptr + channel).to(tl.float32)
-        previous_variance = tl.load(previous_running_variance_ptr + channel).to(
+        previous_mean = tl.load(previous_running_mean_ptr + channel).to(
             tl.float32
         )
+        previous_variance = tl.load(
+            previous_running_variance_ptr + channel
+        ).to(tl.float32)
         unbiased_variance = tl.where(
             REDUCTION_ELEMENTS > 1,
             variance * REDUCTION_ELEMENTS / (REDUCTION_ELEMENTS - 1),
@@ -340,19 +366,22 @@ def batchnorm_training_persistent_kernel(
         )
         tl.store(
             next_running_variance_ptr + channel,
-            previous_variance * (1.0 - MOMENTUM) + unbiased_variance * MOMENTUM,
+            previous_variance * (1.0 - MOMENTUM)
+            + unbiased_variance * MOMENTUM,
         )
 
         channel_scale = tl.load(scale_ptr + channel).to(tl.float32)
         channel_bias = tl.load(bias_ptr + channel).to(tl.float32)
         if dense_x and dense_y and BATCH <= BLOCK_SIZE:
             for spatial_base in range(0, SPATIAL, spatial_block):
-                spatial = spatial_base + tl.arange(0, spatial_block)[None, :].to(
-                    tl.int64
-                )
+                spatial = spatial_base + tl.arange(0, spatial_block)[
+                    None, :
+                ].to(tl.int64)
                 mask = batch_mask & (spatial < SPATIAL)
                 offset = (batches * CHANNELS + channel) * SPATIAL + spatial
-                value = tl.load(x_ptr + offset, mask=mask, other=0.0).to(tl.float32)
+                value = tl.load(x_ptr + offset, mask=mask, other=0.0).to(
+                    tl.float32
+                )
                 result = (
                     value - channel_mean
                 ) * channel_inv_variance * channel_scale + channel_bias
@@ -415,7 +444,9 @@ def batchnorm_training_persistent_kernel(
                         Y_STRIDE_6,
                         Y_STRIDE_7,
                     )
-                value = tl.load(x_ptr + x_offset, mask=mask, other=0.0).to(tl.float32)
+                value = tl.load(x_ptr + x_offset, mask=mask, other=0.0).to(
+                    tl.float32
+                )
                 result = (
                     value - channel_mean
                 ) * channel_inv_variance * channel_scale + channel_bias
@@ -468,13 +499,18 @@ def layernorm_persistent_kernel(
             rows = row + row_lane
             row_mask = rows < row_limit
             normalized_index = normalized_lane[None, :]
-            linear_index = rows[:, None] * NORMALIZED_ELEMENTS + normalized_index
+            linear_index = (
+                rows[:, None] * NORMALIZED_ELEMENTS + normalized_index
+            )
             mask = row_mask[:, None] & parameter_mask[None, :]
-            value = tl.load(x_ptr + linear_index, mask=mask, other=0.0).to(tl.float32)
+            value = tl.load(x_ptr + linear_index, mask=mask, other=0.0).to(
+                tl.float32
+            )
             mean = tl.sum(value, axis=1) / NORMALIZED_ELEMENTS
             centered = tl.where(mask, value - mean[:, None], 0.0)
             inv_variance = tl.rsqrt(
-                tl.sum(centered * centered, axis=1) / NORMALIZED_ELEMENTS + EPSILON
+                tl.sum(centered * centered, axis=1) / NORMALIZED_ELEMENTS
+                + EPSILON
             )
             tl.store(mean_ptr + rows, mean, mask=row_mask)
             tl.store(inv_variance_ptr + rows, inv_variance, mask=row_mask)
@@ -498,11 +534,14 @@ def layernorm_persistent_kernel(
             mask = (normalized_index < NORMALIZED_ELEMENTS) & (
                 linear_index < n_elements
             )
-            value = tl.load(x_ptr + linear_index, mask=mask, other=0.0).to(tl.float32)
+            value = tl.load(x_ptr + linear_index, mask=mask, other=0.0).to(
+                tl.float32
+            )
             mean = tl.sum(value, axis=0) / NORMALIZED_ELEMENTS
             centered = tl.where(mask, value - mean, 0.0)
             inv_variance = tl.rsqrt(
-                tl.sum(centered * centered, axis=0) / NORMALIZED_ELEMENTS + EPSILON
+                tl.sum(centered * centered, axis=0) / NORMALIZED_ELEMENTS
+                + EPSILON
             )
             tl.store(mean_ptr + row, mean)
             tl.store(inv_variance_ptr + row, inv_variance)
@@ -558,12 +597,12 @@ def layernorm_persistent_kernel(
                 value = tl.load(x_ptr + linear_index, mask=mask, other=0.0).to(
                     tl.float32
                 )
-                scale = tl.load(scale_ptr + normalized_index, mask=mask, other=0.0).to(
-                    tl.float32
-                )
-                bias = tl.load(bias_ptr + normalized_index, mask=mask, other=0.0).to(
-                    tl.float32
-                )
+                scale = tl.load(
+                    scale_ptr + normalized_index, mask=mask, other=0.0
+                ).to(tl.float32)
+                bias = tl.load(
+                    bias_ptr + normalized_index, mask=mask, other=0.0
+                ).to(tl.float32)
                 result = (value - mean) * inv_variance * scale + bias
                 tl.store(
                     y_ptr + linear_index,
@@ -597,8 +636,12 @@ def rmsnorm_persistent_kernel(
     lane = tl.arange(0, BLOCK_SIZE).to(tl.int64)
     if BLOCK_SIZE >= NORMALIZED_ELEMENTS:
         parameter_mask = lane < NORMALIZED_ELEMENTS
-        scale = tl.load(scale_ptr + lane, mask=parameter_mask, other=0.0).to(tl.float32)
-        bias = tl.load(bias_ptr + lane, mask=parameter_mask, other=0.0).to(tl.float32)
+        scale = tl.load(scale_ptr + lane, mask=parameter_mask, other=0.0).to(
+            tl.float32
+        )
+        bias = tl.load(bias_ptr + lane, mask=parameter_mask, other=0.0).to(
+            tl.float32
+        )
     while row < row_limit:
         if BLOCK_SIZE >= NORMALIZED_ELEMENTS:
             normalized_index = lane
@@ -606,7 +649,9 @@ def rmsnorm_persistent_kernel(
             mask = (normalized_index < NORMALIZED_ELEMENTS) & (
                 linear_index < n_elements
             )
-            value = tl.load(x_ptr + linear_index, mask=mask, other=0.0).to(tl.float32)
+            value = tl.load(x_ptr + linear_index, mask=mask, other=0.0).to(
+                tl.float32
+            )
             inv_variance = tl.rsqrt(
                 tl.sum(value * value, axis=0) / NORMALIZED_ELEMENTS + EPSILON
             )
@@ -646,12 +691,12 @@ def rmsnorm_persistent_kernel(
                 value = tl.load(x_ptr + linear_index, mask=mask, other=0.0).to(
                     tl.float32
                 )
-                scale = tl.load(scale_ptr + normalized_index, mask=mask, other=0.0).to(
-                    tl.float32
-                )
-                bias = tl.load(bias_ptr + normalized_index, mask=mask, other=0.0).to(
-                    tl.float32
-                )
+                scale = tl.load(
+                    scale_ptr + normalized_index, mask=mask, other=0.0
+                ).to(tl.float32)
+                bias = tl.load(
+                    bias_ptr + normalized_index, mask=mask, other=0.0
+                ).to(tl.float32)
                 result = value * inv_variance * scale + bias
                 tl.store(
                     y_ptr + linear_index,
@@ -689,19 +734,25 @@ def batchnorm_inference_nchw_persistent_kernel(
         unit_batch_blocks = tl.cdiv(unit_batch_count, unit_block_batch)
         unit_task_count = unit_batch_blocks * unit_channel_blocks
         unit_batch_lane = tl.arange(0, unit_block_batch)[:, None].to(tl.int64)
-        unit_channel_lane = tl.arange(0, unit_block_channels)[None, :].to(tl.int64)
+        unit_channel_lane = tl.arange(0, unit_block_channels)[None, :].to(
+            tl.int64
+        )
         unit_task = program_id
         while unit_task < unit_task_count:
             unit_channel_block = unit_task % unit_channel_blocks
             unit_batch_block = unit_task // unit_channel_blocks
-            unit_batches = unit_batch_block * unit_block_batch + unit_batch_lane
-            unit_channels = unit_channel_block * unit_block_channels + unit_channel_lane
+            unit_batches = (
+                unit_batch_block * unit_block_batch + unit_batch_lane
+            )
+            unit_channels = (
+                unit_channel_block * unit_block_channels + unit_channel_lane
+            )
             unit_channel_mask = unit_channels < CHANNELS
             unit_mask = (unit_batches < unit_batch_count) & unit_channel_mask
             unit_offset = unit_batches * CHANNELS + unit_channels
-            unit_value = tl.load(x_ptr + unit_offset, mask=unit_mask, other=0.0).to(
-                tl.float32
-            )
+            unit_value = tl.load(
+                x_ptr + unit_offset, mask=unit_mask, other=0.0
+            ).to(tl.float32)
             unit_mean = tl.load(
                 mean_ptr + unit_channels,
                 mask=unit_channel_mask,
@@ -737,8 +788,12 @@ def batchnorm_inference_nchw_persistent_kernel(
         BLOCK_SIZE if SPATIAL > BLOCK_SIZE else triton.next_power_of_2(SPATIAL)
     )
     block_channels: tl.constexpr = BLOCK_SIZE // block_spatial
-    spatial_blocks: tl.constexpr = (SPATIAL + block_spatial - 1) // block_spatial
-    channel_blocks: tl.constexpr = (CHANNELS + block_channels - 1) // block_channels
+    spatial_blocks: tl.constexpr = (
+        SPATIAL + block_spatial - 1
+    ) // block_spatial
+    channel_blocks: tl.constexpr = (
+        CHANNELS + block_channels - 1
+    ) // block_channels
     batch_count = n_elements // (CHANNELS * SPATIAL)
     task_count = batch_count * channel_blocks * spatial_blocks
     channel_lane = tl.arange(0, block_channels)[:, None].to(tl.int64)
@@ -755,14 +810,18 @@ def batchnorm_inference_nchw_persistent_kernel(
         mask = channel_mask & (spatial < SPATIAL)
         offset = (batch * CHANNELS + channels) * SPATIAL + spatial
         value = tl.load(x_ptr + offset, mask=mask, other=0.0).to(tl.float32)
-        mean = tl.load(mean_ptr + channels, mask=channel_mask, other=0.0).to(tl.float32)
+        mean = tl.load(mean_ptr + channels, mask=channel_mask, other=0.0).to(
+            tl.float32
+        )
         inv_variance = tl.load(
             inv_variance_ptr + channels, mask=channel_mask, other=0.0
         ).to(tl.float32)
         scale = tl.load(scale_ptr + channels, mask=channel_mask, other=0.0).to(
             tl.float32
         )
-        bias = tl.load(bias_ptr + channels, mask=channel_mask, other=0.0).to(tl.float32)
+        bias = tl.load(bias_ptr + channels, mask=channel_mask, other=0.0).to(
+            tl.float32
+        )
         result = (value - mean) * inv_variance * scale + bias
         tl.store(
             y_ptr + offset,
@@ -824,8 +883,12 @@ def batchnorm_inference_strided_persistent_kernel(
         rank5_task_count = (
             rank5_batch_count * rank5_channel_blocks * rank5_spatial_blocks
         )
-        rank5_channel_lane = tl.arange(0, rank5_block_channels)[:, None].to(tl.int64)
-        rank5_spatial_lane = tl.arange(0, rank5_block_spatial)[None, :].to(tl.int64)
+        rank5_channel_lane = tl.arange(0, rank5_block_channels)[:, None].to(
+            tl.int64
+        )
+        rank5_spatial_lane = tl.arange(0, rank5_block_spatial)[None, :].to(
+            tl.int64
+        )
         rank5_task = tl.program_id(0).to(tl.int64)
         rank5_task_stride = tl.num_programs(0)
         while rank5_task < rank5_task_count:
@@ -898,7 +961,9 @@ def batchnorm_inference_strided_persistent_kernel(
 
     strided_block: tl.constexpr = BLOCK_SIZE // 16
     block_inner: tl.constexpr = (
-        strided_block if DIM_7 > strided_block else triton.next_power_of_2(DIM_7)
+        strided_block
+        if DIM_7 > strided_block
+        else triton.next_power_of_2(DIM_7)
     )
     block_outer: tl.constexpr = strided_block // block_inner
     inner_blocks: tl.constexpr = (DIM_7 + block_inner - 1) // block_inner
@@ -953,13 +1018,17 @@ def batchnorm_inference_strided_persistent_kernel(
             channel = logical_index % CHANNELS
         value = tl.load(x_ptr + x_offset, mask=mask, other=0.0).to(tl.float32)
         mean = tl.load(mean_ptr + channel, mask=mask, other=0.0).to(tl.float32)
-        inv_variance = tl.load(inv_variance_ptr + channel, mask=mask, other=0.0).to(
+        inv_variance = tl.load(
+            inv_variance_ptr + channel, mask=mask, other=0.0
+        ).to(tl.float32)
+        scale = tl.load(scale_ptr + channel, mask=mask, other=0.0).to(
             tl.float32
         )
-        scale = tl.load(scale_ptr + channel, mask=mask, other=0.0).to(tl.float32)
         bias = tl.load(bias_ptr + channel, mask=mask, other=0.0).to(tl.float32)
         result = (value - mean) * inv_variance * scale + bias
-        tl.store(y_ptr + y_offset, result.to(y_ptr.dtype.element_ty), mask=mask)
+        tl.store(
+            y_ptr + y_offset, result.to(y_ptr.dtype.element_ty), mask=mask
+        )
         task += task_stride
 
 
@@ -1196,20 +1265,24 @@ def extended_normalization_forward(
         centered = x - mean
         variance += tl.where(reduced < REDUCTION, centered * centered, 0.0)
     inverse = tl.rsqrt(tl.sum(variance, 0) / REDUCTION + EPSILON)
-    statistic_coords = _coordinates(group, tl.full((), 0, tl.int64), dims, AXES)
+    statistic_coords = _coordinates(
+        group, tl.full((), 0, tl.int64), dims, AXES
+    )
     tl.store(mean_ptr + _offset(statistic_coords, mean_strides), mean)
     tl.store(inv_ptr + _offset(statistic_coords, inv_strides), inverse)
     for start in range(0, REDUCTION, BLOCK_SIZE):
         reduced = start + lanes
         coords = _coordinates(group, reduced, dims, AXES)
         valid = reduced < REDUCTION
-        x = tl.load(x_ptr + _offset(coords, x_strides), valid, other=0).to(tl.float32)
-        scale = tl.load(scale_ptr + _offset(coords, scale_strides), valid, other=0).to(
+        x = tl.load(x_ptr + _offset(coords, x_strides), valid, other=0).to(
             tl.float32
         )
-        bias = tl.load(bias_ptr + _offset(coords, bias_strides), valid, other=0).to(
-            tl.float32
-        )
+        scale = tl.load(
+            scale_ptr + _offset(coords, scale_strides), valid, other=0
+        ).to(tl.float32)
+        bias = tl.load(
+            bias_ptr + _offset(coords, bias_strides), valid, other=0
+        ).to(tl.float32)
         y = (x - mean) * inverse * scale + bias
         tl.store(y_ptr + _offset(coords, y_strides), y, valid)
 
@@ -1398,13 +1471,15 @@ def extended_normalization_backward(
     program = tl.program_id(0).to(tl.int64)
     lanes = tl.arange(0, BLOCK_SIZE)
     if program < GROUPS:
-        statistic_coords = _coordinates(program, tl.full((), 0, tl.int64), dims, AXES)
+        statistic_coords = _coordinates(
+            program, tl.full((), 0, tl.int64), dims, AXES
+        )
         if RMS:
             mean = 0.0
         else:
-            mean = tl.load(mean_ptr + _offset(statistic_coords, mean_strides)).to(
-                tl.float32
-            )
+            mean = tl.load(
+                mean_ptr + _offset(statistic_coords, mean_strides)
+            ).to(tl.float32)
         inverse = tl.load(inv_ptr + _offset(statistic_coords, inv_strides)).to(
             tl.float32
         )
@@ -1417,9 +1492,9 @@ def extended_normalization_backward(
             x = tl.load(x_ptr + _offset(coords, x_strides), valid, other=0).to(
                 tl.float32
             )
-            dy = tl.load(dy_ptr + _offset(coords, dy_strides), valid, other=0).to(
-                tl.float32
-            )
+            dy = tl.load(
+                dy_ptr + _offset(coords, dy_strides), valid, other=0
+            ).to(tl.float32)
             scale = tl.load(
                 scale_ptr + _offset(coords, scale_strides), valid, other=0
             ).to(tl.float32)
@@ -1428,7 +1503,9 @@ def extended_normalization_backward(
             sum_gradient += gradient
             sum_gradient_normalized += gradient * normalized
         gradient_mean = tl.sum(sum_gradient, 0) / REDUCTION
-        gradient_normalized_mean = tl.sum(sum_gradient_normalized, 0) / REDUCTION
+        gradient_normalized_mean = (
+            tl.sum(sum_gradient_normalized, 0) / REDUCTION
+        )
         for start in range(0, REDUCTION, BLOCK_SIZE):
             reduced = start + lanes
             coords = _coordinates(program, reduced, dims, AXES)
@@ -1436,16 +1513,20 @@ def extended_normalization_backward(
             x = tl.load(x_ptr + _offset(coords, x_strides), valid, other=0).to(
                 tl.float32
             )
-            dy = tl.load(dy_ptr + _offset(coords, dy_strides), valid, other=0).to(
-                tl.float32
-            )
+            dy = tl.load(
+                dy_ptr + _offset(coords, dy_strides), valid, other=0
+            ).to(tl.float32)
             scale = tl.load(
                 scale_ptr + _offset(coords, scale_strides), valid, other=0
             ).to(tl.float32)
-            gradient = dy * scale - (x - mean) * inverse * gradient_normalized_mean
+            gradient = (
+                dy * scale - (x - mean) * inverse * gradient_normalized_mean
+            )
             if not RMS:
                 gradient -= gradient_mean
-            tl.store(dx_ptr + _offset(coords, dx_strides), gradient * inverse, valid)
+            tl.store(
+                dx_ptr + _offset(coords, dx_strides), gradient * inverse, valid
+            )
     else:
         parameter = program - GROUPS
         sum_scale = tl.zeros((BLOCK_SIZE,), tl.float32)
@@ -1457,9 +1538,9 @@ def extended_normalization_backward(
             x = tl.load(x_ptr + _offset(coords, x_strides), valid, other=0).to(
                 tl.float32
             )
-            dy = tl.load(dy_ptr + _offset(coords, dy_strides), valid, other=0).to(
-                tl.float32
-            )
+            dy = tl.load(
+                dy_ptr + _offset(coords, dy_strides), valid, other=0
+            ).to(tl.float32)
             if RMS:
                 mean = 0.0
             else:
@@ -1471,9 +1552,15 @@ def extended_normalization_backward(
             ).to(tl.float32)
             sum_scale += dy * (x - mean) * inverse
             sum_bias += dy
-        coords = _coordinates(parameter, tl.full((), 0, tl.int64), dims, PARAM_AXES)
-        tl.store(dscale_ptr + _offset(coords, dscale_strides), tl.sum(sum_scale, 0))
-        tl.store(dbias_ptr + _offset(coords, dbias_strides), tl.sum(sum_bias, 0))
+        coords = _coordinates(
+            parameter, tl.full((), 0, tl.int64), dims, PARAM_AXES
+        )
+        tl.store(
+            dscale_ptr + _offset(coords, dscale_strides), tl.sum(sum_scale, 0)
+        )
+        tl.store(
+            dbias_ptr + _offset(coords, dbias_strides), tl.sum(sum_bias, 0)
+        )
 
 
 @triton.jit
@@ -1494,7 +1581,9 @@ def compact_normalization_forward(
     row = tl.program_id(0).to(tl.int64)
     columns = tl.arange(0, BLOCK_SIZE)
     valid = columns < REDUCTION
-    x = tl.load(x_ptr + row * REDUCTION + columns, valid, other=0).to(tl.float32)
+    x = tl.load(x_ptr + row * REDUCTION + columns, valid, other=0).to(
+        tl.float32
+    )
     mean = tl.sum(x, 0) / REDUCTION
     centered = tl.where(valid, x - mean, 0.0)
     inverse = tl.rsqrt(tl.sum(centered * centered, 0) / REDUCTION + EPSILON)
@@ -1547,9 +1636,9 @@ def compact_batchnorm_backward(
     normalized = (x - mean) * inverse
     sum_dy = tl.sum(dy, 0)
     sum_normalized = tl.sum(dy * normalized, 0)
-    dx = (dy - sum_dy / REDUCTION - normalized * (sum_normalized / REDUCTION)) * (
-        scale * inverse
-    )
+    dx = (
+        dy - sum_dy / REDUCTION - normalized * (sum_normalized / REDUCTION)
+    ) * (scale * inverse)
     tl.store(dx_ptr + offset, dx, valid)
     tl.store(dscale_ptr + channel, sum_normalized)
     tl.store(dbias_ptr + channel, sum_dy)

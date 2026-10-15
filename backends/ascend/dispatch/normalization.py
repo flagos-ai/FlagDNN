@@ -14,7 +14,8 @@ def _batchnorm_inference_meta(
     *,
     channels: int,
     spatial: int,
-) -> dict[str, int]:
+) -> dict[str, int | float]:
+    result: dict[str, int | float]
     leading = MAX_RANK - len(x.dimensions)
     dimensions = [1] * leading + list(x.dimensions)
     x_strides = [0] * leading + list(x.strides)

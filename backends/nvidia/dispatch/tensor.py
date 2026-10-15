@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from typing import Any
 
 from .common import (
@@ -83,6 +85,8 @@ def _tensor_metadata(
     operation_name: str,
     tensor_registry: dict[int, dict[str, Any]],
 ) -> tuple[list[int], list[dict[str, Any]], int]:
+    expected_outputs: tuple[str, ...]
+    index: int | bool
     expected_roles = EXPECTED_TENSOR_ROLES.get(operation_name)
     if expected_roles is None:
         raise ValueError(f"unsupported operation: {operation_name!r}")
@@ -369,7 +373,7 @@ def _build_argument_abi(
                     "name": name,
                     "value": _require_integer(
                         parameters,
-                        name,
+                        cast(str, name),
                         minimum=-(2**31),
                         maximum=2**31 - 1,
                     ),
@@ -380,7 +384,7 @@ def _build_argument_abi(
                 {
                     "kind": "scalar_f32",
                     "name": name,
-                    "value": _require_number(parameters, name),
+                    "value": _require_number(parameters, cast(str, name)),
                 }
             )
         else:

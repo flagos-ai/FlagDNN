@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+from typing import cast
+
 import argparse
 import hashlib
 import importlib.metadata
@@ -120,7 +122,9 @@ def _directory_record(path: Path) -> dict[str, object]:
     requested = path.absolute()
     resolved = requested.resolve(strict=True)
     if not resolved.is_dir():
-        raise CollectionError(f"required directory is not present: {requested}")
+        raise CollectionError(
+            f"required directory is not present: {requested}"
+        )
     return {
         "requested_path": str(requested),
         "realpath": str(resolved),
@@ -163,7 +167,12 @@ def _resolve_library(name: str, search_directories: list[Path]) -> Path:
     if ldconfig is not None:
         result = _run([ldconfig, "-p"], timeout=30)
         if result.returncode == 0:
-            requested_names = {name, f"{name}.1", f"{name}.so", f"lib{name}.so"}
+            requested_names = {
+                name,
+                f"{name}.1",
+                f"{name}.so",
+                f"lib{name}.so",
+            }
             for line in result.stdout.splitlines():
                 match = re.match(r"\s*(\S+)\s+\([^)]*\)\s+=>\s+(\S+)", line)
                 if match and match.group(1) in requested_names:
@@ -181,7 +190,10 @@ def _parse_cmake_backend(config: Path) -> str:
     )
     if match is None:
         raise CollectionError(
-            f"TritonJITConfig.cmake does not declare TritonJIT_BACKEND: {config}"
+            (
+                f"TritonJITConfig.cmake does not declare TritonJIT_BACKEND: "
+                f"{config}"
+            )
         )
     return match.group(1)
 
@@ -197,7 +209,9 @@ def _parse_elf_dynamic_section(text: str) -> tuple[str, list[str]]:
         r"\((?:RUNPATH|RPATH)\).*?Library (?:runpath|rpath): \[([^\]]*)\]",
         text,
     )
-    runpath = [] if runpath_match is None else runpath_match.group(1).split(":")
+    runpath = (
+        [] if runpath_match is None else runpath_match.group(1).split(":")
+    )
     return soname_match.group(1), runpath
 
 
@@ -218,7 +232,9 @@ def _ldd_dependencies(library: Path) -> list[dict[str, object]]:
     ldd = _require_command("ldd")
     result = _run([str(ldd), str(library)], timeout=120)
     if result.returncode != 0:
-        raise CollectionError(f"ldd failed for {library}: {result.stderr.strip()}")
+        raise CollectionError(
+            f"ldd failed for {library}: {result.stderr.strip()}"
+        )
     dependencies: list[dict[str, object]] = []
     for raw_line in result.stdout.splitlines():
         line = raw_line.strip()
@@ -257,9 +273,7 @@ for name in sys.argv[1:]:
         }
 print("FLAGDNN_MODULE_IDENTITIES=" + json.dumps(records, sort_keys=True))
 """
-    result = _run(
-        [sys.executable, "-c", command, *names], timeout=360
-    )
+    result = _run([sys.executable, "-c", command, *names], timeout=360)
     if result.returncode != 0:
         diagnostic = result.stderr.strip().splitlines()
         suffix = diagnostic[-1] if diagnostic else f"exit {result.returncode}"
@@ -377,9 +391,7 @@ def collect_environment() -> dict[str, object]:
         or os.environ.get("FLAGDNN_MTHREADS_TRITON_JIT_ROOT")
         or "/usr/local"
     )
-    configured_jit_dir = os.environ.get(
-        "FLAGDNN_MTHREADS_TRITON_JIT_DIR", ""
-    )
+    configured_jit_dir = os.environ.get("FLAGDNN_MTHREADS_TRITON_JIT_DIR", "")
     jit_config = Path(
         os.environ.get(
             "MTHREADS_TRITON_JIT_CONFIG",
@@ -395,7 +407,9 @@ def collect_environment() -> dict[str, object]:
         )
     )
     jit_build_root = (
-        jit_config.parent if (jit_config.parent / "CMakeCache.txt").is_file() else None
+        jit_config.parent
+        if (jit_config.parent / "CMakeCache.txt").is_file()
+        else None
     )
     jit_default_library = (
         jit_build_root / "src" / "libtriton_jit.so"
@@ -462,7 +476,11 @@ def collect_environment() -> dict[str, object]:
     )
 
     driver_search = [
-        *(Path(item) for item in os.environ.get("LD_LIBRARY_PATH", "").split(":") if item),
+        *(
+            Path(item)
+            for item in os.environ.get("LD_LIBRARY_PATH", "").split(":")
+            if item
+        ),
         Path("/usr/lib/x86_64-linux-gnu"),
         Path("/lib/x86_64-linux-gnu"),
         musa_root / "lib",
@@ -571,10 +589,16 @@ def _validate_path_record(
 ) -> Path | None:
     requested_value = record.get("requested_path")
     realpath_value = record.get("realpath")
-    if not isinstance(requested_value, str) or not Path(requested_value).is_absolute():
+    if (
+        not isinstance(requested_value, str)
+        or not Path(requested_value).is_absolute()
+    ):
         errors.append(f"resource {name} requested_path must be absolute")
         return None
-    if not isinstance(realpath_value, str) or not Path(realpath_value).is_absolute():
+    if (
+        not isinstance(realpath_value, str)
+        or not Path(realpath_value).is_absolute()
+    ):
         errors.append(f"resource {name} realpath must be absolute")
         return None
     requested = Path(requested_value)
@@ -604,7 +628,10 @@ def _validate_path_record(
         elif actual.stat().st_size != size:
             errors.append(f"resource {name} size does not match current bytes")
         digest = record.get("sha256")
-        if not isinstance(digest, str) or SHA256_PATTERN.fullmatch(digest) is None:
+        if (
+            not isinstance(digest, str)
+            or SHA256_PATTERN.fullmatch(digest) is None
+        ):
             errors.append(f"resource {name} SHA-256 is invalid")
         elif _sha256_file(actual) != digest:
             errors.append(
@@ -631,7 +658,9 @@ def validate_environment(document: dict[str, object]) -> list[str]:
     if missing_keys:
         errors.append(f"missing top-level keys: {','.join(missing_keys)}")
     if unexpected_keys:
-        errors.append(f"unexpected top-level keys: {','.join(unexpected_keys)}")
+        errors.append(
+            f"unexpected top-level keys: {','.join(unexpected_keys)}"
+        )
     if document.get("schema_version") != SCHEMA_VERSION:
         errors.append(f"schema_version must be {SCHEMA_VERSION}")
     if document.get("platform") != PLATFORM:
@@ -643,9 +672,7 @@ def validate_environment(document: dict[str, object]) -> list[str]:
     resolved_resources: dict[str, Path] = {}
     if resources is not None:
         for name in REQUIRED_RESOURCES:
-            record = _mapping(
-                resources.get(name), f"resource {name}", errors
-            )
+            record = _mapping(resources.get(name), f"resource {name}", errors)
             if record is None:
                 continue
             resolved = _validate_path_record(name, record, errors)
@@ -658,13 +685,18 @@ def validate_environment(document: dict[str, object]) -> list[str]:
                 path = resolved_resources.get(name)
                 if path is not None and not _under(path, musa_root):
                     errors.append(
-                        "MUSA and muDNN resources do not share the selected root"
+                        (
+                            "MUSA and muDNN resources do not share the "
+                            "selected root"
+                        )
                     )
 
         jit_build_root = None
         if "triton_jit_build_root" in resources:
             build_record = _mapping(
-                resources["triton_jit_build_root"], "triton_jit_build_root", errors
+                resources["triton_jit_build_root"],
+                "triton_jit_build_root",
+                errors,
             )
             if build_record is not None:
                 jit_build_root = _validate_path_record(
@@ -718,9 +750,10 @@ def validate_environment(document: dict[str, object]) -> list[str]:
                         errors.append(
                             f"TritonJIT dependency not found: {name}"
                         )
-                    elif not isinstance(resolved, str) or not Path(
-                        resolved
-                    ).is_absolute():
+                    elif (
+                        not isinstance(resolved, str)
+                        or not Path(resolved).is_absolute()
+                    ):
                         errors.append(
                             f"TritonJIT dependency path is invalid: {name}"
                         )
@@ -739,9 +772,9 @@ def validate_environment(document: dict[str, object]) -> list[str]:
 
         patchelf = resources.get("patchelf")
         if isinstance(patchelf, dict):
-            if not isinstance(patchelf.get("version"), str) or not patchelf.get(
-                "version"
-            ):
+            if not isinstance(
+                patchelf.get("version"), str
+            ) or not patchelf.get("version"):
                 errors.append("patchelf version evidence is missing")
             if not isinstance(
                 patchelf.get("distribution_version"), str
@@ -760,11 +793,11 @@ def validate_environment(document: dict[str, object]) -> list[str]:
         modules = _mapping(python.get("modules"), "python modules", errors)
         if modules is not None:
             for name in REQUIRED_PYTHON_MODULES:
-                record = modules.get(name)
-                if not isinstance(record, dict):
+                module_record = modules.get(name)
+                if not isinstance(module_record, dict):
                     errors.append(f"codegen Python cannot import {name}")
                     continue
-                _validate_path_record(f"python_{name}", record, errors)
+                _validate_path_record(f"python_{name}", module_record, errors)
     declared_identity = document.get("identity_sha256")
     if (
         not isinstance(declared_identity, str)
@@ -817,8 +850,8 @@ def main(argv: list[str] | None = None) -> int:
         document["identity_sha256"] = identity_sha256(document)
     payload = canonical_json(document) + b"\n"
     write_atomic(arguments.output, payload)
-    for error in document["errors"]:
-        print(error, file=sys.stderr)
+    for message in cast(list[str], document["errors"]):
+        print(message, file=sys.stderr)
     return 0 if not document["errors"] else 1
 
 

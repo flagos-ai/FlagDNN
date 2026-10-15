@@ -61,11 +61,15 @@ def genstats_kernel(
         logical //= DIM_1
         physical += (logical % DIM_0) * STRIDE_0
         logical //= DIM_0
-        x = tl.load(x_ptr + physical, reduced < REDUCTION, other=0).to(tl.float32)
+        x = tl.load(x_ptr + physical, reduced < REDUCTION, other=0).to(
+            tl.float32
+        )
         partial_sum += x
         partial_square += x * x
     tl.store(sum_ptr + channel * SUM_CHANNEL_STRIDE, tl.sum(partial_sum, 0))
-    tl.store(sq_sum_ptr + channel * SQ_SUM_CHANNEL_STRIDE, tl.sum(partial_square, 0))
+    tl.store(
+        sq_sum_ptr + channel * SQ_SUM_CHANNEL_STRIDE, tl.sum(partial_square, 0)
+    )
 
 
 @triton.jit
@@ -101,14 +105,22 @@ def bn_finalize_kernel(
     HAS_RUNNING: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    channel = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    channel = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
     valid = channel < CHANNELS
-    total = tl.load(sum_ptr + channel * SUM_STRIDE, valid, other=0).to(tl.float32)
+    total = tl.load(sum_ptr + channel * SUM_STRIDE, valid, other=0).to(
+        tl.float32
+    )
     square = tl.load(sq_sum_ptr + channel * SQ_SUM_STRIDE, valid, other=0).to(
         tl.float32
     )
-    scale = tl.load(scale_ptr + channel * SCALE_STRIDE, valid, other=0).to(tl.float32)
-    bias = tl.load(bias_ptr + channel * BIAS_STRIDE, valid, other=0).to(tl.float32)
+    scale = tl.load(scale_ptr + channel * SCALE_STRIDE, valid, other=0).to(
+        tl.float32
+    )
+    bias = tl.load(bias_ptr + channel * BIAS_STRIDE, valid, other=0).to(
+        tl.float32
+    )
     # CoreX 4.4/corex_71 does not implement reliable FP64 arithmetic.
     # Match the declared FP32 compute type for the moments and inverse.
     mean = total / COUNT
@@ -130,7 +142,9 @@ def bn_finalize_kernel(
         previous_variance = tl.load(
             prev_var_ptr + channel * PREV_VAR_STRIDE, valid, other=0
         ).to(tl.float32)
-        unbiased_variance = variance * (COUNT / (COUNT - 1.0) if COUNT > 1.0 else 0.0)
+        unbiased_variance = variance * (
+            COUNT / (COUNT - 1.0) if COUNT > 1.0 else 0.0
+        )
         tl.store(
             next_mean_ptr + channel * NEXT_MEAN_STRIDE,
             (1.0 - MOMENTUM) * previous_mean + MOMENTUM * mean,
@@ -138,6 +152,7 @@ def bn_finalize_kernel(
         )
         tl.store(
             next_var_ptr + channel * NEXT_VAR_STRIDE,
-            (1.0 - MOMENTUM) * previous_variance + MOMENTUM * unbiased_variance,
+            (1.0 - MOMENTUM) * previous_variance
+            + MOMENTUM * unbiased_variance,
             valid,
         )

@@ -32,7 +32,7 @@ _EXPECTED_TOP_LEVEL_KEYS = {
 }
 
 
-def _require(condition: bool, message: str) -> None:
+def _require(condition: object, message: str) -> None:
     if not condition:
         raise RuntimeError(message)
 
@@ -66,7 +66,9 @@ def _assert_canonical_file(value: Any, root: Path, name: str) -> None:
     path = Path(value)
     _require(path.is_absolute(), f"{name} is not absolute: {path}")
     _require(path.is_file(), f"{name} does not exist: {path}")
-    _require(path == path.resolve(strict=True), f"{name} is not canonical: {path}")
+    _require(
+        path == path.resolve(strict=True), f"{name} is not canonical: {path}"
+    )
     _require(
         path.is_relative_to(root.resolve(strict=True)),
         f"{name} escaped {root}: {path}",
@@ -107,17 +109,26 @@ def _assert_static_document(
     _require(document["device"] is None, "static probe opened a device")
 
     sdk = document["ppu_sdk"]
-    _require(sdk["root"] == str(sdk_root.resolve(strict=True)), "wrong SDK root")
+    _require(
+        sdk["root"] == str(sdk_root.resolve(strict=True)), "wrong SDK root"
+    )
     _require(
         sdk["version"] == _release_version(sdk_root / "release.yaml"),
         "wrong SDK version",
     )
-    for field in ("release_file", "hggc_library", "acdnn_header", "acdnn_library"):
+    for field in (
+        "release_file",
+        "hggc_library",
+        "acdnn_header",
+        "acdnn_library",
+    ):
         _assert_canonical_file(sdk[field], sdk_root, f"ppu_sdk.{field}")
 
     cuda = document["cuda_compat"]
     cuda_root = sdk_root / "CUDA_SDK"
-    _require(cuda["root"] == str(cuda_root.resolve(strict=True)), "wrong CUDA root")
+    _require(
+        cuda["root"] == str(cuda_root.resolve(strict=True)), "wrong CUDA root"
+    )
     for field in ("header", "driver_library", "compiler", "ptxas"):
         _assert_canonical_file(cuda[field], cuda_root, f"cuda_compat.{field}")
     _assert_canonical_file(
@@ -138,11 +149,15 @@ def _assert_static_document(
         and "ppu" in triton["distribution_version"].lower(),
         "Triton distribution is not PPU-qualified",
     )
-    _require(triton["codegen_backend"] in triton["backend_catalog"], "wrong backend catalog")
+    _require(
+        triton["codegen_backend"] in triton["backend_catalog"],
+        "wrong backend catalog",
+    )
     _require(
         triton["codegen_backend"] in {"nvidia", "ppu"}
         and triton["target_backend"] == "cuda"
-        and triton["binary_extension"] == ("hgbin" if triton["codegen_backend"] == "ppu" else "cubin")
+        and triton["binary_extension"]
+        == ("hgbin" if triton["codegen_backend"] == "ppu" else "cubin")
         and triton["ppu_compatibility"] == "cuda",
         "wrong Triton PPU compatibility identity",
     )
@@ -164,7 +179,9 @@ def _assert_static_document(
         _assert_canonical_file(triton[field], triton_root, f"triton.{field}")
 
     jit = document["libtriton_jit"]
-    _require(jit["root"] == str(jit_root.resolve(strict=True)), "wrong JIT root")
+    _require(
+        jit["root"] == str(jit_root.resolve(strict=True)), "wrong JIT root"
+    )
     _require(jit["backend"] == "CUDA", "JIT backend is not CUDA")
     _require(
         jit["repository_root"] == str(jit_root.resolve(strict=True)),
@@ -172,20 +189,37 @@ def _assert_static_document(
     )
     identity = jit["source_identity"]
     if identity.get("kind") == "git_commit":
-        _require((jit_root / ".git").exists(), "installed JIT cannot inherit Git identity")
+        _require(
+            (jit_root / ".git").exists(),
+            "installed JIT cannot inherit Git identity",
+        )
         expected_identity = _git_head(jit_root)
     else:
-        _require(identity.get("kind") == "content_sha256", "wrong JIT identity kind")
+        _require(
+            identity.get("kind") == "content_sha256", "wrong JIT identity kind"
+        )
         digest = hashlib.sha256()
-        for path in sorted({Path(jit[key]) for key in (
-            "config_file", "library", "standalone_compile", "gen_ssig"
-        )}):
-            digest.update(str(path.relative_to(jit_root.resolve(strict=True))).encode())
+        for path in sorted(
+            {
+                Path(jit[key])
+                for key in (
+                    "config_file",
+                    "library",
+                    "standalone_compile",
+                    "gen_ssig",
+                )
+            }
+        ):
+            digest.update(
+                str(path.relative_to(jit_root.resolve(strict=True))).encode()
+            )
             digest.update(b"\0")
             digest.update(path.read_bytes())
             digest.update(b"\0")
         expected_identity = digest.hexdigest()
-    _require(identity.get("value") == expected_identity, "wrong JIT source identity")
+    _require(
+        identity.get("value") == expected_identity, "wrong JIT source identity"
+    )
     for field in (
         "config_file",
         "library",
@@ -195,25 +229,35 @@ def _assert_static_document(
         _assert_canonical_file(jit[field], jit_root, f"libtriton_jit.{field}")
 
     python = document["python"]
-    _require(Path(python["executable"]).samefile(sys.executable), "wrong Python")
-    _require(python["implementation"] == "cpython", "wrong Python implementation")
+    _require(
+        Path(python["executable"]).samefile(sys.executable), "wrong Python"
+    )
+    _require(
+        python["implementation"] == "cpython", "wrong Python implementation"
+    )
     _require(
         isinstance(python["version"], str) and python["version"],
         "missing Python version",
     )
-    _require(isinstance(python["abi"], str) and python["abi"], "missing Python ABI")
+    _require(
+        isinstance(python["abi"], str) and python["abi"], "missing Python ABI"
+    )
     _require(
         isinstance(python["torch_version"], str) and python["torch_version"],
         "missing Torch version",
     )
-    _require(Path(python["torch_file"]).is_file(), "missing Torch package file")
+    _require(
+        Path(python["torch_file"]).is_file(), "missing Torch package file"
+    )
 
 
 def main() -> int:
     validation_root = Path(__file__).resolve().parent
     helper = validation_root / "preflight_environment.py"
     schema = validation_root / "environment.schema.json"
-    sdk_root = Path(os.environ.get("FLAGDNN_THEAD_PPU_SDK_ROOT", "/usr/local/PPU_SDK"))
+    sdk_root = Path(
+        os.environ.get("FLAGDNN_THEAD_PPU_SDK_ROOT", "/usr/local/PPU_SDK")
+    )
     triton_root = Path(
         os.environ.get(
             "FLAGDNN_THEAD_TRITON_ROOT",
@@ -228,7 +272,9 @@ def main() -> int:
     )
     bytecode_before = set(validation_root.rglob("*.pyc"))
 
-    with tempfile.TemporaryDirectory(prefix="flagdnn-thead-environment-") as directory:
+    with tempfile.TemporaryDirectory(
+        prefix="flagdnn-thead-environment-"
+    ) as directory:
         temporary_root = Path(directory)
         output = temporary_root / "static environment.json"
         common_arguments = [
@@ -255,8 +301,12 @@ def main() -> int:
         stdout_document = _load_single_json(static_result.stdout, "stdout")
         _require(output.is_file(), "static preflight did not write --output")
         output_document = _load_single_json(output.read_text(), "--output")
-        _require(stdout_document == output_document, "stdout and --output differ")
-        _assert_static_document(stdout_document, sdk_root, triton_root, jit_root)
+        _require(
+            stdout_document == output_document, "stdout and --output differ"
+        )
+        _assert_static_document(
+            stdout_document, sdk_root, triton_root, jit_root
+        )
 
         fake_smi = temporary_root / "ppu-smi-with-zero-status"
         fake_smi.write_text(
@@ -276,16 +326,24 @@ def main() -> int:
                 str(fake_smi),
             ],
         )
-        _require(device_result.returncode != 0, "driver error returned success")
-        _require(not device_result.stdout, "failed device probe wrote success JSON")
-        error_document = _load_single_json(device_result.stderr, "device stderr")
+        _require(
+            device_result.returncode != 0, "driver error returned success"
+        )
+        _require(
+            not device_result.stdout, "failed device probe wrote success JSON"
+        )
+        error_document = _load_single_json(
+            device_result.stderr, "device stderr"
+        )
         _require(
             error_document.get("error") == "driver_not_loaded",
             f"unstable driver diagnostic: {error_document}",
         )
 
     bytecode_after = set(validation_root.rglob("*.pyc"))
-    _require(bytecode_after == bytecode_before, "preflight wrote Python bytecode")
+    _require(
+        bytecode_after == bytecode_before, "preflight wrote Python bytecode"
+    )
     print("THead environment contract: PASS")
     return 0
 

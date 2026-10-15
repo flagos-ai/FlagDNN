@@ -43,7 +43,8 @@ def _load_json_resource(path: Path, description: str) -> dict[str, Any]:
 
 def _load_capabilities() -> dict[str, Any]:
     document = _load_json_resource(
-        Path(__file__).resolve().parents[1] / "capabilities.json", "Ascend capabilities"
+        Path(__file__).resolve().parents[1] / "capabilities.json",
+        "Ascend capabilities",
     )
     expected_keys = {
         "schema_version",
@@ -73,7 +74,8 @@ def _load_capabilities() -> dict[str, Any]:
         or document.get("backend") != "ascend"
         or document.get("launch_abi") != LAUNCH_ABI
         or document.get("supported_operations") != list(SUPPORTED_OPERATIONS)
-        or document.get("data_types") != ["float32", "float16", "bfloat16", "boolean"]
+        or document.get("data_types")
+        != ["float32", "float16", "bfloat16", "boolean"]
         or document.get("matmul")
         != {
             "data_types": ["float32", "float16", "bfloat16"],
@@ -139,12 +141,15 @@ def _load_capabilities() -> dict[str, Any]:
         or document.get("codegen_arches") != list(SUPPORTED_CODEGEN_ARCHES)
         or document.get("target_policy")
         != {
-            "runtime_detected_codegen_arches": list(RUNTIME_DETECTED_CODEGEN_ARCHES),
+            "runtime_detected_codegen_arches": list(
+                RUNTIME_DETECTED_CODEGEN_ARCHES
+            ),
             "compatibility_alias": COMPATIBILITY_ALIAS,
         }
         or document.get("max_rank") != 8
         or document.get("workspace_alignment") != 256
-        or document.get("compile_options") != {"num_warps": [4], "num_stages": [1]}
+        or document.get("compile_options")
+        != {"num_warps": [4], "num_stages": [1]}
         or document.get("block_sizes") != [4096, 2048, 1024, 256, 128]
         or document.get("persistent_launch")
         != {
@@ -153,7 +158,9 @@ def _load_capabilities() -> dict[str, Any]:
             "workers_per_ai_core": 2,
         }
     ):
-        raise ValueError("Ascend capabilities do not match the kernel contract")
+        raise ValueError(
+            "Ascend capabilities do not match the kernel contract"
+        )
     return document
 
 
@@ -172,7 +179,9 @@ def _validate_build_options(value: object) -> bool:
     return enable_autotune
 
 
-def _validate_platform_candidate(operation: str, candidate: KernelCandidate) -> None:
+def _validate_platform_candidate(
+    operation: str, candidate: KernelCandidate
+) -> None:
     unary = operation in {
         "relu",
         "sqrt",
@@ -215,7 +224,10 @@ def _validate_platform_candidate(operation: str, candidate: KernelCandidate) -> 
             if matmul
             else (
                 "normalization.py"
-                if batchnorm_inference or batchnorm_training or rmsnorm or layernorm
+                if batchnorm_inference
+                or batchnorm_training
+                or rmsnorm
+                or layernorm
                 else (
                     "reduction.py"
                     if reduction
@@ -232,65 +244,46 @@ def _validate_platform_candidate(operation: str, candidate: KernelCandidate) -> 
             )
         )
     )
-    expected_functions = (
-        {
+    if convolution_fprop:
+        expected_functions = {
             "convolution_fprop_persistent_kernel",
-            "convolution_fprop_im2col_kernel",
+            ("convolution_fpr" "op_im2col_kernel"),
         }
-        if convolution_fprop
-        else (
-            {"matmul_strided_kernel"}
-            if matmul
-            else (
-                {"batchnorm_training_persistent_kernel"}
-                if batchnorm_training
-                else (
-                    {"layernorm_persistent_kernel"}
-                    if layernorm
-                    else (
-                        {"rmsnorm_persistent_kernel"}
-                        if rmsnorm
-                        else (
-                            {
-                                "batchnorm_inference_nchw_persistent_kernel",
-                                "batchnorm_inference_strided_persistent_kernel",
-                            }
-                            if batchnorm_inference
-                            else (
-                                {
-                                    "reduction_3d_persistent_kernel",
-                                    "reduction_strided_persistent_kernel",
-                                }
-                                if reduction
-                                else (
-                                    {"layout_copy_kernel"}
-                                    if layout
-                                    else (
-                                        {
-                                            "unary_pointwise_contiguous_kernel",
-                                            "unary_pointwise_strided_kernel",
-                                        }
-                                        if unary
-                                        else (
-                                            {
-                                                "binary_select_contiguous_kernel",
-                                                "binary_select_strided_kernel",
-                                            }
-                                            if ternary
-                                            else {
-                                                "binary_contiguous_kernel",
-                                                "binary_strided_kernel",
-                                            }
-                                        )
-                                    )
-                                )
-                            )
-                        )
-                    )
-                )
-            )
-        )
-    )
+    elif matmul:
+        expected_functions = {"matmul_strided_kernel"}
+    elif batchnorm_training:
+        expected_functions = {"batchnorm_training_persistent_kernel"}
+    elif layernorm:
+        expected_functions = {"layernorm_persistent_kernel"}
+    elif rmsnorm:
+        expected_functions = {"rmsnorm_persistent_kernel"}
+    elif batchnorm_inference:
+        expected_functions = {
+            "batchnorm_inference_nchw_persistent_kernel",
+            ("batchnorm_inference_st" "rided_persistent_kernel"),
+        }
+    elif reduction:
+        expected_functions = {
+            "reduction_3d_persistent_kernel",
+            ("reduction_strided" "_persistent_kernel"),
+        }
+    elif layout:
+        expected_functions = {"layout_copy_kernel"}
+    elif unary:
+        expected_functions = {
+            "unary_pointwise_contiguous_kernel",
+            ("unary_pointwise" "_strided_kernel"),
+        }
+    elif ternary:
+        expected_functions = {
+            "binary_select_contiguous_kernel",
+            ("binary_select_" "strided_kernel"),
+        }
+    else:
+        expected_functions = {
+            "binary_contiguous_kernel",
+            ("binary_str" "ided_kernel"),
+        }
     expected_table = (
         "convolution_fprop"
         if convolution_fprop

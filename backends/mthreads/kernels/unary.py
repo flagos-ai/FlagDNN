@@ -107,9 +107,7 @@ def unary_pointwise_contiguous_kernel(
     # n_elements is an i32 runtime scalar. Keeping the dense linear index in
     # i32 avoids costly 64-bit integer arithmetic on MTGPU.
     program_base = tl.program_id(0) * BLOCK_SIZE * TILES_PER_PROGRAM
-    full_program = (
-        program_base + BLOCK_SIZE * TILES_PER_PROGRAM <= n_elements
-    )
+    full_program = program_base + BLOCK_SIZE * TILES_PER_PROGRAM <= n_elements
     for tile_index in tl.static_range(TILES_PER_PROGRAM):
         offsets = (
             program_base + tile_index * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)

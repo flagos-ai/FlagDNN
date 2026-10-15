@@ -596,6 +596,8 @@ def _tensor_metadata(
     operation_name: str,
     tensor_registry: dict[int, dict[str, Any]],
 ) -> tuple[list[int], list[dict[str, Any]], int]:
+    expected_outputs: tuple[str, ...]
+    index: int | bool
     expected_roles = EXPECTED_TENSOR_ROLES.get(operation_name)
     if expected_roles is None:
         raise ValueError(f"unsupported operation: {operation_name!r}")

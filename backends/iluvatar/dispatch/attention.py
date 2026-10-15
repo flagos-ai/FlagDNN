@@ -76,9 +76,13 @@ def _validate_qkv(
     if kd[2] != vd[2]:
         raise ValueError("SDPA K/V sequence dimensions must match")
     if qd[1] % kd[1] or qd[1] % vd[1]:
-        raise ValueError("SDPA query heads must be divisible by key/value heads")
+        raise ValueError(
+            "SDPA query heads must be divisible by key/value heads"
+        )
     if qd[3] > 256 or vd[3] > 256:
-        raise ValueError("SDPA head dimensions greater than 256 are unsupported")
+        raise ValueError(
+            "SDPA head dimensions greater than 256 are unsupported"
+        )
     return {
         "data_type": data_type,
         "batch": qd[0],
@@ -123,7 +127,9 @@ def _validate_bias(
         or dims[2] != shape["sequence_q"]
         or dims[3] != shape["sequence_kv"]
     ):
-        raise ValueError(f"{name} must broadcast over B/H and match Q/KV sequences")
+        raise ValueError(
+            f"{name} must broadcast over B/H and match Q/KV sequences"
+        )
 
 
 def _validate_fp32_scalar(tensor: Mapping[str, Any], name: str) -> None:
@@ -140,7 +146,9 @@ def _validate_attention(node: Mapping[str, Any]) -> dict[str, Any]:
     ports = _require_object(node["port_tensors"], "node.port_tensors")
     fp8 = operation in ("sdpa_fp8", "sdpa_fp8_backward")
     shape = _validate_qkv(ports["q"], ports["k"], ports["v"], fp8=fp8)
-    if operation == "sdpa_backward" and (shape["key_heads"] != shape["value_heads"]):
+    if operation == "sdpa_backward" and (
+        shape["key_heads"] != shape["value_heads"]
+    ):
         raise ValueError("SDPA backward requires matching K/V head counts")
     data_type = str(shape["data_type"])
     b = int(shape["batch"])
@@ -153,7 +161,9 @@ def _validate_attention(node: Mapping[str, Any]) -> dict[str, Any]:
 
     _validate_attention_tensor(ports["o"], output_shape, data_type, "SDPA O")
     if operation in ("sdpa_backward", "sdpa_fp8_backward"):
-        _validate_attention_tensor(ports["do"], output_shape, data_type, "SDPA dO")
+        _validate_attention_tensor(
+            ports["do"], output_shape, data_type, "SDPA dO"
+        )
         for primal, gradient in (("q", "dq"), ("k", "dk"), ("v", "dv")):
             _validate_attention_tensor(
                 ports[gradient],
@@ -162,7 +172,10 @@ def _validate_attention(node: Mapping[str, Any]) -> dict[str, Any]:
                 f"SDPA {gradient}",
             )
     stats = ports["stats"]
-    if stats["data_type"] != "float32" or list(stats["dimensions"]) != stats_shape:
+    if (
+        stats["data_type"] != "float32"
+        or list(stats["dimensions"]) != stats_shape
+    ):
         raise ValueError("SDPA stats must be float32 [B,H,SQ,1]")
 
     has_bias = _require_flag(p, "has_bias")
@@ -187,18 +200,29 @@ def _validate_attention(node: Mapping[str, Any]) -> dict[str, Any]:
         "q_per_v",
     ):
         if _require_integer(p, name, maximum=MAX_I64) != int(shape[name]):
-            raise ValueError(f"parameters.{name} is inconsistent with Q/K/V metadata")
-    min_diag = _require_integer(p, "min_diag", minimum=-MAX_I32, maximum=MAX_I32)
-    max_diag = _require_integer(p, "max_diag", minimum=-MAX_I32, maximum=MAX_I32)
+            raise ValueError(
+                f"parameters.{name} is inconsistent with Q/K/V metadata"
+            )
+    min_diag = _require_integer(
+        p, "min_diag", minimum=-MAX_I32, maximum=MAX_I32
+    )
+    max_diag = _require_integer(
+        p, "max_diag", minimum=-MAX_I32, maximum=MAX_I32
+    )
     if min_diag > max_diag:
         raise ValueError("SDPA diagonal interval is empty")
     banded = _require_flag(p, "banded")
-    if banded != (min_diag != -UNBOUNDED_DIAGONAL or max_diag != UNBOUNDED_DIAGONAL):
+    if banded != (
+        min_diag != -UNBOUNDED_DIAGONAL or max_diag != UNBOUNDED_DIAGONAL
+    ):
         raise ValueError("parameters.banded disagrees with diagonal bounds")
     causal_top_left = _require_flag(p, "causal_top_left")
     reverse_causal = _require_flag(p, "reverse_causal")
     generate_stats = _require_flag(p, "generate_stats")
-    if operation in ("sdpa_backward", "sdpa_fp8_backward") and not generate_stats:
+    if (
+        operation in ("sdpa_backward", "sdpa_fp8_backward")
+        and not generate_stats
+    ):
         raise ValueError("SDPA backward requires generated forward stats")
     attn_scale = _require_number(p, "attn_scale")
 
@@ -300,7 +324,9 @@ _ATTENTION_BACKWARD_RUNTIME_SCALARS = (
 )
 
 
-def _attention_forward_scalar_arguments(*, fp8: bool) -> tuple[ScalarArgument, ...]:
+def _attention_forward_scalar_arguments(
+    *, fp8: bool
+) -> tuple[ScalarArgument, ...]:
     scale_name = "attn_scale" if fp8 else "qk_scale"
     return ((scale_name, "fp32"),) + tuple(
         (name, "i32") for name in _ATTENTION_FORWARD_I32_SCALARS
@@ -453,7 +479,9 @@ def _apply_attention_workspace_strides(
         )
     ):
         constants[name] = (
-            0 if port_name == "bias" and axis < 2 and dimension == 1 else stride
+            0
+            if port_name == "bias" and axis < 2 and dimension == 1
+            else stride
         )
 
 
@@ -591,7 +619,8 @@ def _fp8_forward_plan(node: Mapping[str, Any]) -> NodePlan:
                 int(d["batch"]) * int(d["heads"]),
             ),
         ),
-        dependencies=("zero_amax",) + tuple(stage.stage_name for stage in conversions),
+        dependencies=("zero_amax",)
+        + tuple(stage.stage_name for stage in conversions),
         num_stages=2,
     )
     plan = NodePlan(
@@ -645,7 +674,9 @@ def _attention_backward_base(
         "HEAD_DIM": int(d["head_dimension"]),
         "BLOCK_M": 32,
         "BLOCK_N": 32,
-        "BLOCK_D_FULL": _attention_full_dimension_block(int(d["head_dimension"])),
+        "BLOCK_D_FULL": _attention_full_dimension_block(
+            int(d["head_dimension"])
+        ),
         # The common backward kernels iterate a full BLOCK_M query tile and
         # require masking for tail query blocks, even for non-banded attention.
         "FULL_ATTENTION": False,
@@ -672,7 +703,8 @@ def _attention_backward_dq_stage(
     dbias_reduce = bool(
         has_dbias
         and (
-            dbias["dimensions"][0] != d["batch"] or dbias["dimensions"][1] != d["heads"]
+            dbias["dimensions"][0] != d["batch"]
+            or dbias["dimensions"][1] != d["heads"]
         )
     )
     dbias_strides = list(dbias["strides"]) if has_dbias else [0, 0, 0, 0]
@@ -701,8 +733,12 @@ def _attention_backward_dq_stage(
             "V_DIM": int(d["value_dimension"]),
             "DBIAS_BATCHES": dbias["dimensions"][0] if has_dbias else 1,
             "DBIAS_HEADS": dbias["dimensions"][1] if has_dbias else 1,
-            "BLOCK_D_OUT": _attention_output_dimension_block(int(d["head_dimension"])),
-            "BLOCK_DV": _attention_full_dimension_block(int(d["value_dimension"])),
+            "BLOCK_D_OUT": _attention_output_dimension_block(
+                int(d["head_dimension"])
+            ),
+            "BLOCK_DV": _attention_full_dimension_block(
+                int(d["value_dimension"])
+            ),
             "HAS_DBIAS": has_dbias,
             "DBIAS_REDUCE": dbias_reduce,
         }
@@ -771,7 +807,9 @@ def _attention_backward_dkdv_stage(
             "stride_dvn": dv["strides"][2],
             "stride_dvd": dv["strides"][3],
             "Q_PER": int(d["q_per_k"]),
-            "BLOCK_D_OUT": _attention_output_dimension_block(int(d["head_dimension"])),
+            "BLOCK_D_OUT": _attention_output_dimension_block(
+                int(d["head_dimension"])
+            ),
         }
     )
     bias_port = "bias" if bool(d["has_bias"]) else "q"
@@ -832,8 +870,12 @@ def _attention_backward_dk_stage(
             "stride_dkd": dk["strides"][3],
             "V_DIM": int(d["value_dimension"]),
             "Q_PER": int(d["q_per_k"]),
-            "BLOCK_D_OUT": _attention_output_dimension_block(int(d["head_dimension"])),
-            "BLOCK_DV": _attention_full_dimension_block(int(d["value_dimension"])),
+            "BLOCK_D_OUT": _attention_output_dimension_block(
+                int(d["head_dimension"])
+            ),
+            "BLOCK_DV": _attention_full_dimension_block(
+                int(d["value_dimension"])
+            ),
         }
     )
     bias_port = "bias" if bool(d["has_bias"]) else "q"
@@ -894,7 +936,9 @@ def _attention_backward_dv_stage(
             "stride_dvd": dv["strides"][3],
             "V_DIM": int(d["value_dimension"]),
             "Q_PER": int(d["q_per_v"]),
-            "BLOCK_D_FULL": _attention_full_dimension_block(int(d["head_dimension"])),
+            "BLOCK_D_FULL": _attention_full_dimension_block(
+                int(d["head_dimension"])
+            ),
             "BLOCK_DV_OUT": _attention_output_dimension_block(
                 int(d["value_dimension"])
             ),
@@ -938,7 +982,8 @@ def _attention_backward_plan(node: Mapping[str, Any]) -> NodePlan:
     if bool(d["has_dbias"]):
         dbias = node["port_tensors"]["dbias"]
         reduces = (
-            dbias["dimensions"][0] != d["batch"] or dbias["dimensions"][1] != d["heads"]
+            dbias["dimensions"][0] != d["batch"]
+            or dbias["dimensions"][1] != d["heads"]
         )
         if reduces:
             if not _is_contiguous(dbias):
@@ -984,7 +1029,9 @@ def _attention_backward_plan(node: Mapping[str, Any]) -> NodePlan:
         1,
     )
     raw_size = 4 * _checked_product(delta_dimensions, "SDPA delta elements")
-    workspace_size = _ceil_div(raw_size, WORKSPACE_ALIGNMENT) * WORKSPACE_ALIGNMENT
+    workspace_size = (
+        _ceil_div(raw_size, WORKSPACE_ALIGNMENT) * WORKSPACE_ALIGNMENT
+    )
     workspace = WorkspaceTensor(
         name="delta",
         data_type="float32",
@@ -993,7 +1040,9 @@ def _attention_backward_plan(node: Mapping[str, Any]) -> NodePlan:
         offset=0,
         size=raw_size,
     )
-    plan = NodePlan("sdpa_backward", tuple(stages), (workspace,), workspace_size)
+    plan = NodePlan(
+        "sdpa_backward", tuple(stages), (workspace,), workspace_size
+    )
     plan.validate_dependencies()
     return plan
 
@@ -1203,12 +1252,16 @@ def _fp8_backward_plan(node: Mapping[str, Any]) -> NodePlan:
         tuning_key_value=1,
         grid_spec=GridSpec("fixed", (1, 1, 1)),
     )
-    workspaces, workspace_size = _fp8_input_workspaces(node, ("q", "k", "v", "o", "do"))
+    workspaces, workspace_size = _fp8_input_workspaces(
+        node, ("q", "k", "v", "o", "do")
+    )
     conversions = tuple(
         _fp8_conversion_stage(node, name, workspace, ("zero_amax",))
         for name, workspace in workspaces.items()
     )
-    dq_dependencies = ("zero_amax",) + tuple(stage.stage_name for stage in conversions)
+    dq_dependencies = ("zero_amax",) + tuple(
+        stage.stage_name for stage in conversions
+    )
     dq = _fp8_backward_dq_stage(node, workspaces, dq_dependencies)
     dk_dv = _fp8_backward_dkdv_stage(node, workspaces)
     plan = NodePlan(

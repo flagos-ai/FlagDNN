@@ -14,12 +14,14 @@
 
 """Graph-IR planning for Iluvatar tensor, reduction, and MatMul kernels.
 
-This module is intentionally independent from :mod:`backends.iluvatar.compiler`.
+This module is intentionally independent from
+:mod:`backends.iluvatar.compiler`.
 The provider can import it without creating a circular dependency, while pure
 Python schema/configuration tests can import it without Triton or a GPU.
 
 The returned :class:`KernelConfiguration` describes only visible kernel
-arguments.  The Iluvatar provider must append its global/profile scratch pointer
+arguments.  The Iluvatar provider must append its global/profile scratch
+pointer
 arguments when it renders the libtriton_jit ABI.
 """
 
@@ -153,7 +155,7 @@ class GridSpec:
     kind: str
     extents: tuple[int, ...]
 
-    def evaluate(self, constants: Mapping[str, int | bool]) -> Grid:
+    def evaluate(self, constants: Mapping[str, int | float | bool]) -> Grid:
         if self.kind == "linear":
             block = _positive_meta_integer(constants, "BLOCK_SIZE")
             result = (_ceil_div(self.extents[0], block), 1, 1)
@@ -234,7 +236,8 @@ class KernelConfiguration:
         unknown = set(meta).difference(self.tuning.meta_keys)
         if unknown:
             raise ValueError(
-                "tuning META contains unsupported keys: " + ", ".join(sorted(unknown))
+                "tuning META contains unsupported keys: "
+                + ", ".join(sorted(unknown))
             )
         constants = dict(self.constants)
         for name, value in meta.items():
@@ -295,7 +298,9 @@ def _require_integer(
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"parameters.{name} must be an integer")
     if value < minimum or value > maximum:
-        raise ValueError(f"parameters.{name} must be in [{minimum}, {maximum}]")
+        raise ValueError(
+            f"parameters.{name} must be in [{minimum}, {maximum}]"
+        )
     return value
 
 
@@ -318,12 +323,15 @@ def _require_integer_list(
         for value in raw
     ):
         raise ValueError(
-            f"parameters.{name} values must be integers in " f"[{minimum}, {maximum}]"
+            f"parameters.{name} values must be integers in "
+            f"[{minimum}, {maximum}]"
         )
     return list(raw)
 
 
-def _positive_meta_integer(values: Mapping[str, int | bool], name: str) -> int:
+def _positive_meta_integer(
+    values: Mapping[str, int | float | bool], name: str
+) -> int:
     value = values.get(name)
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"kernel constant {name} must be a positive integer")
@@ -386,7 +394,9 @@ def _has_non_overlapping_strides(
     return True
 
 
-def _is_dense_layout(dimensions: Sequence[int], strides: Sequence[int]) -> bool:
+def _is_dense_layout(
+    dimensions: Sequence[int], strides: Sequence[int]
+) -> bool:
     """Return whether logical elements cover one dense physical allocation."""
 
     axes = sorted(
@@ -421,7 +431,9 @@ def _validate_tensor(tensor_value: object, name: str) -> Mapping[str, Any]:
     data_type = tensor.get("data_type")
     if not isinstance(data_type, str) or data_type not in POINTER_TYPES:
         raise ValueError(f"{name} data type is unsupported: {data_type!r}")
-    dimensions = _require_sequence(tensor.get("dimensions"), f"{name}.dimensions")
+    dimensions = _require_sequence(
+        tensor.get("dimensions"), f"{name}.dimensions"
+    )
     strides = _require_sequence(tensor.get("strides"), f"{name}.strides")
     if len(dimensions) != len(strides) or len(dimensions) > MAX_RANK:
         raise ValueError(f"{name} rank must be in [0, {MAX_RANK}]")
@@ -520,17 +532,23 @@ def _parse_port(
 ) -> tuple[int, Mapping[str, Any]]:
     port = _require_object(port_value, f"node.{direction}")
     if port.get("name") != expected_name:
-        raise ValueError(f"node {direction} port must be named {expected_name!r}")
+        raise ValueError(
+            f"node {direction} port must be named {expected_name!r}"
+        )
     optional = port.get("optional", False)
     if not isinstance(optional, bool) or optional:
-        raise ValueError("Iluvatar tensor operations require every tensor port")
+        raise ValueError(
+            "Iluvatar tensor operations require every tensor port"
+        )
     uid = port.get("uid")
     if isinstance(uid, bool) or not isinstance(uid, int) or uid <= 0:
         raise ValueError(f"node {direction} UID is invalid")
     try:
         tensor = tensor_registry[uid]
     except KeyError as error:
-        raise ValueError(f"node references unknown tensor UID {uid}") from error
+        raise ValueError(
+            f"node references unknown tensor UID {uid}"
+        ) from error
     return uid, _validate_tensor(tensor, f"tensor {uid}")
 
 
@@ -564,7 +582,10 @@ def parse_node(
     operation = node.get("type")
     if not isinstance(operation, str) or operation not in OPERATION_SCHEMAS:
         raise ValueError(
-            f"Iluvatar tensor compiler does not support operation {operation!r}"
+            (
+                f"Iluvatar tensor compiler does not support operation "
+                f"{operation!r}"
+            )
         )
     schema = OPERATION_SCHEMAS[operation]
     inputs = _require_sequence(node.get("inputs"), "node.inputs")
@@ -597,13 +618,19 @@ def parse_node(
         output_uids.append(uid)
         output_tensors.append(tensor)
     if set(input_uids).intersection(output_uids):
-        raise ValueError(f"{operation} does not support in-place output aliasing")
+        raise ValueError(
+            f"{operation} does not support in-place output aliasing"
+        )
 
     compute_data_type = node.get("compute_data_type")
     if compute_data_type != "float32":
-        raise ValueError(f"{operation} requires float32 compute_data_type on Iluvatar")
+        raise ValueError(
+            f"{operation} requires float32 compute_data_type on Iluvatar"
+        )
     attributes = dict(
-        _require_object(node.get("attributes"), f"graph.nodes[{position}].attributes")
+        _require_object(
+            node.get("attributes"), f"graph.nodes[{position}].attributes"
+        )
     )
     return {
         "id": node_id,
@@ -625,7 +652,9 @@ def _metadata_array(
         parameters, name, len(expected), minimum=1, maximum=MAX_I64
     )
     if result != list(expected):
-        raise ValueError(f"parameters.{name} is inconsistent with tensor metadata")
+        raise ValueError(
+            f"parameters.{name} is inconsistent with tensor metadata"
+        )
     return result
 
 
@@ -658,7 +687,9 @@ def _layout_configuration(
     output_rank = len(output_dimensions)
     elements = _require_integer(parameters, "n_elements")
     if elements != _checked_product(output_dimensions, "layout output size"):
-        raise ValueError("parameters.n_elements is inconsistent with layout output")
+        raise ValueError(
+            "parameters.n_elements is inconsistent with layout output"
+        )
     _metadata_array(parameters, "input_dimensions", input_dimensions)
     _metadata_array(parameters, "input_strides", input_strides)
     _metadata_array(parameters, "output_dimensions", output_dimensions)
@@ -669,14 +700,21 @@ def _layout_configuration(
     logical_input_strides = input_strides
     if operation == "reshape":
         if (
-            _require_integer(parameters, "input_rank", minimum=0, maximum=MAX_RANK)
+            _require_integer(
+                parameters, "input_rank", minimum=0, maximum=MAX_RANK
+            )
             != input_rank
-            or _require_integer(parameters, "output_rank", minimum=0, maximum=MAX_RANK)
+            or _require_integer(
+                parameters, "output_rank", minimum=0, maximum=MAX_RANK
+            )
             != output_rank
         ):
             raise ValueError("reshape rank parameters are inconsistent")
         _require_integer(parameters, "reshape_mode", minimum=2, maximum=2)
-        if _checked_product(input_dimensions, "reshape input size") != elements:
+        if (
+            _checked_product(input_dimensions, "reshape input size")
+            != elements
+        ):
             raise ValueError("reshape input/output element counts must match")
     elif operation == "transpose":
         if input_rank == 0 or input_rank != output_rank:
@@ -694,9 +732,15 @@ def _layout_configuration(
             maximum=input_rank - 1,
         )
         if sorted(permutation) != list(range(input_rank)):
-            raise ValueError("transpose permutation must contain each axis once")
-        if output_dimensions != [input_dimensions[axis] for axis in permutation]:
-            raise ValueError("transpose output shape does not match permutation")
+            raise ValueError(
+                "transpose permutation must contain each axis once"
+            )
+        if output_dimensions != [
+            input_dimensions[axis] for axis in permutation
+        ]:
+            raise ValueError(
+                "transpose output shape does not match permutation"
+            )
         logical_input_dimensions = output_dimensions
         logical_input_strides = [input_strides[axis] for axis in permutation]
     elif operation == "slice":
@@ -707,26 +751,37 @@ def _layout_configuration(
             != input_rank
         ):
             raise ValueError("slice rank parameter is inconsistent")
-        starts = _require_integer_list(parameters, "starts", input_rank, minimum=0)
-        limits = _require_integer_list(parameters, "limits", input_rank, minimum=1)
+        starts = _require_integer_list(
+            parameters, "starts", input_rank, minimum=0
+        )
+        limits = _require_integer_list(
+            parameters, "limits", input_rank, minimum=1
+        )
         steps = _require_integer_list(
             parameters, "slice_strides", input_rank, minimum=1
         )
         expected_output: list[int] = []
         for axis in range(input_rank):
-            if starts[axis] >= limits[axis] or limits[axis] > input_dimensions[axis]:
+            if (
+                starts[axis] >= limits[axis]
+                or limits[axis] > input_dimensions[axis]
+            ):
                 raise ValueError("slice range is outside input shape")
-            expected_output.append(_ceil_div(limits[axis] - starts[axis], steps[axis]))
+            expected_output.append(
+                _ceil_div(limits[axis] - starts[axis], steps[axis])
+            )
         if output_dimensions != expected_output:
             raise ValueError("slice output shape does not match attributes")
         input_base = sum(
-            start * stride for start, stride in zip(starts, input_strides, strict=True)
+            start * stride
+            for start, stride in zip(starts, input_strides, strict=True)
         )
         if input_base > MAX_I64:
             raise ValueError("slice input base overflows int64")
         logical_input_dimensions = output_dimensions
         logical_input_strides = [
-            stride * step for stride, step in zip(input_strides, steps, strict=True)
+            stride * step
+            for stride, step in zip(input_strides, steps, strict=True)
         ]
         if any(value > MAX_I64 for value in logical_input_strides):
             raise ValueError("slice logical stride overflows int64")
@@ -745,7 +800,9 @@ def _layout_configuration(
         function_name = "layout_copy_kernel"
         input_leading = MAX_RANK - len(logical_input_dimensions)
         output_leading = MAX_RANK - output_rank
-        padded_input_dimensions = [1] * input_leading + logical_input_dimensions
+        padded_input_dimensions = [
+            1
+        ] * input_leading + logical_input_dimensions
         padded_input_strides = [0] * input_leading + logical_input_strides
         padded_output_dimensions = [1] * output_leading + output_dimensions
         padded_output_strides = [0] * output_leading + output_strides
@@ -836,7 +893,9 @@ def _reduction_configuration(
     if rank == 0:
         raise ValueError("reduction input must have positive rank")
     axis = _require_integer(parameters, "axis", minimum=0, maximum=rank - 1)
-    keep_value = _require_integer(parameters, "keep_dimensions", minimum=0, maximum=1)
+    keep_value = _require_integer(
+        parameters, "keep_dimensions", minimum=0, maximum=1
+    )
     keep_dimensions = keep_value == 1
     expected_output = list(input_dimensions)
     if keep_dimensions:
@@ -846,7 +905,9 @@ def _reduction_configuration(
     if list(output_tensor["dimensions"]) != expected_output:
         raise ValueError("reduction output shape is incorrect")
 
-    expected_outer = _checked_product(input_dimensions[:axis], "reduction outer extent")
+    expected_outer = _checked_product(
+        input_dimensions[:axis], "reduction outer extent"
+    )
     expected_extent = input_dimensions[axis]
     expected_inner = _checked_product(
         input_dimensions[axis + 1 :], "reduction inner extent"
@@ -863,7 +924,10 @@ def _reduction_configuration(
         expected_output_elements,
     ):
         raise ValueError("reduction parameters are inconsistent with shape")
-    if _checked_product(expected_output, "reduction output size") != output_elements:
+    if (
+        _checked_product(expected_output, "reduction output size")
+        != output_elements
+    ):
         raise ValueError("reduction output element count is inconsistent")
 
     block_n = _next_power_of_two(extent)
@@ -878,9 +942,9 @@ def _reduction_configuration(
         "out_ptr": POINTER_TYPES[data_types[1]],
         "M": "i32",
     }
-    contiguous = _is_row_major_contiguous(input_tensor) and _is_row_major_contiguous(
-        output_tensor
-    )
+    contiguous = _is_row_major_contiguous(
+        input_tensor
+    ) and _is_row_major_contiguous(output_tensor)
     if contiguous and inner == 1:
         constants.update({"stride_xm": extent, "stride_xn": 1})
         function_name = "reduction_2d_kernel"
@@ -937,7 +1001,9 @@ def _matmul_configuration(
     data_types = [tensor["data_type"] for tensor in tensors]
     if len(set(data_types)) != 1 or data_types[0] not in FLOAT_TYPES:
         raise ValueError("matmul tensors must use one matching floating type")
-    if any(not 2 <= len(tensor["dimensions"]) <= MAX_RANK for tensor in tensors):
+    if any(
+        not 2 <= len(tensor["dimensions"]) <= MAX_RANK for tensor in tensors
+    ):
         raise ValueError("matmul tensor ranks must be in [2, 8]")
     m = a["dimensions"][-2]
     k = a["dimensions"][-1]
@@ -953,7 +1019,11 @@ def _matmul_configuration(
     for trailing in range(batch_rank):
         a_dimension = a_batch[-1 - trailing] if trailing < len(a_batch) else 1
         b_dimension = b_batch[-1 - trailing] if trailing < len(b_batch) else 1
-        if a_dimension != b_dimension and a_dimension != 1 and b_dimension != 1:
+        if (
+            a_dimension != b_dimension
+            and a_dimension != 1
+            and b_dimension != 1
+        ):
             raise ValueError("matmul batch dimensions are not broadcastable")
         batch_dimensions[-1 - trailing] = max(a_dimension, b_dimension)
     if list(output["dimensions"]) != [*batch_dimensions, m, n]:
@@ -979,7 +1049,9 @@ def _matmul_configuration(
     padded_dimensions = [1] * (MAX_BATCH_RANK - batch_rank) + batch_dimensions
     a_batch_strides = batch_strides(a)
     b_batch_strides = batch_strides(b)
-    c_batch_strides = [0] * (MAX_BATCH_RANK - batch_rank) + list(output["strides"][:-2])
+    c_batch_strides = [0] * (MAX_BATCH_RANK - batch_rank) + list(
+        output["strides"][:-2]
+    )
     precision = parameters.get("input_precision", 0)
     if type(precision) is not int or precision not in (0, 1, 2):
         raise ValueError("matmul input_precision must be 0, 1 or 2")
@@ -1069,7 +1141,9 @@ def kernel_configuration(node: Mapping[str, Any]) -> KernelConfiguration:
 
     operation = node.get("operation")
     if not isinstance(operation, str) or operation not in SUPPORTED_OPERATIONS:
-        raise ValueError(f"unsupported Iluvatar tensor operation {operation!r}")
+        raise ValueError(
+            f"unsupported Iluvatar tensor operation {operation!r}"
+        )
     if node.get("compute_data_type") != "float32":
         raise ValueError(f"{operation} requires float32 compute_data_type")
     parameters = _require_object(node.get("parameters"), "node.parameters")

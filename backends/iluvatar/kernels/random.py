@@ -35,7 +35,9 @@ def rng_kernel(
     OUTPUT_STRIDE_7: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    logical = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    logical = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
     remaining = logical
     physical = tl.zeros((BLOCK_SIZE,), tl.int64)
     physical += (remaining % DIM_7) * OUTPUT_STRIDE_7
@@ -62,14 +64,20 @@ def rng_kernel(
         counter_low < (OFFSET & 0xFFFFFFFF)
     ).to(tl.uint32)
     zero = tl.full((BLOCK_SIZE,), 0, tl.uint32)
-    first, second, _, _ = tl.philox(SEED, counter_low, counter_high, zero, zero, 10)
+    first, second, _, _ = tl.philox(
+        SEED, counter_low, counter_high, zero, zero, 10
+    )
     if DISTRIBUTION == 1:
-        value = (first >> (32 - UNIFORM_BITS)).to(tl.float32) * (2.0 ** (-UNIFORM_BITS))
+        value = (first >> (32 - UNIFORM_BITS)).to(tl.float32) * (
+            2.0 ** (-UNIFORM_BITS)
+        )
     elif DISTRIBUTION == 2:
         # Open-closed first uniform prevents log(0); second is in [0,1).
         u1 = ((first >> 8).to(tl.float32) + 1.0) * (2.0**-24)
         u2 = (second >> 8).to(tl.float32) * (2.0**-24)
-        value = tl.sqrt(-2.0 * tl.log(u1)) * libdevice.cos(6.283185307179586 * u2)
+        value = tl.sqrt(-2.0 * tl.log(u1)) * libdevice.cos(
+            6.283185307179586 * u2
+        )
     else:
         uniform = (first >> 8).to(tl.float32) * (2.0**-24)
         value = (uniform < PROBABILITY).to(tl.float32)

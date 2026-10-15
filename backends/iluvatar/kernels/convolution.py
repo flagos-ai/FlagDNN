@@ -84,7 +84,9 @@ def conv1d_gemm_kernel(
         reduction = start + reduction_base
         input_channel = reduction // KW
         kernel_w = reduction - input_channel * KW
-        input_l = output_l[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
+        input_l = (
+            output_l[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
+        )
         input_ptrs = (
             x_ptr
             + batch[:, None] * x_stride_n
@@ -94,7 +96,9 @@ def conv1d_gemm_kernel(
         spatial_mask = (input_l >= 0) & (input_l < XL)
         if M % BLOCK_M == 0 and reduction_extent % BLOCK_K == 0:
             safe_input_l = tl.maximum(0, tl.minimum(input_l, XL - 1))
-            safe_input_ptrs = input_ptrs + (safe_input_l - input_l) * x_stride_l
+            safe_input_ptrs = (
+                input_ptrs + (safe_input_l - input_l) * x_stride_l
+            )
             input_values = tl.load(safe_input_ptrs)
             input_values = tl.where(spatial_mask, input_values, 0.0)
         elif M % BLOCK_M == 0:
@@ -152,7 +156,8 @@ def conv1d_gemm_kernel(
 
     if HAS_BIAS:
         bias = tl.load(
-            bias_ptr + (group * COUT_PER_GROUP + output_channels) * bias_stride,
+            bias_ptr
+            + (group * COUT_PER_GROUP + output_channels) * bias_stride,
             mask=output_channels < COUT_PER_GROUP,
             other=0.0,
         )
@@ -178,7 +183,8 @@ def conv1d_gemm_kernel(
         tl.store(
             output_ptrs,
             output,
-            mask=(rows[:, None] < M) & (output_channels[None, :] < COUT_PER_GROUP),
+            mask=(rows[:, None] < M)
+            & (output_channels[None, :] < COUT_PER_GROUP),
         )
 
 
@@ -229,7 +235,8 @@ def _conv2d_1x1_nchw_exact_tile(
             )
         weight_ptrs = (
             w_ptr
-            + (group * COUT_PER_GROUP + output_channels[:, None]) * CIN_PER_GROUP
+            + (group * COUT_PER_GROUP + output_channels[:, None])
+            * CIN_PER_GROUP
             + input_channels[None, :]
         )
         if COUT_PER_GROUP % BLOCK_OC == 0 and CIN_PER_GROUP % BLOCK_K == 0:
@@ -412,7 +419,8 @@ def conv2d_1x1_nchw_kernel(
             )
         weight_ptrs = (
             w_ptr
-            + (group * COUT_PER_GROUP + output_channels[:, None]) * CIN_PER_GROUP
+            + (group * COUT_PER_GROUP + output_channels[:, None])
+            * CIN_PER_GROUP
             + input_channels[None, :]
         )
         if COUT_PER_GROUP % BLOCK_OC == 0 and CIN_PER_GROUP % BLOCK_K == 0:
@@ -527,7 +535,10 @@ def conv_fprop_2d_im2col_kernel(
             other=0.0,
         )
         tl.store(
-            columns_ptr + column_base + kernel_w * COLUMNS_STRIDE_K + output_hw,
+            columns_ptr
+            + column_base
+            + kernel_w * COLUMNS_STRIDE_K
+            + output_hw,
             values,
             mask=valid_hw,
         )
@@ -581,7 +592,9 @@ def conv_fprop_2d_packed_matmul_kernel(
         weight_ptrs += BLOCK_K
         column_ptrs += BLOCK_K * N
 
-    output_ptrs = output_ptr + batch * M * N + rows[:, None] * N + columns[None, :]
+    output_ptrs = (
+        output_ptr + batch * M * N + rows[:, None] * N + columns[None, :]
+    )
     output = accumulator.to(output_ptr.dtype.element_ty)
     if M % BLOCK_M == 0 and N % BLOCK_N == 0:
         tl.store(output_ptrs, output)
@@ -640,7 +653,9 @@ def conv2d_3x3_nchw_pad1_kernel(
         valid_h = (input_h >= 0) & (input_h < XH)
         for kernel_w in tl.static_range(0, 3):
             input_w = output_w * STRIDE_W - 1 + kernel_w
-            input_mask = output_mask & valid_h & (input_w >= 0) & (input_w < XW)
+            input_mask = (
+                output_mask & valid_h & (input_w >= 0) & (input_w < XW)
+            )
             for input_start in range(0, CIN_PER_GROUP, BLOCK_K):
                 input_channels = input_start + reduction_base
                 reduction_mask = input_channels < CIN_PER_GROUP
@@ -852,7 +867,9 @@ def conv2d_spatial_nchw_kernel(
         if OW % BLOCK_HW == 0:
             tiles_per_row: tl.constexpr = OW // BLOCK_HW
             output_h = tile_hw // tiles_per_row
-            output_w = (tile_hw - output_h * tiles_per_row) * BLOCK_HW + spatial_offsets
+            output_w = (
+                tile_hw - output_h * tiles_per_row
+            ) * BLOCK_HW + spatial_offsets
         else:
             output_h = output_hw // OW
             output_w = output_hw % OW
@@ -872,8 +889,12 @@ def conv2d_spatial_nchw_kernel(
         kernel_hw = reduction % (KH * KW)
         kernel_h = kernel_hw // KW
         kernel_w = kernel_hw % KW
-        input_h = output_h[:, None] * STRIDE_H - PAD_TOP + kernel_h[None, :] * DIL_H
-        input_w = output_w[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
+        input_h = (
+            output_h[:, None] * STRIDE_H - PAD_TOP + kernel_h[None, :] * DIL_H
+        )
+        input_w = (
+            output_w[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
+        )
         if exact_stem:
             spatial_mask = (input_h >= 0) & (input_w >= 0)
             input_ptrs = (
@@ -884,7 +905,10 @@ def conv2d_spatial_nchw_kernel(
             )
         else:
             spatial_mask = (
-                (input_h >= 0) & (input_h < XH) & (input_w >= 0) & (input_w < XW)
+                (input_h >= 0)
+                & (input_h < XH)
+                & (input_w >= 0)
+                & (input_w < XW)
             )
             input_ptrs = (
                 x_ptr
@@ -920,18 +944,24 @@ def conv2d_spatial_nchw_kernel(
                 + input_h * X_STRIDE_H
                 + input_w * X_STRIDE_W
             )
-            safe_offsets = tl.minimum(tl.maximum(input_offsets, 0), input_limit)
+            safe_offsets = tl.minimum(
+                tl.maximum(input_offsets, 0), input_limit
+            )
             input_values = tl.load(x_ptr + safe_offsets)
             input_values = tl.where(input_mask, input_values, 0.0)
         if exact_x_stem:
             reduction_mask = reduction < reduction_extent
             weights_64 = tl.load(
-                w_ptr + output_channels_64[None, :] * W_STRIDE_K + reduction[:, None],
+                w_ptr
+                + output_channels_64[None, :] * W_STRIDE_K
+                + reduction[:, None],
                 mask=reduction_mask[:, None],
                 other=0.0,
             )
             weights_32 = tl.load(
-                w_ptr + output_channels_32[None, :] * W_STRIDE_K + reduction[:, None],
+                w_ptr
+                + output_channels_32[None, :] * W_STRIDE_K
+                + reduction[:, None],
                 mask=reduction_mask[:, None],
                 other=0.0,
             )
@@ -948,17 +978,23 @@ def conv2d_spatial_nchw_kernel(
         else:
             if exact_stem:
                 weight_ptrs = (
-                    w_ptr + output_channels[None, :] * W_STRIDE_K + reduction[:, None]
+                    w_ptr
+                    + output_channels[None, :] * W_STRIDE_K
+                    + reduction[:, None]
                 )
             else:
                 weight_ptrs = (
                     w_ptr
-                    + (group * COUT_PER_GROUP + output_channels[None, :]) * W_STRIDE_K
+                    + (group * COUT_PER_GROUP + output_channels[None, :])
+                    * W_STRIDE_K
                     + input_channel[:, None] * W_STRIDE_C
                     + kernel_h[:, None] * W_STRIDE_R
                     + kernel_w[:, None] * W_STRIDE_S
                 )
-            if reduction_extent % BLOCK_K == 0 and COUT_PER_GROUP % BLOCK_OC == 0:
+            if (
+                reduction_extent % BLOCK_K == 0
+                and COUT_PER_GROUP % BLOCK_OC == 0
+            ):
                 weights = tl.load(weight_ptrs)
             elif reduction_extent % BLOCK_K == 0:
                 weights = tl.load(
@@ -983,12 +1019,15 @@ def conv2d_spatial_nchw_kernel(
                     + (KW - 1) * W_STRIDE_S
                 )
                 weight_offsets = (
-                    (group * COUT_PER_GROUP + output_channels[None, :]) * W_STRIDE_K
+                    (group * COUT_PER_GROUP + output_channels[None, :])
+                    * W_STRIDE_K
                     + input_channel[:, None] * W_STRIDE_C
                     + kernel_h[:, None] * W_STRIDE_R
                     + kernel_w[:, None] * W_STRIDE_S
                 )
-                safe_offsets = tl.minimum(tl.maximum(weight_offsets, 0), weight_limit)
+                safe_offsets = tl.minimum(
+                    tl.maximum(weight_offsets, 0), weight_limit
+                )
                 weights = tl.load(w_ptr + safe_offsets)
                 weights = tl.where(weight_mask, weights, 0.0)
             accumulator += tl.dot(
@@ -999,17 +1038,22 @@ def conv2d_spatial_nchw_kernel(
 
     if exact_x_stem:
         output_ptrs_64 = (
-            y_ptr + output_channels_64[None, :] * Y_STRIDE_C + output_hw[:, None]
+            y_ptr
+            + output_channels_64[None, :] * Y_STRIDE_C
+            + output_hw[:, None]
         )
         output_ptrs_32 = (
-            y_ptr + output_channels_32[None, :] * Y_STRIDE_C + output_hw[:, None]
+            y_ptr
+            + output_channels_32[None, :] * Y_STRIDE_C
+            + output_hw[:, None]
         )
         tl.store(output_ptrs_64, accumulator_64.to(y_ptr.dtype.element_ty))
         tl.store(output_ptrs_32, accumulator_32.to(y_ptr.dtype.element_ty))
     else:
         if HAS_BIAS:
             bias = tl.load(
-                bias_ptr + (group * COUT_PER_GROUP + output_channels) * BIAS_STRIDE_C,
+                bias_ptr
+                + (group * COUT_PER_GROUP + output_channels) * BIAS_STRIDE_C,
                 mask=output_channels < COUT_PER_GROUP,
                 other=0.0,
             )
@@ -1018,13 +1062,16 @@ def conv2d_spatial_nchw_kernel(
             accumulator = tl.maximum(accumulator, 0.0)
         if exact_stem:
             output_ptrs = (
-                y_ptr + output_channels[None, :] * Y_STRIDE_C + output_hw[:, None]
+                y_ptr
+                + output_channels[None, :] * Y_STRIDE_C
+                + output_hw[:, None]
             )
         else:
             output_ptrs = (
                 y_ptr
                 + batch * Y_STRIDE_N
-                + (group * COUT_PER_GROUP + output_channels[None, :]) * Y_STRIDE_C
+                + (group * COUT_PER_GROUP + output_channels[None, :])
+                * Y_STRIDE_C
                 + output_h[:, None] * Y_STRIDE_H
                 + output_w[:, None] * Y_STRIDE_W
             )
@@ -1126,9 +1173,17 @@ def conv3d_spatial_ncdhw_m_kernel(
         kernel_hw = kernel_spatial - kernel_d * (KH * KW)
         kernel_h = kernel_hw // KW
         kernel_w = kernel_hw - kernel_h * KW
-        input_d = output_d[:, None] * STRIDE_D - PAD_FRONT + kernel_d[None, :] * DIL_D
-        input_h = output_h[:, None] * STRIDE_H - PAD_TOP + kernel_h[None, :] * DIL_H
-        input_w = output_w[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
+        input_d = (
+            output_d[:, None] * STRIDE_D
+            - PAD_FRONT
+            + kernel_d[None, :] * DIL_D
+        )
+        input_h = (
+            output_h[:, None] * STRIDE_H - PAD_TOP + kernel_h[None, :] * DIL_H
+        )
+        input_w = (
+            output_w[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
+        )
         input_values = tl.load(
             x_ptr
             + batch[:, None] * X_STRIDE_N
@@ -1216,12 +1271,17 @@ def conv_dgrad_2d_1x1_kernel(
         mask_co = output_channels < COUT_PER_GROUP
         global_co = group * COUT_PER_GROUP + output_channels
         losses = tl.load(
-            dy_ptr + batch * (C_OUT * HW) + global_co[None, :] * HW + spatial[:, None],
+            dy_ptr
+            + batch * (C_OUT * HW)
+            + global_co[None, :] * HW
+            + spatial[:, None],
             mask=mask_m[:, None] & mask_co[None, :],
             other=0.0,
         )
         weights = tl.load(
-            w_ptr + global_co[:, None] * CIN_PER_GROUP + input_channels[None, :],
+            w_ptr
+            + global_co[:, None] * CIN_PER_GROUP
+            + input_channels[None, :],
             mask=mask_co[:, None] & mask_ci[None, :],
             other=0.0,
         )
@@ -1234,7 +1294,10 @@ def conv_dgrad_2d_1x1_kernel(
 
     global_ci = group * CIN_PER_GROUP + input_channels
     tl.store(
-        dx_ptr + batch * (C_IN * HW) + global_ci[None, :] * HW + spatial[:, None],
+        dx_ptr
+        + batch * (C_IN * HW)
+        + global_ci[None, :] * HW
+        + spatial[:, None],
         accumulator.to(dx_ptr.dtype.element_ty),
         mask=mask_m[:, None] & mask_ci[None, :],
     )
@@ -1294,7 +1357,9 @@ def conv_dgrad_2d_p5_splitk_kernel(
         common_mask = mask_m[:, None] & mask_co[None, :]
         weight_mask = mask_co[:, None] & mask_ci[None, :]
         loss00 = tl.load(
-            loss_ptr + output_channels[None, :] * loss_stride_c + loss_base[:, None],
+            loss_ptr
+            + output_channels[None, :] * loss_stride_c
+            + loss_base[:, None],
             mask=common_mask,
             other=0.0,
         )
@@ -1481,7 +1546,9 @@ def conv_dgrad_cast_contiguous_kernel(
     TOTAL: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    offsets = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    offsets = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
     active = offsets < TOTAL
     values = tl.load(input_ptr + offsets, mask=active, other=0.0)
     tl.store(
@@ -1500,7 +1567,9 @@ def conv_dgrad_pack_weight_3x3_kernel(
     BLOCK_SIZE: tl.constexpr,
 ):
     pair_count: tl.constexpr = C_OUT * C_IN
-    pair = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    pair = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
     kernel_position = tl.arange(0, 16)
     mask = (pair[:, None] < pair_count) & (kernel_position[None, :] < 9)
     values = tl.load(
@@ -1639,7 +1708,9 @@ def conv_dgrad_zero_kernel(
     N_ELEMENTS: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    offsets = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    offsets = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
     tl.store(dx_ptr + offsets, 0.0, mask=offsets < N_ELEMENTS)
 
 
@@ -1743,8 +1814,12 @@ def conv_dgrad_2d_scatter_kernel(
             input_precision="ieee",
         )
 
-    input_h = output_h[:, None] * STRIDE_H - PAD_TOP + kernel_h[None, :] * DIL_H
-    input_w = output_w[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
+    input_h = (
+        output_h[:, None] * STRIDE_H - PAD_TOP + kernel_h[None, :] * DIL_H
+    )
+    input_w = (
+        output_w[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
+    )
     active = (
         (rows[:, None] < batch_size * output_volume)
         & (columns[None, :] < contribution_columns)
@@ -2033,7 +2108,9 @@ def conv_dgrad_nd_kernel(
         reduction = start + reduction_base
         if exact_symmetric_3d:
             output_channel = reduction_base % COUT_PER_GROUP
-            kernel_spatial = start // COUT_PER_GROUP + reduction_base // COUT_PER_GROUP
+            kernel_spatial = (
+                start // COUT_PER_GROUP + reduction_base // COUT_PER_GROUP
+            )
         else:
             output_channel = reduction // kernel_volume
             kernel_spatial = reduction % kernel_volume
@@ -2351,7 +2428,9 @@ def conv_wgrad_2d_batched_matmul_kernel(
         + rows[:, None] * LOSS_STRIDE_C
         + reduction[None, :]
     )
-    packed_ptrs = packed_ptr + batch * K * N + reduction[:, None] * N + columns[None, :]
+    packed_ptrs = (
+        packed_ptr + batch * K * N + reduction[:, None] * N + columns[None, :]
+    )
     accumulator = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
     for reduction_start in tl.range(0, K, BLOCK_K):
         reduction_offsets = reduction_start + reduction
@@ -2406,7 +2485,9 @@ def conv_wgrad_2d_batched_wide_kernel(
     rows = tile_m * BLOCK_M + tl.arange(0, BLOCK_M)
     wide_columns = tile_n * (BLOCK_N + BLOCK_N // 8) + tl.arange(0, BLOCK_N)
     narrow_columns = (
-        tile_n * (BLOCK_N + BLOCK_N // 8) + BLOCK_N + tl.arange(0, BLOCK_N // 8)
+        tile_n * (BLOCK_N + BLOCK_N // 8)
+        + BLOCK_N
+        + tl.arange(0, BLOCK_N // 8)
     )
     reduction = tl.arange(0, BLOCK_K)
     loss_ptrs = (
@@ -2417,7 +2498,9 @@ def conv_wgrad_2d_batched_wide_kernel(
     )
     packed_batch = packed_ptr + batch * K * N
     wide_ptrs = packed_batch + reduction[:, None] * N + wide_columns[None, :]
-    narrow_ptrs = packed_batch + reduction[:, None] * N + narrow_columns[None, :]
+    narrow_ptrs = (
+        packed_batch + reduction[:, None] * N + narrow_columns[None, :]
+    )
     accumulator_wide = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
     accumulator_narrow = tl.zeros((BLOCK_M, BLOCK_N // 8), dtype=tl.float32)
     for reduction_start in tl.range(0, K, BLOCK_K):
@@ -2475,7 +2558,9 @@ def conv_wgrad_2d_batched_reduce_kernel(
     BATCH: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    offsets = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    offsets = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
     active = offsets < OUTPUT_ELEMENTS
     accumulator = tl.zeros((BLOCK_SIZE,), dtype=tl.float32)
     for batch in tl.static_range(0, BATCH):
@@ -2490,7 +2575,9 @@ def conv_wgrad_2d_batched_reduce_kernel(
     kernel_position = packed_column // CIN_PER_GROUP
     input_channel = packed_column - kernel_position * CIN_PER_GROUP
     output_offsets = (
-        output_channel * CIN_PER_GROUP * 9 + input_channel * 9 + kernel_position
+        output_channel * CIN_PER_GROUP * 9
+        + input_channel * 9
+        + kernel_position
     )
     tl.store(
         out_ptr + output_offsets,
@@ -2562,8 +2649,16 @@ def conv_wgrad_2d_col_split_kernel(
         quotient = safe_rows // LOSS_W
         output_h = quotient % LOSS_H
         batch = quotient // LOSS_H
-        input_h = output_h[:, None] * STRIDE_H - PAD_H + image_kernel_h[None, :] * DIL_H
-        input_w = output_w[:, None] * STRIDE_W - PAD_W + image_kernel_w[None, :] * DIL_W
+        input_h = (
+            output_h[:, None] * STRIDE_H
+            - PAD_H
+            + image_kernel_h[None, :] * DIL_H
+        )
+        input_w = (
+            output_w[:, None] * STRIDE_W
+            - PAD_W
+            + image_kernel_w[None, :] * DIL_W
+        )
         valid = (
             mask_m[:, None]
             & mask_n[None, :]
@@ -2614,7 +2709,9 @@ def conv_wgrad_2d_col_reduce_kernel(
     NUM_SPLITS: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    offsets = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    offsets = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
     active = offsets < TOTAL
     accumulator0 = tl.zeros((BLOCK_SIZE,), dtype=tl.float32)
     accumulator1 = tl.zeros((BLOCK_SIZE,), dtype=tl.float32)
@@ -3003,7 +3100,8 @@ def conv_wgrad_nd_kernel(
             + output_d[None, :] * DY_STRIDE_D
             + output_h[None, :] * DY_STRIDE_H
             + output_w[None, :] * DY_STRIDE_W,
-            mask=(output_channels[:, None] < COUT_PER_GROUP) & active_rows[None, :],
+            mask=(output_channels[:, None] < COUT_PER_GROUP)
+            & active_rows[None, :],
             other=0.0,
         )
         inputs = tl.load(
@@ -3013,7 +3111,8 @@ def conv_wgrad_nd_kernel(
             + input_d[:, None] * X_STRIDE_D
             + input_h[:, None] * X_STRIDE_H
             + input_w[:, None] * X_STRIDE_W,
-            mask=active_rows[:, None] & (input_channels[None, :] < CIN_PER_GROUP),
+            mask=active_rows[:, None]
+            & (input_channels[None, :] < CIN_PER_GROUP),
             other=0.0,
         )
         accumulator += tl.dot(

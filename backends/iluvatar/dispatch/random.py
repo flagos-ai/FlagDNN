@@ -24,8 +24,12 @@ def _rng_kernel_configuration(parameters, tensors):
     offset = _require_integer(
         parameters, "offset", minimum=0, maximum=2**63 - 1 - elements
     )
-    seed = _require_integer(parameters, "seed", minimum=-(2**63), maximum=2**63 - 1)
-    distribution = _require_integer(parameters, "distribution", minimum=1, maximum=3)
+    seed = _require_integer(
+        parameters, "seed", minimum=-(2**63), maximum=2**63 - 1
+    )
+    distribution = _require_integer(
+        parameters, "distribution", minimum=1, maximum=3
+    )
     probability = parameters.get("probability")
     if (
         isinstance(probability, bool)

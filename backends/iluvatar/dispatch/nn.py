@@ -21,15 +21,15 @@ from .nn_common import SUPPORTED_OPERATIONS as NN_OPERATIONS
 from . import extended
 
 SUPPORTED_OPERATIONS = NN_OPERATIONS | extended.SUPPORTED_OPERATIONS
-from .nn_common import _parse_port
-from .nn_common import _require_object
-from .nn_common import _require_sequence
-from .nn_common import _resolved_ports
-from .normalization import _normalization_stage
-from .normalization import _validate_normalization
-from typing import Any
-from typing import Mapping
-from .nn_common import WORKSPACE_ALIGNMENT
+from .nn_common import _parse_port  # noqa: E402
+from .nn_common import _require_object  # noqa: E402
+from .nn_common import _require_sequence  # noqa: E402
+from .nn_common import _resolved_ports  # noqa: E402
+from .normalization import _normalization_stage  # noqa: E402
+from .normalization import _validate_normalization  # noqa: E402
+from typing import Any  # noqa: E402
+from typing import Mapping  # noqa: E402
+from .nn_common import WORKSPACE_ALIGNMENT  # noqa: F401, E402
 
 
 def parse_node(
@@ -44,7 +44,9 @@ def parse_node(
         isinstance(node_value, dict)
         and node_value.get("type") in extended.SUPPORTED_OPERATIONS
     ):
-        return extended.parse_node(node_value, position, node_count, tensor_registry)
+        return extended.parse_node(
+            node_value, position, node_count, tensor_registry
+        )
 
     if (
         isinstance(position, bool)
@@ -73,7 +75,9 @@ def parse_node(
     if node.get("compute_data_type") != "float32":
         raise ValueError(f"{operation} requires float32 compute_data_type")
     parameters = dict(
-        _require_object(node.get("attributes"), f"graph.nodes[{position}].attributes")
+        _require_object(
+            node.get("attributes"), f"graph.nodes[{position}].attributes"
+        )
     )
     schema = OPERATION_SCHEMAS[operation]
     input_ports, output_ports = _resolved_ports(operation, schema, parameters)
@@ -181,5 +185,7 @@ def kernel_configuration(node: Mapping[str, Any]) -> KernelStagePlan:
 
     plan = plan_kernel_stages(node)
     if len(plan.stages) != 1:
-        raise ValueError(f"{plan.operation} is multi-stage; use plan_kernel_stages")
+        raise ValueError(
+            f"{plan.operation} is multi-stage; use plan_kernel_stages"
+        )
     return plan.stages[0]

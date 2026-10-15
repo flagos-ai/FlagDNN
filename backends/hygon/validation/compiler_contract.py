@@ -240,7 +240,8 @@ def _check_hcu_llvm_compatibility() -> None:
         raise AssertionError("negative clang major version was accepted")
 
     # Execute the injected import-time patch against both shipped DTK shapes.
-    # These fixtures retain class-method indentation, just like inspect.getsource.
+    # These fixtures retain class-method indentation, just like
+    # inspect.getsource.
     import io
     import re
     from types import SimpleNamespace
@@ -250,10 +251,11 @@ def _check_hcu_llvm_compatibility() -> None:
             # Remove memory(...) from function attributes
             llir_str = re.sub(r'\\s*memory\\([^)]*\\)', '', llir_str)
 """
-    legacy_write = """            with tempfile.NamedTemporaryFile(mode='w', suffix=".ll", delete=False) as f:
-                llir_file = f.name
-                f.write(llir_str)
-"""
+    legacy_write = (
+        "            with tempfile.NamedTemporaryFile(mode='w', suffi"
+        'x=".ll", delete=False) as f:\n                llir_file = f.n'
+        "ame\n                f.write(llir_str)\n"
+    )
     direct_write = legacy_write.replace(
         "f.write(llir_str)", "f.write(str(src))"
     )
@@ -275,11 +277,11 @@ def _check_hcu_llvm_compatibility() -> None:
         class CapturedIR(io.StringIO):
             name = "/fixture/kernel.ll"
 
-            def __exit__(self, *args: Any) -> bool:
-                return False
+            def __exit__(self, *args: Any) -> None:
+                return None
 
         written_ir = CapturedIR()
-        compiler_module = ModuleType("triton.backends.hcu.compiler_hcu")
+        compiler_module: Any = ModuleType("triton.backends.hcu.compiler_hcu")
         compiler_module.re = re
         compiler_module.tempfile = SimpleNamespace(
             NamedTemporaryFile=mock.Mock(return_value=written_ir)
@@ -296,7 +298,7 @@ def _check_hcu_llvm_compatibility() -> None:
                 "path_to_rocm_clang": staticmethod(lambda: "/fixture/clang"),
             },
         )
-        modules = {
+        modules: dict[str, Any] = {
             name: ModuleType(name)
             for name in ("triton", "triton.backends", "triton.backends.hcu")
         }
@@ -334,7 +336,8 @@ def _check_hcu_llvm_compatibility() -> None:
                 )
                 assert metadata == {"unchanged_vendor_step": True}
                 assert getattr(backend, marker) == "clang-memory-attributes-v2"
-                compiler_module.tempfile.NamedTemporaryFile.assert_called_once_with(
+                temporary_file = compiler_module.tempfile.NamedTemporaryFile
+                temporary_file.assert_called_once_with(
                     mode="w", suffix=".ll", delete=False
                 )
                 patched_method = backend.make_amdgcn
@@ -2948,9 +2951,12 @@ def _write_compiler_environment_fixture(
 def _check_private_build_mirror_layout(compiler: ModuleType) -> None:
     from backends.hygon.codegen import identity as compiler_identity
 
-    with _isolated_jit_discovery_environment(), tempfile.TemporaryDirectory(
-        prefix="flagdnn-hygon-compiler-layout-contract-"
-    ) as temporary:
+    with (
+        _isolated_jit_discovery_environment(),
+        tempfile.TemporaryDirectory(
+            prefix="flagdnn-hygon-compiler-layout-contract-"
+        ) as temporary,
+    ):
         temporary_root = Path(temporary)
         (
             provider,

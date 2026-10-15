@@ -4,7 +4,7 @@ from __future__ import annotations
 from .common import TensorPlan
 from typing import Any
 import math
-from .common import (
+from .common import (  # noqa: F401
     FLOAT_DATA_TYPES,
     TRITON_POINTER_TYPES,
     _ceil_div,
@@ -43,7 +43,9 @@ def _matmul_meta(
         tensor_batch_dimensions = tensor.dimensions[:-2]
         tensor_batch_strides = tensor.strides[:-2]
         tensor_leading = batch_rank - len(tensor_batch_dimensions)
-        aligned_dimensions = [1] * tensor_leading + list(tensor_batch_dimensions)
+        aligned_dimensions = [1] * tensor_leading + list(
+            tensor_batch_dimensions
+        )
         aligned_strides = [0] * tensor_leading + list(tensor_batch_strides)
         return [0] * leading + [
             0 if dimension == 1 else stride
@@ -79,10 +81,11 @@ def _matmul_kernel_configuration(
 ) -> tuple[
     str,
     dict[str, str],
-    dict[str, int | bool],
+    dict[str, int | float | str | bool],
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    constants: dict[str, int | float | str | bool]
     if len(tensors) != 3:
         raise ValueError("MatMul tensor count is invalid")
     a, b, output = tensors
@@ -90,13 +93,19 @@ def _matmul_kernel_configuration(
     broadcast_a = parameters.get("_fprop_broadcast_a", False)
     if not isinstance(broadcast_a, bool):
         raise ValueError("internal broadcast-A MatMul flag must be boolean")
-    valid_data_types = len(set(data_types)) == 1 and data_types[0] in FLOAT_DATA_TYPES
+    valid_data_types = (
+        len(set(data_types)) == 1 and data_types[0] in FLOAT_DATA_TYPES
+    )
     if not valid_data_types:
-        raise ValueError("MatMul input/output data types must match and be floating")
+        raise ValueError(
+            "MatMul input/output data types must match and be floating"
+        )
     if any(
         len(tensor["dimensions"]) < 2
         or len(tensor["dimensions"]) > 8
-        or not _has_non_overlapping_strides(tensor["dimensions"], tensor["strides"])
+        or not _has_non_overlapping_strides(
+            tensor["dimensions"], tensor["strides"]
+        )
         for tensor in tensors
     ):
         raise ValueError(
@@ -117,8 +126,14 @@ def _matmul_kernel_configuration(
     for trailing in range(batch_rank):
         a_dimension = a_batch[-1 - trailing] if trailing < len(a_batch) else 1
         b_dimension = b_batch[-1 - trailing] if trailing < len(b_batch) else 1
-        if a_dimension != b_dimension and a_dimension != 1 and b_dimension != 1:
-            raise ValueError("MatMul batch dimensions are not broadcast-compatible")
+        if (
+            a_dimension != b_dimension
+            and a_dimension != 1
+            and b_dimension != 1
+        ):
+            raise ValueError(
+                "MatMul batch dimensions are not broadcast-compatible"
+            )
         batch_dimensions[-1 - trailing] = max(a_dimension, b_dimension)
     expected_output = [*batch_dimensions, m, n]
     if output["dimensions"] != expected_output:
@@ -127,7 +142,9 @@ def _matmul_kernel_configuration(
     batch = math.prod(batch_dimensions)
     for name, expected in (("batch", batch), ("m", m), ("n", n), ("k", k)):
         if _require_integer(parameters, name) != expected:
-            raise ValueError(f"parameters.{name} is inconsistent with MatMul metadata")
+            raise ValueError(
+                f"parameters.{name} is inconsistent with MatMul metadata"
+            )
 
     def batch_strides(tensor: dict[str, Any]) -> list[int]:
         tensor_batch = tensor["dimensions"][:-2]
@@ -147,7 +164,7 @@ def _matmul_kernel_configuration(
     block_m = 32 if m < 64 else 64
     block_n = 32 if n < 64 else 64
     block_k = 32
-    constants: dict[str, int | bool] = {
+    constants = {
         "M": m,
         "N": n,
         "K": k,

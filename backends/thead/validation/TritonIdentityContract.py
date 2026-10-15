@@ -21,7 +21,11 @@ from typing import Any
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from triton_compat import configure_triton_path, ppu_codegen_backend, ppu_distribution
+from triton_compat import (  # noqa: E402
+    configure_triton_path,
+    ppu_codegen_backend,
+    ppu_distribution,
+)
 
 
 class IdentityError(RuntimeError):
@@ -33,7 +37,9 @@ def _inside(path_value: str | None, root: Path, description: str) -> Path:
         raise IdentityError(f"{description} has no source path")
     path = Path(path_value).resolve(strict=True)
     if not path.is_file() or not path.is_relative_to(root):
-        raise IdentityError(f"{description} is outside configured root {root}: {path}")
+        raise IdentityError(
+            f"{description} is outside configured root {root}: {path}"
+        )
     return path
 
 
@@ -44,7 +50,8 @@ def _distribution_metadata(root: Path) -> tuple[Path, str]:
 
 def _jit_backend(jit_root: Path) -> tuple[Path, str]:
     # Match the source/build and install layouts accepted by the JIT resolver.
-    # The identity check also runs during CMake configuration of installed JITs.
+    # The identity check also runs during CMake configuration of installed
+    # JITs.
     candidates = (
         jit_root / "build/TritonJITConfig.cmake",
         jit_root / "lib/cmake/TritonJIT/TritonJITConfig.cmake",
@@ -52,7 +59,9 @@ def _jit_backend(jit_root: Path) -> tuple[Path, str]:
     )
     selected = next((path for path in candidates if path.is_file()), None)
     if selected is None:
-        raise IdentityError("JIT root has no supported build/install configuration")
+        raise IdentityError(
+            "JIT root has no supported build/install configuration"
+        )
     config = _inside(str(selected), jit_root, "libtriton_jit configuration")
     matches = re.findall(
         (
@@ -86,7 +95,9 @@ def identify(triton_root_value: Path, jit_root_value: Path) -> dict[str, Any]:
         compiler_api = importlib.import_module("triton.backends.compiler")
         compiler_frontend = importlib.import_module("triton.compiler.compiler")
     except Exception as error:
-        raise IdentityError(f"cannot import configured Triton: {error}") from error
+        raise IdentityError(
+            f"cannot import configured Triton: {error}"
+        ) from error
 
     package_file = _inside(
         getattr(triton, "__file__", None), triton_root, "Triton package"
@@ -99,7 +110,9 @@ def identify(triton_root_value: Path, jit_root_value: Path) -> dict[str, Any]:
         )
     cuda = catalog[codegen_backend]
     compiler_file = _inside(
-        inspect.getsourcefile(cuda.compiler), triton_root, "Triton CUDA compiler"
+        inspect.getsourcefile(cuda.compiler),
+        triton_root,
+        "Triton CUDA compiler",
     )
     driver_file = _inside(
         inspect.getsourcefile(cuda.driver), triton_root, "Triton CUDA driver"
@@ -113,7 +126,9 @@ def identify(triton_root_value: Path, jit_root_value: Path) -> dict[str, Any]:
     compiler_source = compiler_file.read_text(encoding="utf-8")
     ppu_markers = ("PPU_SDK", "llvm-irformatter", "--ppu-backend-options")
     if any(marker not in compiler_source for marker in ppu_markers):
-        raise IdentityError("Triton CUDA compiler lacks the PPU compatibility path")
+        raise IdentityError(
+            "Triton CUDA compiler lacks the PPU compatibility path"
+        )
 
     target_type = getattr(compiler_api, "GPUTarget", None)
     if target_type is None:
@@ -121,7 +136,9 @@ def identify(triton_root_value: Path, jit_root_value: Path) -> dict[str, Any]:
     try:
         backend = cuda.compiler(target_type("cuda", 80, 32))
     except Exception as error:
-        raise IdentityError(f"cannot instantiate Triton CUDA compiler: {error}") from error
+        raise IdentityError(
+            f"cannot instantiate Triton CUDA compiler: {error}"
+        ) from error
     binary_extension = getattr(backend, "binary_ext", None)
     if binary_extension != ("hgbin" if codegen_backend == "ppu" else "cubin"):
         raise IdentityError(
@@ -190,5 +207,7 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except (RuntimeError, OSError) as error:
-        print(f"THead Triton identity contract: FAIL: {error}", file=sys.stderr)
+        print(
+            f"THead Triton identity contract: FAIL: {error}", file=sys.stderr
+        )
         raise SystemExit(1) from error

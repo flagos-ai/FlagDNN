@@ -12,7 +12,9 @@ from .extended_common import (
 def _resample_kernel_configuration(parameters, tensors):
     mode = _require_integer(parameters, "mode", minimum=1, maximum=5)
     padding = _require_integer(parameters, "padding", minimum=1, maximum=3)
-    index = _require_integer(parameters, "generate_index", minimum=0, maximum=1)
+    index = _require_integer(
+        parameters, "generate_index", minimum=0, maximum=1
+    )
     align = _require_integer(parameters, "align_corners", minimum=0, maximum=1)
     if (
         len(tensors) != (3 if index else 2)
@@ -29,16 +31,23 @@ def _resample_kernel_configuration(parameters, tensors):
         or shape[:2] != y["dimensions"][:2]
     ):
         raise ValueError(
-            "resample requires matching NC dimensions and " "1..3 spatial dimensions"
+            "resample requires matching NC dimensions and "
+            "1..3 spatial dimensions"
         )
-    if x["data_type"] not in FLOAT_DATA_TYPES or y["data_type"] != x["data_type"]:
-        raise ValueError("resample input/output types must match and be floating")
+    if (
+        x["data_type"] not in FLOAT_DATA_TYPES
+        or y["data_type"] != x["data_type"]
+    ):
+        raise ValueError(
+            "resample input/output types must match and be floating"
+        )
     for tensor in tensors:
         if not _has_non_overlapping_strides(
             tensor["dimensions"], tensor["strides"]
         ) or any(d > 2**31 - 1 for d in tensor["dimensions"]):
             raise ValueError(
-                "resample tensor strides or Iluvatar dimension " "limits are invalid"
+                "resample tensor strides or Iluvatar dimension "
+                "limits are invalid"
             )
     if index and (
         tensors[2]["dimensions"] != y["dimensions"]
@@ -51,7 +60,9 @@ def _resample_kernel_configuration(parameters, tensors):
         or (mode == 1 and padding != 3)
         or (mode == 2 and padding == 2)
     ):
-        raise ValueError("resample interpolation/padding combination is invalid")
+        raise ValueError(
+            "resample interpolation/padding combination is invalid"
+        )
     spatial = rank - 2
     window, stride, pre, post = (
         parameters.get(name)
@@ -70,7 +81,9 @@ def _resample_kernel_configuration(parameters, tensors):
         ):
             raise ValueError("resample spatial parameters are invalid")
     if math.prod(window) > 2**31 - 1:
-        raise ValueError("resample window volume exceeds Iluvatar kernel limits")
+        raise ValueError(
+            "resample window volume exceeds Iluvatar kernel limits"
+        )
     if mode in (3, 4):
         if (
             window != [1] * spatial
@@ -113,7 +126,9 @@ def _resample_kernel_configuration(parameters, tensors):
         ("Y", y),
         ("I", tensors[2] if index else y),
     ]:
-        values = tensor["strides"][:2] + [0] * (3 - spatial) + tensor["strides"][2:]
+        values = (
+            tensor["strides"][:2] + [0] * (3 - spatial) + tensor["strides"][2:]
+        )
         for axis, value in zip("NCDHW", values):
             constants[role + "_" + axis] = value
     grid = (elements + 255) // 256

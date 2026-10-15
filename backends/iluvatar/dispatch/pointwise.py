@@ -215,7 +215,9 @@ def _parse_pointwise_node(
     if len(inputs) != len(schema.input_ports) or len(outputs) != len(
         schema.output_ports
     ):
-        raise ValueError(f"{schema.family} pointwise node port count is invalid")
+        raise ValueError(
+            f"{schema.family} pointwise node port count is invalid"
+        )
 
     input_uids: list[int] = []
     input_tensors: list[dict[str, Any]] = []
@@ -235,7 +237,10 @@ def _parse_pointwise_node(
         output_tensors.append(tensor)
 
     compute_data_type = node.get("compute_data_type")
-    if not isinstance(compute_data_type, str) or compute_data_type not in POINTER_TYPES:
+    if (
+        not isinstance(compute_data_type, str)
+        or compute_data_type not in POINTER_TYPES
+    ):
         raise ValueError(
             f"node compute_data_type is unsupported: {compute_data_type!r}"
         )
@@ -273,7 +278,9 @@ def _broadcast_dimensions(
                 else 1
             )
             if result_dimension not in (1, dimension) and dimension != 1:
-                raise ValueError(f"{family} pointwise inputs are not broadcastable")
+                raise ValueError(
+                    f"{family} pointwise inputs are not broadcastable"
+                )
             result_dimension = max(result_dimension, dimension)
         expected[-1 - trailing] = result_dimension
     if output["dimensions"] != expected:
@@ -357,7 +364,9 @@ def _validate_pointwise_data_types(
     data_types = [tensor["data_type"] for tensor in tensors]
     policy = schema.data_type_policy
     if policy == "binary_numeric":
-        valid = len(set(data_types)) == 1 and data_types[0] in (FLOAT_TYPES | {"int32"})
+        valid = len(set(data_types)) == 1 and data_types[0] in (
+            FLOAT_TYPES | {"int32"}
+        )
         expected_compute = {"float32", "int32"}
     elif policy == "binary_comparison":
         valid = (
@@ -370,7 +379,9 @@ def _validate_pointwise_data_types(
         valid = data_types == ["boolean", "boolean", "boolean"]
         expected_compute = {"boolean"}
     elif policy == "unary_numeric":
-        allowed = set(POINTER_TYPES) if operation == "identity" else FLOAT_TYPES
+        allowed = (
+            set(POINTER_TYPES) if operation == "identity" else FLOAT_TYPES
+        )
         valid = data_types[0] == data_types[1] and data_types[0] in allowed
         expected_compute = {"float32", "int32"}
     elif policy == "unary_boolean":
@@ -386,7 +397,9 @@ def _validate_pointwise_data_types(
     else:
         raise ValueError(f"unknown pointwise data-type policy {policy!r}")
     if not valid:
-        raise ValueError(f"{operation} tensor data types violate {policy} policy")
+        raise ValueError(
+            f"{operation} tensor data types violate {policy} policy"
+        )
     if compute_data_type not in expected_compute:
         raise ValueError(
             f"{operation} compute_data_type {compute_data_type!r} is not "
@@ -400,7 +413,9 @@ def _pointwise_elements(
 ) -> int:
     elements = _require_integer(parameters, "n_elements")
     if elements != math.prod(output["dimensions"]):
-        raise ValueError(f"parameters.n_elements is inconsistent with {family} output")
+        raise ValueError(
+            f"parameters.n_elements is inconsistent with {family} output"
+        )
     return elements
 
 
@@ -417,7 +432,9 @@ def _schema_binary_configuration(
     tuple[int, int, int],
 ]:
     left, right, output = tensors
-    _validate_pointwise_data_types(schema, operation, compute_data_type, tensors)
+    _validate_pointwise_data_types(
+        schema, operation, compute_data_type, tensors
+    )
     elements = _pointwise_elements(parameters, output, schema.family)
     pointwise_mode_value = parameters.get("pointwise_mode", schema.mode)
     pointwise_mode = _require_integer(
@@ -427,7 +444,9 @@ def _schema_binary_configuration(
         maximum=48,
     )
     if pointwise_mode != schema.mode:
-        raise ValueError("parameters.pointwise_mode is inconsistent with node type")
+        raise ValueError(
+            "parameters.pointwise_mode is inconsistent with node type"
+        )
     alpha = _require_number(parameters, "alpha", default=1.0)
     if left["data_type"] == "int32":
         if alpha != int(alpha) or not -(2**31) <= alpha < 2**31:
@@ -473,10 +492,16 @@ def _schema_binary_configuration(
                     parameters, "relu_upper_clip", default=0.0
                 ),
                 "HAS_UPPER_CLIP": bool(
-                    _require_integer(parameters, "has_upper_clip", minimum=0, maximum=1)
+                    _require_integer(
+                        parameters, "has_upper_clip", minimum=0, maximum=1
+                    )
                 ),
-                "SWISH_BETA": _require_number(parameters, "swish_beta", default=1.0),
-                "ELU_ALPHA": _require_number(parameters, "elu_alpha", default=1.0),
+                "SWISH_BETA": _require_number(
+                    parameters, "swish_beta", default=1.0
+                ),
+                "ELU_ALPHA": _require_number(
+                    parameters, "elu_alpha", default=1.0
+                ),
                 "SOFTPLUS_BETA": _require_number(
                     parameters, "softplus_beta", default=1.0
                 ),
@@ -487,7 +512,9 @@ def _schema_binary_configuration(
             and constants["UPPER_CLIP"] < constants["LOWER_CLIP"]
         ):
             raise ValueError("invalid activation gradient attributes")
-        function_name = function_name.replace("binary_", "activation_backward_", 1)
+        function_name = function_name.replace(
+            "binary_", "activation_backward_", 1
+        )
         if function_name == "activation_backward_contiguous_kernel":
             constants["MASK_TAIL"] = True
     signature = {
@@ -517,7 +544,9 @@ def _schema_unary_configuration(
     tuple[int, int, int],
 ]:
     input_tensor, output = tensors
-    _validate_pointwise_data_types(schema, operation, compute_data_type, tensors)
+    _validate_pointwise_data_types(
+        schema, operation, compute_data_type, tensors
+    )
     elements = _pointwise_elements(parameters, output, schema.family)
     strided_constants = _unary_stride_constants(input_tensor, output)
     negative_slope = _require_number(parameters, "negative_slope", default=0.0)
@@ -573,7 +602,8 @@ def _schema_unary_configuration(
         signature,
         constants,
         (
-            (elements + block_size * packed_factor - 1) // (block_size * packed_factor),
+            (elements + block_size * packed_factor - 1)
+            // (block_size * packed_factor),
             1,
             1,
         ),
@@ -593,7 +623,9 @@ def _schema_ternary_configuration(
     tuple[int, int, int],
 ]:
     left, right, predicate, output = tensors
-    _validate_pointwise_data_types(schema, operation, compute_data_type, tensors)
+    _validate_pointwise_data_types(
+        schema, operation, compute_data_type, tensors
+    )
     elements = _pointwise_elements(parameters, output, schema.family)
     strided_constants = _broadcast_stride_constants(
         [left, right, predicate],

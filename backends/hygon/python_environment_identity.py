@@ -36,7 +36,9 @@ def _sha256_file(path: Path) -> str:
 def _module_file(module: ModuleType) -> Path:
     origin = getattr(module, "__file__", None)
     if not isinstance(origin, str) or not origin:
-        raise RuntimeError(f"Python module has no file origin: {module.__name__}")
+        raise RuntimeError(
+            f"Python module has no file origin: {module.__name__}"
+        )
     return Path(origin).resolve()
 
 
@@ -90,7 +92,9 @@ def _distribution_directories(
         record = metadata_directory / "RECORD"
         record_owns_module = False
         if not owners and record.is_file():
-            with record.open("r", encoding="utf-8", errors="replace") as source:
+            with record.open(
+                "r", encoding="utf-8", errors="replace"
+            ) as source:
                 record_owns_module = any(
                     line.startswith(f"{relative_module},") for line in source
                 )
@@ -120,7 +124,9 @@ def _package_tree_paths(root: Path) -> tuple[Path, ...]:
 
 
 def _package_tree_sha256(root: Path) -> str:
-    """Fingerprint executable Triton package content, excluding bytecode caches."""
+    """
+    Fingerprint executable Triton package content, excluding bytecode caches.
+    """
 
     root = root.resolve()
     digest = hashlib.sha256()
@@ -169,7 +175,11 @@ def runtime_python_environment_dependency_paths() -> tuple[Path, ...]:
     }
     triton_root = _module_file(triton).parent
     paths.update(_package_tree_paths(triton_root))
-    for package, module in (("torch", torch), ("triton", triton), ("yaml", yaml)):
+    for package, module in (
+        ("torch", torch),
+        ("triton", triton),
+        ("yaml", yaml),
+    ):
         search_root = _module_file(module).parent.parent.resolve()
         paths.add(search_root)
         for directory in _distribution_directories(package, module):
@@ -185,7 +195,9 @@ def runtime_python_environment_dependency_paths() -> tuple[Path, ...]:
 
 
 def _validate_loaded_package_modules(package: str, root: Path) -> None:
-    """Reject a sys.modules package assembled from more than one environment."""
+    """
+    Reject a sys.modules package assembled from more than one environment.
+    """
 
     root = root.resolve()
 
@@ -195,7 +207,10 @@ def _validate_loaded_package_modules(package: str, root: Path) -> None:
             candidate.relative_to(root)
         except ValueError as error:
             raise RuntimeError(
-                f"Loaded {module_name!r} comes from {candidate}, outside {root}"
+                (
+                    f"Loaded {module_name!r} comes from {candidate}, outside "
+                    f"{root}"
+                )
             ) from error
 
     prefix = f"{package}."

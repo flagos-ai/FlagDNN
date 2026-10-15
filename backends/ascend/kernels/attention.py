@@ -57,13 +57,17 @@ def _sdpa_fwd_inner(
             k_mask = offs_d[:, None] < HEAD_DIM
         if k_mask is not None:
             k = tl.load(
-                k_base + offs_d[:, None] * stride_kd + offs_n[None, :] * stride_kn,
+                k_base
+                + offs_d[:, None] * stride_kd
+                + offs_n[None, :] * stride_kn,
                 mask=k_mask,
                 other=0.0,
             )
         else:
             k = tl.load(
-                k_base + offs_d[:, None] * stride_kd + offs_n[None, :] * stride_kn
+                k_base
+                + offs_d[:, None] * stride_kd
+                + offs_n[None, :] * stride_kn
             )
 
         qk = tl.dot(q, k)
@@ -105,13 +109,17 @@ def _sdpa_fwd_inner(
             v_mask = offs_dv[None, :] < V_DIM
         if v_mask is not None:
             v = tl.load(
-                v_base + offs_n[:, None] * stride_vn + offs_dv[None, :] * stride_vd,
+                v_base
+                + offs_n[:, None] * stride_vn
+                + offs_dv[None, :] * stride_vd,
                 mask=v_mask,
                 other=0.0,
             )
         else:
             v = tl.load(
-                v_base + offs_n[:, None] * stride_vn + offs_dv[None, :] * stride_vd
+                v_base
+                + offs_n[:, None] * stride_vn
+                + offs_dv[None, :] * stride_vd
             )
         acc += tl.dot(p.to(v.dtype), v)
         m_i = m_new
@@ -446,7 +454,9 @@ def _sdpa_bwd_dq_dbias_kernel(
     delta_base = delta_ptr + off_b * stride_delta_b + off_h * stride_delta_h
 
     q_full = tl.load(
-        q_base + offs_m[:, None] * stride_qm + offs_d_full[None, :] * stride_qd,
+        q_base
+        + offs_m[:, None] * stride_qm
+        + offs_d_full[None, :] * stride_qd,
         mask=(offs_m[:, None] < SQ) & (offs_d_full[None, :] < HEAD_DIM),
         other=0.0,
     )
@@ -480,12 +490,16 @@ def _sdpa_bwd_dq_dbias_kernel(
     for start_n in tl.range(0, loop_end_n, BLOCK_N):
         cols = start_n + offs_n
         k_full = tl.load(
-            k_base + cols[:, None] * stride_kn + offs_d_full[None, :] * stride_kd,
+            k_base
+            + cols[:, None] * stride_kn
+            + offs_d_full[None, :] * stride_kd,
             mask=(cols[:, None] < SKV) & (offs_d_full[None, :] < HEAD_DIM),
             other=0.0,
         )
         score = (
-            tl.dot(q_full, tl.trans(k_full), input_precision="ieee").to(tl.float32)
+            tl.dot(q_full, tl.trans(k_full), input_precision="ieee").to(
+                tl.float32
+            )
             * attn_scale
         )
         if HAS_BIAS:
@@ -514,7 +528,9 @@ def _sdpa_bwd_dq_dbias_kernel(
             mask=(cols[:, None] < SKV) & (offs_dv[None, :] < V_DIM),
             other=0.0,
         )
-        dp = tl.dot(do_tile, tl.trans(v_tile), input_precision="ieee").to(tl.float32)
+        dp = tl.dot(do_tile, tl.trans(v_tile), input_precision="ieee").to(
+            tl.float32
+        )
         ds = p * (dp - delta[:, None])
 
         k_out = tl.load(
@@ -636,7 +652,9 @@ def _sdpa_bwd_dk_kernel(
     k_base = k_ptr + off_b * stride_kb + off_kh * stride_kh
     v_base = v_ptr + off_b * stride_vb + off_kh * stride_vh
     k_full = tl.load(
-        k_base + offs_n[:, None] * stride_kn + offs_d_full[None, :] * stride_kd,
+        k_base
+        + offs_n[:, None] * stride_kn
+        + offs_d_full[None, :] * stride_kd,
         mask=(offs_n[:, None] < SKV) & (offs_d_full[None, :] < HEAD_DIM),
         other=0.0,
     )
@@ -652,19 +670,25 @@ def _sdpa_bwd_dk_kernel(
         q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
         do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
         stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
-        delta_base = delta_ptr + off_b * stride_delta_b + off_h * stride_delta_h
+        delta_base = (
+            delta_ptr + off_b * stride_delta_b + off_h * stride_delta_h
+        )
         loop_start_m = 0
         if CAUSAL_TOP_LEFT:
             loop_start_m = (start_n // BLOCK_M) * BLOCK_M
         for start_m in tl.range(loop_start_m, SQ, BLOCK_M):
             rows = start_m + offs_m
             q_full = tl.load(
-                q_base + rows[:, None] * stride_qm + offs_d_full[None, :] * stride_qd,
+                q_base
+                + rows[:, None] * stride_qm
+                + offs_d_full[None, :] * stride_qd,
                 mask=(rows[:, None] < SQ) & (offs_d_full[None, :] < HEAD_DIM),
                 other=0.0,
             )
             do_tile = tl.load(
-                do_base + rows[:, None] * stride_dom + offs_dv[None, :] * stride_dod,
+                do_base
+                + rows[:, None] * stride_dom
+                + offs_dv[None, :] * stride_dod,
                 mask=(rows[:, None] < SQ) & (offs_dv[None, :] < V_DIM),
                 other=0.0,
             )
@@ -680,7 +704,9 @@ def _sdpa_bwd_dk_kernel(
             ).to(tl.float32)
 
             score = (
-                tl.dot(q_full, tl.trans(k_full), input_precision="ieee").to(tl.float32)
+                tl.dot(q_full, tl.trans(k_full), input_precision="ieee").to(
+                    tl.float32
+                )
                 * attn_scale
             )
             if HAS_BIAS:
@@ -709,11 +735,15 @@ def _sdpa_bwd_dk_kernel(
             ds = p * (dp - delta[:, None])
 
             q_out = tl.load(
-                q_base + rows[:, None] * stride_qm + offs_d[None, :] * stride_qd,
+                q_base
+                + rows[:, None] * stride_qm
+                + offs_d[None, :] * stride_qd,
                 mask=(rows[:, None] < SQ) & (offs_d[None, :] < HEAD_DIM),
                 other=0.0,
             )
-            dk += tl.dot(tl.trans(ds).to(q_out.dtype), q_out, input_precision="ieee")
+            dk += tl.dot(
+                tl.trans(ds).to(q_out.dtype), q_out, input_precision="ieee"
+            )
 
     tl.store(
         dk_ptr
@@ -818,12 +848,16 @@ def _sdpa_bwd_dkdv_kernel(
     k_base = k_ptr + off_b * stride_kb + off_kh * stride_kh
     v_base = v_ptr + off_b * stride_vb + off_kh * stride_vh
     k_full = tl.load(
-        k_base + offs_n[:, None] * stride_kn + offs_d_full[None, :] * stride_kd,
+        k_base
+        + offs_n[:, None] * stride_kn
+        + offs_d_full[None, :] * stride_kd,
         mask=(offs_n[:, None] < SKV) & (offs_d_full[None, :] < HEAD_DIM),
         other=0.0,
     )
     v_full = tl.load(
-        v_base + offs_n[:, None] * stride_vn + offs_d_full[None, :] * stride_vd,
+        v_base
+        + offs_n[:, None] * stride_vn
+        + offs_d_full[None, :] * stride_vd,
         mask=(offs_n[:, None] < SKV) & (offs_d_full[None, :] < HEAD_DIM),
         other=0.0,
     )
@@ -831,11 +865,15 @@ def _sdpa_bwd_dkdv_kernel(
     dv = tl.zeros((BLOCK_N, BLOCK_D_OUT), dtype=tl.float32)
 
     for group_idx in tl.static_range(0, 1 if PARTIAL else Q_PER):
-        off_h = output_head // CHUNKS if PARTIAL else off_kh * Q_PER + group_idx
+        off_h = (
+            output_head // CHUNKS if PARTIAL else off_kh * Q_PER + group_idx
+        )
         q_base = q_ptr + off_b * stride_qb + off_h * stride_qh
         do_base = do_ptr + off_b * stride_dob + off_h * stride_doh
         stats_base = stats_ptr + off_b * stride_sb + off_h * stride_sh
-        delta_base = delta_ptr + off_b * stride_delta_b + off_h * stride_delta_h
+        delta_base = (
+            delta_ptr + off_b * stride_delta_b + off_h * stride_delta_h
+        )
         loop_start_m = 0
         if CAUSAL_TOP_LEFT:
             loop_start_m = (start_n // BLOCK_M) * BLOCK_M
@@ -843,7 +881,9 @@ def _sdpa_bwd_dkdv_kernel(
         for start_m in tl.range(loop_start_m, last_query, BLOCK_M):
             rows = start_m + offs_m
             q_full = tl.load(
-                q_base + rows[:, None] * stride_qm + offs_d_full[None, :] * stride_qd,
+                q_base
+                + rows[:, None] * stride_qm
+                + offs_d_full[None, :] * stride_qd,
                 mask=(rows[:, None] < SQ) & (offs_d_full[None, :] < HEAD_DIM),
                 other=0.0,
             )
@@ -866,7 +906,9 @@ def _sdpa_bwd_dkdv_kernel(
             ).to(tl.float32)
 
             score = (
-                tl.dot(q_full, tl.trans(k_full), input_precision="ieee").to(tl.float32)
+                tl.dot(q_full, tl.trans(k_full), input_precision="ieee").to(
+                    tl.float32
+                )
                 * attn_scale
             )
             if HAS_BIAS:
@@ -895,16 +937,22 @@ def _sdpa_bwd_dkdv_kernel(
             ds = p_attn * (dp - delta[:, None])
 
             q_out = tl.load(
-                q_base + rows[:, None] * stride_qm + offs_d[None, :] * stride_qd,
+                q_base
+                + rows[:, None] * stride_qm
+                + offs_d[None, :] * stride_qd,
                 mask=(rows[:, None] < SQ) & (offs_d[None, :] < HEAD_DIM),
                 other=0.0,
             )
             do_out = tl.load(
-                do_base + rows[:, None] * stride_dom + offs_d[None, :] * stride_dod,
+                do_base
+                + rows[:, None] * stride_dom
+                + offs_d[None, :] * stride_dod,
                 mask=(rows[:, None] < SQ) & (offs_d[None, :] < HEAD_DIM),
                 other=0.0,
             )
-            dk += tl.dot(tl.trans(ds).to(q_out.dtype), q_out, input_precision="ieee")
+            dk += tl.dot(
+                tl.trans(ds).to(q_out.dtype), q_out, input_precision="ieee"
+            )
             dv += tl.dot(
                 tl.trans(p_attn).to(do_out.dtype),
                 do_out,
@@ -996,7 +1044,9 @@ def _sdpa_bwd_dv_kernel(
 
     k_base = k_ptr + off_b * stride_kb + off_kh * stride_kh
     k_full = tl.load(
-        k_base + offs_n[:, None] * stride_kn + offs_d_full[None, :] * stride_kd,
+        k_base
+        + offs_n[:, None] * stride_kn
+        + offs_d_full[None, :] * stride_kd,
         mask=(offs_n[:, None] < SKV) & (offs_d_full[None, :] < HEAD_DIM),
         other=0.0,
     )
@@ -1013,12 +1063,16 @@ def _sdpa_bwd_dv_kernel(
         for start_m in tl.range(loop_start_m, SQ, BLOCK_M):
             rows = start_m + offs_m
             q_full = tl.load(
-                q_base + rows[:, None] * stride_qm + offs_d_full[None, :] * stride_qd,
+                q_base
+                + rows[:, None] * stride_qm
+                + offs_d_full[None, :] * stride_qd,
                 mask=(rows[:, None] < SQ) & (offs_d_full[None, :] < HEAD_DIM),
                 other=0.0,
             )
             score = (
-                tl.dot(q_full, tl.trans(k_full), input_precision="ieee").to(tl.float32)
+                tl.dot(q_full, tl.trans(k_full), input_precision="ieee").to(
+                    tl.float32
+                )
                 * attn_scale
             )
             if HAS_BIAS:
@@ -1047,7 +1101,9 @@ def _sdpa_bwd_dv_kernel(
                     valid = valid & (diag >= min_diag) & (diag <= max_diag)
                 p = tl.where(valid, tl.exp(score - stats[:, None]), 0.0)
             do_tile = tl.load(
-                do_base + rows[:, None] * stride_dom + offs_dv[None, :] * stride_dod,
+                do_base
+                + rows[:, None] * stride_dom
+                + offs_dv[None, :] * stride_dod,
                 mask=(rows[:, None] < SQ) & (offs_dv[None, :] < V_DIM),
                 other=0.0,
             )
@@ -1069,7 +1125,9 @@ def _sdpa_bwd_dv_kernel(
 
 
 @triton.jit
-def _zero_contiguous_kernel(ptr, n_elements: tl.constexpr, BLOCK: tl.constexpr):
+def _zero_contiguous_kernel(
+    ptr, n_elements: tl.constexpr, BLOCK: tl.constexpr
+):
     offsets = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
     tl.store(
         ptr + offsets,

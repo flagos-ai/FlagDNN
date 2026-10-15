@@ -71,7 +71,9 @@ def compile_request(
     graph = require_object(request.get("graph"), "graph")
     extended = handles_extended(graph)
     if extended:
-        stages, workspace_size = emit_extended(graph, output_directory, identity)
+        stages, workspace_size = emit_extended(
+            graph, output_directory, identity
+        )
     else:
         stages, workspace_size = emit_persistent(
             graph, target_name, identity, enable_autotune, output_directory

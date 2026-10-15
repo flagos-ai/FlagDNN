@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from functools import lru_cache
 import importlib.metadata
 from pathlib import Path
@@ -27,19 +29,25 @@ def configure_triton_path(root: str | Path) -> None:
         for name in ("stdlib", "platstdlib")
     }
     standard_paths.update(
-        path.parent / f"python{sys.version_info.major}{sys.version_info.minor}.zip"
+        path.parent
+        / f"python{sys.version_info.major}{sys.version_info.minor}.zip"
         for path in tuple(standard_paths)
     )
     extension_path = sysconfig.get_config_var("DESTSHARED")
     if extension_path:
         standard_paths.add(Path(extension_path).resolve())
     paths = [
-        entry for entry in sys.path
+        entry
+        for entry in sys.path
         if not isinstance(entry, str) or Path(entry).resolve() != root
     ]
     position = max(
-        (index + 1 for index, entry in enumerate(paths)
-         if isinstance(entry, str) and Path(entry).resolve() in standard_paths),
+        (
+            index + 1
+            for index, entry in enumerate(paths)
+            if isinstance(entry, str)
+            and Path(entry).resolve() in standard_paths
+        ),
         default=0,
     )
     paths.insert(position, str(root))
@@ -52,8 +60,12 @@ def _metadata_state(path: Path) -> tuple[int, ...] | None:
     except (FileNotFoundError, NotADirectoryError, PermissionError):
         return None
     return (
-        status.st_dev, status.st_ino, status.st_mode, status.st_size,
-        status.st_mtime_ns, status.st_ctime_ns,
+        status.st_dev,
+        status.st_ino,
+        status.st_mode,
+        status.st_size,
+        status.st_mtime_ns,
+        status.st_ctime_ns,
     )
 
 
@@ -61,21 +73,34 @@ def _metadata_state(path: Path) -> tuple[int, ...] | None:
 def _distribution_name(path: Path, _state: tuple) -> str:
     # Only cache the name used to select a distribution. The returned public
     # Distribution still reads version, RECORD, and file existence normally.
-    return importlib.metadata.PathDistribution(path).metadata.get("Name", "").lower()
+    return (
+        importlib.metadata.PathDistribution(path)
+        .metadata.get("Name", "")
+        .lower()
+    )
 
 
 def _current_distribution_name(path: Path) -> str:
     # Include importlib's PKG-INFO fallback and directory identity. ctime/inode
     # also catch replacement or same-size writes with the old mtime restored.
-    state = tuple(_metadata_state(item) for item in (
-        path, path / "METADATA", path / "PKG-INFO",
-    ))
+    state = tuple(
+        _metadata_state(item)
+        for item in (
+            path,
+            path / "METADATA",
+            path / "PKG-INFO",
+        )
+    )
     # Some filesystems update ctime only once per clock tick. Re-read recent
     # files so a same-size write with restored mtime cannot reuse that tick's
     # cached name. Installed packages normally have much older timestamps.
     cutoff = time_ns() - 2_000_000_000
     if any(item is not None and max(item[-2:]) > cutoff for item in state):
-        return importlib.metadata.PathDistribution(path).metadata.get("Name", "").lower()
+        return (
+            importlib.metadata.PathDistribution(path)
+            .metadata.get("Name", "")
+            .lower()
+        )
     return _distribution_name(path, state)
 
 
@@ -91,7 +116,10 @@ def ppu_distribution(
     ]
     if len(candidates) != 1:
         raise RuntimeError(
-            "configured root must contain exactly one Triton/FlagTree distribution"
+            (
+                "configured root must contain exactly one Triton/FlagTree "
+                "distribution"
+            )
         )
     distribution = candidates[0]
     if "ppu" not in distribution.version.lower():
@@ -99,13 +127,17 @@ def ppu_distribution(
             "configured Triton distribution is not the PPU-qualified build"
         )
     metadata = [
-        Path(distribution.locate_file(entry)).resolve(strict=True)
+        Path(cast(Any, distribution.locate_file(entry))).resolve(strict=True)
         for entry in distribution.files or ()
-        if entry.name == "METADATA" and entry.parent.name.endswith(".dist-info")
+        if entry.name == "METADATA"
+        and entry.parent.name.endswith(".dist-info")
     ]
     if len(metadata) != 1 or not metadata[0].is_relative_to(root):
         raise RuntimeError(
-            "Triton distribution metadata is missing or outside configured root"
+            (
+                "Triton distribution metadata is missing or outside "
+                "configured root"
+            )
         )
     return distribution, metadata[0]
 
@@ -164,5 +196,5 @@ def install_cuda_jit_bridge(standalone) -> None:
                     temporary.unlink(missing_ok=True)
         return str(cache)
 
-    compile_a_kernel._flagdnn_ppu_bridge = True
+    setattr(compile_a_kernel, "_flagdnn_ppu_bridge", True)
     standalone.compile_a_kernel = compile_a_kernel

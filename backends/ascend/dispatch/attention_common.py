@@ -3,14 +3,21 @@
 from __future__ import annotations
 from typing import Any
 import math
-from .common import FLOAT_DATA_TYPES, FP8_DATA_TYPES, _FLOAT32_MAX, _require_integer
+from .common import (
+    FLOAT_DATA_TYPES,
+    FP8_DATA_TYPES,
+    _FLOAT32_MAX,
+    _require_integer,
+)
 
 
 def _attention_flag(parameters: dict[str, Any], name: str) -> bool:
     return _require_integer(parameters, name, minimum=0, maximum=1) == 1
 
 
-def _attention_runtime_i32(parameters: dict[str, Any], name: str, value: int) -> int:
+def _attention_runtime_i32(
+    parameters: dict[str, Any], name: str, value: int
+) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"SDPA runtime parameter {name} must be an integer")
     if value < -(2**31) or value > 2**31 - 1:
@@ -36,11 +43,14 @@ def _attention_strides(
     if len(strides) < len(axes):
         raise ValueError(f"SDPA {prefix} tensor rank is invalid")
     return {
-        f"stride_{prefix}{axis}": int(stride) for axis, stride in zip(axes, strides)
+        f"stride_{prefix}{axis}": int(stride)
+        for axis, stride in zip(axes, strides)
     }
 
 
-def _attention_broadcast_strides(tensor: dict[str, Any], prefix: str) -> dict[str, int]:
+def _attention_broadcast_strides(
+    tensor: dict[str, Any], prefix: str
+) -> dict[str, int]:
     dimensions = tensor["dimensions"]
     strides = tensor["strides"]
     if len(dimensions) != 4 or len(strides) != 4:
@@ -100,9 +110,13 @@ def _validate_attention_base(
     }
     for name, value in expected.items():
         if _require_integer(parameters, name) != value:
-            raise ValueError(f"parameters.{name} is inconsistent with SDPA tensors")
+            raise ValueError(
+                f"parameters.{name} is inconsistent with SDPA tensors"
+            )
     if head_dimension > 256 or value_dimension > 256:
-        raise ValueError("SDPA head dimensions greater than 256 are unsupported")
+        raise ValueError(
+            "SDPA head dimensions greater than 256 are unsupported"
+        )
     return (
         batch,
         heads,
@@ -116,5 +130,8 @@ def _validate_attention_base(
 
 
 def _require_fp8_scale_tensor(tensor: dict[str, Any], name: str) -> None:
-    if tensor["data_type"] != "float32" or math.prod(tensor["dimensions"]) != 1:
+    if (
+        tensor["data_type"] != "float32"
+        or math.prod(tensor["dimensions"]) != 1
+    ):
         raise ValueError(f"{name} must be a one-element float32 tensor")

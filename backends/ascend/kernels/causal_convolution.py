@@ -31,7 +31,9 @@ def causal_conv1d_kernel(
     Y_L: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    logical = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    logical = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
     position = logical % LENGTH
     channel = logical // LENGTH % CHANNELS
     batch = logical // (LENGTH * CHANNELS)
@@ -49,7 +51,9 @@ def causal_conv1d_kernel(
         )
         accumulator += x * w
     if HAS_BIAS:
-        accumulator += tl.load(bias_ptr + channel * B_C, valid, other=0).to(tl.float32)
+        accumulator += tl.load(bias_ptr + channel * B_C, valid, other=0).to(
+            tl.float32
+        )
     if SILU:
         accumulator *= tl.sigmoid(accumulator)
     tl.store(

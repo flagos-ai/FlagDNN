@@ -58,56 +58,88 @@ def main() -> int:
                     raise ValueError(f"invalid latency: {operator}/{name}")
                 ratio = reference / flagdnn
                 pairs.append(ratio)
-                cases.append({"operator": operator, "case": name,
-                              "flagdnn_median_us": flagdnn,
-                              "acdnn_median_us": reference, "speedup": ratio,
-                              "passed": ratio >= args.min_speedup})
+                cases.append(
+                    {
+                        "operator": operator,
+                        "case": name,
+                        "flagdnn_median_us": flagdnn,
+                        "acdnn_median_us": reference,
+                        "speedup": ratio,
+                        "passed": ratio >= args.min_speedup,
+                    }
+                )
         failed = sum(value < args.min_speedup for value in pairs)
-        state = ("below_threshold" if failed else "passed") if pairs else (
-            "reference_unavailable" if benchmark.get("status") == "skipped"
-            else "not_measured")
-        operators.append({
-            "operator": operator, "status": state, "case_count": len(pairs),
-            "failed_case_count": failed,
-            "minimum_speedup": min(pairs) if pairs else None,
-            "median_speedup": statistics.median(pairs) if pairs else None,
-            "geometric_mean_speedup": (
-                statistics.geometric_mean(pairs) if pairs else None
-            ),
-        })
+        state = (
+            ("below_threshold" if failed else "passed")
+            if pairs
+            else (
+                "reference_unavailable"
+                if benchmark.get("status") == "skipped"
+                else "not_measured"
+            )
+        )
+        operators.append(
+            {
+                "operator": operator,
+                "status": state,
+                "case_count": len(pairs),
+                "failed_case_count": failed,
+                "minimum_speedup": min(pairs) if pairs else None,
+                "median_speedup": statistics.median(pairs) if pairs else None,
+                "geometric_mean_speedup": (
+                    statistics.geometric_mean(pairs) if pairs else None
+                ),
+            }
+        )
     performance = benchmark_speedup_summary(
         results, args.min_speedup, coverage
     )
-    report = {"source": str(args.input.resolve()),
-              "source_timestamp_utc": document.get("timestamp_utc"),
-              "note": args.note, "performance": performance,
-              "operators": operators, "cases": cases}
+    report = {
+        "source": str(args.input.resolve()),
+        "source_timestamp_utc": document.get("timestamp_utc"),
+        "note": args.note,
+        "performance": performance,
+        "operators": operators,
+        "cases": cases,
+    }
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "performance.json").write_text(
-        json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+    )
     for name, rows in (("operators", operators), ("cases", cases)):
         with (args.output_dir / f"{name}.csv").open("w", newline="") as output:
             if rows:
                 writer = csv.DictWriter(output, fieldnames=list(rows[0]))
                 writer.writeheader()
                 writer.writerows(rows)
-    lines = ["# THead 算子性能统计", "",
-             f"来源：`{args.input.resolve()}`", "",
-             f"来源时间：{document.get('timestamp_utc')}", "",
-             "speedup = acDNN median / FlagDNN median；"
-             f"逐 case 阈值：{args.min_speedup}。", "",
-             f"可比较 case：{len(cases)}；低于阈值：{performance['failed_case_count']}；"
-             f"性能门禁通过：{performance['gate_passed']}。", "",
-             "没有可比较 case 的算子不计为达标。以下是输入记录的统计，不是新的真机测量。", ""]
+    lines = [
+        "# THead 算子性能统计",
+        "",
+        f"来源：`{args.input.resolve()}`",
+        "",
+        f"来源时间：{document.get('timestamp_utc')}",
+        "",
+        "speedup = acDNN median / FlagDNN median；"
+        f"逐 case 阈值：{args.min_speedup}。",
+        "",
+        f"可比较 case：{len(cases)}；低于阈值：{performance['failed_case_count']}；"
+        f"性能门禁通过：{performance['gate_passed']}。",
+        "",
+        "没有可比较 case 的算子不计为达标。以下是输入记录的统计，不是新的真机测量。",
+        "",
+    ]
     if args.note:
         lines += [args.note, ""]
-    lines += ["| 算子 | case 数 | 未达标 | 最小 speedup | 几何均值 | 状态 |",
-              "|---|---:|---:|---:|---:|---|"]
+    lines += [
+        "| 算子 | case 数 | 未达标 | 最小 speedup | 几何均值 | 状态 |",
+        "|---|---:|---:|---:|---:|---|",
+    ]
     for row in operators:
-        minimum = f"{row['minimum_speedup']:.6f}" if row['case_count'] else "—"
+        minimum = f"{row['minimum_speedup']:.6f}" if row["case_count"] else "—"
         mean = (
             f"{row['geometric_mean_speedup']:.6f}"
-            if row['case_count'] else "—"
+            if row["case_count"]
+            else "—"
         )
         lines.append(
             f"| {row['operator']} | {row['case_count']} | "
@@ -115,12 +147,18 @@ def main() -> int:
             f"{row['status']} |"
         )
     (args.output_dir / "performance.md").write_text("\n".join(lines) + "\n")
-    print(json.dumps({"case_count": len(cases),
-                      "failed_case_count": performance["failed_case_count"],
-                      "failed_operator_count": sum(
-                          r["failed_case_count"] > 0 for r in operators
-                      ),
-                      "gate_passed": performance["gate_passed"]}))
+    print(
+        json.dumps(
+            {
+                "case_count": len(cases),
+                "failed_case_count": performance["failed_case_count"],
+                "failed_operator_count": sum(
+                    r["failed_case_count"] > 0 for r in operators
+                ),
+                "gate_passed": performance["gate_passed"],
+            }
+        )
+    )
     return 0
 
 

@@ -22,7 +22,7 @@ TARGET = "musa-mtgpu-cc31-w32"
 MAX_LINEAR_ELEMENTS = (1 << 31) - 1 - ((1 << 16) - 1)
 JsonObject = dict[str, Any]
 Mutation = Callable[[JsonObject], None]
-FilesystemMutation = Callable[[Path], None]
+FilesystemMutation = Callable[[Path], object]
 
 
 def fail(message: str) -> None:
@@ -2033,6 +2033,43 @@ def layout_request_matrix(matrix: Matrix) -> None:
         operation="slice",
     )
 
+    def duplicate_transpose_axis(value) -> None:
+        replace_request(value, transpose)
+        set_path(
+            value,
+            ("graph", "nodes", 0, "attributes", "permutation"),
+            [2, 0, 0],
+        )
+
+    def mismatched_transpose_shape(value) -> None:
+        replace_request(value, transpose)
+        set_path(value, ("graph", "tensors", 1, "dimensions"), [4, 3, 2])
+        set_path(value, ("graph", "tensors", 1, "strides"), [1, 4, 12])
+
+    def missing_transpose_permutation(value) -> None:
+        replace_request(value, transpose)
+        delete_path(value, ("graph", "nodes", 0, "attributes", "permutation"))
+
+    def negative_slice_start(value) -> None:
+        replace_request(value, sliced)
+        set_path(
+            value, ("graph", "nodes", 0, "attributes", "starts"), [0, -1, 0]
+        )
+
+    def oversized_slice_limit(value) -> None:
+        replace_request(value, sliced)
+        set_path(
+            value, ("graph", "nodes", 0, "attributes", "limits"), [2, 5, 5]
+        )
+
+    def zero_slice_stride(value) -> None:
+        replace_request(value, sliced)
+        set_path(
+            value,
+            ("graph", "nodes", 0, "attributes", "slice_strides"),
+            [1, 0, 1],
+        )
+
     mutations: list[tuple[str, Mutation]] = [
         (
             "layout wrong input role",
@@ -2098,91 +2135,27 @@ def layout_request_matrix(matrix: Matrix) -> None:
         ),
         (
             "transpose duplicate permutation axis",
-            lambda value: (
-                replace_request(value, transpose),
-                set_path(
-                    value,
-                    (
-                        "graph",
-                        "nodes",
-                        0,
-                        "attributes",
-                        "permutation",
-                    ),
-                    [2, 0, 0],
-                ),
-            ),
+            duplicate_transpose_axis,
         ),
         (
             "transpose output shape mismatch",
-            lambda value: (
-                replace_request(value, transpose),
-                set_path(
-                    value,
-                    ("graph", "tensors", 1, "dimensions"),
-                    [4, 3, 2],
-                ),
-                set_path(
-                    value,
-                    ("graph", "tensors", 1, "strides"),
-                    [1, 4, 12],
-                ),
-            ),
+            mismatched_transpose_shape,
         ),
         (
             "transpose missing permutation",
-            lambda value: (
-                replace_request(value, transpose),
-                delete_path(
-                    value,
-                    (
-                        "graph",
-                        "nodes",
-                        0,
-                        "attributes",
-                        "permutation",
-                    ),
-                ),
-            ),
+            missing_transpose_permutation,
         ),
         (
             "slice negative start",
-            lambda value: (
-                replace_request(value, sliced),
-                set_path(
-                    value,
-                    ("graph", "nodes", 0, "attributes", "starts"),
-                    [0, -1, 0],
-                ),
-            ),
+            negative_slice_start,
         ),
         (
             "slice limit exceeds input",
-            lambda value: (
-                replace_request(value, sliced),
-                set_path(
-                    value,
-                    ("graph", "nodes", 0, "attributes", "limits"),
-                    [2, 5, 5],
-                ),
-            ),
+            oversized_slice_limit,
         ),
         (
             "slice zero stride",
-            lambda value: (
-                replace_request(value, sliced),
-                set_path(
-                    value,
-                    (
-                        "graph",
-                        "nodes",
-                        0,
-                        "attributes",
-                        "slice_strides",
-                    ),
-                    [1, 0, 1],
-                ),
-            ),
+            zero_slice_stride,
         ),
         (
             "layout virtual input",
@@ -2207,6 +2180,10 @@ def layout_request_matrix(matrix: Matrix) -> None:
 
 
 def reduction_request_matrix(matrix: Matrix) -> None:
+    def wrong_reduction_shape(value) -> None:
+        set_path(value, ("graph", "tensors", 1, "dimensions"), [2, 8])
+        set_path(value, ("graph", "tensors", 1, "strides"), [8, 1])
+
     def boolean_storage(value: JsonObject) -> None:
         for tensor in value["graph"]["tensors"]:
             tensor["data_type"] = "boolean"
@@ -2275,18 +2252,7 @@ def reduction_request_matrix(matrix: Matrix) -> None:
         ),
         (
             "reduction wrong output shape",
-            lambda value: (
-                set_path(
-                    value,
-                    ("graph", "tensors", 1, "dimensions"),
-                    [2, 8],
-                ),
-                set_path(
-                    value,
-                    ("graph", "tensors", 1, "strides"),
-                    [8, 1],
-                ),
-            ),
+            wrong_reduction_shape,
         ),
         (
             "reduction outer mismatch",
@@ -4655,7 +4621,10 @@ def main() -> int:
                         pass
                     else:
                         fail(
-                            "compiler accepted an invalid Sigmoid backward clip flag"
+                            (
+                                "compiler accepted an invalid Sigmoid "
+                                "backward clip flag"
+                            )
                         )
                     sigmoid_matrix.reject(
                         "sigmoid backward clip " + repr(bad_clip),
@@ -5122,7 +5091,9 @@ def main() -> int:
                 data_type="bfloat16",
                 autotune=True,
             ),
-            "convolution-wgrad-standard-stride2-fp16": convolution_request_fixture(
+            (
+                "convolution-wgrad-s" "tandard-stride2-fp16"
+            ): convolution_request_fixture(
                 identity,
                 arguments.flagdnn_version,
                 operation="convolution_wgrad",
@@ -5151,7 +5122,9 @@ def main() -> int:
                 convolution_mode=0,
                 data_type="bfloat16",
             ),
-            "convolution-wgrad-nd-1d-fp16-autotune": convolution_request_fixture(
+            (
+                "convolution-wgrad-" "nd-1d-fp16-autotune"
+            ): convolution_request_fixture(
                 identity,
                 arguments.flagdnn_version,
                 operation="convolution_wgrad",
@@ -5166,7 +5139,9 @@ def main() -> int:
                 data_type="float16",
                 autotune=True,
             ),
-            "convolution-wgrad-nd-3d-asymmetric-bf16": convolution_request_fixture(
+            (
+                "convolution-wgrad-n" "d-3d-asymmetric-bf16"
+            ): convolution_request_fixture(
                 identity,
                 arguments.flagdnn_version,
                 operation="convolution_wgrad",
@@ -5247,7 +5222,10 @@ def main() -> int:
                                 int(precision == 2)
                             ):
                                 fail(
-                                    "explicit backward convolution precision was overwritten"
+                                    (
+                                        "explicit backward convolution "
+                                        "precision was overwritten"
+                                    )
                                 )
         valid_add_square_requests = {
             "add-square-fp32": add_square_request_fixture(

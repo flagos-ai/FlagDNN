@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from functools import partial
 
 import copy
@@ -41,7 +43,7 @@ def fail(message: str) -> None:
     raise RuntimeError(message)
 
 
-def require(condition: bool, message: str) -> None:
+def require(condition: object, message: str) -> None:
     if not condition:
         fail(message)
 
@@ -1047,7 +1049,7 @@ def load_artifact(output: Path) -> dict[str, Any]:
 
 
 def assert_add_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -1210,7 +1212,7 @@ def assert_add_artifact(
         "Add alpha specialization is invalid",
     )
 
-    mutations: list[tuple[str, Callable[[dict[str, Any]], None], str]] = [
+    mutations: list[tuple[str, Callable[[dict[str, Any]], object], str]] = [
         (
             "bad-broadcast",
             lambda value: value["graph"]["tensors"][1].__setitem__(
@@ -1289,7 +1291,7 @@ def assert_add_artifact(
 
 
 def assert_mul_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -1395,7 +1397,7 @@ def assert_mul_artifact(
 
 
 def assert_scale_alias_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -1503,7 +1505,7 @@ def assert_scale_alias_artifact(
 
 
 def assert_relu_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -1582,7 +1584,7 @@ def assert_relu_artifact(
         "Relu runtime ABI or launch geometry is invalid",
     )
 
-    mutations: list[tuple[str, Callable[[dict[str, Any]], None], str]] = [
+    mutations: list[tuple[str, Callable[[dict[str, Any]], object], str]] = [
         (
             "relu-bad-stride",
             lambda value: value["graph"]["tensors"][0].__setitem__(
@@ -1690,7 +1692,7 @@ def assert_relu_artifact(
 
 
 def assert_sigmoid_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -1769,7 +1771,7 @@ def assert_sigmoid_artifact(
         "Sigmoid runtime ABI or launch geometry is invalid",
     )
 
-    mutations: list[tuple[str, Callable[[dict[str, Any]], None], str]] = [
+    mutations: list[tuple[str, Callable[[dict[str, Any]], object], str]] = [
         (
             "sigmoid-bad-mode",
             lambda value: value["graph"]["nodes"][0]["attributes"].__setitem__(
@@ -1842,7 +1844,7 @@ def assert_sigmoid_artifact(
 
 
 def assert_tanh_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -1921,7 +1923,7 @@ def assert_tanh_artifact(
         "Tanh runtime ABI or launch geometry is invalid",
     )
 
-    mutations: list[tuple[str, Callable[[dict[str, Any]], None], str]] = [
+    mutations: list[tuple[str, Callable[[dict[str, Any]], object], str]] = [
         (
             "tanh-bad-mode",
             lambda value: value["graph"]["nodes"][0]["attributes"].__setitem__(
@@ -1994,7 +1996,7 @@ def assert_tanh_artifact(
 
 
 def assert_elu_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -2073,7 +2075,7 @@ def assert_elu_artifact(
         "Elu runtime ABI or launch geometry is invalid",
     )
 
-    mutations: list[tuple[str, Callable[[dict[str, Any]], None], str]] = [
+    mutations: list[tuple[str, Callable[[dict[str, Any]], object], str]] = [
         (
             "elu-bad-mode",
             lambda value: value["graph"]["nodes"][0]["attributes"].__setitem__(
@@ -2146,7 +2148,7 @@ def assert_elu_artifact(
 
 
 def assert_identity_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -2225,7 +2227,7 @@ def assert_identity_artifact(
         "Identity runtime ABI or launch geometry is invalid",
     )
 
-    mutations: list[tuple[str, Callable[[dict[str, Any]], None], str]] = [
+    mutations: list[tuple[str, Callable[[dict[str, Any]], object], str]] = [
         (
             "identity-bad-mode",
             lambda value: value["graph"]["nodes"][0]["attributes"].__setitem__(
@@ -2298,8 +2300,11 @@ def assert_identity_artifact(
 
 
 def assert_performance_artifacts(
-    provider: object, temporary: Path, identity: str, *, compile_kernel: bool
+    provider: Any, temporary: Path, identity: str, *, compile_kernel: bool
 ) -> None:
+    dimensions: list[int] | tuple[list[int], ...]
+    shape: int | list[int]
+    stride: int | list[int]
     for operation in ("add", "abs", "pow"):
         for data_type in ("float32", "float16", "bfloat16"):
             document = request(identity, operation, autotune=True)
@@ -2372,9 +2377,9 @@ def assert_performance_artifacts(
                     dimensions=shape,
                     strides=[math.prod(shape[i + 1 :]) for i in range(4)],
                 )
-            output = document["graph"]["nodes"][0]["outputs"][0]["uid"]
+            output_uid = document["graph"]["nodes"][0]["outputs"][0]["uid"]
             document["graph"]["nodes"][0]["attributes"].update(
-                stride=[2, 2], n_outputs=math.prod(dimensions[output - 1])
+                stride=[2, 2], n_outputs=math.prod(dimensions[output_uid - 1])
             )
             name = f"optimized-{operation}-{dtype}"
             path, output = temporary / f"{name}.json", temporary / name
@@ -2647,7 +2652,7 @@ def assert_performance_artifacts(
 
 
 def assert_generic_binary_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -2785,7 +2790,7 @@ def assert_generic_binary_artifact(
 
 
 def assert_add_square_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -2979,7 +2984,7 @@ def assert_add_square_artifact(
 
 
 def assert_reduction_artifacts(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -3285,7 +3290,7 @@ def assert_reduction_artifacts(
 
 
 def assert_layout_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -3390,7 +3395,7 @@ def assert_layout_artifact(
             )
 
     mutations: tuple[
-        tuple[str, Callable[[dict[str, Any]], None], str], ...
+        tuple[str, Callable[[dict[str, Any]], object], str], ...
     ] = (
         (
             "mismatched-dtype",
@@ -3456,12 +3461,13 @@ def assert_layout_artifact(
 
 
 def assert_batchnorm_artifacts(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
     compile_kernel: bool,
 ) -> None:
+    expectations: dict[str, dict[str, Any]]
     expectations = {
         "batchnorm_inference": {
             "function": "batch_norm_inference_nchw_kernel",
@@ -3736,13 +3742,14 @@ def assert_batchnorm_artifacts(
 
 
 def assert_normalization_artifacts(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
     compile_kernel: bool,
     check_launch_resources: bool = True,
 ) -> None:
+    expectations: dict[str, dict[str, Any]]
     expectations = {
         "layernorm": {
             "function": "layer_norm_kernel",
@@ -4007,7 +4014,7 @@ def assert_normalization_artifacts(
 
 
 def assert_matmul_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -4238,6 +4245,7 @@ def assert_convolution_indexing() -> None:
     conversion at tt.addptr. Inspect the multiply itself, not the pointer type.
     Numerical execution remains exclusively compared with acDNN by the runner.
     """
+    values: dict[str, int | str]
     import triton
     from triton.backends.compiler import GPUTarget
     from triton.compiler import ASTSource
@@ -4328,12 +4336,14 @@ def assert_convolution_indexing() -> None:
 
 
 def assert_convolution_artifacts(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
     compile_kernel: bool,
 ) -> None:
+    expectations: dict[str, dict[str, Any]]
+    mutate: Callable[..., object]
     expectations = {
         "convolution_fprop": {
             "provider": "thead_triton",
@@ -4508,54 +4518,57 @@ def assert_convolution_artifacts(
                     ranked_output, ranked_variant, ranked_stage["kernel"]
                 )
 
-        for name, mutate, detail in (
+        for name, mutate, detail in cast(
+            tuple[tuple[str, Callable[..., object], str], ...],
             (
-                "mismatched-dtype",
-                lambda value: value["graph"]["tensors"][0].__setitem__(
-                    "data_type", "float16"
+                (
+                    "mismatched-dtype",
+                    lambda value: value["graph"]["tensors"][0].__setitem__(
+                        "data_type", "float16"
+                    ),
+                    "matching",
                 ),
-                "matching",
-            ),
-            (
-                "bad-padding",
-                lambda value: value["graph"]["nodes"][0][
-                    "attributes"
-                ].__setitem__("post_padding", [0, 1]),
-                "output shape",
-            ),
-            (
-                "bad-groups",
-                lambda value: value["graph"]["nodes"][0][
-                    "attributes"
-                ].__setitem__("groups", 3),
-                "groups",
-            ),
-            (
-                "int64-coordinate-overflow",
-                lambda value: value["graph"]["nodes"][0][
-                    "attributes"
-                ].__setitem__("dilation", [2**62, 2**62]),
-                "spatial coordinates exceed int64",
-            ),
-            (
-                "int32-index-overflow",
-                lambda value, operation=operation: (
-                    value["graph"]["tensors"][0]["dimensions"].__setitem__(
-                        0, 2**30
-                    ),
-                    value["graph"]["tensors"][2]["dimensions"].__setitem__(
-                        0, 2**30
-                    ),
-                    value["graph"]["nodes"][0]["attributes"].__setitem__(
-                        "n_outputs",
-                        (
-                            2**30 * 2 * 5 * 5
-                            if operation != "convolution_wgrad"
-                            else 2 * 2 * 3 * 3
+                (
+                    "bad-padding",
+                    lambda value: value["graph"]["nodes"][0][
+                        "attributes"
+                    ].__setitem__("post_padding", [0, 1]),
+                    "output shape",
+                ),
+                (
+                    "bad-groups",
+                    lambda value: value["graph"]["nodes"][0][
+                        "attributes"
+                    ].__setitem__("groups", 3),
+                    "groups",
+                ),
+                (
+                    "int64-coordinate-overflow",
+                    lambda value: value["graph"]["nodes"][0][
+                        "attributes"
+                    ].__setitem__("dilation", [2**62, 2**62]),
+                    "spatial coordinates exceed int64",
+                ),
+                (
+                    "int32-index-overflow",
+                    lambda value, operation=operation: (
+                        value["graph"]["tensors"][0]["dimensions"].__setitem__(
+                            0, 2**30
+                        ),
+                        value["graph"]["tensors"][2]["dimensions"].__setitem__(
+                            0, 2**30
+                        ),
+                        value["graph"]["nodes"][0]["attributes"].__setitem__(
+                            "n_outputs",
+                            (
+                                2**30 * 2 * 5 * 5
+                                if operation != "convolution_wgrad"
+                                else 2 * 2 * 3 * 3
+                            ),
                         ),
                     ),
+                    "int32",
                 ),
-                "int32",
             ),
         ):
             mutated = copy.deepcopy(document)
@@ -4596,7 +4609,7 @@ def assert_convolution_artifacts(
 
 
 def assert_conv_bias_relu_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -4732,7 +4745,7 @@ def assert_conv_bias_relu_artifact(
 
 
 def assert_generic_unary_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -4826,7 +4839,7 @@ def assert_generic_unary_artifact(
         f"{label} runtime ABI or launch geometry is invalid",
     )
 
-    mutations: list[tuple[str, Callable[[dict[str, Any]], None], str]] = [
+    mutations: list[tuple[str, Callable[[dict[str, Any]], object], str]] = [
         (
             f"{operation}-bad-mode",
             lambda value: value["graph"]["nodes"][0]["attributes"].__setitem__(
@@ -5108,7 +5121,7 @@ def attention_requests(identity: str) -> list[dict[str, Any]]:
 
 
 def assert_attention_artifacts(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -5270,7 +5283,7 @@ def assert_attention_artifacts(
 
 
 def assert_boolean_pointwise_artifacts(
-    provider: object, temporary: Path, identity: str, *, compile_kernel: bool
+    provider: Any, temporary: Path, identity: str, *, compile_kernel: bool
 ) -> None:
     for operation in (
         "logical_not",
@@ -5410,7 +5423,7 @@ def assert_boolean_pointwise_artifacts(
 
 
 def assert_typed_pointwise_artifacts(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -5465,7 +5478,7 @@ def assert_typed_pointwise_artifacts(
 
 
 def assert_strided_pointwise_artifacts(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -5564,7 +5577,13 @@ def assert_strided_pointwise_artifacts(
         ("abs", "unary_pointwise_contiguous_kernel"),
         ("add_square", "add_square_contiguous_kernel"),
     ):
-        for label, dimensions, strides, mixed, expected_contiguous in (
+        for (
+            label,
+            layout_dimensions,
+            layout_strides,
+            mixed,
+            expected_contiguous,
+        ) in (
             ("nhwc", [2, 3, 4, 5], [60, 1, 15, 3], False, True),
             ("padded_nhwc", [2, 3, 4, 5], [64, 1, 15, 3], False, False),
             ("mixed_layout", [2, 3, 4, 5], [60, 1, 15, 3], True, False),
@@ -5579,14 +5598,14 @@ def assert_strided_pointwise_artifacts(
         ):
             document = request(identity, operation)
             for tensor in document["graph"]["tensors"]:
-                tensor["dimensions"] = dimensions
-                tensor["strides"] = strides
+                tensor["dimensions"] = layout_dimensions
+                tensor["strides"] = layout_strides
             if mixed:
                 document["graph"]["tensors"][-1]["strides"] = [60, 20, 5, 1]
             if label == "singleton":
                 document["graph"]["tensors"][-1]["strides"] = [20, 1, 5, 1]
             for node in document["graph"]["nodes"]:
-                node["attributes"]["n_elements"] = math.prod(dimensions)
+                node["attributes"]["n_elements"] = math.prod(layout_dimensions)
             request_path = temporary / f"{operation}-{label}.json"
             output = temporary / f"{operation}-{label}-artifact"
             write_json(request_path, document)
@@ -5605,7 +5624,7 @@ def assert_strided_pointwise_artifacts(
 
 
 def assert_sub_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -5729,7 +5748,7 @@ def assert_sub_artifact(
 
 
 def assert_min_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -5835,7 +5854,7 @@ def assert_min_artifact(
 
 
 def assert_max_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
     *,
@@ -5953,10 +5972,11 @@ def canonical_sha256(value: object) -> str:
 
 
 def assert_add_autotune_artifact(
-    provider: object,
+    provider: Any,
     temporary: Path,
     identity: str,
 ) -> None:
+    expected_configurations: list[dict[str, Any]]
     request_path = temporary / "add-autotune.json"
     output = temporary / "add-autotune-artifact"
     document = request(identity, autotune=True)
@@ -6708,7 +6728,7 @@ def assert_sigmoid_backward_planning(provider: Any) -> None:
             )
 
 
-def assert_program_manifest_resources(provider: object) -> None:
+def assert_program_manifest_resources(provider: Any) -> None:
     emitter = sys.modules[provider.__package__ + ".codegen.artifacts"]
     with tempfile.TemporaryDirectory(
         prefix="flagdnn-thead-resource-contract-"
@@ -6868,7 +6888,7 @@ def main() -> int:
         }
         with tempfile.TemporaryDirectory(
             prefix="flagdnn-thead-host-"
-        ) as temporary:
+        ) as temporary_directory:
             artifact_codegen = sys.modules[
                 provider.__package__ + ".codegen.artifacts"
             ]
@@ -6877,7 +6897,7 @@ def main() -> int:
             ), patch.object(artifact_codegen, "populate_launch_resources"):
                 assert_generic_binary_artifact(
                     provider,
-                    Path(temporary),
+                    Path(temporary_directory),
                     "0" * 64,
                     operation="sigmoid_backward",
                     label="SigmoidBackward",
@@ -6887,7 +6907,7 @@ def main() -> int:
                 )
                 assert_normalization_artifacts(
                     provider,
-                    Path(temporary),
+                    Path(temporary_directory),
                     "0" * 64,
                     compile_kernel=False,
                     check_launch_resources=False,
@@ -7399,7 +7419,9 @@ def main() -> int:
             "unsupported compiler skeleton unexpectedly wrote artifacts",
         )
 
-        mutations: list[tuple[str, Callable[[dict[str, Any]], None], str]] = [
+        mutations: list[
+            tuple[str, Callable[[dict[str, Any]], object], str]
+        ] = [
             (
                 "backend",
                 lambda value: value.__setitem__("backend", "nvidia"),

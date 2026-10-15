@@ -13,14 +13,15 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[3]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / "compiler"))
-from flagdnn_codegen.provider_loader import get_provider
+from flagdnn_codegen.provider_loader import get_provider  # noqa: E402
 
 provider = get_provider("ascend")
 package = provider.__package__
 emitter = importlib.import_module(package + ".codegen.extended")
 attention = importlib.import_module(package + ".dispatch.attention_forward")
 spec = importlib.util.spec_from_file_location(
-    "ascend_runner_adapter", ROOT / "backends/ascend/validation/run_tests_adapter.py"
+    "ascend_runner_adapter",
+    ROOT / "backends/ascend/validation/run_tests_adapter.py",
 )
 adapter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(adapter)
@@ -63,8 +64,11 @@ class Contracts(unittest.TestCase):
                         source_node_ids=[0],
                         dependencies=[],
                     )
-                    with tempfile.TemporaryDirectory() as directory, patch.object(
-                        emitter, "plan_graph", return_value=([plan], {}, 0)
+                    with (
+                        tempfile.TemporaryDirectory() as directory,
+                        patch.object(
+                            emitter, "plan_graph", return_value=([plan], {}, 0)
+                        ),
                     ):
                         stages, _ = emitter.emit(
                             {}, Path(directory), {"identity_sha256": "a" * 64}
@@ -72,12 +76,16 @@ class Contracts(unittest.TestCase):
                     signature = stages[0]["candidates"][0]["payload"][
                         "full_signature"
                     ].split(",")
-                    self.assertEqual([x.split(":")[0] for x in signature[:2]],
-                                     ["*u8", "*u8"])
+                    self.assertEqual(
+                        [x.split(":")[0] for x in signature[:2]],
+                        ["*u8", "*u8"],
+                    )
                     with self.assertRaises(ValueError):
                         dispatch.configuration("exp", parameters, tensors)
 
-    def test_activation_backward_launches_resolve_for_dense_and_strided_tensors(self):
+    def test_activation_backward_dense_and_strided_launches(
+        self,
+    ):
         dispatch = importlib.import_module(package + ".dispatch.extended")
         common = importlib.import_module(package + ".dispatch.common")
         for operation, mode in common.BINARY_ELEMENTWISE_MODES.items():
@@ -105,8 +113,11 @@ class Contracts(unittest.TestCase):
                         source_node_ids=[0],
                         dependencies=[],
                     )
-                    with tempfile.TemporaryDirectory() as directory, patch.object(
-                        emitter, "plan_graph", return_value=([plan], {}, 0)
+                    with (
+                        tempfile.TemporaryDirectory() as directory,
+                        patch.object(
+                            emitter, "plan_graph", return_value=([plan], {}, 0)
+                        ),
                     ):
                         stages, size = emitter.emit(
                             {}, Path(directory), {"identity_sha256": "a" * 64}
@@ -136,7 +147,9 @@ class Contracts(unittest.TestCase):
             generate_stats=1,
             reverse_causal=0,
         )
-        config = attention._sdpa_forward_kernel_configuration(parameters, tensors)
+        config = attention._sdpa_forward_kernel_configuration(
+            parameters, tensors
+        )
         plan = dict(
             configuration=config,
             source="attention",
@@ -147,14 +160,17 @@ class Contracts(unittest.TestCase):
             source_node_ids=[0],
             dependencies=[],
         )
-        with tempfile.TemporaryDirectory() as directory, patch.object(
-            emitter, "plan_graph", return_value=([plan], {}, 0)
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(emitter, "plan_graph", return_value=([plan], {}, 0)),
         ):
             stages, size = emitter.emit(
                 {}, Path(directory), {"identity_sha256": "a" * 64}
             )
             stage = stages[0]
-            signature = stage["candidates"][0]["payload"]["full_signature"].split(",")
+            signature = stage["candidates"][0]["payload"][
+                "full_signature"
+            ].split(",")
             source = next(Path(directory).glob("source-*.py")).read_text()
         entry = next(
             n
@@ -183,8 +199,9 @@ class Contracts(unittest.TestCase):
             "convolution_dgrad",
             "convolution_wgrad",
         ]:
-            with self.subTest(operation=operation), self.assertRaisesRegex(
-                ValueError, "not TF32"
+            with (
+                self.subTest(operation=operation),
+                self.assertRaisesRegex(ValueError, "not TF32"),
             ):
                 dispatch.configuration(operation, {"input_precision": 2}, [])
 
@@ -207,11 +224,16 @@ class Contracts(unittest.TestCase):
                 post_padding=[0, 0],
                 n_elements=32,
             )
-            config = dispatch._resample_kernel_configuration(parameters, tensors)
+            config = dispatch._resample_kernel_configuration(
+                parameters, tensors
+            )
             self.assertEqual(config[1]["index_ptr"], pointer)
 
     def test_runner_selects_supplements_and_all_public_operators(self):
-        for suite, suffix in [("functional", "dtype"), ("benchmark", "fp32_output")]:
+        for suite, suffix in [
+            ("functional", "dtype"),
+            ("benchmark", "fp32_output"),
+        ]:
             expression = adapter.test_expression(suite, "reduction")
             self.assertRegex(f"{suite}.ascend.reduction.{suffix}", expression)
             self.assertIsNone(
@@ -238,7 +260,9 @@ class Contracts(unittest.TestCase):
         }
         result = {
             "status": "failed",
-            "record_errors": ["skipped benchmark emitted timing provider records"],
+            "record_errors": [
+                "skipped benchmark emitted timing provider records"
+            ],
         }
         adapter.postprocess_result(
             result=result,
@@ -269,7 +293,11 @@ class Contracts(unittest.TestCase):
             operator="add",
             suite="benchmark",
             records={
-                "case": {"flagdnn": {"stream_us": dict(median=2, p90=2, samples=[2])}}
+                "case": {
+                    "flagdnn": {
+                        "stream_us": dict(median=2, p90=2, samples=[2])
+                    }
+                }
             },
             manifest_operators=[],
         )

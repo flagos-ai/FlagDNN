@@ -70,7 +70,9 @@ def reduction_3d_persistent_kernel(
                         + inner_indices
                         + reduction_index * INNER,
                         mask=output_mask,
-                        other=(1.0 if REDUCTION_MODE == REDUCTION_MUL else 0.0),
+                        other=(
+                            1.0 if REDUCTION_MODE == REDUCTION_MUL else 0.0
+                        ),
                     ).to(tl.float32)
                     if REDUCTION_MODE == REDUCTION_MUL:
                         result *= values
@@ -109,7 +111,9 @@ def reduction_3d_persistent_kernel(
             accumulator = 0.0
         reduction_start = output_index * 0
         while reduction_start < REDUCTION_SIZE:
-            reduction_offsets = reduction_start + tl.arange(0, BLOCK_SIZE).to(tl.int64)
+            reduction_offsets = reduction_start + tl.arange(0, BLOCK_SIZE).to(
+                tl.int64
+            )
             active = reduction_offsets < REDUCTION_SIZE
             values = tl.load(
                 input_ptr + input_base + reduction_offsets * INNER,
@@ -209,7 +213,9 @@ def reduction_strided_persistent_kernel(
         else:
             accumulator = 0.0
         while reduction_start < REDUCTION_SIZE:
-            reduction_offsets = reduction_start + tl.arange(0, BLOCK_SIZE).to(tl.int64)
+            reduction_offsets = reduction_start + tl.arange(0, BLOCK_SIZE).to(
+                tl.int64
+            )
             active = reduction_offsets < REDUCTION_SIZE
             input_linear = (
                 (output_index // INNER) * REDUCTION_SIZE * INNER
@@ -295,7 +301,9 @@ def reduction_2d_kernel(
         reduction_offsets = start + columns
         active = active_rows[:, None] & (reduction_offsets[None, :] < N)
         values = tl.load(
-            x_ptr + rows[:, None] * stride_xm + reduction_offsets[None, :] * stride_xn,
+            x_ptr
+            + rows[:, None] * stride_xm
+            + reduction_offsets[None, :] * stride_xn,
             mask=active,
             other=other,
         ).to(tl.float32)

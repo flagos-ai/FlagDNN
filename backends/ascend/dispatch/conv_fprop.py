@@ -3,7 +3,7 @@
 from __future__ import annotations
 from typing import Any
 import math
-from .common import (
+from .common import (  # noqa: F401
     TRITON_POINTER_TYPES,
     _ceil_div,
     _has_non_overlapping_strides,
@@ -23,6 +23,8 @@ def _convolution_kernel_configuration(
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    constants: dict[str, int | float | str | bool]
+    pointer_abi: list[tuple[str, str | int | None]]
     fused_bias_relu = parameters.get("_fused_bias_relu", False)
     if not isinstance(fused_bias_relu, bool):
         raise ValueError("internal convolution fusion flag must be boolean")
@@ -36,13 +38,18 @@ def _convolution_kernel_configuration(
     pointer_type = TRITON_POINTER_TYPES.get(tensor_data_types[0])
     if pointer_type is None:
         raise ValueError(
-            "unsupported convolution FProp data type: " f"{tensor_data_types[0]!r}"
+            "unsupported convolution FProp data type: "
+            f"{tensor_data_types[0]!r}"
         )
 
-    spatial_rank = _require_integer(parameters, "spatial_rank", minimum=1, maximum=3)
+    spatial_rank = _require_integer(
+        parameters, "spatial_rank", minimum=1, maximum=3
+    )
     tensor_rank = spatial_rank + 2
     if any(len(tensor["dimensions"]) != tensor_rank for tensor in tensors):
-        raise ValueError("convolution FProp tensor rank must equal spatial_rank + 2")
+        raise ValueError(
+            "convolution FProp tensor rank must equal spatial_rank + 2"
+        )
     if any(
         dimension > 2**31 - 1
         for tensor in tensors
@@ -50,10 +57,14 @@ def _convolution_kernel_configuration(
     ):
         raise ValueError("convolution FProp tensor dimensions are too large")
     if any(
-        not _has_non_overlapping_strides(tensor["dimensions"], tensor["strides"])
+        not _has_non_overlapping_strides(
+            tensor["dimensions"], tensor["strides"]
+        )
         for tensor in tensors
     ):
-        raise ValueError("convolution FProp tensors must have non-overlapping strides")
+        raise ValueError(
+            "convolution FProp tensors must have non-overlapping strides"
+        )
 
     pre_padding = _require_integer_list(
         parameters, "pre_padding", spatial_rank, minimum=0
@@ -61,8 +72,12 @@ def _convolution_kernel_configuration(
     post_padding = _require_integer_list(
         parameters, "post_padding", spatial_rank, minimum=0
     )
-    stride = _require_integer_list(parameters, "stride", spatial_rank, minimum=1)
-    dilation = _require_integer_list(parameters, "dilation", spatial_rank, minimum=1)
+    stride = _require_integer_list(
+        parameters, "stride", spatial_rank, minimum=1
+    )
+    dilation = _require_integer_list(
+        parameters, "dilation", spatial_rank, minimum=1
+    )
     groups = _require_integer(parameters, "groups")
     outputs = _require_integer(parameters, "n_outputs")
 
@@ -77,11 +92,15 @@ def _convolution_kernel_configuration(
     channels_per_group = c // groups
     outputs_per_group = k // groups
     if filter_channels != channels_per_group:
-        raise ValueError("convolution FProp filter channels do not match input")
+        raise ValueError(
+            "convolution FProp filter channels do not match input"
+        )
     if fused_bias_relu:
         expected_bias_dimensions = [1, k] + [1] * spatial_rank
         if tensors[2]["dimensions"] != expected_bias_dimensions:
-            raise ValueError("fused convolution bias must have shape [1, K, 1, ...]")
+            raise ValueError(
+                "fused convolution bias must have shape [1, K, 1, ...]"
+            )
 
     expected_output = [n, k]
     reduction_extent = channels_per_group
@@ -91,8 +110,12 @@ def _convolution_kernel_configuration(
         effective_filter = dilation[axis] * (filter_extent - 1) + 1
         padded_input = input_extent + pre_padding[axis] + post_padding[axis]
         if padded_input < effective_filter:
-            raise ValueError("convolution FProp filter is larger than padded input")
-        expected_output.append((padded_input - effective_filter) // stride[axis] + 1)
+            raise ValueError(
+                "convolution FProp filter is larger than padded input"
+            )
+        expected_output.append(
+            (padded_input - effective_filter) // stride[axis] + 1
+        )
         reduction_extent *= filter_extent
     if output_dimensions != expected_output:
         raise ValueError("convolution FProp output metadata is inconsistent")
@@ -108,7 +131,7 @@ def _convolution_kernel_configuration(
         "y_ptr": pointer_type,
     }
     if fused_bias_relu:
-        pointer_abi: list[tuple[str, str | int | None]] = [
+        pointer_abi = [
             ("tensor", None),
             ("tensor", None),
             ("tensor", None),
@@ -130,7 +153,7 @@ def _convolution_kernel_configuration(
         block_m = 32
         block_oc = 16 if outputs_per_group <= 16 else 32
         block_k = 16 if reduction_extent <= 16 else 32
-        constants: dict[str, int | str | bool] = {
+        constants = {
             "M": m,
             "XL": input_l,
             "OL": output_l,
@@ -205,7 +228,9 @@ def _convolution_kernel_configuration(
                 "GROUPS": groups,
                 "HAS_BIAS": fused_bias_relu,
                 "APPLY_RELU": fused_bias_relu,
-                "BIAS_STRIDE": (tensors[2]["strides"][1] if fused_bias_relu else 0),
+                "BIAS_STRIDE": (
+                    tensors[2]["strides"][1] if fused_bias_relu else 0
+                ),
                 "BLOCK_OC": block_oc,
                 "BLOCK_HW": block_hw,
                 "BLOCK_K": block_k,
@@ -215,7 +240,9 @@ def _convolution_kernel_configuration(
                     "bfloat16": 1,
                     "float32": 2,
                 }[tensor_data_types[0]],
-                "INPUT_PRECISION": (1 if tensor_data_types[0] == "float32" else 0),
+                "INPUT_PRECISION": (
+                    1 if tensor_data_types[0] == "float32" else 0
+                ),
             }
             return (
                 "conv2d_1x1_nchw_pad0_kernel",

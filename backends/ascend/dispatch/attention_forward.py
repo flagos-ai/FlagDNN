@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from typing import Any
-from .attention_common import (
+from .attention_common import (  # noqa: F401
     _attention_broadcast_strides,
     _attention_flag,
     _attention_runtime_f32,
@@ -11,7 +11,7 @@ from .attention_common import (
     _require_fp8_scale_tensor,
     _validate_attention_base,
 )
-from .common import (
+from .common import (  # noqa: F401
     FLOAT_DATA_TYPES,
     TRITON_POINTER_TYPES,
     _ceil_div,
@@ -30,6 +30,9 @@ def _sdpa_forward_kernel_configuration(
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    pointer_layout: list[tuple[str, str | int | None]]
+    scalar_layout: list[tuple[str, str | int | None]]
+    constants: dict[str, int | float | str | bool]
     has_bias = _attention_flag(parameters, "has_bias")
     if len(tensors) != (6 if has_bias else 5):
         raise ValueError("SDPA forward tensor count is invalid")
@@ -75,7 +78,8 @@ def _sdpa_forward_kernel_configuration(
         }
 
     runtime_values: dict[str, int | float] = {
-        "qk_scale": _require_number(parameters, "attn_scale") * 1.4426950408889634,
+        "qk_scale": _require_number(parameters, "attn_scale")
+        * 1.4426950408889634,
         "HQ": heads,
         "SQ": sequence_q,
         "SKV": sequence_kv,
@@ -145,7 +149,7 @@ def _sdpa_forward_kernel_configuration(
         runtime_signature[name] = "i32"
 
     block_m = 16
-    constants: dict[str, int | float | str | bool] = {
+    constants = {
         "HEAD_DIM": head_dimension,
         "V_DIM": value_dimension,
         "ELEM_SIZE": 4 if q["data_type"] == "float32" else 2,
@@ -167,7 +171,9 @@ def _sdpa_forward_kernel_configuration(
         ("tensor_alias", stats_index),
         ("scalar_f32", "qk_scale"),
     ]
-    scalar_layout = [("scalar_i32", name) for name in list(runtime_signature)[7:]]
+    scalar_layout = [
+        ("scalar_i32", name) for name in list(runtime_signature)[7:]
+    ]
     return (
         "_sdpa_fwd_kernel",
         runtime_signature,

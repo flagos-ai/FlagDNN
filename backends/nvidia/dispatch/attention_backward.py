@@ -33,6 +33,10 @@ def _sdpa_fp8_backward_kernel_configuration(
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    constants: dict[str, int | float | str | bool]
+    layout: list[tuple[str, str | int | None]]
+    scale_names: tuple[str, ...]
+    amax_tensors: tuple[tuple[dict[str, Any], str], ...]
     stage = parameters.get("_sdpa_fp8_bwd_stage")
     if stage == "zero_amax":
         if len(tensors) != 4:
@@ -232,7 +236,7 @@ def _sdpa_fp8_backward_kernel_configuration(
             "scale_dp_ptr": TRITON_POINTER_TYPES["float32"],
             **runtime_scalars,
         }
-        layout: list[tuple[str, str | int | None]] = [
+        layout = [
             *[("tensor_alias", index) for index in (0, 1, 2, 3, 4, 5)],
             ("tensor_alias", 14),
             ("tensor_alias", 15),
@@ -330,6 +334,8 @@ def _sdpa_backward_kernel_configuration(
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    constants: dict[str, int | float | str | bool]
+    layout: list[tuple[str, str | int | None]]
     stage = parameters.get("_sdpa_bwd_stage")
     # FP32 dot operands need smaller tiles to fit the shared-memory budget.
     fp32 = bool(tensors) and tensors[0]["data_type"] == "float32"
@@ -426,7 +432,7 @@ def _sdpa_backward_kernel_configuration(
                 "stride_bias_n": 0,
             }
         pointer_type = TRITON_POINTER_TYPES[q["data_type"]]
-        constants: dict[str, int | float | str | bool] = {
+        constants = {
             "HKV": value_heads,
             **_attention_strides(q, "q", "bhmd"),
             **_attention_strides(k, "k", "bhnd"),
@@ -576,7 +582,7 @@ def _sdpa_backward_kernel_configuration(
         delta = tensors[delta_index]
         dq = tensors[dq_index]
         dbias = tensors[dbias_index] if dbias_index is not None else None
-        constants: dict[str, int | float | str | bool] = {
+        constants = {
             "HQ": heads,
             "q_per_k": heads // key_heads,
             "q_per_v": heads // value_heads,

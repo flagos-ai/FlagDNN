@@ -61,13 +61,19 @@ def handles(graph):
 
 def configuration(operation, parameters, tensors):
     if parameters.get("input_precision", 0) not in (0, 1):
-        raise ValueError("Ascend 910B supports DEFAULT/IEEE precision, not TF32")
+        raise ValueError(
+            "Ascend 910B supports DEFAULT/IEEE precision, not TF32"
+        )
     if operation.startswith("reduction_"):
-        return "reduction", reduction_configuration(operation, parameters, tensors)
+        return "reduction", reduction_configuration(
+            operation, parameters, tensors
+        )
     if operation == "matmul":
         return "matmul", _matmul_kernel_configuration(parameters, tensors)
     if operation == "convolution_fprop":
-        return "convolution", _convolution_kernel_configuration(parameters, tensors)
+        return "convolution", _convolution_kernel_configuration(
+            parameters, tensors
+        )
     if (
         operation in BINARY_ELEMENTWISE_MODES
         or operation in UNARY_POINTWISE_MODES
@@ -82,11 +88,17 @@ def configuration(operation, parameters, tensors):
                 else "ternary" if operation == "binary_select" else "unary"
             )
         )
-        return source, _pointwise_kernel_configuration(operation, parameters, tensors)
+        return source, _pointwise_kernel_configuration(
+            operation, parameters, tensors
+        )
     if operation in {"reshape", "transpose", "slice"}:
-        return "layout", _layout_kernel_configuration(operation, parameters, tensors)
+        return "layout", _layout_kernel_configuration(
+            operation, parameters, tensors
+        )
     if operation in {"concatenate", "gen_index"}:
-        return "unary", _index_kernel_configuration(operation, parameters, tensors)
+        return "unary", _index_kernel_configuration(
+            operation, parameters, tensors
+        )
     if operation in {
         "instancenorm",
         "adalayernorm",
@@ -109,7 +121,9 @@ def configuration(operation, parameters, tensors):
     if operation == "bn_finalize":
         return "unary", _bn_finalize_kernel_configuration(parameters, tensors)
     if operation in {"rope", "rope_backward"}:
-        return "unary", _rope_kernel_configuration(operation, parameters, tensors)
+        return "unary", _rope_kernel_configuration(
+            operation, parameters, tensors
+        )
     if operation == "rng":
         return "unary", _rng_kernel_configuration(parameters, tensors)
     if operation == "resample":
@@ -119,11 +133,17 @@ def configuration(operation, parameters, tensors):
             parameters, tensors
         )
     if operation in {"moe_grouped_matmul", "moe_grouped_matmul_bwd"}:
-        return "matmul", _moe_matmul_configuration(operation, parameters, tensors)
+        return "matmul", _moe_matmul_configuration(
+            operation, parameters, tensors
+        )
     if operation == "sdpa":
-        return "attention", _sdpa_forward_kernel_configuration(parameters, tensors)
+        return "attention", _sdpa_forward_kernel_configuration(
+            parameters, tensors
+        )
     if operation == "sdpa_backward":
-        return "attention", _sdpa_backward_kernel_configuration(parameters, tensors)
+        return "attention", _sdpa_backward_kernel_configuration(
+            parameters, tensors
+        )
     raise ValueError(f"Ascend has no operator plan for {operation!r}")
 
 
@@ -140,14 +160,24 @@ def plan_graph(graph):
     stages, producers, ids = [], {}, set()
     for node in nodes:
         node_id, op = node["id"], node["type"]
-        if type(node_id) is not int or node_id in ids or not 0 <= node_id < len(nodes):
+        if (
+            type(node_id) is not int
+            or node_id in ids
+            or not 0 <= node_id < len(nodes)
+        ):
             raise ValueError("Ascend graph node ID is invalid")
         ids.add(node_id)
         uids, metadata, input_count = _tensor_metadata(node, op, tensors)
         inputs, outputs = uids[:input_count], uids[input_count:]
-        if any(uid in producers for uid in outputs) or set(inputs) & set(outputs):
-            raise ValueError("Ascend tensor has duplicate or aliased producers")
-        if any(tensors[uid]["virtual"] and uid not in producers for uid in inputs):
+        if any(uid in producers for uid in outputs) or set(inputs) & set(
+            outputs
+        ):
+            raise ValueError(
+                "Ascend tensor has duplicate or aliased producers"
+            )
+        if any(
+            tensors[uid]["virtual"] and uid not in producers for uid in inputs
+        ):
             raise ValueError("Ascend virtual input has no earlier producer")
         group = dict(
             operation=op,
@@ -157,9 +187,15 @@ def plan_graph(graph):
             output_uids=outputs,
             source_node_ids=[node_id],
         )
-        groups = _expand_concatenate_group(group) if op == "concatenate" else [group]
+        groups = (
+            _expand_concatenate_group(group)
+            if op == "concatenate"
+            else [group]
+        )
         if op == "sdpa_backward":
-            groups, next_uid = _expand_sdpa_backward_group(group, tensors, next_uid)
+            groups, next_uid = _expand_sdpa_backward_group(
+                group, tensors, next_uid
+            )
         for group in groups:
             group["dependencies"] = sorted(
                 {

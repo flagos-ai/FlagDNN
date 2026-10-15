@@ -69,9 +69,13 @@ def _validate_convolution(node: Mapping[str, Any]) -> dict[str, Any]:
             ports["output"],
         )
         if "convolution_mode" in p:
-            mode = _require_integer(p, "convolution_mode", minimum=0, maximum=1)
+            mode = _require_integer(
+                p, "convolution_mode", minimum=0, maximum=1
+            )
             if mode != 0:
-                raise ValueError("convolution FProp supports CROSS_CORRELATION only")
+                raise ValueError(
+                    "convolution FProp supports CROSS_CORRELATION only"
+                )
         flip_filter = False
     elif operation == "convolution_dgrad":
         result, weight, image = ports["dy"], ports["w"], ports["dx"]
@@ -92,7 +96,9 @@ def _validate_convolution(node: Mapping[str, Any]) -> dict[str, Any]:
     tensors = (image, weight, result)
     data_type = _same_dtype(tensors, FLOAT_TYPES, "convolution")
     if any(len(tensor["dimensions"]) != rank for tensor in tensors):
-        raise ValueError("convolution tensor ranks must equal spatial_rank + 2")
+        raise ValueError(
+            "convolution tensor ranks must equal spatial_rank + 2"
+        )
     image_dims = list(image["dimensions"])
     weight_dims = list(weight["dimensions"])
     result_dims = list(result["dimensions"])
@@ -132,7 +138,9 @@ def _validate_convolution(node: Mapping[str, Any]) -> dict[str, Any]:
         "convolution output elements",
     )
     if n_outputs != expected_n_outputs:
-        raise ValueError("parameters.n_outputs is inconsistent with the output tensor")
+        raise ValueError(
+            "parameters.n_outputs is inconsistent with the output tensor"
+        )
     return {
         "input_precision": precision,
         "data_type": data_type,
@@ -156,6 +164,8 @@ def _validate_convolution(node: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _convolution_stage(node: Mapping[str, Any]) -> KernelStagePlan:
+    constants: dict[str, int | float | bool]
+    pointers: tuple[tuple[str, str, str, str | int], ...]
     operation = str(node["operation"])
     d = _require_object(node["derived"], "node.derived")
     spatial_rank = int(d["spatial_rank"])
@@ -207,7 +217,9 @@ def _convolution_stage(node: Mapping[str, Any]) -> KernelStagePlan:
         if not isinstance(fused_bias_relu, bool):
             raise ValueError("fused_bias_relu must be boolean")
         if fused_bias_relu and spatial_rank != 2:
-            raise ValueError("Conv-Bias-ReLU fusion supports 2D convolution only")
+            raise ValueError(
+                "Conv-Bias-ReLU fusion supports 2D convolution only"
+            )
         bias_port = "bias" if fused_bias_relu else "input"
         pointers = (
             _tensor_pointer(node, "x_ptr", "input"),
@@ -509,6 +521,7 @@ def _can_use_1x1_fprop(node: Mapping[str, Any]) -> bool:
 
 
 def _one_by_one_fprop_plan(node: Mapping[str, Any]) -> NodePlan:
+    constants: dict[str, int | float | bool]
     derived = _require_object(node["derived"], "node.derived")
     result = _require_object(derived["result"], "node.derived.result")
     base = _convolution_stage(node)
@@ -524,7 +537,9 @@ def _one_by_one_fprop_plan(node: Mapping[str, Any]) -> NodePlan:
         "HAS_BIAS": fused_bias_relu,
         "APPLY_RELU": fused_bias_relu,
         "BIAS_STRIDE": (
-            int(node["port_tensors"]["bias"]["strides"][1]) if fused_bias_relu else 0
+            int(node["port_tensors"]["bias"]["strides"][1])
+            if fused_bias_relu
+            else 0
         ),
         "BLOCK_OC": 32,
         "BLOCK_HW": 32,
@@ -769,7 +784,9 @@ def _3x3_im2col_fprop_plan(node: Mapping[str, Any]) -> NodePlan:
         num_warps=matmul_num_warps,
         num_stages=1,
     )
-    plan = NodePlan(operation, (pack_stage, matmul_stage), (columns,), columns.size)
+    plan = NodePlan(
+        operation, (pack_stage, matmul_stage), (columns,), columns.size
+    )
     plan.validate_dependencies()
     return plan
 
@@ -798,6 +815,7 @@ def _can_use_low_channel_3x3_fprop(node: Mapping[str, Any]) -> bool:
 
 
 def _low_channel_3x3_fprop_plan(node: Mapping[str, Any]) -> NodePlan:
+    constants: dict[str, int | float | bool]
     derived = _require_object(node["derived"], "node.derived")
     image = _require_object(derived["image"], "node.derived.image")
     result = _require_object(derived["result"], "node.derived.result")
@@ -818,7 +836,9 @@ def _low_channel_3x3_fprop_plan(node: Mapping[str, Any]) -> NodePlan:
         "HAS_BIAS": fused_bias_relu,
         "APPLY_RELU": fused_bias_relu,
         "BIAS_STRIDE": (
-            int(node["port_tensors"]["bias"]["strides"][1]) if fused_bias_relu else 0
+            int(node["port_tensors"]["bias"]["strides"][1])
+            if fused_bias_relu
+            else 0
         ),
         "BLOCK_OC": 32,
         "BLOCK_HW": 32,
@@ -841,7 +861,9 @@ def _low_channel_3x3_fprop_plan(node: Mapping[str, Any]) -> NodePlan:
         grid_spec=grid_spec,
     )
     if stage.function_name not in REGISTRY_FUNCTIONS[stage.operation]:
-        raise ValueError("low-channel 3x3 FProp kernel is absent from the registry")
+        raise ValueError(
+            "low-channel 3x3 FProp kernel is absent from the registry"
+        )
     stage.validate_launch()
     return NodePlan(str(node["operation"]), (stage,))
 
@@ -1406,7 +1428,11 @@ def _batched_3x3_wgrad_plan(node: Mapping[str, Any]) -> NodePlan:
             "fixed",
             (
                 _ceil_div(int(derived["out_channels"]), block_m)
-                * (2 if use_wide_matmul else _ceil_div(packed_columns, block_n)),
+                * (
+                    2
+                    if use_wide_matmul
+                    else _ceil_div(packed_columns, block_n)
+                ),
                 batch,
                 1,
             ),
@@ -1629,7 +1655,11 @@ def _standard_1x1_wgrad_plan(node: Mapping[str, Any]) -> NodePlan:
     partial = _workspace_tensor(
         "wgrad_1x1_partial",
         "float32",
-        (num_splits, int(derived["out_channels"]), int(derived["in_per_group"])),
+        (
+            num_splits,
+            int(derived["out_channels"]),
+            int(derived["in_per_group"]),
+        ),
     )
     split_constants = {
         "HW": int(image["dimensions"][2]) * int(image["dimensions"][3]),
@@ -1740,6 +1770,7 @@ def _can_use_1x1_dgrad(node: Mapping[str, Any]) -> bool:
 
 
 def _one_by_one_dgrad_plan(node: Mapping[str, Any]) -> NodePlan:
+    constants: dict[str, int | float | bool]
     derived = _require_object(node["derived"], "node.derived")
     image = _require_object(derived["image"], "node.derived.image")
     base = _convolution_stage(node)
@@ -1838,10 +1869,11 @@ def _can_use_packed_stride2_dgrad(node: Mapping[str, Any]) -> bool:
 
 
 def _packed_stride2_dgrad_plan(node: Mapping[str, Any]) -> NodePlan:
+    constants: dict[str, int | float | bool]
     derived = _require_object(node["derived"], "node.derived")
     operation = str(node["operation"])
     image = _require_object(derived["image"], "node.derived.image")
-    weight = _require_object(derived["weight"], "node.derived.weight")
+    _require_object(derived["weight"], "node.derived.weight")
     result = _require_object(derived["result"], "node.derived.result")
     source_type = str(derived["data_type"])
     compute_type = "float16" if source_type == "float32" else source_type
@@ -2101,7 +2133,8 @@ def _packed_stride2_dgrad_plan(node: Mapping[str, Any]) -> NodePlan:
             grid_spec=GridSpec(
                 "fixed",
                 (
-                    _ceil_div(rows, block_m) * _ceil_div(in_per_group, block_ci),
+                    _ceil_div(rows, block_m)
+                    * _ceil_div(in_per_group, block_ci),
                     1,
                     1,
                 ),
@@ -2124,6 +2157,7 @@ def _packed_stride2_dgrad_plan(node: Mapping[str, Any]) -> NodePlan:
 
 
 def _scatter_dgrad_plan(node: Mapping[str, Any]) -> NodePlan:
+    constants: dict[str, int | float | bool]
     derived = _require_object(node["derived"], "node.derived")
     operation = str(node["operation"])
     zero = _make_stage(
@@ -2192,6 +2226,7 @@ def _stride2_dgrad_stage(
     parity_w: int,
     dependency: tuple[str, ...],
 ) -> KernelStagePlan:
+    constants: dict[str, int | float | bool]
     base = _convolution_stage(node)
     derived = _require_object(node["derived"], "node.derived")
     image = _require_object(derived["image"], "node.derived.image")

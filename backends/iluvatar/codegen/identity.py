@@ -62,8 +62,12 @@ def _jit_paths() -> dict[str, Path]:
     root_value = os.environ.get("FLAGDNN_ILUVATAR_TRITON_JIT_ROOT", "")
     config_value = os.environ.get("FLAGDNN_ILUVATAR_TRITON_JIT_DIR", "")
     library_value = os.environ.get("FLAGDNN_ILUVATAR_TRITON_JIT_LIBRARY", "")
-    include_value = os.environ.get("FLAGDNN_ILUVATAR_TRITON_JIT_INCLUDE_DIR", "")
-    scripts_value = os.environ.get("FLAGDNN_ILUVATAR_TRITON_JIT_SCRIPT_DIR", "")
+    include_value = os.environ.get(
+        "FLAGDNN_ILUVATAR_TRITON_JIT_INCLUDE_DIR", ""
+    )
+    scripts_value = os.environ.get(
+        "FLAGDNN_ILUVATAR_TRITON_JIT_SCRIPT_DIR", ""
+    )
     root = Path(root_value).expanduser() if root_value else None
     config = _first_file(
         tuple(
@@ -75,14 +79,20 @@ def _jit_paths() -> dict[str, Path]:
                     else None
                 ),
                 root / "build/TritonJITConfig.cmake" if root else None,
-                (root / "lib/cmake/TritonJIT/TritonJITConfig.cmake" if root else None),
+                (
+                    root / "lib/cmake/TritonJIT/TritonJITConfig.cmake"
+                    if root
+                    else None
+                ),
                 Path("/usr/local/lib/cmake/TritonJIT/TritonJITConfig.cmake"),
             )
             if candidate is not None
         ),
         "IX TritonJITConfig.cmake",
     )
-    build_root = config.parent.parent if config.parent.name == "build" else None
+    build_root = (
+        config.parent.parent if config.parent.name == "build" else None
+    )
     install_root = (
         config.parent.parent.parent.parent
         if config.parent.name == "TritonJIT"
@@ -93,8 +103,16 @@ def _jit_paths() -> dict[str, Path]:
             candidate
             for candidate in (
                 Path(library_value) if library_value else None,
-                (build_root / "build/src/libtriton_jit.so" if build_root else None),
-                (install_root / "lib/libtriton_jit.so" if install_root else None),
+                (
+                    build_root / "build/src/libtriton_jit.so"
+                    if build_root
+                    else None
+                ),
+                (
+                    install_root / "lib/libtriton_jit.so"
+                    if install_root
+                    else None
+                ),
                 Path("/usr/local/lib/libtriton_jit.so"),
             )
             if candidate is not None
@@ -120,7 +138,11 @@ def _jit_paths() -> dict[str, Path]:
             for candidate in (
                 Path(scripts_value) if scripts_value else None,
                 build_root / "scripts" if build_root else None,
-                (install_root / "share/triton_jit/scripts" if install_root else None),
+                (
+                    install_root / "share/triton_jit/scripts"
+                    if install_root
+                    else None
+                ),
                 Path("/usr/local/share/triton_jit/scripts"),
             )
             if candidate is not None
@@ -162,7 +184,9 @@ def _kernel_dependency_paths() -> tuple[Path, ...]:
     for candidate in iter_kernel_candidates("iluvatar"):
         paths.add(resolve_kernel_source(compiler_path, candidate).resolve())
         if candidate.tuning is not None:
-            paths.add(resolve_tuning_source(compiler_path, candidate).resolve())
+            paths.add(
+                resolve_tuning_source(compiler_path, candidate).resolve()
+            )
     return tuple(sorted(paths))
 
 
@@ -187,7 +211,9 @@ def compiler_identity_dependencies(
     result = tuple(sorted(path.resolve() for path in paths))
     for path in result:
         if not path.is_file():
-            raise RuntimeError(f"compiler identity dependency is missing: {path}")
+            raise RuntimeError(
+                f"compiler identity dependency is missing: {path}"
+            )
     return result
 
 
@@ -215,7 +241,9 @@ def _validate_request(target: str, execution_engine: str) -> None:
         raise ValueError("Iluvatar supports only libtriton_jit")
 
 
-def build_compiler_identity(target: str, execution_engine: str) -> dict[str, Any]:
+def build_compiler_identity(
+    target: str, execution_engine: str
+) -> dict[str, Any]:
     _validate_request(target, execution_engine)
     corex = _corex_paths()
     jit = _jit_paths()
@@ -266,9 +294,9 @@ def build_compiler_identity(target: str, execution_engine: str) -> dict[str, Any
         "python_environment": collect_environment_identity(),
         "dependencies": dependency_records,
     }
-    canonical = json.dumps(document, sort_keys=True, separators=(",", ":")).encode(
-        "utf-8"
-    )
+    canonical = json.dumps(
+        document, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
     return {
         "provider": PROVIDER_NAME,
         "provider_version": PROVIDER_VERSION,

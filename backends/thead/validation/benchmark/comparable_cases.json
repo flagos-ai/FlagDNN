@@ -18224,11 +18224,6 @@
       }
     },
     "concatenate": {
-      "concatenate_int32_1_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
       "concatenate_fp32_1_axis0": {
         "status": "unsupported",
         "reason_code": "no_certified_acdnn_primitive",
@@ -18240,31 +18235,6 @@
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
       },
       "concatenate_bf16_1_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_bool_1_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e4m3_1_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e5m2_1_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e8m0_1_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_int32_17_axis-1": {
         "status": "unsupported",
         "reason_code": "no_certified_acdnn_primitive",
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
@@ -18284,31 +18254,6 @@
         "reason_code": "no_certified_acdnn_primitive",
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
       },
-      "concatenate_bool_17_axis-1": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e4m3_17_axis-1": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e5m2_17_axis-1": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e8m0_17_axis-1": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_int32_33_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
       "concatenate_fp32_33_axis0": {
         "status": "unsupported",
         "reason_code": "no_certified_acdnn_primitive",
@@ -18320,31 +18265,6 @@
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
       },
       "concatenate_bf16_33_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_bool_33_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e4m3_33_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e5m2_33_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e8m0_33_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_int32_2_3_axis-1": {
         "status": "unsupported",
         "reason_code": "no_certified_acdnn_primitive",
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
@@ -18364,31 +18284,6 @@
         "reason_code": "no_certified_acdnn_primitive",
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
       },
-      "concatenate_bool_2_3_axis-1": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e4m3_2_3_axis-1": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e5m2_2_3_axis-1": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e8m0_2_3_axis-1": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_int32_3_7_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
       "concatenate_fp32_3_7_axis0": {
         "status": "unsupported",
         "reason_code": "no_certified_acdnn_primitive",
@@ -18400,31 +18295,6 @@
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
       },
       "concatenate_bf16_3_7_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_bool_3_7_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e4m3_3_7_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e5m2_3_7_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e8m0_3_7_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_int32_2_3_5_axis-1": {
         "status": "unsupported",
         "reason_code": "no_certified_acdnn_primitive",
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
@@ -18444,31 +18314,6 @@
         "reason_code": "no_certified_acdnn_primitive",
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
       },
-      "concatenate_bool_2_3_5_axis-1": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e4m3_2_3_5_axis-1": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e5m2_2_3_5_axis-1": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e8m0_2_3_5_axis-1": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_int32_1_3_17_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
       "concatenate_fp32_1_3_17_axis0": {
         "status": "unsupported",
         "reason_code": "no_certified_acdnn_primitive",
@@ -18480,31 +18325,6 @@
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
       },
       "concatenate_bf16_1_3_17_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_bool_1_3_17_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e4m3_1_3_17_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e5m2_1_3_17_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e8m0_1_3_17_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_int32_2_4_33_axis-2": {
         "status": "unsupported",
         "reason_code": "no_certified_acdnn_primitive",
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
@@ -18524,31 +18344,6 @@
         "reason_code": "no_certified_acdnn_primitive",
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
       },
-      "concatenate_bool_2_4_33_axis-2": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e4m3_2_4_33_axis-2": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e5m2_2_4_33_axis-2": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e8m0_2_4_33_axis-2": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_int32_2_3_4_5_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
       "concatenate_fp32_2_3_4_5_axis0": {
         "status": "unsupported",
         "reason_code": "no_certified_acdnn_primitive",
@@ -18560,31 +18355,6 @@
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
       },
       "concatenate_bf16_2_3_4_5_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_bool_2_3_4_5_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e4m3_2_3_4_5_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e5m2_2_3_4_5_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e8m0_2_3_4_5_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_int32_1_7_3_9_axis-3": {
         "status": "unsupported",
         "reason_code": "no_certified_acdnn_primitive",
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
@@ -18604,31 +18374,6 @@
         "reason_code": "no_certified_acdnn_primitive",
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
       },
-      "concatenate_bool_1_7_3_9_axis-3": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e4m3_1_7_3_9_axis-3": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e5m2_1_7_3_9_axis-3": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e8m0_1_7_3_9_axis-3": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_int32_2_2_2_2_3_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
       "concatenate_fp32_2_2_2_2_3_axis0": {
         "status": "unsupported",
         "reason_code": "no_certified_acdnn_primitive",
@@ -18640,31 +18385,6 @@
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
       },
       "concatenate_bf16_2_2_2_2_3_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_bool_2_2_2_2_3_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e4m3_2_2_2_2_3_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e5m2_2_2_2_2_3_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e8m0_2_2_2_2_3_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_int32_1_2_1_3_1_2_1_5_axis-5": {
         "status": "unsupported",
         "reason_code": "no_certified_acdnn_primitive",
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
@@ -18684,31 +18404,6 @@
         "reason_code": "no_certified_acdnn_primitive",
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
       },
-      "concatenate_bool_1_2_1_3_1_2_1_5_axis-5": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e4m3_1_2_1_3_1_2_1_5_axis-5": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e5m2_1_2_1_3_1_2_1_5_axis-5": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e8m0_1_2_1_3_1_2_1_5_axis-5": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_int32_3_257_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
       "concatenate_fp32_3_257_axis0": {
         "status": "unsupported",
         "reason_code": "no_certified_acdnn_primitive",
@@ -18724,31 +18419,6 @@
         "reason_code": "no_certified_acdnn_primitive",
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
       },
-      "concatenate_bool_3_257_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e4m3_3_257_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e5m2_3_257_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e8m0_3_257_axis0": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_int32_2_1025_axis-1": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
       "concatenate_fp32_2_1025_axis-1": {
         "status": "unsupported",
         "reason_code": "no_certified_acdnn_primitive",
@@ -18760,26 +18430,6 @@
         "detail": "acDNN 1400 does not implement the corresponding operator interface."
       },
       "concatenate_bf16_2_1025_axis-1": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_bool_2_1025_axis-1": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e4m3_2_1025_axis-1": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e5m2_2_1025_axis-1": {
-        "status": "unsupported",
-        "reason_code": "no_certified_acdnn_primitive",
-        "detail": "acDNN 1400 does not implement the corresponding operator interface."
-      },
-      "concatenate_fp8_e8m0_2_1025_axis-1": {
         "status": "unsupported",
         "reason_code": "no_certified_acdnn_primitive",
         "detail": "acDNN 1400 does not implement the corresponding operator interface."

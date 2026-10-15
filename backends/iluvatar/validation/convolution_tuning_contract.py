@@ -8,7 +8,7 @@ import importlib.util
 from pathlib import Path
 
 import torch
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 # N, Cin, Cout, H, W, kernel, padding, groups. Exercise both tails,
 # spatially aligned group boundaries, multiple batches, and aligned K.
@@ -96,13 +96,18 @@ def check_problem(kernel, configurations, problem):
                 x, w, x, y, **constants, DTYPE_ID=dtype_id, **meta, **options
             )
             torch.cuda.synchronize()
-            label = f"problem={problem} dtype={dtype} META={meta} options={options}"
+            label = (
+                f"problem={problem} dtype={dtype} META={meta} "
+                f"options={options}"
+            )
             torch.testing.assert_close(
                 y.cpu(), expected, atol=atol, rtol=atol, msg=label
             )
             if not bool(torch.all(y_storage[ny:] == 23).item()):
                 raise AssertionError(f"output guard overwritten: {label}")
-            if not torch.equal(x.cpu(), host_x) or not torch.equal(w.cpu(), host_w):
+            if not torch.equal(x.cpu(), host_x) or not torch.equal(
+                w.cpu(), host_w
+            ):
                 raise AssertionError(f"input modified: {label}")
             checked += 1
     return checked
@@ -112,7 +117,9 @@ def main():
     backend = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--kernel-source", type=Path, default=backend / "kernels/convolution.py"
+        "--kernel-source",
+        type=Path,
+        default=backend / "kernels/convolution.py",
     )
     parser.add_argument("--problem", type=int, choices=range(len(PROBLEMS)))
     args = parser.parse_args()
@@ -121,9 +128,9 @@ def main():
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    entries = yaml.safe_load((backend / "tuning/convolution.yaml").read_text())[
-        "conv_fprop"
-    ]
+    entries = yaml.safe_load(
+        (backend / "tuning/convolution.yaml").read_text()
+    )["conv_fprop"]
     configurations, seen = [], set()
     for entry in entries:
         meta = {
@@ -140,7 +147,9 @@ def main():
             configurations.append((meta, options))
     problems = PROBLEMS if args.problem is None else (PROBLEMS[args.problem],)
     checked = sum(
-        check_problem(module.conv2d_spatial_nchw_kernel, configurations, problem)
+        check_problem(
+            module.conv2d_spatial_nchw_kernel, configurations, problem
+        )
         for problem in problems
     )
     print(f"PASS: grouped convolution tuning configurations={checked}")

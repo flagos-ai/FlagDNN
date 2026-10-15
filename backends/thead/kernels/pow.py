@@ -65,6 +65,7 @@ def binary_contiguous_kernel(
         mask=mask,
     )
 
+
 @triton.jit
 def binary_strided_kernel(
     x_ptr,

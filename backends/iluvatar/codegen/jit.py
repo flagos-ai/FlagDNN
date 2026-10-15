@@ -21,7 +21,9 @@ def _triton_supports_pointer_range(version: str) -> bool:
     return (int(match.group(1)), int(match.group(2))) >= (3, 3)
 
 
-TRITON_SUPPORTS_POINTER_RANGE = _triton_supports_pointer_range(triton.__version__)
+TRITON_SUPPORTS_POINTER_RANGE = _triton_supports_pointer_range(
+    triton.__version__
+)
 
 
 def _jit_runtime_signature(
@@ -35,7 +37,9 @@ def _jit_runtime_signature(
         or argument_abi[-1].get("kind") != "profile_scratch_pointer"
     ):
         raise ValueError("libtriton_jit scratch ABI is invalid")
-    runtime_names = [name for name in function.arg_names if name in runtime_signature]
+    runtime_names = [
+        name for name in function.arg_names if name in runtime_signature
+    ]
     visible_arguments = argument_abi[:-2]
     if len(runtime_names) != len(visible_arguments):
         raise ValueError("kernel runtime signature and argument ABI disagree")
@@ -50,9 +54,11 @@ def _jit_runtime_signature(
         alignment = int(argument.get("alignment", 1))
         storage_size = int(argument.get("size", 0))
         specialization = "16" if alignment >= 16 else ""
-        # Match IX CoreX Triton Tensor specialization exactly: buffer operations may
+        # Match IX CoreX Triton Tensor specialization exactly: buffer
+        # operations may
         # use 32-bit offsets only when the reachable storage range is proven to
-        # fit in signed int32. The Iluvatar-private standalone compiler restores
+        # fit in signed int32. The Iluvatar-private standalone compiler
+        # restores
         # this S marker as the tt.pointer_range=32 TTIR argument attribute.
         if TRITON_SUPPORTS_POINTER_RANGE and 0 < storage_size <= MAX_I32:
             specialization += "S"

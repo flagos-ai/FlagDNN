@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Iterable
+
 import ast
 import hashlib
 import os
@@ -21,8 +23,14 @@ def _compiler_entry_path() -> Path:
 
 def _write_immutable(path: Path, data: bytes, description: str) -> None:
     if path.exists():
-        if not path.is_file() or path.is_symlink() or path.read_bytes() != data:
-            raise ValueError(f"existing {description} violates content identity")
+        if (
+            not path.is_file()
+            or path.is_symlink()
+            or path.read_bytes() != data
+        ):
+            raise ValueError(
+                f"existing {description} violates content identity"
+            )
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -31,7 +39,11 @@ def _write_immutable(path: Path, data: bytes, description: str) -> None:
             output.flush()
             os.fsync(output.fileno())
     except FileExistsError:
-        if not path.is_file() or path.is_symlink() or path.read_bytes() != data:
+        if (
+            not path.is_file()
+            or path.is_symlink()
+            or path.read_bytes() != data
+        ):
             raise ValueError(f"concurrent {description} publication disagrees")
 
 
@@ -52,11 +64,14 @@ def _materialize_source(
 
 
 def _validate_non_tle_kernel_source(source_bytes: bytes) -> None:
+    modules: Iterable[str]
     try:
         source = source_bytes.decode("utf-8")
         tree = ast.parse(source)
     except (UnicodeDecodeError, SyntaxError) as error:
-        raise ValueError("Ascend kernel source is not valid UTF-8 Python") from error
+        raise ValueError(
+            "Ascend kernel source is not valid UTF-8 Python"
+        ) from error
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -67,7 +82,10 @@ def _validate_non_tle_kernel_source(source_bytes: bytes) -> None:
                 alias.name in {"tle", "*"} for alias in node.names
             ):
                 raise ValueError(
-                    "FlagDNN Ascend kernels must not depend on optional Triton TLE"
+                    (
+                        "FlagDNN Ascend kernels must not depend on optional "
+                        "Triton TLE"
+                    )
                 )
             modules = (module,)
         else:

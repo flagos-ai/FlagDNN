@@ -1,4 +1,6 @@
-"""FP32 MatMul packing policy; separate layout preparation from GEMM planning."""
+"""
+FP32 MatMul packing policy; separate layout preparation from GEMM planning.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +18,8 @@ def _expand_matmul_group(
     *,
     architecture: int = 0,
 ) -> tuple[list[ExecutionGroup], int]:
+    packing: ExecutionGroup
+    compute: ExecutionGroup
     tensors = group["tensors"]
     if len(tensors) != 3 or not all(
         t["data_type"] == "float32"

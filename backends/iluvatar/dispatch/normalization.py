@@ -59,7 +59,9 @@ def _validate_normalization(node: Mapping[str, Any]) -> dict[str, Any]:
             scale_dim = 1 if axis < leading else scale_dims[axis - leading]
             if scale_dim != 1:
                 if scale_dim != x_dim:
-                    raise ValueError("normalization scale shape does not match X")
+                    raise ValueError(
+                        "normalization scale shape does not match X"
+                    )
                 normalized_suffix = True
             elif normalized_suffix and x_dim != 1:
                 raise ValueError(
@@ -74,14 +76,18 @@ def _validate_normalization(node: Mapping[str, Any]) -> dict[str, Any]:
             not normalized_suffix
             or _checked_product(scale_dims, "normalization scale elements")
             != normalized_elements
-            or _checked_product(list(bias["dimensions"]), "normalization bias elements")
+            or _checked_product(
+                list(bias["dimensions"]), "normalization bias elements"
+            )
             != normalized_elements
         ):
             raise ValueError("normalization scale/bias size is invalid")
         if not _is_contiguous(scale) or not _is_contiguous(bias):
             raise ValueError("normalization scale/bias must be contiguous")
         statistic_names = (
-            ("inv_variance",) if operation == "rmsnorm" else ("mean", "inv_variance")
+            ("inv_variance",)
+            if operation == "rmsnorm"
+            else ("mean", "inv_variance")
         )
         for name in statistic_names:
             statistic = ports[name]
@@ -107,7 +113,10 @@ def _validate_normalization(node: Mapping[str, Any]) -> dict[str, Any]:
         epsilon = _require_number(p, "epsilon", positive=True)
         if (
             "forward_phase" in p
-            and _require_integer(p, "forward_phase", minimum=0, maximum=MAX_I32) != 2
+            and _require_integer(
+                p, "forward_phase", minimum=0, maximum=MAX_I32
+            )
+            != 2
         ):
             raise ValueError("normalization supports TRAINING phase only")
         return {
@@ -147,7 +156,9 @@ def _validate_normalization(node: Mapping[str, Any]) -> dict[str, Any]:
             if _checked_product(
                 list(tensor["dimensions"]), f"batchnorm {name} elements"
             ) != channels or not _is_contiguous(tensor):
-                raise ValueError(f"batchnorm {name} must be contiguous with C elements")
+                raise ValueError(
+                    f"batchnorm {name} must be contiguous with C elements"
+                )
         for name in (
             "previous_running_mean",
             "previous_running_variance",
@@ -167,7 +178,8 @@ def _validate_normalization(node: Mapping[str, Any]) -> dict[str, Any]:
                 or not _is_contiguous(tensor)
             ):
                 raise ValueError(
-                    f"batchnorm statistic {name!r} must be contiguous " "float32[C]"
+                    f"batchnorm statistic {name!r} must be contiguous "
+                    "float32[C]"
                 )
         epsilon = _require_number(p, "epsilon", positive=True)
         momentum = _require_number(p, "momentum")
@@ -187,13 +199,16 @@ def _validate_normalization(node: Mapping[str, Any]) -> dict[str, Any]:
     for name in ("mean", "inv_variance", "scale", "bias"):
         tensor = ports[name]
         if tensor["data_type"] not in FLOAT_TYPES:
-            raise ValueError(f"batchnorm inference {name} must be floating point")
+            raise ValueError(
+                f"batchnorm inference {name} must be floating point"
+            )
         if _checked_product(
             list(tensor["dimensions"]),
             f"batchnorm inference {name} elements",
         ) != channels or not _is_contiguous(tensor):
             raise ValueError(
-                f"batchnorm inference {name} must be contiguous with " "C elements"
+                f"batchnorm inference {name} must be contiguous with "
+                "C elements"
             )
     return {
         "data_type": str(x["data_type"]),
@@ -217,6 +232,7 @@ def _padded_rank_metadata(
 
 
 def _normalization_stage(node: Mapping[str, Any]) -> KernelStagePlan:
+    pointers: tuple[tuple[str, str, str, str | int], ...]
     operation = str(node["operation"])
     d = _require_object(node["derived"], "node.derived")
     if operation == "layernorm":
@@ -307,10 +323,16 @@ def _normalization_stage(node: Mapping[str, Any]) -> KernelStagePlan:
             _tensor_pointer(node, "bias_ptr", "bias"),
             _tensor_pointer(node, "saved_mean_ptr", "mean"),
             _tensor_pointer(node, "saved_inv_var_ptr", "inv_variance"),
-            _tensor_pointer(node, "next_running_mean_ptr", "next_running_mean"),
-            _tensor_pointer(node, "next_running_var_ptr", "next_running_variance"),
+            _tensor_pointer(
+                node, "next_running_mean_ptr", "next_running_mean"
+            ),
+            _tensor_pointer(
+                node, "next_running_var_ptr", "next_running_variance"
+            ),
         )
-        function = "batch_norm_nchw_kernel" if use_nchw else "batch_norm_kernel"
+        function = (
+            "batch_norm_nchw_kernel" if use_nchw else "batch_norm_kernel"
+        )
         if not use_nchw:
             x = node["port_tensors"]["x"]
             y = node["port_tensors"]["y"]
@@ -328,7 +350,9 @@ def _normalization_stage(node: Mapping[str, Any]) -> KernelStagePlan:
             pointer_arguments=pointers,
             constants=constants,
             scalar_arguments=(
-                (("N", "i32"), ("C", "i32"), ("S", "i32")) if not use_nchw else ()
+                (("N", "i32"), ("C", "i32"), ("S", "i32"))
+                if not use_nchw
+                else ()
             ),
             tuning=BATCH_NORM_TUNING,
             tuning_key_value=int(d["channels"]),

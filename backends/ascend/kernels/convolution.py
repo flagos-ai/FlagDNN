@@ -38,7 +38,9 @@ def _convolution_fprop_im2col_stride2_width(
         FILTER_DIM_4 == 3 or FILTER_DIM_4 == 5
     ) and DILATION_2 == 1
     valid_output_width: tl.constexpr = (
-        OUTPUT_DIM_4 if OUTPUT_DIM_4 < block_output_width else block_output_width
+        OUTPUT_DIM_4
+        if OUTPUT_DIM_4 < block_output_width
+        else block_output_width
     )
     input_window_span: tl.constexpr = (
         (valid_output_width - 1) * 2 + (FILTER_DIM_4 - 1) * DILATION_2 + 1
@@ -58,7 +60,11 @@ def _convolution_fprop_im2col_stride2_width(
     output_w_offset = output_w_start.to(tl.int32)
     if use_deinterleave:
         left_window = tl.make_block_ptr(
-            base=(input_ptr + batch * INPUT_STRIDE_0 + safe_input_h * INPUT_STRIDE_3),
+            base=(
+                input_ptr
+                + batch * INPUT_STRIDE_0
+                + safe_input_h * INPUT_STRIDE_3
+            ),
             shape=(CHANNELS_PER_GROUP, INPUT_DIM_4),
             strides=(INPUT_STRIDE_1, INPUT_STRIDE_4),
             offsets=(channel_offset, input_window_offset),
@@ -70,10 +76,16 @@ def _convolution_fprop_im2col_stride2_width(
             boundary_check=(0, 1),
             padding_option="zero",
         )
-        left_pairs = tl.reshape(left_values, (block_channels, block_output_width, 2))
+        left_pairs = tl.reshape(
+            left_values, (block_channels, block_output_width, 2)
+        )
         filter_w0_values, filter_w1_values = tl.split(left_pairs)
         right_window = tl.make_block_ptr(
-            base=(input_ptr + batch * INPUT_STRIDE_0 + safe_input_h * INPUT_STRIDE_3),
+            base=(
+                input_ptr
+                + batch * INPUT_STRIDE_0
+                + safe_input_h * INPUT_STRIDE_3
+            ),
             shape=(CHANNELS_PER_GROUP, INPUT_DIM_4),
             strides=(INPUT_STRIDE_1, INPUT_STRIDE_4),
             offsets=(channel_offset, input_window_offset + 2),
@@ -85,12 +97,16 @@ def _convolution_fprop_im2col_stride2_width(
             boundary_check=(0, 1),
             padding_option="zero",
         )
-        right_pairs = tl.reshape(right_values, (block_channels, block_output_width, 2))
+        right_pairs = tl.reshape(
+            right_values, (block_channels, block_output_width, 2)
+        )
         filter_w2_values, filter_w3_values = tl.split(right_pairs)
         if FILTER_DIM_4 == 5:
             far_window = tl.make_block_ptr(
                 base=(
-                    input_ptr + batch * INPUT_STRIDE_0 + safe_input_h * INPUT_STRIDE_3
+                    input_ptr
+                    + batch * INPUT_STRIDE_0
+                    + safe_input_h * INPUT_STRIDE_3
                 ),
                 shape=(CHANNELS_PER_GROUP, INPUT_DIM_4),
                 strides=(INPUT_STRIDE_1, INPUT_STRIDE_4),
@@ -103,11 +119,17 @@ def _convolution_fprop_im2col_stride2_width(
                 boundary_check=(0, 1),
                 padding_option="zero",
             )
-            far_pairs = tl.reshape(far_values, (block_channels, block_output_width, 2))
+            far_pairs = tl.reshape(
+                far_values, (block_channels, block_output_width, 2)
+            )
             filter_w4_values, _ = tl.split(far_pairs)
     else:
         input_window = tl.make_block_ptr(
-            base=(input_ptr + batch * INPUT_STRIDE_0 + safe_input_h * INPUT_STRIDE_3),
+            base=(
+                input_ptr
+                + batch * INPUT_STRIDE_0
+                + safe_input_h * INPUT_STRIDE_3
+            ),
             shape=(CHANNELS_PER_GROUP, INPUT_DIM_4),
             strides=(INPUT_STRIDE_1, INPUT_STRIDE_4),
             offsets=(
@@ -127,7 +149,9 @@ def _convolution_fprop_im2col_stride2_width(
     output_lane_valid = output_w < OUTPUT_DIM_4
     for filter_w in tl.static_range(0, FILTER_DIM_4):
         input_w = output_w * 2 - PRE_PADDING_2 + filter_w * DILATION_2
-        input_lane_valid = output_lane_valid & (input_w >= 0) & (input_w < INPUT_DIM_4)
+        input_lane_valid = (
+            output_lane_valid & (input_w >= 0) & (input_w < INPUT_DIM_4)
+        )
         if use_deinterleave:
             if filter_w == 0:
                 values = filter_w0_values
@@ -150,7 +174,9 @@ def _convolution_fprop_im2col_stride2_width(
                 (block_channels, block_output_width),
             )
             values = tl.gather(window_values, gather_index, axis=1)
-        values = tl.where(valid_input_h & input_lane_valid[None, :], values, 0.0)
+        values = tl.where(
+            valid_input_h & input_lane_valid[None, :], values, 0.0
+        )
         columns_block = tl.make_block_ptr(
             base=(
                 columns_ptr
@@ -201,7 +227,9 @@ def _convolution_fprop_im2col_rgb_stride2_rows(
     input_window_offset = (output_w_start * 2 - PRE_PADDING_2).to(tl.int32)
     output_h_offset = output_h_start.to(tl.int32)
     output_w_offset = output_w_start.to(tl.int32)
-    input_base = input_ptr + batch * INPUT_STRIDE_0 + input_h_start * INPUT_STRIDE_3
+    input_base = (
+        input_ptr + batch * INPUT_STRIDE_0 + input_h_start * INPUT_STRIDE_3
+    )
     left_window = tl.make_block_ptr(
         base=input_base,
         shape=(CHANNELS_PER_GROUP, block_rows, INPUT_DIM_4),
@@ -314,9 +342,11 @@ def _convolution_fprop_im2col_1d(
                         strides=(INPUT_STRIDE_1, INPUT_STRIDE_4),
                         offsets=(
                             channel_offset,
-                            (length_start - PRE_PADDING_2 + filter_w * DILATION_2).to(
-                                tl.int32
-                            ),
+                            (
+                                length_start
+                                - PRE_PADDING_2
+                                + filter_w * DILATION_2
+                            ).to(tl.int32),
                         ),
                         block_shape=(tile_channels, tile_length),
                         order=(1, 0),
@@ -334,7 +364,9 @@ def _convolution_fprop_im2col_1d(
                         offsets=(
                             channel_offset,
                             (
-                                length_start * 2 - PRE_PADDING_2 + filter_w * DILATION_2
+                                length_start * 2
+                                - PRE_PADDING_2
+                                + filter_w * DILATION_2
                             ).to(tl.int32),
                         ),
                         block_shape=(tile_channels, tile_length * 2),
@@ -349,12 +381,16 @@ def _convolution_fprop_im2col_1d(
                         (length_lane * 2)[None, :],
                         (tile_channels, tile_length),
                     )
-                    input_values = tl.gather(input_window_values, gather_index, axis=1)
+                    input_values = tl.gather(
+                        input_window_values, gather_index, axis=1
+                    )
                 else:
                     output_l = length_start + length_lane
                     length_mask = output_l < OUTPUT_DIM_4
                     input_l = (
-                        output_l * CONV_STRIDE_2 - PRE_PADDING_2 + filter_w * DILATION_2
+                        output_l * CONV_STRIDE_2
+                        - PRE_PADDING_2
+                        + filter_w * DILATION_2
                     )
                     valid_input_l = (input_l >= 0) & (input_l < INPUT_DIM_4)
                     safe_input_l = tl.where(valid_input_l, input_l, 0)
@@ -486,8 +522,12 @@ def convolution_fprop_im2col_kernel(
         d3c_width: tl.constexpr = 16
         d3c_output_plane: tl.constexpr = OUTPUT_DIM_3 * OUTPUT_DIM_4
         d3c_output_spatial: tl.constexpr = OUTPUT_DIM_2 * d3c_output_plane
-        d3c_filter_volume: tl.constexpr = FILTER_DIM_2 * FILTER_DIM_3 * FILTER_DIM_4
-        d3c_reduction_extent: tl.constexpr = CHANNELS_PER_GROUP * d3c_filter_volume
+        d3c_filter_volume: tl.constexpr = (
+            FILTER_DIM_2 * FILTER_DIM_3 * FILTER_DIM_4
+        )
+        d3c_reduction_extent: tl.constexpr = (
+            CHANNELS_PER_GROUP * d3c_filter_volume
+        )
         d3c_planes_per_batch: tl.constexpr = (
             CHANNELS_PER_GROUP * FILTER_DIM_2 * FILTER_DIM_3
         )
@@ -515,9 +555,15 @@ def convolution_fprop_im2col_kernel(
                         INPUT_STRIDE_4,
                     ),
                     offsets=(
-                        (-PRE_PADDING_0 + d3c_filter_d * DILATION_0).to(tl.int32),
-                        (-PRE_PADDING_1 + d3c_filter_h * DILATION_1).to(tl.int32),
-                        (-PRE_PADDING_2 + d3c_filter_w * DILATION_2).to(tl.int32),
+                        (-PRE_PADDING_0 + d3c_filter_d * DILATION_0).to(
+                            tl.int32
+                        ),
+                        (-PRE_PADDING_1 + d3c_filter_h * DILATION_1).to(
+                            tl.int32
+                        ),
+                        (-PRE_PADDING_2 + d3c_filter_w * DILATION_2).to(
+                            tl.int32
+                        ),
                     ),
                     block_shape=(OUTPUT_DIM_2, d3c_rows, d3c_width),
                     order=(2, 1, 0),
@@ -531,7 +577,8 @@ def convolution_fprop_im2col_kernel(
                     base=(
                         columns_ptr
                         + d3c_batch * d3c_output_spatial * d3c_reduction_extent
-                        + (d3c_plane * FILTER_DIM_4 + d3c_filter_w) * d3c_output_spatial
+                        + (d3c_plane * FILTER_DIM_4 + d3c_filter_w)
+                        * d3c_output_spatial
                     ),
                     shape=(OUTPUT_DIM_2, OUTPUT_DIM_3, OUTPUT_DIM_4),
                     strides=(d3c_output_plane, OUTPUT_DIM_4, 1),
@@ -549,10 +596,18 @@ def convolution_fprop_im2col_kernel(
 
     if SPATIAL_RANK == 3:
         d3_block_spatial: tl.constexpr = 128
-        d3_output_spatial: tl.constexpr = OUTPUT_DIM_2 * OUTPUT_DIM_3 * OUTPUT_DIM_4
-        d3_spatial_tiles: tl.constexpr = tl.cdiv(d3_output_spatial, d3_block_spatial)
-        d3_filter_volume: tl.constexpr = FILTER_DIM_2 * FILTER_DIM_3 * FILTER_DIM_4
-        d3_reduction_extent: tl.constexpr = CHANNELS_PER_GROUP * d3_filter_volume
+        d3_output_spatial: tl.constexpr = (
+            OUTPUT_DIM_2 * OUTPUT_DIM_3 * OUTPUT_DIM_4
+        )
+        d3_spatial_tiles: tl.constexpr = tl.cdiv(
+            d3_output_spatial, d3_block_spatial
+        )
+        d3_filter_volume: tl.constexpr = (
+            FILTER_DIM_2 * FILTER_DIM_3 * FILTER_DIM_4
+        )
+        d3_reduction_extent: tl.constexpr = (
+            CHANNELS_PER_GROUP * d3_filter_volume
+        )
         d3_planes_per_batch: tl.constexpr = (
             CHANNELS_PER_GROUP * FILTER_DIM_2 * FILTER_DIM_3
         )
@@ -571,18 +626,26 @@ def convolution_fprop_im2col_kernel(
             d3_filter_d = d3_channel_filter_d % FILTER_DIM_2
             d3_input_channel = d3_channel_filter_d // FILTER_DIM_2
 
-            d3_output_linear = d3_spatial_tile * d3_block_spatial + d3_spatial_lane
+            d3_output_linear = (
+                d3_spatial_tile * d3_block_spatial + d3_spatial_lane
+            )
             d3_output_mask = d3_output_linear < d3_output_spatial
-            d3_safe_output_linear = tl.where(d3_output_mask, d3_output_linear, 0)
+            d3_safe_output_linear = tl.where(
+                d3_output_mask, d3_output_linear, 0
+            )
             d3_output_w = d3_safe_output_linear % OUTPUT_DIM_4
             d3_output_plane = d3_safe_output_linear // OUTPUT_DIM_4
             d3_output_h = d3_output_plane % OUTPUT_DIM_3
             d3_output_d = d3_output_plane // OUTPUT_DIM_3
             d3_input_d = (
-                d3_output_d * CONV_STRIDE_0 - PRE_PADDING_0 + d3_filter_d * DILATION_0
+                d3_output_d * CONV_STRIDE_0
+                - PRE_PADDING_0
+                + d3_filter_d * DILATION_0
             )
             d3_input_h = (
-                d3_output_h * CONV_STRIDE_1 - PRE_PADDING_1 + d3_filter_h * DILATION_1
+                d3_output_h * CONV_STRIDE_1
+                - PRE_PADDING_1
+                + d3_filter_h * DILATION_1
             )
             d3_valid_dh = (
                 d3_output_mask
@@ -601,7 +664,9 @@ def convolution_fprop_im2col_kernel(
                     + d3_filter_w * DILATION_2
                 )
                 d3_valid_input = (
-                    d3_valid_dh & (d3_input_w >= 0) & (d3_input_w < INPUT_DIM_4)
+                    d3_valid_dh
+                    & (d3_input_w >= 0)
+                    & (d3_input_w < INPUT_DIM_4)
                 )
                 d3_safe_input_w = tl.where(d3_valid_input, d3_input_w, 0)
                 d3_values = tl.load(
@@ -659,7 +724,9 @@ def convolution_fprop_im2col_kernel(
             rgb_row_group = rgb_batch_task - rgb_filter_h * rgb_row_groups
             rgb_output_h = rgb_row_group * OUTPUT_DIM_3 // rgb_row_groups
             rgb_channel_start = tl.zeros((), dtype=tl.int64)
-            rgb_output_h_end = (rgb_row_group + 1) * OUTPUT_DIM_3 // rgb_row_groups
+            rgb_output_h_end = (
+                (rgb_row_group + 1) * OUTPUT_DIM_3 // rgb_row_groups
+            )
             while rgb_output_h < rgb_output_h_end:
                 rgb_input_h = (
                     rgb_output_h * CONV_STRIDE_1
@@ -670,7 +737,10 @@ def convolution_fprop_im2col_kernel(
                 rgb_safe_input_h = tl.where(rgb_valid_h, rgb_input_h, 0)
                 rgb_full_row_block = (
                     (rgb_output_h + rgb_block_rows <= rgb_output_h_end)
-                    & (rgb_input_h + (rgb_block_rows - 1) * CONV_STRIDE_1 < INPUT_DIM_3)
+                    & (
+                        rgb_input_h + (rgb_block_rows - 1) * CONV_STRIDE_1
+                        < INPUT_DIM_3
+                    )
                     & rgb_valid_h
                 )
                 if rgb_full_row_block:
@@ -747,8 +817,12 @@ def convolution_fprop_im2col_kernel(
         compact_rows_per_task: tl.constexpr = 16
         compact_filter_area: tl.constexpr = 9
         compact_output_spatial: tl.constexpr = OUTPUT_DIM_3 * OUTPUT_DIM_4
-        compact_reduction: tl.constexpr = CHANNELS_PER_GROUP * compact_filter_area
-        compact_row_groups: tl.constexpr = tl.cdiv(OUTPUT_DIM_3, compact_rows_per_task)
+        compact_reduction: tl.constexpr = (
+            CHANNELS_PER_GROUP * compact_filter_area
+        )
+        compact_row_groups: tl.constexpr = tl.cdiv(
+            OUTPUT_DIM_3, compact_rows_per_task
+        )
         compact_task_count: tl.constexpr = (
             INPUT_DIM_0 * compact_filter_area * compact_row_groups
         )
@@ -756,20 +830,26 @@ def convolution_fprop_im2col_kernel(
         compact_task = tl.program_id(0).to(tl.int64)
         while compact_task < compact_task_count:
             compact_batch_filter = compact_task // compact_row_groups
-            compact_row_group = compact_task - compact_batch_filter * compact_row_groups
+            compact_row_group = (
+                compact_task - compact_batch_filter * compact_row_groups
+            )
             compact_batch = compact_batch_filter // compact_filter_area
             compact_filter_position = (
                 compact_batch_filter - compact_batch * compact_filter_area
             )
             compact_filter_h = compact_filter_position // FILTER_DIM_4
-            compact_filter_w = compact_filter_position - compact_filter_h * FILTER_DIM_4
+            compact_filter_w = (
+                compact_filter_position - compact_filter_h * FILTER_DIM_4
+            )
             compact_output_h = compact_row_group * compact_rows_per_task
             compact_output_h_end = tl.minimum(
                 compact_output_h + compact_rows_per_task, OUTPUT_DIM_3
             )
             while compact_output_h < compact_output_h_end:
                 compact_input_h = (
-                    compact_output_h - PRE_PADDING_1 + compact_filter_h * DILATION_1
+                    compact_output_h
+                    - PRE_PADDING_1
+                    + compact_filter_h * DILATION_1
                 )
                 compact_valid_h = (compact_input_h >= 0) & (
                     compact_input_h < INPUT_DIM_3
@@ -785,7 +865,9 @@ def convolution_fprop_im2col_kernel(
                     strides=(INPUT_STRIDE_1, INPUT_STRIDE_4),
                     offsets=(
                         0,
-                        (-PRE_PADDING_2 + compact_filter_w * DILATION_2).to(tl.int32),
+                        (-PRE_PADDING_2 + compact_filter_w * DILATION_2).to(
+                            tl.int32
+                        ),
                     ),
                     block_shape=(compact_channels, compact_width),
                     order=(1, 0),
@@ -799,7 +881,9 @@ def convolution_fprop_im2col_kernel(
                 compact_columns_block = tl.make_block_ptr(
                     base=(
                         columns_ptr
-                        + compact_batch * compact_output_spatial * compact_reduction
+                        + compact_batch
+                        * compact_output_spatial
+                        * compact_reduction
                         + compact_filter_position * compact_output_spatial
                     ),
                     shape=(CHANNELS_PER_GROUP, compact_output_spatial),
@@ -866,27 +950,36 @@ def convolution_fprop_im2col_kernel(
             blocked_tasks_per_batch: tl.constexpr = (
                 FILTER_DIM_3 * blocked_tasks_per_filter_h
             )
-            blocked_task_count: tl.constexpr = INPUT_DIM_0 * blocked_tasks_per_batch
+            blocked_task_count: tl.constexpr = (
+                INPUT_DIM_0 * blocked_tasks_per_batch
+            )
             blocked_task = tl.program_id(0).to(tl.int64)
             while blocked_task < blocked_task_count:
                 blocked_batch = blocked_task // blocked_tasks_per_batch
                 blocked_batch_task = (
                     blocked_task - blocked_batch * blocked_tasks_per_batch
                 )
-                blocked_filter_h = blocked_batch_task // blocked_tasks_per_filter_h
+                blocked_filter_h = (
+                    blocked_batch_task // blocked_tasks_per_filter_h
+                )
                 blocked_filter_task = (
-                    blocked_batch_task - blocked_filter_h * blocked_tasks_per_filter_h
+                    blocked_batch_task
+                    - blocked_filter_h * blocked_tasks_per_filter_h
                 )
                 blocked_output_h = blocked_filter_task // blocked_tasks_per_row
                 blocked_row_task = (
-                    blocked_filter_task - blocked_output_h * blocked_tasks_per_row
+                    blocked_filter_task
+                    - blocked_output_h * blocked_tasks_per_row
                 )
                 blocked_channel_tile = blocked_row_task // blocked_width_tiles
                 blocked_width_tile = (
-                    blocked_row_task - blocked_channel_tile * blocked_width_tiles
+                    blocked_row_task
+                    - blocked_channel_tile * blocked_width_tiles
                 )
                 blocked_channel_start = blocked_channel_tile * blocked_channels
-                blocked_output_w_start = blocked_width_tile * blocked_output_width
+                blocked_output_w_start = (
+                    blocked_width_tile * blocked_output_width
+                )
                 blocked_input_h = (
                     blocked_output_h * CONV_STRIDE_1
                     - PRE_PADDING_1
@@ -927,7 +1020,9 @@ def convolution_fprop_im2col_kernel(
         flat_block: tl.constexpr = 128
         flat_filter_area: tl.constexpr = FILTER_DIM_3 * FILTER_DIM_4
         flat_output_spatial: tl.constexpr = OUTPUT_DIM_3 * OUTPUT_DIM_4
-        flat_output_tiles: tl.constexpr = tl.cdiv(flat_output_spatial, flat_block)
+        flat_output_tiles: tl.constexpr = tl.cdiv(
+            flat_output_spatial, flat_block
+        )
         flat_planes_per_batch: tl.constexpr = CHANNELS_PER_GROUP * FILTER_DIM_3
         flat_task_count: tl.constexpr = (
             INPUT_DIM_0 * flat_planes_per_batch * flat_output_tiles
@@ -938,9 +1033,13 @@ def convolution_fprop_im2col_kernel(
             flat_plane = flat_task // flat_output_tiles
             flat_output_tile = flat_task - flat_plane * flat_output_tiles
             flat_batch = flat_plane // flat_planes_per_batch
-            flat_plane_in_batch = flat_plane - flat_batch * flat_planes_per_batch
+            flat_plane_in_batch = (
+                flat_plane - flat_batch * flat_planes_per_batch
+            )
             flat_input_channel = flat_plane_in_batch // FILTER_DIM_3
-            flat_filter_h = flat_plane_in_batch - flat_input_channel * FILTER_DIM_3
+            flat_filter_h = (
+                flat_plane_in_batch - flat_input_channel * FILTER_DIM_3
+            )
             flat_output_hw = flat_output_tile * flat_block + flat_lane
             flat_output_mask = flat_output_hw < flat_output_spatial
             flat_output_h = flat_output_hw // OUTPUT_DIM_4
@@ -951,12 +1050,20 @@ def convolution_fprop_im2col_kernel(
                 + flat_filter_h * DILATION_1
             )
             flat_valid_h = (
-                flat_output_mask & (flat_input_h >= 0) & (flat_input_h < INPUT_DIM_3)
+                flat_output_mask
+                & (flat_input_h >= 0)
+                & (flat_input_h < INPUT_DIM_3)
             )
             flat_safe_h = tl.where(flat_valid_h, flat_input_h, 0)
             flat_column_base = (
-                flat_batch * flat_output_spatial * CHANNELS_PER_GROUP * flat_filter_area
-                + (flat_input_channel * flat_filter_area + flat_filter_h * FILTER_DIM_4)
+                flat_batch
+                * flat_output_spatial
+                * CHANNELS_PER_GROUP
+                * flat_filter_area
+                + (
+                    flat_input_channel * flat_filter_area
+                    + flat_filter_h * FILTER_DIM_4
+                )
                 * flat_output_spatial
             )
             for flat_filter_w in range(0, FILTER_DIM_4):
@@ -966,7 +1073,9 @@ def convolution_fprop_im2col_kernel(
                     + flat_filter_w * DILATION_2
                 )
                 flat_valid = (
-                    flat_valid_h & (flat_input_w >= 0) & (flat_input_w < INPUT_DIM_4)
+                    flat_valid_h
+                    & (flat_input_w >= 0)
+                    & (flat_input_w < INPUT_DIM_4)
                 )
                 flat_safe_w = tl.where(flat_valid, flat_input_w, 0)
                 flat_values = tl.load(
@@ -1000,7 +1109,9 @@ def convolution_fprop_im2col_kernel(
     batch_filter_count: tl.constexpr = INPUT_DIM_0 * filter_area
     row_groups: tl.constexpr = tl.cdiv(OUTPUT_DIM_3, rows_per_task)
     column_task_count: tl.constexpr = (
-        batch_filter_count if SPATIAL_RANK == 1 else batch_filter_count * row_groups
+        batch_filter_count
+        if SPATIAL_RANK == 1
+        else batch_filter_count * row_groups
     )
     output_spatial: tl.constexpr = OUTPUT_DIM_3 * OUTPUT_DIM_4
 
@@ -1021,7 +1132,9 @@ def convolution_fprop_im2col_kernel(
             batch_filter = column_task // row_groups
             row_group = column_task - batch_filter * row_groups
             output_h_start = row_group * rows_per_task
-            output_h_end = tl.minimum(output_h_start + rows_per_task, OUTPUT_DIM_3)
+            output_h_end = tl.minimum(
+                output_h_start + rows_per_task, OUTPUT_DIM_3
+            )
         batch = batch_filter // filter_area
         filter_position = batch_filter - batch * filter_area
         filter_h = filter_position // FILTER_DIM_4
@@ -1042,7 +1155,9 @@ def convolution_fprop_im2col_kernel(
                             offsets=(
                                 channel_offset,
                                 (
-                                    length_start - PRE_PADDING_2 + filter_w * DILATION_2
+                                    length_start
+                                    - PRE_PADDING_2
+                                    + filter_w * DILATION_2
                                 ).to(tl.int32),
                             ),
                             block_shape=(tile_channels, tile_length),
@@ -1090,7 +1205,9 @@ def convolution_fprop_im2col_kernel(
                             - PRE_PADDING_2
                             + filter_w * DILATION_2
                         )
-                        valid_input_l = (input_l >= 0) & (input_l < INPUT_DIM_4)
+                        valid_input_l = (input_l >= 0) & (
+                            input_l < INPUT_DIM_4
+                        )
                         safe_input_l = tl.where(valid_input_l, input_l, 0)
                         input_values = tl.load(
                             input_ptr
@@ -1129,7 +1246,9 @@ def convolution_fprop_im2col_kernel(
                 output_h = output_h_start
                 while output_h < output_h_end:
                     input_h = (
-                        output_h * CONV_STRIDE_1 - PRE_PADDING_1 + filter_h * DILATION_1
+                        output_h * CONV_STRIDE_1
+                        - PRE_PADDING_1
+                        + filter_h * DILATION_1
                     )
                     valid_input_h = (input_h >= 0) & (input_h < INPUT_DIM_3)
                     safe_input_h = tl.where(valid_input_h, input_h, 0)
@@ -1159,7 +1278,9 @@ def convolution_fprop_im2col_kernel(
                             boundary_check=(0, 1),
                             padding_option="zero",
                         )
-                        input_values = tl.where(valid_input_h, input_values, 0.0)
+                        input_values = tl.where(
+                            valid_input_h, input_values, 0.0
+                        )
                         columns_block = tl.make_block_ptr(
                             base=(
                                 columns_ptr
@@ -1170,7 +1291,9 @@ def convolution_fprop_im2col_kernel(
                             strides=(filter_area * output_spatial, 1),
                             offsets=(
                                 channel_offset,
-                                (output_h * OUTPUT_DIM_4 + output_w_start).to(tl.int32),
+                                (output_h * OUTPUT_DIM_4 + output_w_start).to(
+                                    tl.int32
+                                ),
                             ),
                             block_shape=(tile_channels, tile_width),
                             order=(1, 0),
@@ -1234,13 +1357,20 @@ def _convolution_fprop_1d_gemm(
         channel_tile = group_tile // length_tiles
         length_tile = group_tile % length_tiles
 
-        group_output_channels = channel_tile * block_output_channels + tl.arange(
-            0, block_output_channels
+        group_output_channels = (
+            channel_tile * block_output_channels
+            + tl.arange(0, block_output_channels)
         )
         channel_mask = group_output_channels < output_channels_per_group
-        safe_group_output_channels = tl.where(channel_mask, group_output_channels, 0)
-        output_channels = group * output_channels_per_group + safe_group_output_channels
-        output_l = length_tile * block_output_length + tl.arange(0, block_output_length)
+        safe_group_output_channels = tl.where(
+            channel_mask, group_output_channels, 0
+        )
+        output_channels = (
+            group * output_channels_per_group + safe_group_output_channels
+        )
+        output_l = length_tile * block_output_length + tl.arange(
+            0, block_output_length
+        )
         length_mask = output_l < OUTPUT_DIM_4
         safe_output_l = tl.where(length_mask, output_l, 0)
         reduction_base = tl.arange(0, block_reduction)
@@ -1250,11 +1380,15 @@ def _convolution_fprop_1d_gemm(
 
         for filter_w in range(0, FILTER_DIM_4):
             input_l = (
-                safe_output_l * CONV_STRIDE_2 - PRE_PADDING_2 + filter_w * DILATION_2
+                safe_output_l * CONV_STRIDE_2
+                - PRE_PADDING_2
+                + filter_w * DILATION_2
             )
             valid_input_l = (input_l >= 0) & (input_l < INPUT_DIM_4)
             safe_input_l = tl.where(valid_input_l, input_l, 0)
-            for reduction_start in range(0, CHANNELS_PER_GROUP, block_reduction):
+            for reduction_start in range(
+                0, CHANNELS_PER_GROUP, block_reduction
+            ):
                 input_channel = reduction_start + reduction_base
                 reduction_mask = input_channel < CHANNELS_PER_GROUP
                 safe_input_channel = tl.where(reduction_mask, input_channel, 0)
@@ -1269,7 +1403,10 @@ def _convolution_fprop_1d_gemm(
                 input_values = tl.load(
                     input_ptr
                     + batch * INPUT_STRIDE_0
-                    + (group * CHANNELS_PER_GROUP + safe_input_channel[:, None])
+                    + (
+                        group * CHANNELS_PER_GROUP
+                        + safe_input_channel[:, None]
+                    )
                     * INPUT_STRIDE_1
                     + safe_input_l[None, :] * INPUT_STRIDE_4,
                     mask=(
@@ -1330,7 +1467,9 @@ def _convolution_fprop_2d_nchw_1x1(
     block_reduction: tl.constexpr = 64
     spatial: tl.constexpr = INPUT_DIM_3 * INPUT_DIM_4
     output_channels_per_group: tl.constexpr = OUTPUT_CHANNELS // GROUPS
-    channel_tiles: tl.constexpr = tl.cdiv(output_channels_per_group, block_channels)
+    channel_tiles: tl.constexpr = tl.cdiv(
+        output_channels_per_group, block_channels
+    )
     spatial_tiles: tl.constexpr = tl.cdiv(spatial, block_spatial)
     tiles_per_group: tl.constexpr = channel_tiles * spatial_tiles
     tiles_per_batch: tl.constexpr = GROUPS * tiles_per_group
@@ -1350,11 +1489,17 @@ def _convolution_fprop_2d_nchw_1x1(
             0, block_channels
         )
         channel_mask = group_output_channels < output_channels_per_group
-        output_channels = group * output_channels_per_group + group_output_channels
-        spatial_offsets = spatial_tile * block_spatial + tl.arange(0, block_spatial)
+        output_channels = (
+            group * output_channels_per_group + group_output_channels
+        )
+        spatial_offsets = spatial_tile * block_spatial + tl.arange(
+            0, block_spatial
+        )
         spatial_mask = spatial_offsets < spatial
         reduction = tl.arange(0, block_reduction)
-        accumulator = tl.zeros((block_channels, block_spatial), dtype=tl.float32)
+        accumulator = tl.zeros(
+            (block_channels, block_spatial), dtype=tl.float32
+        )
 
         for reduction_start in range(0, CHANNELS_PER_GROUP, block_reduction):
             reduction_offsets = reduction_start + reduction
@@ -1433,7 +1578,9 @@ def _convolution_fprop_2d_nchw_tiled(
     block_reduction: tl.constexpr = 64
     output_area: tl.constexpr = OUTPUT_DIM_3 * OUTPUT_DIM_4
     output_channels_per_group: tl.constexpr = OUTPUT_CHANNELS // GROUPS
-    channel_tiles: tl.constexpr = tl.cdiv(output_channels_per_group, block_channels)
+    channel_tiles: tl.constexpr = tl.cdiv(
+        output_channels_per_group, block_channels
+    )
     spatial_tiles: tl.constexpr = tl.cdiv(output_area, block_spatial)
     tiles_per_group: tl.constexpr = channel_tiles * spatial_tiles
     tiles_per_batch: tl.constexpr = GROUPS * tiles_per_group
@@ -1453,28 +1600,44 @@ def _convolution_fprop_2d_nchw_tiled(
             0, block_channels
         )
         channel_mask = group_output_channels < output_channels_per_group
-        safe_group_output_channels = tl.where(channel_mask, group_output_channels, 0)
-        output_channels = group * output_channels_per_group + safe_group_output_channels
-        spatial_offsets = spatial_tile * block_spatial + tl.arange(0, block_spatial)
+        safe_group_output_channels = tl.where(
+            channel_mask, group_output_channels, 0
+        )
+        output_channels = (
+            group * output_channels_per_group + safe_group_output_channels
+        )
+        spatial_offsets = spatial_tile * block_spatial + tl.arange(
+            0, block_spatial
+        )
         spatial_mask = spatial_offsets < output_area
         safe_spatial_offsets = tl.where(spatial_mask, spatial_offsets, 0)
         output_h = safe_spatial_offsets // OUTPUT_DIM_4
         output_w = safe_spatial_offsets % OUTPUT_DIM_4
         reduction = tl.arange(0, block_reduction)
-        accumulator = tl.zeros((block_channels, block_spatial), dtype=tl.float32)
+        accumulator = tl.zeros(
+            (block_channels, block_spatial), dtype=tl.float32
+        )
 
         for filter_h in range(0, FILTER_DIM_3):
-            input_h = output_h * CONV_STRIDE_1 - PRE_PADDING_1 + filter_h * DILATION_1
+            input_h = (
+                output_h * CONV_STRIDE_1
+                - PRE_PADDING_1
+                + filter_h * DILATION_1
+            )
             valid_h = (input_h >= 0) & (input_h < INPUT_DIM_3)
             safe_input_h = tl.where(valid_h, input_h, 0)
             for filter_w in range(0, FILTER_DIM_4):
                 input_w = (
-                    output_w * CONV_STRIDE_2 - PRE_PADDING_2 + filter_w * DILATION_2
+                    output_w * CONV_STRIDE_2
+                    - PRE_PADDING_2
+                    + filter_w * DILATION_2
                 )
                 valid_w = (input_w >= 0) & (input_w < INPUT_DIM_4)
                 safe_input_w = tl.where(valid_w, input_w, 0)
                 valid_spatial = spatial_mask & valid_h & valid_w
-                for reduction_start in range(0, CHANNELS_PER_GROUP, block_reduction):
+                for reduction_start in range(
+                    0, CHANNELS_PER_GROUP, block_reduction
+                ):
                     reduction_offsets = reduction_start + reduction
                     reduction_mask = reduction_offsets < CHANNELS_PER_GROUP
                     weights = tl.load(
@@ -1489,11 +1652,16 @@ def _convolution_fprop_2d_nchw_tiled(
                     input_values = tl.load(
                         input_ptr
                         + batch * INPUT_STRIDE_0
-                        + (group * CHANNELS_PER_GROUP + reduction_offsets[:, None])
+                        + (
+                            group * CHANNELS_PER_GROUP
+                            + reduction_offsets[:, None]
+                        )
                         * INPUT_STRIDE_1
                         + safe_input_h[None, :] * INPUT_STRIDE_3
                         + safe_input_w[None, :] * INPUT_STRIDE_4,
-                        mask=(reduction_mask[:, None] & valid_spatial[None, :]),
+                        mask=(
+                            reduction_mask[:, None] & valid_spatial[None, :]
+                        ),
                         other=0.0,
                     )
                     accumulator += tl.dot(
@@ -1546,7 +1714,9 @@ def _convolution_fprop_2d_nchw_3x3_blocked(
     block_output_channels: tl.constexpr = 64
     block_output_width: tl.constexpr = 32
     block_reduction: tl.constexpr = 32
-    channel_tiles: tl.constexpr = tl.cdiv(OUTPUT_CHANNELS, block_output_channels)
+    channel_tiles: tl.constexpr = tl.cdiv(
+        OUTPUT_CHANNELS, block_output_channels
+    )
     width_tiles: tl.constexpr = tl.cdiv(OUTPUT_DIM_4, block_output_width)
     tiles_per_row: tl.constexpr = channel_tiles * width_tiles
     tiles_per_batch: tl.constexpr = OUTPUT_DIM_3 * tiles_per_row
@@ -1561,19 +1731,29 @@ def _convolution_fprop_2d_nchw_3x3_blocked(
         row_tile = batch_tile % tiles_per_row
         channel_tile = row_tile // width_tiles
         width_tile = row_tile % width_tiles
-        output_channel_start = (channel_tile * block_output_channels).to(tl.int32)
+        output_channel_start = (channel_tile * block_output_channels).to(
+            tl.int32
+        )
         output_width_start = (width_tile * block_output_width).to(tl.int32)
         accumulator = tl.zeros(
             (block_output_channels, block_output_width), dtype=tl.float32
         )
 
         for filter_h in range(0, 3):
-            input_h = output_h * CONV_STRIDE_1 - PRE_PADDING_1 + filter_h * DILATION_1
+            input_h = (
+                output_h * CONV_STRIDE_1
+                - PRE_PADDING_1
+                + filter_h * DILATION_1
+            )
             valid_input_h = (input_h >= 0) & (input_h < INPUT_DIM_3)
             safe_input_h = tl.where(valid_input_h, input_h, 0)
             for filter_w in range(0, 3):
-                input_width_start = output_width_start - PRE_PADDING_2 + filter_w
-                for reduction_start in range(0, CHANNELS_PER_GROUP, block_reduction):
+                input_width_start = (
+                    output_width_start - PRE_PADDING_2 + filter_w
+                )
+                for reduction_start in range(
+                    0, CHANNELS_PER_GROUP, block_reduction
+                ):
                     input_block = tl.make_block_ptr(
                         base=(
                             input_ptr
@@ -1619,7 +1799,11 @@ def _convolution_fprop_2d_nchw_3x3_blocked(
                     )
 
         output_block = tl.make_block_ptr(
-            base=(output_ptr + batch * OUTPUT_STRIDE_0 + output_h * OUTPUT_STRIDE_3),
+            base=(
+                output_ptr
+                + batch * OUTPUT_STRIDE_0
+                + output_h * OUTPUT_STRIDE_3
+            ),
             shape=(OUTPUT_CHANNELS, OUTPUT_DIM_4),
             strides=(OUTPUT_STRIDE_1, OUTPUT_STRIDE_4),
             offsets=(output_channel_start, output_width_start),
@@ -1870,11 +2054,15 @@ def convolution_fprop_persistent_kernel(
             input_channel = input_channel_base + channel_offset
             for filter_d in range(0, FILTER_DIM_2):
                 input_d = (
-                    output_d * CONV_STRIDE_0 - PRE_PADDING_0 + filter_d * DILATION_0
+                    output_d * CONV_STRIDE_0
+                    - PRE_PADDING_0
+                    + filter_d * DILATION_0
                 )
                 for filter_h in range(0, FILTER_DIM_3):
                     input_h = (
-                        output_h * CONV_STRIDE_1 - PRE_PADDING_1 + filter_h * DILATION_1
+                        output_h * CONV_STRIDE_1
+                        - PRE_PADDING_1
+                        + filter_h * DILATION_1
                     )
                     for filter_w in range(0, FILTER_DIM_4):
                         input_w = (
@@ -1998,7 +2186,9 @@ def conv1d_gemm_kernel(
         reduction = start + reduction_base
         input_channel = reduction // KW
         kernel_w = reduction % KW
-        input_l = output_l[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
+        input_l = (
+            output_l[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
+        )
         input_ptrs = (
             x_ptr
             + batch[:, None] * x_stride_n
@@ -2041,7 +2231,8 @@ def conv1d_gemm_kernel(
 
     if HAS_BIAS:
         bias = tl.load(
-            bias_ptr + (group * COUT_PER_GROUP + output_channels) * bias_stride,
+            bias_ptr
+            + (group * COUT_PER_GROUP + output_channels) * bias_stride,
             mask=output_channels < COUT_PER_GROUP,
             other=0.0,
         )
@@ -2145,8 +2336,12 @@ def conv2d_spatial_nchw_kernel(
             kernel_hw = reduction - input_channel * kernel_area
         kernel_h = kernel_hw // KW
         kernel_w = kernel_hw - kernel_h * KW
-        input_h = output_h[None, :] * STRIDE_H - PAD_TOP + kernel_h[:, None] * DIL_H
-        input_w = output_w[None, :] * STRIDE_W - PAD_LEFT + kernel_w[:, None] * DIL_W
+        input_h = (
+            output_h[None, :] * STRIDE_H - PAD_TOP + kernel_h[:, None] * DIL_H
+        )
+        input_w = (
+            output_w[None, :] * STRIDE_W - PAD_LEFT + kernel_w[:, None] * DIL_W
+        )
         input_values = tl.load(
             x_ptr
             + batch * X_STRIDE_N
@@ -2172,7 +2367,9 @@ def conv2d_spatial_nchw_kernel(
         )
         if INPUT_PRECISION == 2:
             weights = _round_explicit_tf32_rne(weights, NATIVE_TF32_RNE)
-            input_values = _round_explicit_tf32_rne(input_values, NATIVE_TF32_RNE)
+            input_values = _round_explicit_tf32_rne(
+                input_values, NATIVE_TF32_RNE
+            )
         if DTYPE_ID == 2 and (INPUT_PRECISION == 1 or INPUT_PRECISION == 2):
             accumulator += tl.dot(
                 weights,
@@ -2180,11 +2377,14 @@ def conv2d_spatial_nchw_kernel(
                 input_precision="ieee",
             )
         else:
-            accumulator += tl.dot(weights, input_values, input_precision="ieee")
+            accumulator += tl.dot(
+                weights, input_values, input_precision="ieee"
+            )
 
     if HAS_BIAS:
         bias = tl.load(
-            bias_ptr + (group * COUT_PER_GROUP + output_channels) * BIAS_STRIDE,
+            bias_ptr
+            + (group * COUT_PER_GROUP + output_channels) * BIAS_STRIDE,
             mask=channel_mask,
             other=0.0,
         )
@@ -2261,7 +2461,8 @@ def conv2d_1x1_nchw_pad0_kernel(
         )
         weights = tl.load(
             w_ptr
-            + (group * COUT_PER_GROUP + output_channels[:, None]) * CIN_PER_GROUP
+            + (group * COUT_PER_GROUP + output_channels[:, None])
+            * CIN_PER_GROUP
             + input_channels[None, :],
             mask=channel_mask[:, None] & reduction_mask[None, :],
             other=0.0,
@@ -2276,7 +2477,9 @@ def conv2d_1x1_nchw_pad0_kernel(
                 input_precision="ieee",
             )
         else:
-            accumulator += tl.dot(weights, input_values, input_precision="ieee")
+            accumulator += tl.dot(
+                weights, input_values, input_precision="ieee"
+            )
 
     global_output_channels = group * COUT_PER_GROUP + output_channels
     if HAS_BIAS:
@@ -2379,9 +2582,17 @@ def conv3d_spatial_ncdhw_m_kernel(
         kernel_hw = kernel_spatial % (KH * KW)
         kernel_h = kernel_hw // KW
         kernel_w = kernel_hw % KW
-        input_d = output_d[:, None] * STRIDE_D - PAD_FRONT + kernel_d[None, :] * DIL_D
-        input_h = output_h[:, None] * STRIDE_H - PAD_TOP + kernel_h[None, :] * DIL_H
-        input_w = output_w[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
+        input_d = (
+            output_d[:, None] * STRIDE_D
+            - PAD_FRONT
+            + kernel_d[None, :] * DIL_D
+        )
+        input_h = (
+            output_h[:, None] * STRIDE_H - PAD_TOP + kernel_h[None, :] * DIL_H
+        )
+        input_w = (
+            output_w[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
+        )
         input_values = tl.load(
             x_ptr
             + batch[:, None] * X_STRIDE_N
@@ -2426,7 +2637,8 @@ def conv3d_spatial_ncdhw_m_kernel(
 
     if HAS_BIAS:
         bias = tl.load(
-            bias_ptr + (group * COUT_PER_GROUP + output_channels) * BIAS_STRIDE,
+            bias_ptr
+            + (group * COUT_PER_GROUP + output_channels) * BIAS_STRIDE,
             mask=output_channels < COUT_PER_GROUP,
             other=0.0,
         )
@@ -2481,7 +2693,10 @@ def conv_dgrad2d_1x1_nchw_kernel(
         mask_co = offs_co < COUT_PER_GROUP
         global_co = group * COUT_PER_GROUP + offs_co
         losses = tl.load(
-            dy_ptr + batch * (C_OUT * HW) + global_co[:, None] * HW + offs_m[None, :],
+            dy_ptr
+            + batch * (C_OUT * HW)
+            + global_co[:, None] * HW
+            + offs_m[None, :],
             mask=mask_co[:, None] & mask_m[None, :],
             other=0.0,
         )
@@ -2510,7 +2725,10 @@ def conv_dgrad2d_1x1_nchw_kernel(
 
     global_ci = group * CIN_PER_GROUP + offs_ci
     tl.store(
-        dx_ptr + batch * (C_IN * HW) + global_ci[:, None] * HW + offs_m[None, :],
+        dx_ptr
+        + batch * (C_IN * HW)
+        + global_ci[:, None] * HW
+        + offs_m[None, :],
         accumulator.to(dx_ptr.dtype.element_ty),
         mask=mask_ci[:, None] & mask_m[None, :],
     )
@@ -2724,7 +2942,9 @@ def conv_dgrad2d_stride1_kernel(
             weight_w = KW - 1 - kernel_w if FLIP_FILTER else kernel_w
             for channel_start in tl.static_range(0, COUT_PER_GROUP, BLOCK_CO):
                 output_channels = channel_start + tl.arange(0, BLOCK_CO)
-                global_output_channels = group * COUT_PER_GROUP + output_channels
+                global_output_channels = (
+                    group * COUT_PER_GROUP + output_channels
+                )
                 output_channel_mask = output_channels < COUT_PER_GROUP
                 losses = tl.load(
                     dy_ptr
@@ -2748,11 +2968,17 @@ def conv_dgrad2d_stride1_kernel(
                 )
                 if INPUT_PRECISION == 2:
                     losses = _round_explicit_tf32_rne(losses, NATIVE_TF32_RNE)
-                    weights = _round_explicit_tf32_rne(weights, NATIVE_TF32_RNE)
+                    weights = _round_explicit_tf32_rne(
+                        weights, NATIVE_TF32_RNE
+                    )
                 if INPUT_PRECISION == 1 or INPUT_PRECISION == 2:
-                    accumulator += tl.dot(losses, weights, input_precision="ieee")
+                    accumulator += tl.dot(
+                        losses, weights, input_precision="ieee"
+                    )
                 else:
-                    accumulator += tl.dot(losses, weights, input_precision="ieee")
+                    accumulator += tl.dot(
+                        losses, weights, input_precision="ieee"
+                    )
 
     tl.store(
         dx_ptr
@@ -2973,9 +3199,9 @@ def conv_dgrad_stem_vector_kernel(
                     + ww * W_STRIDE_W
                 )
                 weight_mask = (co < COUT_PER_GROUP) & (kh < KH) & (kw < KW)
-                loss = tl.load(dy_ptr + tl.where(mask, dy_offsets, 0), mask, 0).to(
-                    tl.float32
-                )
+                loss = tl.load(
+                    dy_ptr + tl.where(mask, dy_offsets, 0), mask, 0
+                ).to(tl.float32)
                 weight = tl.load(
                     w_ptr + tl.where(weight_mask, w_offsets, 0), weight_mask, 0
                 ).to(tl.float32)
@@ -3098,14 +3324,18 @@ def conv_wgrad_contiguous_kernel(
         loss = tl.load(
             dy_ptr
             + tl.where(
-                (oc[:, None] < COUT_PER_GROUP) & (rows[None, :] < M), dy_offsets, 0
+                (oc[:, None] < COUT_PER_GROUP) & (rows[None, :] < M),
+                dy_offsets,
+                0,
             ),
             (oc[:, None] < COUT_PER_GROUP) & (rows[None, :] < M),
             0,
         )
         value = tl.load(x_ptr + tl.where(x_mask, x_offsets, 0), x_mask, 0)
         acc += tl.dot(loss, value, input_precision="ieee")
-    offsets = (group * COUT_PER_GROUP + oc[:, None]) * filter_width + column[None, :]
+    offsets = (group * COUT_PER_GROUP + oc[:, None]) * filter_width + column[
+        None, :
+    ]
     tl.store(
         dw_ptr + offsets,
         acc,

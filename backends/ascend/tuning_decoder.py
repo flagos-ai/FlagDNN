@@ -91,7 +91,9 @@ def _assign_path(
 
 def _parameter_values(entry: dict[str, Any], name: str) -> list[Any]:
     if name not in entry:
-        raise ValueError(f"tuning param_map references missing parameter {name}")
+        raise ValueError(
+            f"tuning param_map references missing parameter {name}"
+        )
     source = entry[name]
     values = source if isinstance(source, list) else [source]
     if not values:
@@ -112,7 +114,9 @@ def _expand_generated_entry(entry: dict[str, Any]) -> list[dict[str, Any]]:
     source_names: list[str] = []
     for output_path, source_name in leaves:
         if output_path in output_paths:
-            raise ValueError(f"duplicate tuning output {'.'.join(output_path)}")
+            raise ValueError(
+                f"duplicate tuning output {'.'.join(output_path)}"
+            )
         output_paths.add(output_path)
         if source_name not in source_names:
             source_names.append(source_name)
@@ -140,7 +144,9 @@ def _expand_entries(entries: list[object]) -> list[dict[str, Any]]:
     seen: set[bytes] = set()
     for index, raw_entry in enumerate(entries):
         if not isinstance(raw_entry, dict) or not raw_entry:
-            raise ValueError(f"tuning entry {index} must be a nonempty mapping")
+            raise ValueError(
+                f"tuning entry {index} must be a nonempty mapping"
+            )
         if raw_entry.get("gen") is True:
             expanded = _expand_generated_entry(raw_entry)
         elif "gen" in raw_entry:
@@ -174,7 +180,9 @@ def _positive_option(value: object, name: str) -> int:
 
 def normalize_configuration(value: dict[str, Any]) -> TuningConfiguration:
     if set(value) != {"META", "num_warps", "num_stages"}:
-        unknown = sorted(set(value).difference({"META", "num_warps", "num_stages"}))
+        unknown = sorted(
+            set(value).difference({"META", "num_warps", "num_stages"})
+        )
         missing = sorted({"META", "num_warps", "num_stages"}.difference(value))
         detail = []
         if unknown:
@@ -267,7 +275,9 @@ def validate_add_configuration(
         ):
             raise ValueError(f"Ascend capability whitelist {name} is invalid")
         if value not in allowed:
-            raise ValueError(f"Ascend tuning {name} is outside target capability")
+            raise ValueError(
+                f"Ascend tuning {name} is outside target capability"
+            )
 
 
 def checked_grid(

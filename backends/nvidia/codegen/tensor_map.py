@@ -52,7 +52,10 @@ def resolve_tensor_maps(
             raise ValueError("unsupported host TensorMap metadata or tile")
         argument["block_shape"] = block
         layout = (
-            ",NVMMASharedLayout(swizzle_byte_width=128,element_bitwidth=32,rank=2)"
+            (
+                ",NVMMASharedLayout(swizzle_byte_wi"
+                "dth=128,element_bitwidth=32,rank=2)"
+            )
             if gluon
             else ""
         )

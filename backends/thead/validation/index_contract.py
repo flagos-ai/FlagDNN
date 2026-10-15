@@ -15,13 +15,17 @@ from unittest.mock import patch
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compiler"))
-from flagdnn_codegen import provider_loader
+from flagdnn_codegen import provider_loader  # noqa: E402
 
 
 def tensor(uid, dtype, shape, strides):
     return {
-        "uid": uid, "data_type": dtype, "dimensions": shape,
-        "strides": strides, "alignment": 16, "virtual": False,
+        "uid": uid,
+        "data_type": dtype,
+        "dimensions": shape,
+        "strides": strides,
+        "alignment": 16,
+        "virtual": False,
     }
 
 
@@ -33,18 +37,24 @@ def graph(operation, tensors, axis):
     if operation == "concatenate":
         parameters["input_count"] = len(inputs)
     return {
-        "name": operation, "tensor_count": len(tensors), "tensors": tensors,
+        "name": operation,
+        "tensor_count": len(tensors),
+        "tensors": tensors,
         "node_count": 1,
-        "nodes": [{
-            "id": 0, "type": operation, "name": operation,
-            "compute_data_type": "float32",
-            "inputs": [
-                {"name": f"input_{i}", "uid": item["uid"]}
-                for i, item in enumerate(inputs)
-            ],
-            "outputs": [{"name": "output", "uid": tensors[-1]["uid"]}],
-            "attributes": parameters,
-        }],
+        "nodes": [
+            {
+                "id": 0,
+                "type": operation,
+                "name": operation,
+                "compute_data_type": "float32",
+                "inputs": [
+                    {"name": f"input_{i}", "uid": item["uid"]}
+                    for i, item in enumerate(inputs)
+                ],
+                "outputs": [{"name": "output", "uid": tensors[-1]["uid"]}],
+                "attributes": parameters,
+            }
+        ],
     }
 
 
@@ -57,11 +67,15 @@ def require_rejected(action):
 
 
 def verify_repeated_inputs(parser, extended, artifacts, emit):
-    document = graph("concatenate", [
-        tensor(1, "float32", [2], [1]),
-        tensor(2, "float32", [3], [2]),
-        tensor(3, "float32", [7], [2]),
-    ], 0)
+    document = graph(
+        "concatenate",
+        [
+            tensor(1, "float32", [2], [1]),
+            tensor(2, "float32", [3], [2]),
+            tensor(3, "float32", [7], [2]),
+        ],
+        0,
+    )
     node = document["nodes"][0]
     node["inputs"] = [
         {"name": f"input_{index}", "uid": uid}
@@ -74,9 +88,12 @@ def verify_repeated_inputs(parser, extended, artifacts, emit):
         with patch.object(artifacts, "populate_launch_resources"):
             emit._compile_extended(
                 request={"graph": document, "flagdnn_version": "0.2.0"},
-                request_bytes=b"repeated inputs", identity={},
-                target="ppu_contract_cc80", output_directory=output,
-                enable_autotune=False, operation="concatenate",
+                request_bytes=b"repeated inputs",
+                identity={},
+                target="ppu_contract_cc80",
+                output_directory=output,
+                enable_autotune=False,
+                operation="concatenate",
             )
         manifest = json.loads((output / "manifest.json").read_text())
         assert manifest["tensor_count"] == len(manifest["tensors"]) == 3
@@ -88,19 +105,34 @@ def verify_repeated_inputs(parser, extended, artifacts, emit):
         argument_uids = [a["uid"] for a in stage["variants"][0]["arguments"]]
         assert argument_uids == [1, 2, 3]
         source = ast.parse((output / "generated_stage_0.py").read_text())
-        entry = next(n for n in source.body if isinstance(n, ast.FunctionDef)
-                     and n.name == "concatenate_kernel")
+        entry = next(
+            n
+            for n in source.body
+            if isinstance(n, ast.FunctionDef)
+            and n.name == "concatenate_kernel"
+        )
         assert [p.arg for p in entry.args.args] == [
-            "input_0", "input_1", "output_ptr", "BLOCK_SIZE"
+            "input_0",
+            "input_1",
+            "output_ptr",
+            "BLOCK_SIZE",
         ]
-        calls = [n for n in ast.walk(entry) if isinstance(n, ast.Call)
-                 and isinstance(n.func, ast.Name)
-                 and n.func.id == "_concatenate_region"]
+        calls = [
+            n
+            for n in ast.walk(entry)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "_concatenate_region"
+        ]
         assert [n.args[0].id for n in calls] == [
-            "input_0", "input_1", "input_0"
+            "input_0",
+            "input_1",
+            "input_0",
         ]
         assert [(n.args[8].value, n.args[9].value) for n in calls] == [
-            (0, 2), (2, 5), (5, 7)
+            (0, 2),
+            (2, 5),
+            (5, 7),
         ]
     invalid = copy.deepcopy(document)
     invalid["nodes"][0]["outputs"][0]["uid"] = 1
@@ -160,8 +192,11 @@ def verify_kernel_addresses(parser, extended):
 
     path = ROOT / "backends/thead/kernels/index.py"
     tree = ast.parse(path.read_text())
-    helper = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
-                  and n.name == "_concatenate_region")
+    helper = next(
+        n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "_concatenate_region"
+    )
     helper.decorator_list = []
     namespace = {"tl": _ScalarLanguage}
     module = ast.Module(body=[helper], type_ignores=[])
@@ -185,19 +220,24 @@ def verify_kernel_addresses(parser, extended):
                 shape[axis] = extent
             output = list(shapes[0])
             output[axis] = 6
-            geometries.append((
-                shapes, [strides(s, i % 2) for i, s in enumerate(shapes)],
-                output, strides(output, True), axis,
-            ))
+            geometries.append(
+                (
+                    shapes,
+                    [strides(s, i % 2) for i, s in enumerate(shapes)],
+                    output,
+                    strides(output, True),
+                    axis,
+                )
+            )
     for geometry in geometries:
         shapes, source_strides, output_shape, output_strides, axis = geometry
         tensors = [
             tensor(i + 1, "int32", shape, stride)
             for i, (shape, stride) in enumerate(zip(shapes, source_strides))
         ]
-        tensors.append(tensor(
-            len(tensors) + 1, "int32", output_shape, output_strides
-        ))
+        tensors.append(
+            tensor(len(tensors) + 1, "int32", output_shape, output_strides)
+        )
         document = graph("concatenate", tensors, axis)
         assert parser(document) == ["concatenate"]
         extended.kernel_configuration(document)
@@ -211,15 +251,15 @@ def verify_kernel_addresses(parser, extended):
                 memory = {}
                 coordinates = product(*(range(d) for d in shape))
                 for logical, coordinate in enumerate(coordinates):
-                    value = (0x80000000 + index * 65536 + logical)
+                    value = 0x80000000 + index * 65536 + logical
                     value ^= replay * 0x12345678
                     offset = sum(a * b for a, b in zip(coordinate, stride))
                     memory[offset] = value
                     destination = list(coordinate)
                     destination[axis] += begin
-                    offset = sum(a * b for a, b in zip(
-                        destination, output_strides
-                    ))
+                    offset = sum(
+                        a * b for a, b in zip(destination, output_strides)
+                    )
                     expected[offset] = value
                 sources.append(memory)
                 begin += shape[axis]
@@ -229,10 +269,20 @@ def verify_kernel_addresses(parser, extended):
             for shape, stride, source in zip(shapes, source_strides, sources):
                 end = begin + shape[axis]
                 for logical in range(math.prod(output_shape) + 7):
-                    execute(_Address(source), _Address(actual), logical,
-                            math.prod(output_shape), tuple(output_shape),
-                            tuple(stride), tuple(output_strides), axis,
-                            begin, end, "uint32", 1)
+                    execute(
+                        _Address(source),
+                        _Address(actual),
+                        logical,
+                        math.prod(output_shape),
+                        tuple(output_shape),
+                        tuple(stride),
+                        tuple(output_strides),
+                        axis,
+                        begin,
+                        end,
+                        "uint32",
+                        1,
+                    )
                 begin = end
             assert actual == expected
             assert sources == original_sources
@@ -272,24 +322,37 @@ def main():
         require_rejected(lambda: extended.kernel_configuration(invalid))
 
     dtype_names = (
-        "float32", "int32", "float16", "bfloat16", "boolean",
-        "fp8_e4m3", "fp8_e5m2", "fp8_e8m0",
+        "float32",
+        "int32",
+        "float16",
+        "bfloat16",
+        "boolean",
+        "fp8_e4m3",
+        "fp8_e5m2",
+        "fp8_e8m0",
     )
     with tempfile.TemporaryDirectory(prefix="flagdnn-thead-index-") as temp:
         for dtype in dtype_names:
-            document = graph("concatenate", [
-                tensor(1, dtype, [2, 3], [11, 2]),
-                tensor(2, dtype, [2, 5], [17, 3]),
-                tensor(3, dtype, [2, 8], [25, 2]),
-            ], 1)
+            document = graph(
+                "concatenate",
+                [
+                    tensor(1, dtype, [2, 3], [11, 2]),
+                    tensor(2, dtype, [2, 5], [17, 3]),
+                    tensor(3, dtype, [2, 8], [25, 2]),
+                ],
+                1,
+            )
             assert parser(document) == ["concatenate"]
             output = Path(temp) / dtype
             with patch.object(artifacts, "populate_launch_resources"):
                 result = emit._compile_extended(
                     request={"graph": document, "flagdnn_version": "0.2.0"},
-                    request_bytes=b"contract", identity={},
-                    target="ppu_contract_cc80", output_directory=output,
-                    enable_autotune=False, operation="concatenate",
+                    request_bytes=b"contract",
+                    identity={},
+                    target="ppu_contract_cc80",
+                    output_directory=output,
+                    enable_autotune=False,
+                    operation="concatenate",
                 )
             assert result["stage_count"] == 1
             manifest = json.loads((output / "manifest.json").read_text())
@@ -300,23 +363,33 @@ def main():
             assert [a["uid"] for a in variant["arguments"]] == [1, 2, 3]
             if dtype.startswith("fp8_"):
                 assert variant["full_signature"] == "*i8:16,*i8:16,*i8:16,256"
-                assert all(a.get("storage_view") == "fp8_bytes"
-                           for a in variant["arguments"])
+                assert all(
+                    a.get("storage_view") == "fp8_bytes"
+                    for a in variant["arguments"]
+                )
             else:
-                assert all("storage_view" not in a
-                           for a in variant["arguments"])
+                assert all(
+                    "storage_view" not in a for a in variant["arguments"]
+                )
             source = ast.parse((output / "generated_stage_0.py").read_text())
             entry = next(
-                n for n in source.body if isinstance(n, ast.FunctionDef)
+                n
+                for n in source.body
+                if isinstance(n, ast.FunctionDef)
                 and n.name == "concatenate_kernel"
             )
-            calls = [n for n in ast.walk(entry) if isinstance(n, ast.Call)
-                     and isinstance(n.func, ast.Name)
-                     and n.func.id == "_concatenate_region"]
+            calls = [
+                n
+                for n in ast.walk(entry)
+                if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Name)
+                and n.func.id == "_concatenate_region"
+            ]
             assert len(calls) == 2
             # The two input regions meet exactly at coordinate three.
             assert [(n.args[8].value, n.args[9].value) for n in calls] == [
-                (0, 3), (3, 8)
+                (0, 3),
+                (3, 8),
             ]
             invalid = copy.deepcopy(document)
             invalid["nodes"][0]["attributes"]["input_count"] = 1

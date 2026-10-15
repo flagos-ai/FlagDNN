@@ -106,7 +106,9 @@ def _tf32_tensor_map_eligible(
     tensors: list[dict[str, Any]],
     architecture: int,
 ) -> bool:
-    """Whole-tile Hopper path; virtual inputs and tails retain pointer kernels."""
+    """
+    Whole-tile Hopper path; virtual inputs and tails retain pointer kernels.
+    """
     if (
         architecture != 90
         or len(tensors) != 3
@@ -195,7 +197,9 @@ def _tf32_tma_kernel_configuration(
     tensors: list[dict[str, Any]],
     architecture: int,
 ) -> KernelPlan | None:
-    """Return None for valid packed layouts outside the Hopper tile contract."""
+    """
+    Return None for valid packed layouts outside the Hopper tile contract.
+    """
     if parameters.get("_matmul_tf32_packed") is not True:
         return None
     if len(tensors) != 3 or any(len(t["dimensions"]) != 3 for t in tensors):

@@ -59,10 +59,11 @@ def _layout_kernel_configuration(
 ) -> tuple[
     str,
     dict[str, str],
-    dict[str, int],
+    dict[str, int | float | str | bool],
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    constants: dict[str, int | float | str | bool]
     if len(tensors) != 2:
         raise ValueError("layout operation tensor count is invalid")
     input_tensor, output_tensor = tensors
@@ -229,7 +230,7 @@ def _layout_kernel_configuration(
             minimum=1,
             maximum=2**63 - 1,
         )
-        expected_output: list[int] = []
+        expected_output = []
         for axis in range(input_rank):
             if (
                 starts[axis] >= limits[axis]
@@ -261,7 +262,7 @@ def _layout_kernel_configuration(
     padded_output_dimensions = [1] * leading_output + output_dimensions
     padded_output_strides = [0] * leading_output + output_strides
     block = 256
-    constants: dict[str, int] = {
+    constants = {
         "INPUT_BASE": input_base,
         "BLOCK_SIZE": block,
     }

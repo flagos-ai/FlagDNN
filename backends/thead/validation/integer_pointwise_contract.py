@@ -24,15 +24,28 @@ sys.path.insert(0, str(SOURCE_ROOT / "compiler"))
 os.environ["FLAGDNN_BACKEND_ROOT"] = str(SOURCE_ROOT / "backends")
 
 
-
 MODES = {
-    "add": 1, "sub": 17, "mul": 18, "div": 19, "pow": 23,
-    "min": 20, "max": 21, "mod": 22, "cmp_eq": 25,
-    "cmp_neq": 26, "cmp_gt": 27, "cmp_ge": 28, "cmp_lt": 29, "cmp_le": 30,
+    "add": 1,
+    "sub": 17,
+    "mul": 18,
+    "div": 19,
+    "pow": 23,
+    "min": 20,
+    "max": 21,
+    "mod": 22,
+    "cmp_eq": 25,
+    "cmp_neq": 26,
+    "cmp_gt": 27,
+    "cmp_ge": 28,
+    "cmp_lt": 29,
+    "cmp_le": 30,
 }
 CONFIGURATION = {
-    "META": {"BLOCK_SIZE": 1024}, "num_warps": 4, "num_stages": 1,
-    "maxnreg": None, "ppu_compiler_options": {},
+    "META": {"BLOCK_SIZE": 1024},
+    "num_warps": 4,
+    "num_stages": 1,
+    "maxnreg": None,
+    "ppu_compiler_options": {},
 }
 
 
@@ -71,16 +84,36 @@ def verify_binary_plans(dispatch):
     layouts = (
         ("dense", [[2, 3], [2, 3], [2, 3]], [[3, 1]] * 3, None),
         ("dense_permutation", [[2, 3]] * 3, [[1, 2]] * 3, None),
-        ("scalar_right", [[2, 3], [1], [2, 3]],
-         [[3, 1], [1], [3, 1]], [[3, 1], [0, 0], [3, 1]]),
-        ("scalar_left", [[1], [2, 3], [2, 3]],
-         [[1], [3, 1], [3, 1]], [[0, 0], [3, 1], [3, 1]]),
-        ("right_aligned", [[2, 3], [3], [2, 3]],
-         [[3, 1], [1], [3, 1]], [[3, 1], [0, 1], [3, 1]]),
-        ("two_sided", [[2, 1], [1, 3], [2, 3]],
-         [[1, 1], [3, 1], [3, 1]], [[1, 0], [0, 1], [3, 1]]),
-        ("padded", [[2, 3]] * 3, [[9, 2], [8, 2], [10, 3]],
-         [[9, 2], [8, 2], [10, 3]]),
+        (
+            "scalar_right",
+            [[2, 3], [1], [2, 3]],
+            [[3, 1], [1], [3, 1]],
+            [[3, 1], [0, 0], [3, 1]],
+        ),
+        (
+            "scalar_left",
+            [[1], [2, 3], [2, 3]],
+            [[1], [3, 1], [3, 1]],
+            [[0, 0], [3, 1], [3, 1]],
+        ),
+        (
+            "right_aligned",
+            [[2, 3], [3], [2, 3]],
+            [[3, 1], [1], [3, 1]],
+            [[3, 1], [0, 1], [3, 1]],
+        ),
+        (
+            "two_sided",
+            [[2, 1], [1, 3], [2, 3]],
+            [[1, 1], [3, 1], [3, 1]],
+            [[1, 0], [0, 1], [3, 1]],
+        ),
+        (
+            "padded",
+            [[2, 3]] * 3,
+            [[9, 2], [8, 2], [10, 3]],
+            [[9, 2], [8, 2], [10, 3]],
+        ),
     )
     for operation, mode in MODES.items():
         for label, shapes, strides, expected_strides in layouts:
@@ -120,8 +153,13 @@ def verify_binary_plans(dispatch):
                     "wrong broadcast kernel",
                 )
             variant = dispatch._binary_pointwise_variant(
-                graph["tensors"], plan["n_elements"], mode, plan["alpha"],
-                plan["stride_constants"], CONFIGURATION, "contract",
+                graph["tensors"],
+                plan["n_elements"],
+                mode,
+                plan["alpha"],
+                plan["stride_constants"],
+                CONFIGURATION,
+                "contract",
             )
             parts = variant["full_signature"].split(",")
             require(
@@ -129,7 +167,8 @@ def verify_binary_plans(dispatch):
                 "integer pointers became floating",
             )
             require(
-                parts[2] == ("*i8:16" if operation.startswith("cmp_") else "*i32:16"),
+                parts[2]
+                == ("*i8:16" if operation.startswith("cmp_") else "*i32:16"),
                 "wrong output pointer type",
             )
             require(
@@ -142,24 +181,36 @@ def verify_binary_plans(dispatch):
             )
 
     graph = document_for(
-        "add", [[2, 1, 17], [3, 1], [2, 3, 17]],
+        "add",
+        [[2, 1, 17], [3, 1], [2, 3, 17]],
         [[17, 17, 1], [1, 1], [51, 17, 1]],
     )["graph"]
     plan = dispatch._validate_binary_pointwise_graph(graph, "add")
     require(plan["n_elements"] == 102, "multi-axis output count changed")
     require(
-        plan["stride_constants"] == (
-            [1] * 5 + [2, 3, 17]
-            + [0] * 5 + [17, 0, 1]
-            + [0] * 5 + [0, 1, 0]
-            + [0] * 5 + [51, 17, 1]
+        plan["stride_constants"]
+        == (
+            [1] * 5
+            + [2, 3, 17]
+            + [0] * 5
+            + [17, 0, 1]
+            + [0] * 5
+            + [0, 1, 0]
+            + [0] * 5
+            + [51, 17, 1]
         ),
         "multi-axis rank-mismatched broadcast addresses changed",
     )
 
     floating = request("0" * 64, "pow")["graph"]
     variant = dispatch._binary_pointwise_variant(
-        floating["tensors"], 16, 23, 1.0, None, CONFIGURATION, "float",
+        floating["tensors"],
+        16,
+        23,
+        1.0,
+        None,
+        CONFIGURATION,
+        "float",
     )
     require(
         variant["launch"]["shared_memory"] == 16,
@@ -168,26 +219,39 @@ def verify_binary_plans(dispatch):
 
 
 def verify_binary_select(dispatch):
-    for shape, strides in (([2, 3], [[3, 1]] * 4),
-                           ([2, 3], [[9, 2], [8, 2], [7, 2], [10, 3]])):
+    for shape, strides in (
+        ([2, 3], [[3, 1]] * 4),
+        ([2, 3], [[9, 2], [8, 2], [7, 2], [10, 3]]),
+    ):
         graph = document_for("binary_select", [shape] * 4, strides)["graph"]
         plan = dispatch._validate_binary_select_graph(graph)
         variant = dispatch._binary_pointwise_variant(
-            graph["tensors"], 6, 41, 1, plan["stride_constants"],
-            CONFIGURATION, "integer_select",
+            graph["tensors"],
+            6,
+            41,
+            1,
+            plan["stride_constants"],
+            CONFIGURATION,
+            "integer_select",
         )
-        require(variant["full_signature"].split(",")[:4] ==
-                ["*i32:16", "*i32:16", "*i8:16", "*i32:16"],
-                "integer selection lost exact value pointers")
+        require(
+            variant["full_signature"].split(",")[:4]
+            == ["*i32:16", "*i32:16", "*i8:16", "*i32:16"],
+            "integer selection lost exact value pointers",
+        )
         if strides[0] != [3, 1]:
             expected = [1] * 6 + shape
             for stride in strides:
                 expected += [0] * 6 + stride
-            require(plan["stride_constants"] == expected,
-                    "integer selection addresses changed")
+            require(
+                plan["stride_constants"] == expected,
+                "integer selection addresses changed",
+            )
         graph["tensors"][1]["data_type"] = "float32"
-        expect_rejected(lambda: dispatch._validate_binary_select_graph(graph),
-                        "mixed integer/float selection accepted")
+        expect_rejected(
+            lambda: dispatch._validate_binary_select_graph(graph),
+            "mixed integer/float selection accepted",
+        )
 
 
 def verify_rejections(dispatch):
@@ -208,8 +272,13 @@ def verify_rejections(dispatch):
             "alpha boundary changed",
         )
         variant = dispatch._binary_pointwise_variant(
-            graph["tensors"], plan["n_elements"], 1, plan["alpha"],
-            plan["stride_constants"], CONFIGURATION, "alpha_boundary",
+            graph["tensors"],
+            plan["n_elements"],
+            1,
+            plan["alpha"],
+            plan["stride_constants"],
+            CONFIGURATION,
+            "alpha_boundary",
         )
         require(
             variant["full_signature"].split(",")[-2] == str(alpha),
@@ -298,8 +367,11 @@ def verify_add_square(dispatch):
             "add_square layout specialization changed",
         )
         variant = dispatch._add_square_variant(
-            plan["argument_tensors"], 16, plan["stride_constants"],
-            CONFIGURATION, "square",
+            plan["argument_tensors"],
+            16,
+            plan["stride_constants"],
+            CONFIGURATION,
+            "square",
         )
         require(
             variant["full_signature"].split(",")[:3] == ["*i32:16"] * 3,

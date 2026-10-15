@@ -44,17 +44,23 @@ def _moe_matmul_configuration(operation, parameters, tensors):
         raise ValueError("inconsistent MoE token or offset shape")
     if matrix["dimensions"] != (
         [1, tokens, n] if backward else [experts, k, n]
-    ) or output["dimensions"] != ([experts, k, n] if backward else [1, routed, n]):
+    ) or output["dimensions"] != (
+        [experts, k, n] if backward else [1, routed, n]
+    ):
         raise ValueError("inconsistent MoE matrix or output shape")
     if mode != 1 and routed != tokens:
-        raise ValueError("MoE routed and input counts must match outside gather mode")
+        raise ValueError(
+            "MoE routed and input counts must match outside gather mode"
+        )
     for tensor in tensors[3:-1]:
         if tensor["data_type"] != "int32" or tensor["dimensions"] != [
             1,
             routed,
             1,
         ]:
-            raise ValueError("MoE routing indices must be INT32 [1,routed_tokens,1]")
+            raise ValueError(
+                "MoE routing indices must be INT32 [1,routed_tokens,1]"
+            )
     if mode == 2 and routed % top_k:
         raise ValueError("MoE scatter routed count must be divisible by top-k")
     constants = dict(

@@ -23,7 +23,9 @@ def add_square_contiguous_kernel(
     if left.dtype == tl.int32:
         result = left + right * right
     else:
-        result = left.to(tl.float32) + right.to(tl.float32) * right.to(tl.float32)
+        result = left.to(tl.float32) + right.to(tl.float32) * right.to(
+            tl.float32
+        )
     tl.store(
         output_ptr + offsets,
         result.to(output_ptr.dtype.element_ty),
@@ -127,7 +129,9 @@ def add_square_strided_kernel(
     if left.dtype == tl.int32:
         result = left + right * right
     else:
-        result = left.to(tl.float32) + right.to(tl.float32) * right.to(tl.float32)
+        result = left.to(tl.float32) + right.to(tl.float32) * right.to(
+            tl.float32
+        )
     tl.store(
         output_ptr + output_offsets,
         result.to(output_ptr.dtype.element_ty),

@@ -56,6 +56,7 @@ def _candidate_payload(
     source_sha256: str,
     worker_count: int,
 ) -> dict[str, Any]:
+    meta: dict[str, int | float | str | bool]
     validate_add_configuration(
         configuration, capabilities, kernel_family=stage.kernel_family
     )
@@ -79,7 +80,9 @@ def _candidate_payload(
         )
         grid = checked_grid(work_items, 1, capabilities)
     elif stage.kernel_family == "batchnorm_inference":
-        grid = _batchnorm_inference_grid(stage, int(meta["BLOCK_SIZE"]), capabilities)
+        grid = _batchnorm_inference_grid(
+            stage, int(meta["BLOCK_SIZE"]), capabilities
+        )
     elif stage.kernel_family == "matmul":
         block_size = int(meta["BLOCK_SIZE"])
         tiles = ((int(meta["M"]) + block_size - 1) // block_size) * (
@@ -91,9 +94,13 @@ def _candidate_payload(
         inner_elements = int(meta["OUTPUT_DIM_7"])
         if inner_elements <= 0 or stage.n_elements % inner_elements != 0:
             raise ValueError("shared-row layout dimensions are inconsistent")
-        grid = checked_grid(stage.n_elements // inner_elements, 1, capabilities)
+        grid = checked_grid(
+            stage.n_elements // inner_elements, 1, capabilities
+        )
     else:
-        grid = checked_grid(stage.n_elements, int(meta["BLOCK_SIZE"]), capabilities)
+        grid = checked_grid(
+            stage.n_elements, int(meta["BLOCK_SIZE"]), capabilities
+        )
     grid = (min(grid[0], worker_count), grid[1], grid[2])
     return {
         "schema_version": LAUNCH_PAYLOAD_VERSION,

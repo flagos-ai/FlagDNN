@@ -84,6 +84,7 @@ def _kernel_configuration_impl(
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    constants: dict[str, int | float | str | bool]
     if parameters.get("_sdpa_reduce_partials") is True:
         return partial_gradient_reduction(operation, parameters, tensors)
     tensor_data_types = [tensor["data_type"] for tensor in tensors]
@@ -274,7 +275,7 @@ def _kernel_configuration_impl(
         )
 
         block_n = _next_power_of_two(extent)
-        constants: dict[str, int | str] = {
+        constants = {
             "N": extent,
             "OP": REDUCTION_OPERATIONS[operation],
             "BLOCK_M": 1,

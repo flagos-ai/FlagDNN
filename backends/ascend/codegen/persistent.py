@@ -1,7 +1,7 @@
 """Materialize persistent Ascend stages and their tuning candidates."""
 
-from pathlib import Path
-from typing import Any
+from pathlib import Path  # noqa: F401
+from typing import Any  # noqa: F401
 from .emit import _build_stage
 from .io import (
     _compiler_entry_path,
@@ -12,7 +12,10 @@ from .signature import _validate_kernel_function
 from ..compiler_identity import aicore_count_from_target
 from ..dispatch.common import _MAX_KERNEL_SOURCE_SIZE, require_object
 from ..dispatch.graph import plan_graph
-from ..dispatch.selection import _load_capabilities, _validate_platform_candidate
+from ..dispatch.selection import (
+    _load_capabilities,
+    _validate_platform_candidate,
+)
 from ..tuning_decoder import (
     TuningConfiguration,
     load_tuning_table,
@@ -40,7 +43,9 @@ def emit(graph, target_name, identity, enable_autotune, output_directory):
         <= int(persistent_launch["maximum_ai_core_count"])
     ):
         raise ValueError("Ascend target AI core count exceeds capability")
-    worker_count = ai_core_count * int(persistent_launch["workers_per_ai_core"])
+    worker_count = ai_core_count * int(
+        persistent_launch["workers_per_ai_core"]
+    )
     candidate_by_operation: dict[str, KernelCandidate] = {}
     for operation in sorted({stage.operation for stage in graph_plan.stages}):
         candidate = select_kernel_candidate("ascend", operation)
@@ -67,7 +72,9 @@ def emit(graph, target_name, identity, enable_autotune, output_directory):
 
         tuning = candidate.tuning
         if tuning is None:
-            raise RuntimeError("validated Ascend pointwise candidate lost tuning")
+            raise RuntimeError(
+                "validated Ascend pointwise candidate lost tuning"
+            )
         tuning_path = resolve_tuning_source(compiler_path, candidate)
         configurations, tuning_source_sha256 = load_tuning_table(
             tuning_path, tuning.table
@@ -114,7 +121,8 @@ def emit(graph, target_name, identity, enable_autotune, output_directory):
                 tuning_source_sha256=tuning_source_sha256,
                 enable_autotune=(
                     enable_autotune
-                    and stage.function_name != "convolution_fprop_im2col_kernel"
+                    and stage.function_name
+                    != "convolution_fprop_im2col_kernel"
                 ),
                 capabilities=capabilities,
                 source_path=source_path,

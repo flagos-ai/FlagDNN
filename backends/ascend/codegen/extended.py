@@ -2,7 +2,7 @@
 
 from pathlib import Path
 import ast
-import hashlib
+import hashlib  # noqa: F401
 import math
 from .io import _materialize_source
 from ..dispatch.extended import plan_graph
@@ -15,32 +15,47 @@ def emit(graph, output_directory, identity):
     for plan in plans:
         entry, signature, constants, grid, layout = plan["configuration"]
         source = (
-            Path(__file__).resolve().parents[1] / "kernels" / (plan["source"] + ".py")
+            Path(__file__).resolve().parents[1]
+            / "kernels"
+            / (plan["source"] + ".py")
         )
         data = source.read_bytes()
         tree = ast.parse(data)
         function = next(
-            n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == entry
+            n
+            for n in tree.body
+            if isinstance(n, ast.FunctionDef) and n.name == entry
         )
         names = [a.arg for a in function.args.args]
         defaults = (
-            dict(zip(names[-len(function.args.defaults) :], function.args.defaults))
+            dict(
+                zip(
+                    names[-len(function.args.defaults) :],
+                    function.args.defaults,
+                )
+            )
             if function.args.defaults
             else {}
         )
         values = dict(constants)
         runtime_names = [name for name in names if name in signature]
         if len(runtime_names) != len(layout):
-            raise ValueError("Ascend extended signature and argument layout differ")
+            raise ValueError(
+                "Ascend extended signature and argument layout differ"
+            )
         arguments, tokens, tensor_index = [], {}, 0
         annotations = {
             a.arg: ast.unparse(a.annotation) if a.annotation else ""
             for a in function.args.args
         }
         for name, (kind, key) in zip(runtime_names, layout):
-            # LTJ's standalone compiler reads constexpr annotations from source.
+            # LTJ's standalone compiler reads constexpr annotations from
+            # source.
             # A numeric token must accompany every annotated scalar parameter.
-            if kind.startswith("scalar_") and annotations[name] == "tl.constexpr":
+            if (
+                kind.startswith("scalar_")
+                and annotations[name] == "tl.constexpr"
+            ):
                 values[name] = plan["parameters"][key]
                 continue
             if kind == "tensor" or kind == "tensor_alias":
@@ -52,11 +67,17 @@ def emit(graph, output_directory, identity):
                 argument = dict(
                     index=len(arguments),
                     name=name,
-                    source="graph_workspace" if tensor["virtual"] else "binding",
+                    source=(
+                        "graph_workspace" if tensor["virtual"] else "binding"
+                    ),
                     type="pointer",
                     uid=uid,
                     size=_tensor_storage_size(tensor),
-                    alignment=256 if tensor["virtual"] else tensor.get("alignment", 16),
+                    alignment=(
+                        256
+                        if tensor["virtual"]
+                        else tensor.get("alignment", 16)
+                    ),
                 )
                 if tensor["virtual"]:
                     argument["offset"] = workspace[uid][0]
@@ -76,7 +97,9 @@ def emit(graph, output_directory, identity):
                 )
                 tokens[name] = "fp32" if scalar_type == "f32" else scalar_type
             else:
-                raise ValueError(f"unsupported Ascend extended argument kind {kind}")
+                raise ValueError(
+                    f"unsupported Ascend extended argument kind {kind}"
+                )
         for name in names:
             if name in tokens:
                 continue
@@ -89,7 +112,10 @@ def emit(graph, output_directory, identity):
                 tokens[name] = repr(value)
             else:
                 raise ValueError(
-                    f"Ascend constexpr {entry}.{name} is not numeric: {value!r}"
+                    (
+                        f"Ascend constexpr {entry}.{name} is not numeric: "
+                        f"{value!r}"
+                    )
                 )
         if len(arguments) > 64 or any(
             type(x) is not int or not 1 <= x <= 2**31 - 1 for x in grid
@@ -111,7 +137,9 @@ def emit(graph, output_directory, identity):
                     source=source.name,
                     entry_point=entry,
                     source_sha256=sha,
-                    materialized_source=dict(file=filename, size=len(data), sha256=sha),
+                    materialized_source=dict(
+                        file=filename, size=len(data), sha256=sha
+                    ),
                 ),
                 argument_sources=arguments,
                 candidates=[
@@ -123,7 +151,9 @@ def emit(graph, output_directory, identity):
                             source_path=filename,
                             source_sha256=sha,
                             entry_point=entry,
-                            full_signature=",".join(tokens[name] for name in names),
+                            full_signature=",".join(
+                                tokens[name] for name in names
+                            ),
                             grid=list(grid),
                             compile_options=dict(num_warps=4, num_stages=1),
                         ),

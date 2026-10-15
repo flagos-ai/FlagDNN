@@ -657,7 +657,10 @@ def _identity_inputs(
         source = resolve_kernel_source(compiler_entry, candidate).resolve()
         if normalization_source is not None and source != normalization_source:
             raise ValueError(
-                "mthreads normalization operations resolve to different sources"
+                (
+                    "mthreads normalization operations resolve to different "
+                    "sources"
+                )
             )
         normalization_source = source
     if normalization_source is None:

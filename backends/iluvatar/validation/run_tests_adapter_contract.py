@@ -16,7 +16,7 @@ import tempfile
 from typing import Any
 
 
-def require(condition: bool, message: str) -> None:
+def require(condition: object, message: str) -> None:
     if not condition:
         raise RuntimeError(message)
 
@@ -62,7 +62,9 @@ def invoke_main(runner, arguments: list[str]) -> tuple[int, str, str]:
     stderr = io.StringIO()
     try:
         sys.argv = [str(runner.__file__), *arguments]
-        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(
+            stderr
+        ):
             exit_code = runner.main()
     finally:
         sys.argv = original_argv
@@ -100,7 +102,9 @@ def main() -> int:
     manifests = runner.operator_manifests()
     manifest_operators = list(
         dict.fromkeys(
-            operator for manifest in manifests.values() for operator in manifest
+            operator
+            for manifest in manifests.values()
+            for operator in manifest
         )
     )
     selected = iluvatar.select_operator_manifests(manifests)
@@ -117,7 +121,10 @@ def main() -> int:
         iluvatar.postprocess_result(
             result=result,
             ctest_reported_status=reported,
-            output=f"42: DNN_CAPABILITY_UNAVAILABLE: iluvatar: {operator} reason=DNN_API_UNAVAILABLE",
+            output=(
+                f"42: DNN_CAPABILITY_UNAVAILABLE: iluvatar: {operator} "
+                f"reason=DNN_API_UNAVAILABLE"
+            ),
             operator=operator,
             suite="functional",
             records={},
@@ -165,9 +172,16 @@ def main() -> int:
         "Iluvatar functional-only preflight requires benchmark targets",
     )
 
-    fp8_skip = "[SKIP][iluvatar] op=matmul case=matmul_ae4m3_be5m2_mode3_16_16_32 reason=DNN_FP8_UNAVAILABLE"
-    partial, errors = iluvatar.partial_capability_skips("42: " + fp8_skip, "matmul")
-    require(len(partial) == 1 and not errors, "plain FP8 matmul capability missing")
+    fp8_skip = (
+        "[SKIP][iluvatar] op=matmul case=matmul_ae4m3_be5m2_mode3_16_16_32 "
+        "reason=DNN_FP8_UNAVAILABLE"
+    )
+    partial, errors = iluvatar.partial_capability_skips(
+        "42: " + fp8_skip, "matmul"
+    )
+    require(
+        len(partial) == 1 and not errors, "plain FP8 matmul capability missing"
+    )
     for output, operator in (
         (fp8_skip, "add"),
         (fp8_skip + "\n" + fp8_skip, "matmul"),
@@ -210,7 +224,8 @@ def main() -> int:
         runner.run_process_group = original_run_process_group
     require(
         missing_preflight_result["status"] == "failed"
-        and missing_preflight_result["missing_tests"] == [missing_preflight_test],
+        and missing_preflight_result["missing_tests"]
+        == [missing_preflight_test],
         "missing Iluvatar preflight test did not fail closed",
     )
 
@@ -218,7 +233,8 @@ def main() -> int:
         if "--show-only=json-v1" in command:
             catalog = {
                 "tests": [
-                    {"name": name} for name in sorted(required_functional_preflight)
+                    {"name": name}
+                    for name in sorted(required_functional_preflight)
                 ]
             }
             return json.dumps(catalog), "", 0, False
@@ -435,7 +451,9 @@ def main() -> int:
         "valid FlagDNN/CoreX cuDNN benchmark pair was rejected",
     )
     _, duplicate_provider_errors = runner.benchmark_records(
-        timing(benchmark_case, "flagdnn") + "\n" + timing(benchmark_case, "flagdnn"),
+        timing(benchmark_case, "flagdnn")
+        + "\n"
+        + timing(benchmark_case, "flagdnn"),
         iluvatar,
     )
     require(
@@ -461,13 +479,19 @@ def main() -> int:
     for label, invalid_pair in (
         (
             "one-sided",
-            {benchmark_case: {"flagdnn": paired_records[benchmark_case]["flagdnn"]}},
+            {
+                benchmark_case: {
+                    "flagdnn": paired_records[benchmark_case]["flagdnn"]
+                }
+            },
         ),
         (
             "reverse-order",
             {
                 benchmark_case: {
-                    "corex_cudnn": paired_records[benchmark_case]["corex_cudnn"],
+                    "corex_cudnn": paired_records[benchmark_case][
+                        "corex_cudnn"
+                    ],
                     "flagdnn": paired_records[benchmark_case]["flagdnn"],
                 }
             },
@@ -535,15 +559,20 @@ def main() -> int:
     speedup_results = {"add": {"benchmark": speedup_benchmark}}
     require(
         iluvatar.iluvatar_speedup_summary(speedup_results, 1.4)["gate_passed"]
-        and not iluvatar.iluvatar_speedup_summary(speedup_results, 1.6)["gate_passed"],
+        and not iluvatar.iluvatar_speedup_summary(speedup_results, 1.6)[
+            "gate_passed"
+        ],
         "Iluvatar per-case speedup gate did not enforce its threshold",
     )
     failed_speedup_results = {
         "add": {"benchmark": {**speedup_benchmark, "status": "failed"}}
     }
-    failed_speedup = iluvatar.iluvatar_speedup_summary(failed_speedup_results, 1.0)
+    failed_speedup = iluvatar.iluvatar_speedup_summary(
+        failed_speedup_results, 1.0
+    )
     require(
-        failed_speedup["case_count"] == 0 and not failed_speedup["gate_passed"],
+        failed_speedup["case_count"] == 0
+        and not failed_speedup["gate_passed"],
         "Iluvatar speedup accepted records from a failed suite",
     )
 
@@ -562,10 +591,12 @@ def main() -> int:
         }
     }
     require(
-        iluvatar.iluvatar_speedup_summary(skipped_speedup_results, None)["gate_passed"]
-        and not iluvatar.iluvatar_speedup_summary(skipped_speedup_results, 1.0)[
+        iluvatar.iluvatar_speedup_summary(skipped_speedup_results, None)[
             "gate_passed"
-        ],
+        ]
+        and not iluvatar.iluvatar_speedup_summary(
+            skipped_speedup_results, 1.0
+        )["gate_passed"],
         "Iluvatar all-SKIP speedup coverage is inconsistent",
     )
 
@@ -584,7 +615,9 @@ def main() -> int:
         }
     }
     direct_environment: dict[str, str] = {}
-    direct_state = iluvatar.prepare_run(environment=direct_environment, verbose=False)
+    direct_state = iluvatar.prepare_run(
+        environment=direct_environment, verbose=False
+    )
     direct_cache = Path(direct_state["cache_path"])
     require(
         direct_cache.is_dir()
@@ -627,7 +660,9 @@ def main() -> int:
     )
     shutil.rmtree(preserved_cache)
 
-    with tempfile.TemporaryDirectory(prefix="iluvatar-caller-cache-") as caller_cache:
+    with tempfile.TemporaryDirectory(
+        prefix="iluvatar-caller-cache-"
+    ) as caller_cache:
         external_environment = {"FLAGDNN_CACHE_PATH": caller_cache}
         external_state = iluvatar.prepare_run(
             environment=external_environment, verbose=False
@@ -638,7 +673,9 @@ def main() -> int:
             "runner replaced the caller-provided cache",
         )
         iluvatar._cache_summary_and_cleanup(external_state)
-        require(Path(caller_cache).is_dir(), "runner removed a caller-owned cache")
+        require(
+            Path(caller_cache).is_dir(), "runner removed a caller-owned cache"
+        )
 
     with tempfile.TemporaryDirectory(
         prefix="flagdnn-iluvatar-runner-contract-"
@@ -646,7 +683,9 @@ def main() -> int:
         contract_root = Path(temporary_directory)
         build_dir = contract_root / "build"
         build_dir.mkdir()
-        (build_dir / "CTestTestfile.cmake").write_text("# contract\n", encoding="utf-8")
+        (build_dir / "CTestTestfile.cmake").write_text(
+            "# contract\n", encoding="utf-8"
+        )
         summary_path = contract_root / "summary.json"
         observed_cache_paths: list[Path] = []
         original_run_one = runner.run_one

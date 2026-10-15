@@ -629,7 +629,10 @@ def validate_benchmark_record(
         != (8 if record["case"].startswith("identity_bool_") else 1)
     ):
         raise ValueError(
-            "identity requires its measured validation and logical-byte copy ratio"
+            (
+                "identity requires its measured validation and logical-byte "
+                "copy ratio"
+            )
         )
     if case_operator in EQUIVALENT_BFLOAT16_OPERATORS | {
         "batchnorm",
@@ -639,7 +642,10 @@ def validate_benchmark_record(
         or baseline["traffic_ratio"] != 1
     ):
         raise ValueError(
-            "supplemental floating-point cases require CPU-full unit-traffic evidence"
+            (
+                "supplemental floating-point cases require CPU-full "
+                "unit-traffic evidence"
+            )
         )
 
     def positive(value: Any) -> bool:
@@ -773,7 +779,10 @@ def validate_hygon_benchmark_pairs(
                         )
                 except ValueError as error:
                     errors.append(
-                        f"Hygon benchmark case={case} provider={provider}: {error}"
+                        (
+                            f"Hygon benchmark case={case} "
+                            f"provider={provider}: {error}"
+                        )
                     )
             for key in ("timing_mode", "timing_reason", "benchmark_config"):
                 if providers["flagdnn"].get(key) != providers["hipdnn"].get(
@@ -1425,13 +1434,18 @@ def finalize(
             results, suite_operators["benchmark"], catalog
         )
         if not comparable_coverage["verified"]:
+            excluded_complete = comparable_coverage[
+                "excluded_complete_required_case_count"
+            ]
             print(
                 "comparable coverage gate: "
                 f"{comparable_coverage['observed_required_case_count']}/"
                 f"{comparable_coverage['required_case_count']} declared cases "
                 "have complete FlagDNN/hipDNN pairs in completed suites; "
-                f"raw_complete={comparable_coverage['raw_complete_required_case_count']} "
-                f"excluded_suite_failed={comparable_coverage['excluded_complete_required_case_count']}",
+                "raw_complete="
+                f"{comparable_coverage['raw_complete_required_case_count']} "
+                "excluded_suite_failed="
+                f"{excluded_complete}",
                 flush=True,
             )
             for missing in comparable_coverage["missing_cases"]:

@@ -15,20 +15,28 @@ def _rope_kernel_configuration(operation, parameters, tensors):
     x, freqs, y = tensors
     if len(x["dimensions"]) != 4 or y["dimensions"] != x["dimensions"]:
         raise ValueError("RoPE requires BHSD input and matching output")
-    if x["data_type"] not in FLOAT_DATA_TYPES or y["data_type"] != x["data_type"]:
+    if (
+        x["data_type"] not in FLOAT_DATA_TYPES
+        or y["data_type"] != x["data_type"]
+    ):
         raise ValueError("RoPE input/output must use the same floating type")
     for tensor in tensors:
-        if not _has_non_overlapping_strides(tensor["dimensions"], tensor["strides"]):
+        if not _has_non_overlapping_strides(
+            tensor["dimensions"], tensor["strides"]
+        ):
             raise ValueError("RoPE requires non-overlapping tensor strides")
     batch, heads, sequence, dimension = x["dimensions"]
-    width = _require_integer(parameters, "rope_dim", minimum=2, maximum=dimension)
+    width = _require_integer(
+        parameters, "rope_dim", minimum=2, maximum=dimension
+    )
     if (
         width % 2
         or freqs["dimensions"] != [sequence, 1, 1, width]
         or freqs["data_type"] != "float32"
     ):
         raise ValueError(
-            "RoPE frequencies must be FP32 [S,1,1,rope_dim] " "with even rotation width"
+            "RoPE frequencies must be FP32 [S,1,1,rope_dim] "
+            "with even rotation width"
         )
     elements = _require_integer(parameters, "n_elements")
     if elements != batch * heads * sequence * dimension:

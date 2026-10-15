@@ -141,10 +141,11 @@ std::vector<IndexTestCase> make_index_cases(std::string_view operation) {
               {513}, {1025}, {2049}, {4096}, {8192}, {16384}, {65536}};
   std::vector<flagdnnDataType_t> types = {FLAGDNN_DATA_INT32,
                                           FLAGDNN_DATA_FLOAT32};
+  // Shared validation follows the qualified NVIDIA reference catalog.
+  // Other storage types have no executable cuDNN concatenate reference.
   if (operation == "concatenate")
-    types.insert(types.end(), {FLAGDNN_DATA_FLOAT16, FLAGDNN_DATA_BFLOAT16,
-                               FLAGDNN_DATA_BOOLEAN, FLAGDNN_DATA_FP8_E4M3,
-                               FLAGDNN_DATA_FP8_E5M2, FLAGDNN_DATA_FP8_E8M0});
+    types = {FLAGDNN_DATA_FLOAT32, FLAGDNN_DATA_FLOAT16,
+             FLAGDNN_DATA_BFLOAT16};
   std::vector<IndexTestCase> result;
   for (std::size_t index = 0; index < shapes.size(); ++index) {
     for (const auto type : types) {

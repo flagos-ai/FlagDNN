@@ -71,7 +71,9 @@ def _argument_abi(
                 or value < -(2**31)
                 or value > 2**31 - 1
             ):
-                raise ValueError(f"parameters.{name} must be representable as int32")
+                raise ValueError(
+                    f"parameters.{name} must be representable as int32"
+                )
             result.append({"kind": kind, "name": name, "value": value})
             continue
         if kind == "scalar_f32" and isinstance(name, str):
@@ -130,8 +132,12 @@ def _nn_argument_abi(
                 or value < -(2**31)
                 or value > 2**31 - 1
             ):
-                raise ValueError(f"Iluvatar NN runtime scalar {payload!r} is not int32")
-            result.append({"kind": "scalar_i32", "name": payload, "value": value})
+                raise ValueError(
+                    f"Iluvatar NN runtime scalar {payload!r} is not int32"
+                )
+            result.append(
+                {"kind": "scalar_i32", "name": payload, "value": value}
+            )
             continue
         if kind == "scalar_f32" and isinstance(payload, str):
             value = configuration.runtime_values.get(payload)
@@ -173,7 +179,9 @@ def _artifact_arguments(
         if kind in {"global_scratch_pointer", "profile_scratch_pointer"}:
             continue
         serialized = {
-            key: value for key, value in argument.items() if key not in {"role", "name"}
+            key: value
+            for key, value in argument.items()
+            if key not in {"role", "name"}
         }
         if kind == "workspace_tensor":
             serialized["workspace_offset"] = serialized.pop("offset")

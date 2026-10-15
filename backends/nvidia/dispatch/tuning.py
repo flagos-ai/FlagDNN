@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from pathlib import Path
 from typing import Any
 import copy
@@ -11,7 +13,7 @@ import json
 
 from flagdnn_codegen.kernel_registry import KernelCandidate
 from flagdnn_codegen.kernel_registry import resolve_tuning_source
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from .common import _ceil_div, _require_integer
 
@@ -769,7 +771,9 @@ def _autotune_variant_grid(
                 1,
                 1,
             )
-        return tuple(int(value) for value in default_grid)
+        return cast(
+            tuple[int, int, int], tuple(int(value) for value in default_grid)
+        )
 
     if strategy == "matmul":
         block_m = _positive_tuning_integer(meta, "BLOCK_M")

@@ -10,16 +10,21 @@ import math
 def materialize_concatenate_source(source_bytes, tensors, axis):
     tree = ast.parse(source_bytes)
     entry = next(
-        node for node in tree.body
+        node
+        for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name == "concatenate_kernel"
     )
     inputs, output = tensors[:-1], tensors[-1]
     storage = {
-        "float32": "uint32", "int32": "uint32",
-        "float16": "uint16", "bfloat16": "uint16",
-        "boolean": "uint8", "fp8_e4m3": "uint8",
-        "fp8_e5m2": "uint8", "fp8_e8m0": "uint8",
+        "float32": "uint32",
+        "int32": "uint32",
+        "float16": "uint16",
+        "bfloat16": "uint16",
+        "boolean": "uint8",
+        "fp8_e4m3": "uint8",
+        "fp8_e5m2": "uint8",
+        "fp8_e8m0": "uint8",
     }[output["data_type"]]
     input_names = {
         uid: f"input_{index}"
@@ -27,7 +32,8 @@ def materialize_concatenate_source(source_bytes, tensors, axis):
     }
     names = [*input_names.values(), "output_ptr"]
     body = [
-        "def concatenate_kernel(" + ", ".join(names)
+        "def concatenate_kernel("
+        + ", ".join(names)
         + ", BLOCK_SIZE: tl.constexpr):",
         "    logical = tl.program_id(0).to(tl.int64) * BLOCK_SIZE "
         "+ tl.arange(0, BLOCK_SIZE)",
@@ -50,6 +56,5 @@ def materialize_concatenate_source(source_bytes, tensors, axis):
     ast.fix_missing_locations(tree)
     return (
         "# Copyright 2026 FlagOS Contributors\n"
-        "# SPDX-License-Identifier: Apache-2.0\n"
-        + ast.unparse(tree) + "\n"
+        "# SPDX-License-Identifier: Apache-2.0\n" + ast.unparse(tree) + "\n"
     ).encode("utf-8")

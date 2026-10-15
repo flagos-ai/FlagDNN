@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import itertools
 import math
 from typing import Any
@@ -38,7 +40,9 @@ def _padded_convolution_tensor(
 def _padded_convolution_spatial(
     values: tuple[int, ...], fill: int
 ) -> tuple[int, int, int]:
-    return tuple((*([fill] * (3 - len(values))), *values))  # type: ignore[return-value]
+    return cast(
+        tuple[int, int, int], tuple((*([fill] * (3 - len(values))), *values))
+    )
 
 
 def _convolution_function(request: ParsedConvolutionRequest) -> str:
@@ -591,6 +595,7 @@ def _im2col_fprop_stage(
     function: str,
     dependencies: tuple[int, ...],
 ) -> KernelStage:
+    arguments: tuple[RuntimeArgument, ...]
     target_warp = int(request.target.rsplit("-w", 1)[1])
     _, _, warmup, repetitions = _load_tuning(
         table_name="convolution",
@@ -808,6 +813,8 @@ def _dense_dgrad_stage(
     function: str,
     dependencies: tuple[int, ...],
 ) -> KernelStage:
+    candidates: tuple[tuple[int, int, int], ...]
+    arguments: tuple[RuntimeArgument, ...]
     target_warp = int(request.target.rsplit("-w", 1)[1])
     _, _, warmup, repetitions = _load_tuning(
         table_name="convolution",
@@ -981,7 +988,7 @@ def _nd_packed_wgrad_spatial3(
     values: tuple[int, ...],
     fill: int,
 ) -> tuple[int, int, int]:
-    return (fill,) * (3 - len(values)) + values
+    return cast(tuple[int, int, int], (fill,) * (3 - len(values)) + values)
 
 
 def _nd_packed_wgrad_num_splits(
@@ -1152,6 +1159,7 @@ def _nd_packed_wgrad_stage(
     function: str,
     dependencies: tuple[int, ...],
 ) -> KernelStage:
+    arguments: tuple[RuntimeArgument, ...]
     target_warp = int(request.target.rsplit("-w", 1)[1])
     _, _, warmup, repetitions = _load_tuning(
         table_name="convolution",
@@ -1522,6 +1530,7 @@ def _standard_wgrad_stage(
     function: str,
     dependencies: tuple[int, ...],
 ) -> KernelStage:
+    arguments: tuple[RuntimeArgument, ...]
     target_warp = int(request.target.rsplit("-w", 1)[1])
     _, _, warmup, repetitions = _load_tuning(
         table_name="convolution",
@@ -1642,6 +1651,7 @@ def _standard_wgrad_plan(
     request: ParsedConvolutionRequest,
     source_sha256: str,
 ) -> ExecutionPlan:
+    stage_specs: tuple[tuple[str, tuple[int, ...]], ...]
     if request.filter.dimensions[2:] == (1, 1):
         stage_specs = (
             ("_conv_wgrad2d_1x1_split_kernel", ()),
@@ -1788,6 +1798,7 @@ def _stem_wgrad_stage(
     function: str,
     dependencies: tuple[int, ...],
 ) -> KernelStage:
+    arguments: tuple[RuntimeArgument, ...]
     target_warp = int(request.target.rsplit("-w", 1)[1])
     _, _, warmup, repetitions = _load_tuning(
         table_name="convolution",
@@ -1980,6 +1991,7 @@ def _p5_wgrad_stage(
     function: str,
     dependencies: tuple[int, ...],
 ) -> KernelStage:
+    arguments: tuple[RuntimeArgument, ...]
     target_warp = int(request.target.rsplit("-w", 1)[1])
     default, candidates, warmup, repetitions = _load_tuning(
         table_name="convolution",

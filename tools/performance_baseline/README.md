@@ -140,3 +140,34 @@ python3 tools/performance_baseline/benchmark_ascend_vector_memory.py \
 只把已测指标写入对应设备基线，未测项保留 `null`，算子换算策略另行显式登记。
 2026-10-13 的 copy 测量为 6 个配置、600 个有效样本，峰值 **1.1794765684348663 TB/s**；
 见[正式基线](../../docs/performance-baseline.json)的 `measurement_summaries.ascend-20261013`，其中保留配置明细及本地原始归档的路径与哈希。
+
+### NVIDIA 补测记录与复现（2026-10-15）
+
+原始补测执行 175 个不同用例和 15 次 INT32 compute 探测，共 190 次尝试：ELU backward 45 条、softplus backward 45 条通过；非浮点 concatenate 70 条、INT32 POW 15 条没有有效参考。90 条有效记录已入库，原有 3264 条记录未改变。
+
+失败原因：INT32 concatenate 的 legacy 执行返回 NOT_SUPPORTED，BOOL/FP8 descriptor 返回 BAD_PARAM；原 dtype graph 均无可用引擎。14 条普通 INT32 POW 出现 16777217**1 得到 16777216 的精度错误，1 条 padded 布局构建失败，另测 15 条 INT32 compute 均无可用引擎。没有用其他 dtype 的时间替代。后续已从公共目录移除这 85 条，详见[公共用例调整及跨平台影响](../../docs/equivalent-performance-baseline.md)。
+
+[测量摘要](measurements/nvidia-supplement-20261015.json)记录设备、软件、计数和 SHA256；原始压缩归档不再随源码保存。测量机的忽略目录 `build/performance-baseline/evidence/nvidia-supplement-20261015` 保留解压后的旧任务单、原始日志、样本及源码/二进制快照；该目录不随 Git 分发。原始归档 SHA256 留作来源标识，为 `a9cb3f224672be60a713e906f824610e99700a0aeb5de5bc6d6f9dadde94335d`。摘要中的跨平台范围和 18 条功能/6 条性能回归描述的是原始 NVIDIA 补测阶段，回归算子为 ELU backward 和 softplus backward；后续公共目录变更另见上述说明。
+
+有效时间使用 H100 80GB HBM3 / 700 W、cuDNN 9.24.0。输入按实际 dtype 编解码后交给独立 CPU reference；计时前、计时后、重置输出回放后三阶段全量检查，每阶段 27,120 个输出元素，并检查输入、padding 和 guard。计时口径为 10 次预热、20 个样本、每批 Graph 50 次执行、1 次 Graph 预热，取 nearest-rank P50。构建、传输和校验不计时。原始自检覆盖 175 条/71,642 个元素，入库审计通过 18 项损坏证据拒绝检查。这些 NVIDIA 数据不代表目标平台已完成接入或达到性能门槛。
+
+当前工具仅采集保留的 90 条激活反向用例。先重新构建当前 NVIDIA validation archives，再执行以下命令；CUDA/cuDNN 路径应指向本机已有安装，设备应为空闲且已预留的 H100。工具不会修改功耗设置或自动导入正式基线。
+
+```bash
+export CUDA_ROOT=/home/wangbingjie/cuda-local/usr/local/cuda-12.9
+export CUDNN_ROOT=/home/wangbingjie/py312-flagdnn/lib/python3.12/site-packages/nvidia/cudnn
+export CUDNN_FRONTEND_INCLUDE_DIR=/home/wangbingjie/py312-flagdnn/lib/python3.12/site-packages/include
+bash tools/performance_baseline/build_benchmark_nvidia_supplement.sh build/nvidia/nv_supplement
+CUDA_VISIBLE_DEVICES=0 python3 tools/performance_baseline/run_benchmark_nvidia_supplement.py --binary build/nvidia/nv_supplement --output build/performance-baseline/new-supplement
+python3 tools/performance_baseline/audit_nvidia_supplement.py build/performance-baseline/new-supplement --measurement-id new-supplement
+```
+
+输出目录必须位于仓库内且为空或尚不存在，避免覆盖中断测量的证据。采集器保存源码和可执行二进制快照，并从该副本串行执行全部用例。审计核对目录参数与容差、三阶段 CPU 校验、样本、原始日志、源码和二进制哈希，只生成候选数据。新采集必须指定独立 measurement ID，不得复用原始 ID。
+
+复现原始 175 条测量需要另行取得原始 collector、源码与证据；这些文件不再随源码分发。当前共享工厂不再生成退役用例。在测量机已有历史证据目录时，可运行：
+
+```bash
+python3 tools/performance_baseline/audit_nvidia_supplement.py --historical-20261015 build/performance-baseline/evidence/nvidia-supplement-20261015
+```
+
+当前审计保留历史模式，并新增容差及无效误差检查。测量时源码与采集后补充的自动归档工具分别保存在本地证据目录的 `source-snapshot.tar.gz` 和 `post-collection-tooling/` 中。

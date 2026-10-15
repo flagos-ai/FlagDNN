@@ -182,31 +182,38 @@ int main(int argc, char** argv) {
             "architecture");
     rejects([&] { baseline_api::PerformanceBaseline bad(argv[1], "unconfigured"); },
             "unknown target");
-    // Actual missing native catalogs must not silently use a core FLOAT
-    // record, a neighboring shape, or another target's scaling policy.
-    std::size_t missing = 0;
+    // Newly measured native activation cases preserve exact metadata.
+    // The six Real/Scaled attribute cases still require adapter support.
+    std::size_t native_matched = 0, attributes_pending = 0;
     for (auto [name, mode] :
          {std::pair{"elu_backward", FLAGDNN_POINTWISE_ELU_BWD},
-          std::pair{"softplus_backward", FLAGDNN_POINTWISE_SOFTPLUS_BWD},
-          std::pair{"pow", FLAGDNN_POINTWISE_POW}}) {
+          std::pair{"softplus_backward", FLAGDNN_POINTWISE_SOFTPLUS_BWD}}) {
       test::PointwiseCaseDefinition definition;
       definition.operation_name = name;
       definition.mode = mode;
-      if (mode == FLAGDNN_POINTWISE_POW)
-        definition.input_domain = test::PointwiseInputDomain::kPower;
       for (const auto& value : test::make_binary_pointwise_cases(definition)) {
-        if (mode == FLAGDNN_POINTWISE_POW &&
-            value.output.data_type != FLAGDNN_DATA_INT32) continue;
         const auto spec = flagdnn::validation::mthreads::equivalent::as_benchmark(value);
-        require(!document.at("reference").at("cases").as_object()
-                     .contains(spec.name),
-                "new NVIDIA evidence needs contract coverage: " + spec.name);
-        rejects([&] { (void)baseline.lookup(spec, device, arch); },
-                "unmeasured native case " + spec.name);
-        ++missing;
+        require(document.at("reference").at("cases").as_object()
+                    .contains(spec.name),
+                "native NVIDIA activation evidence missing: " + spec.name);
+        if (spec.name.find("_attributes_") != std::string::npos) {
+          rejects([&] { (void)baseline.lookup(spec, device, arch); },
+                  "unadmitted attribute domains " + spec.name);
+          ++attributes_pending;
+        } else {
+          const auto value = baseline.lookup(spec, device, arch);
+          near(value.reference_time_us,
+               document.at("reference").at("cases").at(spec.name)
+                   .at("time_us").as_double());
+          require(value.timing_profile == "native" &&
+                      value.reference_validation == "cpu_full",
+                  "native evidence contract differs: " + spec.name);
+          ++native_matched;
+        }
       }
     }
-    require(missing == 105, "missing native evidence count changed");
+    require(native_matched == 84 && attributes_pending == 6,
+            "native activation evidence coverage changed");
 
     Fixture fixture;
     const auto invalid_document = [&](std::string data, std::string_view label) {
@@ -272,8 +279,9 @@ int main(int argc, char** argv) {
              hygon_device.at("architecture").as_string())
              .min_relative_efficiency, 0.1);
     std::cout << "MThreads equivalent baseline contract PASS: "
-              << cases.size() << " matched, " << missing
-              << " missing evidence rejected, 45 historical div fixtures compatible\n";
+              << cases.size() << " matched, " << native_matched
+              << " native metadata matched, " << attributes_pending
+              << " pending attribute domains rejected, 45 historical div fixtures compatible\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "MTHREADS_BASELINE_CONTRACT_FAILED: " << error.what() << '\n';

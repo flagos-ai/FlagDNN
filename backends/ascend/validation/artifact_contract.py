@@ -13,7 +13,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[3]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / "compiler"))
-from flagdnn_codegen.provider_loader import get_provider
+from flagdnn_codegen.provider_loader import get_provider  # noqa: E402
 
 package = get_provider("ascend").__package__
 emitter = importlib.import_module(package + ".codegen.extended")
@@ -32,7 +32,11 @@ def tensor(uid, dtype):
 
 
 def main():
-    tensors = [tensor(1, "float16"), tensor(2, "float32"), tensor(3, "float16")]
+    tensors = [
+        tensor(1, "float16"),
+        tensor(2, "float32"),
+        tensor(3, "float16"),
+    ]
     tensors[1].update(dimensions=[2, 1, 1, 2], strides=[2, 2, 2, 1])
     parameters = dict(rope_dim=2, n_elements=4, output_scale=1.0)
     source, config = dispatch.configuration("rope", parameters, tensors)
@@ -65,7 +69,9 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         directory = Path(directory)
         with patch.object(emitter, "plan_graph", return_value=([plan], {}, 0)):
-            stages, size = emitter.emit({}, directory, {"identity_sha256": "a" * 64})
+            stages, size = emitter.emit(
+                {}, directory, {"identity_sha256": "a" * 64}
+            )
         hashes = [s["kernel"]["source_sha256"] for s in stages]
         manifest = dict(
             graph_node_count=1,
@@ -110,7 +116,10 @@ def main():
         result = subprocess.run(arguments, capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         print(
-            "Ascend extended artifact contract: valid launch and six malformed artifacts checked"
+            (
+                "Ascend extended artifact contract: valid launch and six "
+                "malformed artifacts checked"
+            )
         )
 
 

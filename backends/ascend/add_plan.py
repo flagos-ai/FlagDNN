@@ -1,6 +1,6 @@
 """Compatibility imports; Ascend graph lowering lives in dispatch."""
 
-from .dispatch.common import (
+from .dispatch.common import (  # noqa: F401
     BINARY_POINTWISE_MODES,
     BOOLEAN_COMPUTE_DATA_TYPE,
     COMPARISON_POINTWISE_OPERATIONS,
@@ -40,10 +40,10 @@ from .dispatch.common import (
     require_list,
     require_object,
 )
-from .dispatch.convolution import (
+from .dispatch.convolution import (  # noqa: F401
     _convolution_fprop_meta,
 )
-from .dispatch.graph import (
+from .dispatch.graph import (  # noqa: F401
     _align_up,
     _argument_source,
     _stage_workspace,
@@ -52,20 +52,20 @@ from .dispatch.graph import (
     plan_binary_graph,
     plan_pointwise_graph,
 )
-from .dispatch.layout import (
+from .dispatch.layout import (  # noqa: F401
     _is_dense_permutation_layout,
     _is_row_major_layout,
     _layout_meta,
     _layout_mode,
 )
-from .dispatch.matmul import (
+from .dispatch.matmul import (  # noqa: F401
     _matmul_meta,
 )
-from .dispatch.normalization import (
+from .dispatch.normalization import (  # noqa: F401
     _batchnorm_inference_meta,
     _batchnorm_training_meta,
 )
-from .dispatch.pointwise import (
+from .dispatch.pointwise import (  # noqa: F401
     _broadcast_dimensions,
     _can_use_contiguous_kernel,
     _can_use_ternary_contiguous_kernel,
@@ -77,10 +77,10 @@ from .dispatch.pointwise import (
     _ternary_strided_meta,
     _unary_strided_meta,
 )
-from .dispatch.reduction import (
+from .dispatch.reduction import (  # noqa: F401
     _reduction_meta,
 )
-from .dispatch.tensor import (
+from .dispatch.tensor import (  # noqa: F401
     _effective_strides,
     _has_non_overlapping_strides,
     _is_physically_dense,

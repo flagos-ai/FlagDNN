@@ -18,10 +18,18 @@ from unittest import mock
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import triton_compat
-from triton_compat import install_cuda_jit_bridge, ppu_codegen_backend, ppu_distribution
-from TritonIdentityContract import IdentityError, _jit_backend, identify
-from preflight_environment import _probe_triton_jit
+import triton_compat  # noqa: E402
+from triton_compat import (  # noqa: E402
+    install_cuda_jit_bridge,
+    ppu_codegen_backend,
+    ppu_distribution,
+)
+from TritonIdentityContract import (  # noqa: E402
+    IdentityError,
+    _jit_backend,
+    identify,
+)  # noqa: E402
+from preflight_environment import _probe_triton_jit  # noqa: E402
 
 
 class CompatibilityContract(unittest.TestCase):
@@ -59,9 +67,12 @@ class CompatibilityContract(unittest.TestCase):
                     reads.append(filename)
                 return original(distribution, filename)
 
-            with mock.patch("triton_compat.time_ns", return_value=time.time_ns() + 3_000_000_000), \
-                    mock.patch.object(importlib.metadata.PathDistribution,
-                                      "read_text", read_text):
+            with mock.patch(
+                "triton_compat.time_ns",
+                return_value=time.time_ns() + 3_000_000_000,
+            ), mock.patch.object(
+                importlib.metadata.PathDistribution, "read_text", read_text
+            ):
                 for _ in range(4):
                     self.assertEqual(ppu_codegen_backend(root), "ppu")
             self.assertEqual(len(reads), 1)
@@ -74,7 +85,9 @@ class CompatibilityContract(unittest.TestCase):
             self.assertEqual(ppu_codegen_backend(root), "ppu")
             previous = unrelated.stat()
             unrelated.write_text("Name: triton\nVersion: 1.0.0\n")
-            os.utime(unrelated, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+            os.utime(
+                unrelated, ns=(previous.st_atime_ns, previous.st_mtime_ns)
+            )
             self.assertEqual(unrelated.stat().st_size, previous.st_size)
             with self.assertRaisesRegex(RuntimeError, "exactly one"):
                 ppu_codegen_backend(root)
@@ -92,8 +105,11 @@ class CompatibilityContract(unittest.TestCase):
                     states[path] = original(path)
                 return states[path]
 
-            with mock.patch("triton_compat._metadata_state", side_effect=same_tick), \
-                    mock.patch("triton_compat.time_ns", return_value=time.time_ns()):
+            with mock.patch(
+                "triton_compat._metadata_state", side_effect=same_tick
+            ), mock.patch(
+                "triton_compat.time_ns", return_value=time.time_ns()
+            ):
                 self.assertEqual(ppu_codegen_backend(root), "ppu")
                 metadata.write_text("Name: triton\nVersion: 1.0.0\n")
                 with self.assertRaisesRegex(RuntimeError, "exactly one"):
@@ -109,7 +125,9 @@ class CompatibilityContract(unittest.TestCase):
             previous = metadata.stat()
             replacement = root / "replacement"
             replacement.write_text("Name: triton\nVersion: 1.0.0\n")
-            os.utime(replacement, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+            os.utime(
+                replacement, ns=(previous.st_atime_ns, previous.st_mtime_ns)
+            )
             replacement.replace(metadata)
             with self.assertRaisesRegex(RuntimeError, "exactly one"):
                 ppu_codegen_backend(root)
@@ -203,7 +221,9 @@ class CompatibilityContract(unittest.TestCase):
             record.write_text(f"../{outside.name}/METADATA,,\n")
             os.utime(record, ns=(previous.st_atime_ns, previous.st_mtime_ns))
             self.assertEqual(record.stat().st_size, previous.st_size)
-            with self.assertRaisesRegex(RuntimeError, "outside configured root"):
+            with self.assertRaisesRegex(
+                RuntimeError, "outside configured root"
+            ):
                 ppu_distribution(root)
             record.write_text(f"{selected.name}/METADATA,,\n")
             self.assertEqual(ppu_codegen_backend(root), "ppu")
@@ -214,10 +234,17 @@ class CompatibilityContract(unittest.TestCase):
             root.mkdir()
             foreign = Path(tmp) / "foreign.py"
             foreign.write_text("raise AssertionError('must not execute')\n")
-            with mock.patch.object(sys, "path", [*sys.path, str(root)]), \
-                    mock.patch("importlib.util.find_spec", return_value=SimpleNamespace(origin=str(foreign))), \
-                    mock.patch("importlib.import_module") as import_module:
-                with self.assertRaisesRegex(IdentityError, "outside configured root"):
+            with mock.patch.object(
+                sys, "path", [*sys.path, str(root)]
+            ), mock.patch(
+                "importlib.util.find_spec",
+                return_value=SimpleNamespace(origin=str(foreign)),
+            ), mock.patch(
+                "importlib.import_module"
+            ) as import_module:
+                with self.assertRaisesRegex(
+                    IdentityError, "outside configured root"
+                ):
                     identify(root, root)
                 self.assertEqual(sys.path.count(str(root)), 1)
                 import_module.assert_not_called()
@@ -225,10 +252,12 @@ class CompatibilityContract(unittest.TestCase):
     def test_identity_rejects_missing_package_before_import(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with mock.patch.object(sys, "path", list(sys.path)), \
-                    mock.patch("importlib.util.find_spec", return_value=None), \
-                    mock.patch("importlib.import_module") as import_module:
-                with self.assertRaisesRegex(IdentityError, "has no Triton package"):
+            with mock.patch.object(sys, "path", list(sys.path)), mock.patch(
+                "importlib.util.find_spec", return_value=None
+            ), mock.patch("importlib.import_module") as import_module:
+                with self.assertRaisesRegex(
+                    IdentityError, "has no Triton package"
+                ):
                     identify(root, root)
                 import_module.assert_not_called()
 
@@ -242,7 +271,10 @@ class CompatibilityContract(unittest.TestCase):
                 "class Options:\n    value: int = 1\n"
             )
             (root / "dataclasses.py").write_text(
-                "raise AssertionError('loaded obsolete dataclasses backport')\n"
+                (
+                    "raise AssertionError('loaded obsolete dataclasses "
+                    "backport')\n"
+                )
             )
             (root / "_csv.py").write_text(
                 "raise AssertionError('shadowed a stdlib extension')\n"
@@ -250,7 +282,10 @@ class CompatibilityContract(unittest.TestCase):
             other = Path(tmp) / "other"
             other.mkdir()
             (other / "triton.py").write_text(
-                "raise AssertionError('loaded a different Triton installation')\n"
+                (
+                    "raise AssertionError('loaded a different Triton "
+                    "installation')\n"
+                )
             )
             probe = """
 import sys
@@ -275,10 +310,18 @@ assert sys.path.count(root) == 1
             for placement in ("absent", "first", "last"):
                 with self.subTest(placement=placement):
                     result = subprocess.run(
-                        [sys.executable, "-B", "-c", probe,
-                         str(Path(__file__).resolve().parents[1]),
-                         str(root), str(other), placement],
-                        capture_output=True, text=True,
+                        [
+                            sys.executable,
+                            "-B",
+                            "-c",
+                            probe,
+                            str(Path(__file__).resolve().parents[1]),
+                            str(root),
+                            str(other),
+                            placement,
+                        ],
+                        capture_output=True,
+                        text=True,
                         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
                         timeout=30,
                     )
@@ -292,23 +335,31 @@ assert sys.path.count(root) == 1
             "lib/cmake/TritonJIT/TritonJITConfig.cmake",
             "lib64/cmake/TritonJIT/TritonJITConfig.cmake",
         ):
-            with self.subTest(layout=relative), tempfile.TemporaryDirectory() as tmp:
+            with self.subTest(
+                layout=relative
+            ), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 config = root / relative
                 config.parent.mkdir(parents=True)
                 config.write_text('set(TritonJIT_BACKEND "CUDA")\n')
-                self.assertEqual(_jit_backend(root), (config.resolve(), "CUDA"))
+                self.assertEqual(
+                    _jit_backend(root), (config.resolve(), "CUDA")
+                )
                 config.write_text('set(TritonJIT_BACKEND "HCU")\n')
                 with self.assertRaisesRegex(IdentityError, "not exactly CUDA"):
                     _jit_backend(root)
 
     def test_installed_jit_preflight_uses_its_own_content(self):
         for libdir in ("lib", "lib64"):
-            with self.subTest(libdir=libdir), tempfile.TemporaryDirectory() as tmp:
+            with self.subTest(
+                libdir=libdir
+            ), tempfile.TemporaryDirectory() as tmp:
                 parent = Path(tmp)
                 (parent / ".git").mkdir()
                 root = parent / "sdk"
-                config = root / libdir / "cmake/TritonJIT/TritonJITConfig.cmake"
+                config = (
+                    root / libdir / "cmake/TritonJIT/TritonJITConfig.cmake"
+                )
                 config.parent.mkdir(parents=True)
                 config.write_text('set(TritonJIT_BACKEND "CUDA")\n')
                 library = root / libdir / "libtriton_jit.so"
@@ -319,10 +370,15 @@ assert sys.path.count(root) == 1
                     (scripts / name).write_text("# fixture\n")
                 first = _probe_triton_jit(root)
                 self.assertEqual(first["repository_root"], str(root))
-                self.assertEqual(first["source_identity"]["kind"], "content_sha256")
+                self.assertEqual(
+                    first["source_identity"]["kind"], "content_sha256"
+                )
                 self.assertEqual(first["library"], str(library))
                 library.write_bytes(b"library-v2")
-                self.assertNotEqual(first["source_identity"], _probe_triton_jit(root)["source_identity"])
+                self.assertNotEqual(
+                    first["source_identity"],
+                    _probe_triton_jit(root)["source_identity"],
+                )
 
     def test_jit_identity_rejects_missing_config(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -337,7 +393,9 @@ assert sys.path.count(root) == 1
             config = parent / "outside.cmake"
             config.write_text('set(TritonJIT_BACKEND "CUDA")\n')
             (root / "build/TritonJITConfig.cmake").symlink_to(config)
-            with self.assertRaisesRegex(IdentityError, "outside configured root"):
+            with self.assertRaisesRegex(
+                IdentityError, "outside configured root"
+            ):
                 _jit_backend(root)
 
     def test_non_ppu_distribution_rejected(self):

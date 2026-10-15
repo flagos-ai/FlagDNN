@@ -21,11 +21,12 @@ def _convolution_im2col_kernel_configuration(
 ) -> tuple[
     str,
     dict[str, str],
-    dict[str, int],
+    dict[str, int | float | str | bool],
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
     """Configure the first stage of the NVIDIA stride-2 FProp pipeline."""
+    constants: dict[str, int | float | str | bool]
     if len(tensors) != 2:
         raise ValueError("the FProp im2col stage requires two tensors")
     input_tensor, columns = tensors
@@ -114,11 +115,13 @@ def _convolution_general_im2col_kernel_configuration(
 ) -> tuple[
     str,
     dict[str, str],
-    dict[str, int | bool],
+    dict[str, int | float | str | bool],
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
     """Configure the materialization stage for the general 2D FProp path."""
+    constants: dict[str, int | float | str | bool]
+    pointer_abi: list[tuple[str, str | int | None]]
     if len(tensors) != 2:
         raise ValueError("the general FProp im2col stage requires 2 tensors")
     input_tensor, columns = tensors
@@ -182,7 +185,7 @@ def _convolution_general_im2col_kernel_configuration(
             "the general FProp im2col workspace strides are invalid"
         )
     block_size = 1024
-    pointer_abi: list[tuple[str, str | int | None]] = [
+    pointer_abi = [
         ("tensor", None),
         ("tensor", None),
     ]
@@ -238,6 +241,8 @@ def _convolution_kernel_configuration(
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    constants: dict[str, int | float | str | bool]
+    pointer_abi: list[tuple[str, str | int | None]]
     fused_bias_relu = parameters.get("_fused_bias_relu", False)
     if not isinstance(fused_bias_relu, bool):
         raise ValueError("internal convolution fusion flag must be boolean")
@@ -344,7 +349,7 @@ def _convolution_kernel_configuration(
         "y_ptr": pointer_type,
     }
     if fused_bias_relu:
-        pointer_abi: list[tuple[str, str | int | None]] = [
+        pointer_abi = [
             ("tensor", None),
             ("tensor", None),
             ("tensor", None),
@@ -366,7 +371,7 @@ def _convolution_kernel_configuration(
         block_m = 32
         block_oc = 16 if outputs_per_group <= 16 else 32
         block_k = 16 if reduction_extent <= 16 else 32
-        constants: dict[str, int | str | bool] = {
+        constants = {
             "M": m,
             "XL": input_l,
             "OL": output_l,

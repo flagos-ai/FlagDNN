@@ -680,14 +680,10 @@ def hygon_conv2d_im2col_nchw_kernel(
     kernel_h = kernel_hw // KW
     kernel_w = kernel_hw - kernel_h * KW
     input_h = (
-        output_h[None, :] * STRIDE_H
-        - PAD_TOP
-        + kernel_h[:, None] * DIL_H
+        output_h[None, :] * STRIDE_H - PAD_TOP + kernel_h[:, None] * DIL_H
     )
     input_w = (
-        output_w[None, :] * STRIDE_W
-        - PAD_LEFT
-        + kernel_w[:, None] * DIL_W
+        output_w[None, :] * STRIDE_W - PAD_LEFT + kernel_w[:, None] * DIL_W
     )
     valid = (
         (packed_k[:, None] < reduction_extent)
@@ -712,8 +708,7 @@ def hygon_conv2d_im2col_nchw_kernel(
         + packed_k[:, None] * COL_STRIDE_K
         + output_m[None, :] * COL_STRIDE_M,
         values,
-        mask=(packed_k[:, None] < reduction_extent)
-        & (output_m[None, :] < M),
+        mask=(packed_k[:, None] < reduction_extent) & (output_m[None, :] < M),
     )
 
 
@@ -775,8 +770,7 @@ def hygon_conv2d_fprop_stride2_low_ci_nchw_kernel(
             w_ptr
             + output_channels[:, None] * reduction_extent
             + reduction[None, :],
-            mask=(output_channels[:, None] < C_OUT)
-            & valid_reduction[None, :],
+            mask=(output_channels[:, None] < C_OUT) & valid_reduction[None, :],
             other=0.0,
         )
         accumulator += tl.dot(
@@ -1225,21 +1219,14 @@ def hygon_conv_dgrad2d_stride1_kernel(
                 & (output_w >= 0)
                 & (output_w < OW)
             )
-            weight_h = (
-                KH - 1 - kernel_h if FLIP_FILTER else kernel_h
-            )
-            weight_w = (
-                KW - 1 - kernel_w if FLIP_FILTER else kernel_w
-            )
+            weight_h = KH - 1 - kernel_h if FLIP_FILTER else kernel_h
+            weight_w = KW - 1 - kernel_w if FLIP_FILTER else kernel_w
             for co_start in range(0, COUT_PER_GROUP, BLOCK_CO):
                 output_channels = co_start + tl.arange(0, BLOCK_CO)
                 losses = tl.load(
                     dy_ptr
                     + batch[:, None] * DY_STRIDE_N
-                    + (
-                        group * COUT_PER_GROUP
-                        + output_channels[None, :]
-                    )
+                    + (group * COUT_PER_GROUP + output_channels[None, :])
                     * DY_STRIDE_C
                     + output_h[:, None] * DY_STRIDE_H
                     + output_w[:, None] * DY_STRIDE_W,
@@ -1249,9 +1236,7 @@ def hygon_conv_dgrad2d_stride1_kernel(
                 )
                 weights = tl.load(
                     w_ptr
-                    + (
-                        group * COUT_PER_GROUP + output_channels[:, None]
-                    )
+                    + (group * COUT_PER_GROUP + output_channels[:, None])
                     * W_STRIDE_K
                     + input_channels[None, :] * W_STRIDE_C
                     + weight_h * W_STRIDE_H
@@ -1269,8 +1254,7 @@ def hygon_conv_dgrad2d_stride1_kernel(
         + input_h[:, None] * X_STRIDE_H
         + input_w[:, None] * X_STRIDE_W,
         accumulator.to(dx_ptr.dtype.element_ty),
-        mask=(rows[:, None] < M)
-        & (input_channels[None, :] < CIN_PER_GROUP),
+        mask=(rows[:, None] < M) & (input_channels[None, :] < CIN_PER_GROUP),
     )
 
 
@@ -1466,8 +1450,7 @@ def hygon_conv_dgrad2d_stride2_contribution_gemm_kernel(
             + global_oc[None, :] * DY_STRIDE_C
             + output_h[:, None] * DY_STRIDE_H
             + output_w[:, None] * DY_STRIDE_W,
-            mask=(rows[:, None] < M)
-            & (global_oc[None, :] < C_OUT),
+            mask=(rows[:, None] < M) & (global_oc[None, :] < C_OUT),
             other=0.0,
         )
         weights = tl.load(
@@ -1488,8 +1471,7 @@ def hygon_conv_dgrad2d_stride2_contribution_gemm_kernel(
         + rows[:, None] * COL_STRIDE_M
         + packed_k[None, :] * COL_STRIDE_K,
         accumulator,
-        mask=(rows[:, None] < M)
-        & (packed_k[None, :] < packed_extent),
+        mask=(rows[:, None] < M) & (packed_k[None, :] < packed_extent),
     )
 
 
@@ -1729,12 +1711,8 @@ def hygon_conv_dgrad2d_stride2_parity_kernel(
                         & (output_w >= 0)
                         & (output_w < OW)
                     )
-                    weight_h = (
-                        KH - 1 - kernel_h if FLIP_FILTER else kernel_h
-                    )
-                    weight_w = (
-                        KW - 1 - kernel_w if FLIP_FILTER else kernel_w
-                    )
+                    weight_h = KH - 1 - kernel_h if FLIP_FILTER else kernel_h
+                    weight_w = KW - 1 - kernel_w if FLIP_FILTER else kernel_w
                     for co_start in range(0, COUT_PER_GROUP, BLOCK_CO):
                         output_channels = co_start + tl.arange(0, BLOCK_CO)
                         losses = tl.load(
@@ -1748,10 +1726,7 @@ def hygon_conv_dgrad2d_stride2_parity_kernel(
                             + output_h[:, None] * DY_STRIDE_H
                             + output_w[:, None] * DY_STRIDE_W,
                             mask=active[:, None]
-                            & (
-                                output_channels[None, :]
-                                < COUT_PER_GROUP
-                            ),
+                            & (output_channels[None, :] < COUT_PER_GROUP),
                             other=0.0,
                         )
                         weights = tl.load(
@@ -1764,9 +1739,7 @@ def hygon_conv_dgrad2d_stride2_parity_kernel(
                             + input_channels[None, :] * W_STRIDE_C
                             + weight_h * W_STRIDE_H
                             + weight_w * W_STRIDE_W,
-                            mask=(
-                                output_channels[:, None] < COUT_PER_GROUP
-                            )
+                            mask=(output_channels[:, None] < COUT_PER_GROUP)
                             & (input_channels[None, :] < CIN_PER_GROUP),
                             other=0.0,
                         )
@@ -1925,8 +1898,7 @@ def hygon_conv_wgrad2d_im2col_split_kernel(
             + output_channels[:, None] * DY_STRIDE_C
             + output_h[None, :] * DY_STRIDE_H
             + output_w[None, :] * DY_STRIDE_W,
-            mask=(output_channels[:, None] < COUT_PER_GROUP)
-            & active[None, :],
+            mask=(output_channels[:, None] < COUT_PER_GROUP) & active[None, :],
             other=0.0,
         )
         columns = tl.load(
@@ -1934,8 +1906,7 @@ def hygon_conv_wgrad2d_im2col_split_kernel(
             + batch[:, None] * COL_STRIDE_N
             + packed_k[None, :] * COL_STRIDE_K
             + output_m[:, None] * COL_STRIDE_M,
-            mask=active[:, None]
-            & (packed_k[None, :] < reduction_extent),
+            mask=active[:, None] & (packed_k[None, :] < reduction_extent),
             other=0.0,
         )
         accumulator += tl.dot(losses, columns, input_precision="ieee")
@@ -2089,19 +2060,12 @@ def hygon_conv_wgrad2d_im2row_kernel(
     kernel_h = kernel_hw // KW
     kernel_w = kernel_hw - kernel_h * KW
     input_h = (
-        output_h[:, None] * STRIDE_H
-        - PAD_TOP
-        + kernel_h[None, :] * DIL_H
+        output_h[:, None] * STRIDE_H - PAD_TOP + kernel_h[None, :] * DIL_H
     )
     input_w = (
-        output_w[:, None] * STRIDE_W
-        - PAD_LEFT
-        + kernel_w[None, :] * DIL_W
+        output_w[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
     )
-    active = (
-        (output_m[:, None] < M)
-        & (packed_k[None, :] < reduction_extent)
-    )
+    active = (output_m[:, None] < M) & (packed_k[None, :] < reduction_extent)
     valid = (
         active
         & (input_h >= 0)
@@ -2336,19 +2300,14 @@ def hygon_conv_wgrad2d_multirow_split_kernel(
             + output_channels[:, None] * DY_STRIDE_C
             + output_h[None, :] * DY_STRIDE_H
             + output_w[None, :] * DY_STRIDE_W,
-            mask=(output_channels[:, None] < COUT_PER_GROUP)
-            & active[None, :],
+            mask=(output_channels[:, None] < COUT_PER_GROUP) & active[None, :],
             other=0.0,
         )
         input_h = (
-            output_h[:, None] * STRIDE_H
-            - PAD_TOP
-            + kernel_h[None, :] * DIL_H
+            output_h[:, None] * STRIDE_H - PAD_TOP + kernel_h[None, :] * DIL_H
         )
         input_w = (
-            output_w[:, None] * STRIDE_W
-            - PAD_LEFT
-            + kernel_w[None, :] * DIL_W
+            output_w[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
         )
         inputs = tl.load(
             x_ptr
@@ -2443,19 +2402,14 @@ def hygon_conv_wgrad2d_direct_split_kernel(
             + output_channels[:, None] * DY_STRIDE_C
             + output_h[None, :] * DY_STRIDE_H
             + output_w[None, :] * DY_STRIDE_W,
-            mask=(output_channels[:, None] < COUT_PER_GROUP)
-            & active[None, :],
+            mask=(output_channels[:, None] < COUT_PER_GROUP) & active[None, :],
             other=0.0,
         )
         input_h = (
-            output_h[:, None] * STRIDE_H
-            - PAD_TOP
-            + kernel_h[None, :] * DIL_H
+            output_h[:, None] * STRIDE_H - PAD_TOP + kernel_h[None, :] * DIL_H
         )
         input_w = (
-            output_w[:, None] * STRIDE_W
-            - PAD_LEFT
-            + kernel_w[None, :] * DIL_W
+            output_w[:, None] * STRIDE_W - PAD_LEFT + kernel_w[None, :] * DIL_W
         )
         inputs = tl.load(
             x_ptr
@@ -2530,8 +2484,7 @@ def hygon_conv_wgrad2d_1x1_split_kernel(
             + batch[None, :] * (C_OUT * HW)
             + global_oc[:, None] * HW
             + spatial[None, :],
-            mask=(output_channels[:, None] < COUT_PER_GROUP)
-            & active[None, :],
+            mask=(output_channels[:, None] < COUT_PER_GROUP) & active[None, :],
             other=0.0,
         )
         inputs = tl.load(
@@ -2539,8 +2492,7 @@ def hygon_conv_wgrad2d_1x1_split_kernel(
             + batch[:, None] * (C_IN * HW)
             + global_ci[None, :] * HW
             + spatial[:, None],
-            mask=active[:, None]
-            & (input_channels[None, :] < CIN_PER_GROUP),
+            mask=active[:, None] & (input_channels[None, :] < CIN_PER_GROUP),
             other=0.0,
         )
         accumulator += tl.dot(losses, inputs, input_precision="ieee")

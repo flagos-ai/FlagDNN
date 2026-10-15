@@ -91,13 +91,19 @@ def configuration(operation, parameters, tensors):
         )
         keep_dimensions = keep_dimensions_value == 1
         if math.prod(tensors[0]["dimensions"]) != outer * extent * inner:
-            raise ValueError("Reduction parameters are inconsistent with input shape")
+            raise ValueError(
+                "Reduction parameters are inconsistent with input shape"
+            )
         if (
             math.prod(tensors[1]["dimensions"]) != output_elements
             or output_elements != outer * inner
         ):
-            raise ValueError("Reduction parameters are inconsistent with output shape")
-        strided_constants = _reduction_tensor_constants(tensors, axis, keep_dimensions)
+            raise ValueError(
+                "Reduction parameters are inconsistent with output shape"
+            )
+        strided_constants = _reduction_tensor_constants(
+            tensors, axis, keep_dimensions
+        )
 
         block_n = _next_power_of_two(extent)
         constants: dict[str, int | str] = {

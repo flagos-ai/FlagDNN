@@ -107,9 +107,7 @@ def _matmul_tle_consumer(
     # cannot cross either matrix boundary.
     rows = tile_m * BLOCK_M + tl.arange(0, BLOCK_M)
     columns = tile_n * BLOCK_N + tl.arange(0, BLOCK_N)
-    offsets = (
-        (batch * M + rows[:, None]) * N + columns[None, :]
-    )
+    offsets = (batch * M + rows[:, None]) * N + columns[None, :]
     tl.store(
         c_ptr + offsets,
         accumulator.to(c_ptr.dtype.element_ty),
@@ -376,7 +374,9 @@ def matmul_strided_kernel(
     # preserve matrix-tile structure through global loads and tl.dot. MTGPU
     # block-pointer zero padding is unreliable for partial reduction tiles.
     if (
-        A_STRIDE_K == 1 and B_STRIDE_N == 1 and C_STRIDE_N == 1
+        A_STRIDE_K == 1
+        and B_STRIDE_N == 1
+        and C_STRIDE_N == 1
         and K % BLOCK_K == 0
     ):
         a_block = tl.make_block_ptr(
@@ -455,14 +455,12 @@ def matmul_strided_kernel(
             reduction_offsets = reduction_start + reduction
             a = tl.load(
                 a_tile_ptrs,
-                mask=(rows[:, None] < M)
-                & (reduction_offsets[None, :] < K),
+                mask=(rows[:, None] < M) & (reduction_offsets[None, :] < K),
                 other=0.0,
             )
             b = tl.load(
                 b_tile_ptrs,
-                mask=(reduction_offsets[:, None] < K)
-                & (columns[None, :] < N),
+                mask=(reduction_offsets[:, None] < K) & (columns[None, :] < N),
                 other=0.0,
             )
             if INPUT_IS_FLOAT32 and USE_TF32:

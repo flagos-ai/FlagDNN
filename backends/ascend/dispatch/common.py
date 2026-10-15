@@ -126,7 +126,9 @@ SUPPORTED_POINTWISE_OPERATIONS = SUPPORTED_OPERATIONS
 
 NUMERIC_STORAGE_DATA_TYPES = frozenset({"float32", "float16", "bfloat16"})
 
-LOGICAL_POINTWISE_OPERATIONS = frozenset({"logical_not", "logical_and", "logical_or"})
+LOGICAL_POINTWISE_OPERATIONS = frozenset(
+    {"logical_not", "logical_and", "logical_or"}
+)
 
 COMPARISON_POINTWISE_OPERATIONS = frozenset(
     {"cmp_eq", "cmp_neq", "cmp_gt", "cmp_ge", "cmp_lt", "cmp_le"}
@@ -205,7 +207,9 @@ def require_integer(
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"parameters.{name} must be an integer")
     if value < minimum or value > maximum:
-        raise ValueError(f"parameters.{name} must be in [{minimum}, {maximum}]")
+        raise ValueError(
+            f"parameters.{name} must be in [{minimum}, {maximum}]"
+        )
     return value
 
 
@@ -555,7 +559,9 @@ def _require_integer(
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"parameters.{name} must be an integer")
     if value < minimum or value > maximum:
-        raise ValueError(f"parameters.{name} must be in [{minimum}, {maximum}]")
+        raise ValueError(
+            f"parameters.{name} must be in [{minimum}, {maximum}]"
+        )
     return value
 
 
@@ -578,7 +584,8 @@ def _require_integer_list(
         for value in result
     ):
         raise ValueError(
-            f"parameters.{name} values must be integers in " f"[{minimum}, {maximum}]"
+            f"parameters.{name} values must be integers in "
+            f"[{minimum}, {maximum}]"
         )
     return result
 
@@ -603,7 +610,9 @@ def _require_number(
     return result
 
 
-def _has_non_overlapping_strides(dimensions: list[int], strides: list[int]) -> bool:
+def _has_non_overlapping_strides(
+    dimensions: list[int], strides: list[int]
+) -> bool:
     axes = sorted(
         (stride, dimension)
         for dimension, stride in zip(dimensions, strides)
@@ -621,7 +630,8 @@ def _is_physically_dense(tensor: dict[str, Any]) -> bool:
     dimensions = tensor["dimensions"]
     strides = tensor["strides"]
     return _has_non_overlapping_strides(dimensions, strides) and 1 + sum(
-        (dimension - 1) * stride for dimension, stride in zip(dimensions, strides)
+        (dimension - 1) * stride
+        for dimension, stride in zip(dimensions, strides)
     ) == math.prod(dimensions)
 
 
@@ -634,8 +644,12 @@ def _unary_pointwise_tensor_constants(
     if input_tensor["dimensions"] != output_tensor["dimensions"]:
         raise ValueError("Pointwise input/output shapes must match")
     for tensor in tensors:
-        if not _has_non_overlapping_strides(tensor["dimensions"], tensor["strides"]):
-            raise ValueError("Pointwise tensors must have non-overlapping strides")
+        if not _has_non_overlapping_strides(
+            tensor["dimensions"], tensor["strides"]
+        ):
+            raise ValueError(
+                "Pointwise tensors must have non-overlapping strides"
+            )
 
     dimensions = input_tensor["dimensions"]
 
@@ -676,7 +690,9 @@ def _binary_pointwise_tensor_constants(
     if rank < 1 or rank > 8:
         raise ValueError("binary pointwise rank must be in [1, 8]")
     if len(output_dimensions) != rank:
-        raise ValueError("binary pointwise output rank does not match broadcast result")
+        raise ValueError(
+            "binary pointwise output rank does not match broadcast result"
+        )
 
     broadcast_dimensions = [1] * rank
     for trailing in range(rank):
@@ -698,14 +714,18 @@ def _binary_pointwise_tensor_constants(
             raise ValueError(
                 "binary pointwise input shapes are not broadcast-compatible"
             )
-        broadcast_dimensions[-1 - trailing] = max(left_dimension, right_dimension)
+        broadcast_dimensions[-1 - trailing] = max(
+            left_dimension, right_dimension
+        )
     if output_dimensions != broadcast_dimensions:
         raise ValueError(
             "binary pointwise output shape does not match broadcast result"
         )
 
     for tensor in tensors:
-        if not _has_non_overlapping_strides(tensor["dimensions"], tensor["strides"]):
+        if not _has_non_overlapping_strides(
+            tensor["dimensions"], tensor["strides"]
+        ):
             raise ValueError(
                 "binary pointwise tensors must have non-overlapping strides"
             )
@@ -776,7 +796,8 @@ def _ternary_pointwise_tensor_constants(
             current = broadcast_dimensions[-1 - trailing]
             if dimension != current and dimension != 1 and current != 1:
                 raise ValueError(
-                    "ternary pointwise input shapes are not " "broadcast-compatible"
+                    "ternary pointwise input shapes are not "
+                    "broadcast-compatible"
                 )
             broadcast_dimensions[-1 - trailing] = max(current, dimension)
     if output["dimensions"] != broadcast_dimensions:
@@ -785,7 +806,9 @@ def _ternary_pointwise_tensor_constants(
         )
 
     for tensor in tensors:
-        if not _has_non_overlapping_strides(tensor["dimensions"], tensor["strides"]):
+        if not _has_non_overlapping_strides(
+            tensor["dimensions"], tensor["strides"]
+        ):
             raise ValueError(
                 "ternary pointwise tensors must have non-overlapping strides"
             )
@@ -801,7 +824,9 @@ def _ternary_pointwise_tensor_constants(
 
     leading = 8 - rank
     dimensions = [1] * leading + output["dimensions"]
-    input_strides = [[0] * leading + effective_strides(tensor) for tensor in inputs]
+    input_strides = [
+        [0] * leading + effective_strides(tensor) for tensor in inputs
+    ]
     output_strides = [0] * leading + output["strides"]
     constants: dict[str, int] = {}
     for axis in range(8):
@@ -853,8 +878,12 @@ def _reduction_tensor_constants(
     if rank == 0 or rank > 8 or axis < 0 or axis >= rank:
         raise ValueError("Reduction axis or rank is invalid")
     for tensor in tensors:
-        if not _has_non_overlapping_strides(tensor["dimensions"], tensor["strides"]):
-            raise ValueError("Reduction tensors must have non-overlapping strides")
+        if not _has_non_overlapping_strides(
+            tensor["dimensions"], tensor["strides"]
+        ):
+            raise ValueError(
+                "Reduction tensors must have non-overlapping strides"
+            )
 
     expected_dimensions = list(input_dimensions)
     if keep_dimensions:

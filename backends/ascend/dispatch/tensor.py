@@ -13,7 +13,7 @@ from .common import (
     require_object,
 )
 from typing import Any
-from .common import (
+from .common import (  # noqa: F401
     EXPECTED_OUTPUT_COUNTS,
     EXPECTED_TENSOR_ROLES,
     TRITON_POINTER_TYPES,
@@ -41,7 +41,9 @@ def _has_non_overlapping_strides(
     return True
 
 
-def _storage_elements(dimensions: tuple[int, ...], strides: tuple[int, ...]) -> int:
+def _storage_elements(
+    dimensions: tuple[int, ...], strides: tuple[int, ...]
+) -> int:
     result = 1
     for dimension, stride in zip(dimensions, strides):
         term = (dimension - 1) * stride
@@ -60,7 +62,9 @@ def _is_physically_dense(tensor: TensorPlan) -> bool:
 
 def _is_row_major_tensor(tensor: TensorPlan) -> bool:
     expected = 1
-    for dimension, stride in zip(reversed(tensor.dimensions), reversed(tensor.strides)):
+    for dimension, stride in zip(
+        reversed(tensor.dimensions), reversed(tensor.strides)
+    ):
         if dimension > 1 and stride != expected:
             return False
         expected *= dimension
@@ -112,8 +116,13 @@ def _parse_tensor_table(graph: dict[str, Any]) -> dict[int, TensorPlan]:
         raw_dimensions = require_list(
             value.get("dimensions"), f"tensor {uid} dimensions"
         )
-        raw_strides = require_list(value.get("strides"), f"tensor {uid} strides")
-        if len(raw_dimensions) != len(raw_strides) or len(raw_dimensions) > MAX_RANK:
+        raw_strides = require_list(
+            value.get("strides"), f"tensor {uid} strides"
+        )
+        if (
+            len(raw_dimensions) != len(raw_strides)
+            or len(raw_dimensions) > MAX_RANK
+        ):
             raise ValueError(f"tensor {uid} rank is invalid")
         if any(
             isinstance(item, bool)
@@ -163,7 +172,9 @@ def _parse_port(
         raise ValueError(f"{description}.name must be {expected_name!r}")
     optional = port.get("optional", False)
     if not isinstance(optional, bool) or optional:
-        raise ValueError("Ascend pointwise does not support absent optional ports")
+        raise ValueError(
+            "Ascend pointwise does not support absent optional ports"
+        )
     uid = port.get("uid")
     if isinstance(uid, bool) or not isinstance(uid, int) or uid <= 0:
         raise ValueError(f"{description}.uid is invalid")
@@ -216,7 +227,9 @@ def _effective_strides(tensor: TensorPlan, rank: int) -> list[int]:
     ]
 
 
-def _parse_tensor_descriptors(graph: dict[str, Any]) -> dict[int, dict[str, Any]]:
+def _parse_tensor_descriptors(
+    graph: dict[str, Any]
+) -> dict[int, dict[str, Any]]:
     tensors = _require_list(graph.get("tensors"), "graph.tensors")
     tensor_count = graph.get("tensor_count")
     if (
@@ -236,7 +249,10 @@ def _parse_tensor_descriptors(graph: dict[str, Any]) -> dict[int, dict[str, Any]
         if uid in result:
             raise ValueError("graph tensor UIDs must be unique")
         data_type = tensor.get("data_type")
-        if not isinstance(data_type, str) or data_type not in TRITON_POINTER_TYPES:
+        if (
+            not isinstance(data_type, str)
+            or data_type not in TRITON_POINTER_TYPES
+        ):
             raise ValueError(
                 f"tensor {uid} has an unsupported data type: {data_type!r}"
             )
@@ -250,8 +266,12 @@ def _parse_tensor_descriptors(graph: dict[str, Any]) -> dict[int, dict[str, Any]
             or alignment <= 0
             or alignment & (alignment - 1) != 0
         ):
-            raise ValueError(f"tensor {uid} alignment must be a positive power of two")
-        dimensions = _require_list(tensor.get("dimensions"), f"tensor {uid} dimensions")
+            raise ValueError(
+                f"tensor {uid} alignment must be a positive power of two"
+            )
+        dimensions = _require_list(
+            tensor.get("dimensions"), f"tensor {uid} dimensions"
+        )
         strides = _require_list(tensor.get("strides"), f"tensor {uid} strides")
         if len(dimensions) != len(strides) or len(dimensions) > 8:
             raise ValueError(f"tensor {uid} rank is invalid")
@@ -276,6 +296,8 @@ def _tensor_metadata(
     operation_name: str,
     tensor_registry: dict[int, dict[str, Any]],
 ) -> tuple[list[int], list[dict[str, Any]], int]:
+    expected_outputs: tuple[str, ...]
+    index: int | bool
     expected_roles = EXPECTED_TENSOR_ROLES.get(operation_name)
     if expected_roles is None:
         raise ValueError(f"unsupported operation: {operation_name!r}")
@@ -291,25 +313,39 @@ def _tensor_metadata(
     elif operation_name == "matmul_fp8":
         attributes = _require_object(node.get("attributes"), "node.attributes")
         mode = _require_integer(attributes, "scale_mode", minimum=0, maximum=2)
-        expected_inputs = ("a", "b") + (("descale_a", "descale_b") if mode else ())
+        expected_inputs = ("a", "b") + (
+            ("descale_a", "descale_b") if mode else ()
+        )
         expected_outputs = ("output",)
     elif operation_name == "causal_conv1d":
         attributes = _require_object(node.get("attributes"), "node.attributes")
-        bias = _require_integer(attributes, "has_bias", minimum=0, maximum=1) == 1
-        expected_inputs = ("input", "weight", "bias") if bias else ("input", "weight")
+        bias = (
+            _require_integer(attributes, "has_bias", minimum=0, maximum=1) == 1
+        )
+        expected_inputs = (
+            ("input", "weight", "bias") if bias else ("input", "weight")
+        )
         expected_outputs = ("output",)
     elif operation_name == "resample":
         attributes = _require_object(node.get("attributes"), "node.attributes")
         index = (
-            _require_integer(attributes, "generate_index", minimum=0, maximum=1) == 1
+            _require_integer(
+                attributes, "generate_index", minimum=0, maximum=1
+            )
+            == 1
         )
         expected_inputs = ("input",)
         expected_outputs = ("output", "index") if index else ("output",)
     elif operation_name == "bn_finalize":
         attributes = _require_object(node.get("attributes"), "node.attributes")
-        running = _require_integer(attributes, "has_running", minimum=0, maximum=1) == 1
+        running = (
+            _require_integer(attributes, "has_running", minimum=0, maximum=1)
+            == 1
+        )
         expected_inputs = ("sum", "sq_sum", "scale", "bias") + (
-            ("previous_running_mean", "previous_running_variance") if running else ()
+            ("previous_running_mean", "previous_running_variance")
+            if running
+            else ()
         )
         expected_outputs = ("eq_scale", "eq_bias", "mean", "inv_variance") + (
             ("next_running_mean", "next_running_variance") if running else ()
@@ -318,7 +354,9 @@ def _tensor_metadata(
         expected_inputs, expected_outputs = (), ("output",)
     elif operation_name == "concatenate":
         attributes = _require_object(node.get("attributes"), "node.attributes")
-        count = _require_integer(attributes, "input_count", minimum=1, maximum=65536)
+        count = _require_integer(
+            attributes, "input_count", minimum=1, maximum=65536
+        )
         expected_inputs = tuple(f"input_{index}" for index in range(count))
         expected_outputs = ("output",)
     elif operation_name in {
@@ -328,13 +366,16 @@ def _tensor_metadata(
         "sdpa_fp8_backward",
     }:
         attributes = _require_object(node.get("attributes"), "node.attributes")
-        has_bias = _require_integer(attributes, "has_bias", minimum=0, maximum=1) == 1
+        has_bias = (
+            _require_integer(attributes, "has_bias", minimum=0, maximum=1) == 1
+        )
         if operation_name == "sdpa":
             expected_inputs = ("q", "k", "v") + (("bias",) if has_bias else ())
             expected_outputs = ("o", "stats")
         elif operation_name == "sdpa_backward":
             has_dbias = (
-                _require_integer(attributes, "has_dbias", minimum=0, maximum=1) == 1
+                _require_integer(attributes, "has_dbias", minimum=0, maximum=1)
+                == 1
             )
             expected_inputs = (
                 "q",
@@ -344,7 +385,9 @@ def _tensor_metadata(
                 "do",
                 "stats",
             ) + (("bias",) if has_bias else ())
-            expected_outputs = ("dq", "dk", "dv") + (("dbias",) if has_dbias else ())
+            expected_outputs = ("dq", "dk", "dv") + (
+                ("dbias",) if has_dbias else ()
+            )
         elif operation_name == "sdpa_fp8":
             expected_inputs = (
                 "q",
@@ -362,7 +405,8 @@ def _tensor_metadata(
             if has_bias:
                 raise ValueError("FP8 SDPA backward bias is unsupported")
             has_dbias = (
-                _require_integer(attributes, "has_dbias", minimum=0, maximum=1) == 1
+                _require_integer(attributes, "has_dbias", minimum=0, maximum=1)
+                == 1
             )
             if has_dbias:
                 raise ValueError("FP8 SDPA backward dBias is unsupported")
@@ -403,7 +447,9 @@ def _tensor_metadata(
         expected_outputs = expected_roles[-output_count:]
     inputs = _require_list(node.get("inputs"), "node.inputs")
     outputs = _require_list(node.get("outputs"), "node.outputs")
-    if len(inputs) != len(expected_inputs) or len(outputs) != len(expected_outputs):
+    if len(inputs) != len(expected_inputs) or len(outputs) != len(
+        expected_outputs
+    ):
         raise ValueError("node port count is invalid")
 
     tensor_uids: list[int] = []
@@ -415,11 +461,14 @@ def _tensor_metadata(
         for index, expected_role in enumerate(roles):
             port = _require_object(ports[index], f"node.{direction}s[{index}]")
             if port.get("name") != expected_role:
-                raise ValueError(f"{direction} port {index} does not match operation")
+                raise ValueError(
+                    f"{direction} port {index} does not match operation"
+                )
             optional = port.get("optional", False)
             if not isinstance(optional, bool) or optional:
                 raise ValueError(
-                    "the Ascend provider does not support absent optional " "ports"
+                    "the Ascend provider does not support absent optional "
+                    "ports"
                 )
             uid = port.get("uid")
             if isinstance(uid, bool) or not isinstance(uid, int) or uid <= 0:

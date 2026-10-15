@@ -460,7 +460,9 @@ def unary_pointwise_contiguous_kernel(
                         if tile_start < n_elements:
                             offsets = tile_start + tl.arange(0, BLOCK_SIZE)
                             mask = offsets < n_elements
-                            value = tl.load(in_ptr + offsets, mask=mask, other=0.0)
+                            value = tl.load(
+                                in_ptr + offsets, mask=mask, other=0.0
+                            )
                             result = _apply_unary_operation(
                                 value,
                                 OPERATION,
@@ -940,7 +942,9 @@ def gen_index_kernel(
     OUTPUT_STRIDE_7: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    logical = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    logical = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
     remaining = logical
     physical = tl.zeros((BLOCK_SIZE,), tl.int64)
     physical += (remaining % DIM_7) * OUTPUT_STRIDE_7
@@ -999,7 +1003,9 @@ def concatenate_copy_kernel(
     OUTPUT_STRIDE_7: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    logical = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    logical = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
     remaining = logical
     source = tl.zeros((BLOCK_SIZE,), tl.int64)
     destination = tl.full((BLOCK_SIZE,), OUTPUT_BASE, tl.int64)
@@ -1067,7 +1073,9 @@ def rope_kernel(
     BACKWARD: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    index = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    index = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
     d = index % DIMENSION
     position = index // DIMENSION % SEQUENCE
     head = index // (DIMENSION * SEQUENCE) % HEADS
@@ -1130,7 +1138,9 @@ def rng_kernel(
     OUTPUT_STRIDE_7: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    logical = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    logical = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
     remaining = logical
     physical = tl.zeros((BLOCK_SIZE,), tl.int64)
     physical += (remaining % DIM_7) * OUTPUT_STRIDE_7
@@ -1151,12 +1161,16 @@ def rng_kernel(
     remaining //= DIM_0
     first, second, _, _ = tl.randint4x(SEED, (logical + OFFSET).to(tl.uint64))
     if DISTRIBUTION == 1:
-        value = (first >> (32 - UNIFORM_BITS)).to(tl.float32) * (2.0 ** (-UNIFORM_BITS))
+        value = (first >> (32 - UNIFORM_BITS)).to(tl.float32) * (
+            2.0 ** (-UNIFORM_BITS)
+        )
     elif DISTRIBUTION == 2:
         # Open-closed first uniform prevents log(0); second is in [0,1).
         u1 = ((first >> 8).to(tl.float32) + 1.0) * (2.0**-24)
         u2 = (second >> 8).to(tl.float32) * (2.0**-24)
-        value = tl.sqrt(-2.0 * tl.log(u1)) * libdevice.cos(6.283185307179586 * u2)
+        value = tl.sqrt(-2.0 * tl.log(u1)) * libdevice.cos(
+            6.283185307179586 * u2
+        )
     else:
         uniform = (first >> 8).to(tl.float32) * (2.0**-24)
         value = (uniform < PROBABILITY).to(tl.float32)
@@ -1211,7 +1225,9 @@ def resample_kernel(
     BLOCK_SIZE: tl.constexpr,
     CHANNELS_LAST: tl.constexpr = False,
 ):
-    logical = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    logical = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
     if CHANNELS_LAST:
         c = logical % CHANNELS
         spatial = logical // CHANNELS
@@ -1231,9 +1247,9 @@ def resample_kernel(
         d = od * ID // OD
         h = oh * IH // OH
         w = ow * IW // OW
-        result = tl.load(x_ptr + base + d * X_D + h * X_H + w * X_W, valid, other=0).to(
-            tl.float32
-        )
+        result = tl.load(
+            x_ptr + base + d * X_D + h * X_H + w * X_W, valid, other=0
+        ).to(tl.float32)
     elif MODE == 3:  # bilinear, edge padding
         if ALIGN:
             h = oh.to(tl.float32) * ((IH - 1) / (OH - 1) if OH > 1 else 0.0)
@@ -1249,22 +1265,34 @@ def resample_kernel(
         w1 = tl.minimum(w0 + 1, IW - 1)
         dh = h - h0.to(tl.float32)
         dw = w - w0.to(tl.float32)
-        a = tl.load(x_ptr + base + h0 * X_H + w0 * X_W, valid, other=0).to(tl.float32)
-        b = tl.load(x_ptr + base + h0 * X_H + w1 * X_W, valid, other=0).to(tl.float32)
-        c0 = tl.load(x_ptr + base + h1 * X_H + w0 * X_W, valid, other=0).to(tl.float32)
-        d0 = tl.load(x_ptr + base + h1 * X_H + w1 * X_W, valid, other=0).to(tl.float32)
+        a = tl.load(x_ptr + base + h0 * X_H + w0 * X_W, valid, other=0).to(
+            tl.float32
+        )
+        b = tl.load(x_ptr + base + h0 * X_H + w1 * X_W, valid, other=0).to(
+            tl.float32
+        )
+        c0 = tl.load(x_ptr + base + h1 * X_H + w0 * X_W, valid, other=0).to(
+            tl.float32
+        )
+        d0 = tl.load(x_ptr + base + h1 * X_H + w1 * X_W, valid, other=0).to(
+            tl.float32
+        )
         result = ((1.0 - dw) * a + dw * b) * (1.0 - dh) + (
             (1.0 - dw) * c0 + dw * d0
         ) * dh
     else:
-        result = tl.full((BLOCK_SIZE,), float("-inf") if MODE == 5 else 0.0, tl.float32)
+        result = tl.full(
+            (BLOCK_SIZE,), float("-inf") if MODE == 5 else 0.0, tl.float32
+        )
         best_index = tl.full((BLOCK_SIZE,), -1, tl.int32)
         samples = tl.zeros((BLOCK_SIZE,), tl.int32)
         for window in range(0, KD * KH * KW):
             d = od * SD - PD + window // (KH * KW)
             h = oh * SH - PH + window // KW % KH
             w = ow * SW - PW + window % KW
-            inside = (d >= 0) & (d < ID) & (h >= 0) & (h < IH) & (w >= 0) & (w < IW)
+            inside = (
+                (d >= 0) & (d < ID) & (h >= 0) & (h < IH) & (w >= 0) & (w < IW)
+            )
             if PADDING == 1:
                 d = tl.minimum(tl.maximum(d, 0), ID - 1)
                 h = tl.minimum(tl.maximum(h, 0), IH - 1)
@@ -1289,7 +1317,9 @@ def resample_kernel(
                 result += sample
                 samples += inside.to(tl.int32)
         if MODE == 1:
-            result = tl.where(samples > 0, result / tl.maximum(samples, 1), 0.0)
+            result = tl.where(
+                samples > 0, result / tl.maximum(samples, 1), 0.0
+            )
         elif MODE == 2:
             result /= KD * KH * KW
         if INDEX:
@@ -1359,11 +1389,15 @@ def genstats_kernel(
         logical //= DIM_1
         physical += (logical % DIM_0) * STRIDE_0
         logical //= DIM_0
-        x = tl.load(x_ptr + physical, reduced < REDUCTION, other=0).to(tl.float32)
+        x = tl.load(x_ptr + physical, reduced < REDUCTION, other=0).to(
+            tl.float32
+        )
         partial_sum += x
         partial_square += x * x
     tl.store(sum_ptr + channel * SUM_CHANNEL_STRIDE, tl.sum(partial_sum, 0))
-    tl.store(sq_sum_ptr + channel * SQ_SUM_CHANNEL_STRIDE, tl.sum(partial_square, 0))
+    tl.store(
+        sq_sum_ptr + channel * SQ_SUM_CHANNEL_STRIDE, tl.sum(partial_square, 0)
+    )
 
 
 @triton.jit
@@ -1399,14 +1433,22 @@ def bn_finalize_kernel(
     HAS_RUNNING: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    channel = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    channel = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
+    )
     valid = channel < CHANNELS
-    total = tl.load(sum_ptr + channel * SUM_STRIDE, valid, other=0).to(tl.float32)
+    total = tl.load(sum_ptr + channel * SUM_STRIDE, valid, other=0).to(
+        tl.float32
+    )
     square = tl.load(sq_sum_ptr + channel * SQ_SUM_STRIDE, valid, other=0).to(
         tl.float32
     )
-    scale = tl.load(scale_ptr + channel * SCALE_STRIDE, valid, other=0).to(tl.float32)
-    bias = tl.load(bias_ptr + channel * BIAS_STRIDE, valid, other=0).to(tl.float32)
+    scale = tl.load(scale_ptr + channel * SCALE_STRIDE, valid, other=0).to(
+        tl.float32
+    )
+    bias = tl.load(bias_ptr + channel * BIAS_STRIDE, valid, other=0).to(
+        tl.float32
+    )
     # Ascend vector arithmetic finalizes FP32 moments in FP32, as ACLNN does.
     mean = total / COUNT
     variance = tl.maximum(square / COUNT - mean * mean, 0.0)
@@ -1427,7 +1469,9 @@ def bn_finalize_kernel(
         previous_variance = tl.load(
             prev_var_ptr + channel * PREV_VAR_STRIDE, valid, other=0
         ).to(tl.float32)
-        unbiased_variance = variance * (COUNT / (COUNT - 1.0) if COUNT > 1.0 else 0.0)
+        unbiased_variance = variance * (
+            COUNT / (COUNT - 1.0) if COUNT > 1.0 else 0.0
+        )
         tl.store(
             next_mean_ptr + channel * NEXT_MEAN_STRIDE,
             (1.0 - MOMENTUM) * previous_mean + MOMENTUM * mean,
@@ -1435,7 +1479,8 @@ def bn_finalize_kernel(
         )
         tl.store(
             next_var_ptr + channel * NEXT_VAR_STRIDE,
-            (1.0 - MOMENTUM) * previous_variance + MOMENTUM * unbiased_variance,
+            (1.0 - MOMENTUM) * previous_variance
+            + MOMENTUM * unbiased_variance,
             valid,
         )
 
@@ -1517,7 +1562,11 @@ def _apply_unary_elementwise_operation(
             ELU_ALPHA * (tl.exp(value_f32) - 1.0),
         )
     elif OPERATION == 36:
-        result = 0.5 * value_f32 * (1.0 + libdevice.erf(value_f32 * 0.7071067811865476))
+        result = (
+            0.5
+            * value_f32
+            * (1.0 + libdevice.erf(value_f32 * 0.7071067811865476))
+        )
     elif OPERATION == 37:
         scaled = SOFTPLUS_BETA * value_f32
         # Factor the positive term before multiplying by beta: beta * x can
@@ -1553,9 +1602,13 @@ def unary_elementwise_contiguous_kernel(
     TILES_PER_PROGRAM: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    program_base = tl.program_id(0).to(tl.int64) * BLOCK_SIZE * TILES_PER_PROGRAM
+    program_base = (
+        tl.program_id(0).to(tl.int64) * BLOCK_SIZE * TILES_PER_PROGRAM
+    )
     for tile_index in tl.static_range(TILES_PER_PROGRAM):
-        offsets = program_base + tile_index * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+        offsets = (
+            program_base + tile_index * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+        )
         active = offsets < n_elements
         value = tl.load(in_ptr + offsets, mask=active, other=0.0)
         if OPERATION == 5:
@@ -1620,9 +1673,13 @@ def unary_elementwise_strided_kernel(
     TILES_PER_PROGRAM: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
-    program_base = tl.program_id(0).to(tl.int64) * BLOCK_SIZE * TILES_PER_PROGRAM
+    program_base = (
+        tl.program_id(0).to(tl.int64) * BLOCK_SIZE * TILES_PER_PROGRAM
+    )
     for tile_index in tl.static_range(TILES_PER_PROGRAM):
-        offsets = program_base + tile_index * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+        offsets = (
+            program_base + tile_index * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+        )
         active = offsets < n_elements
 
         if STRIDED:

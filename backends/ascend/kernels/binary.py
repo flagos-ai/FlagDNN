@@ -69,7 +69,9 @@ def _ieee_fmodf(left, right):
     abs_right = right_bits & 0x7FFFFFFF
     infinity = 0x7F800000
 
-    invalid = (abs_right == 0) | (abs_right > infinity) | (abs_left >= infinity)
+    invalid = (
+        (abs_right == 0) | (abs_right > infinity) | (abs_left >= infinity)
+    )
     algorithm_lane = (~invalid) & (abs_left > abs_right)
 
     # Keep special-case lanes harmless while the vectorized integer body runs.
@@ -135,10 +137,14 @@ def _hybrid_fmodf(left, right):
     # quotient only by one, so bringing a negative result back into [0, |y|)
     # repairs that boundary without an external math-library call.
     native = tl.where(native < 0.0, native + right_magnitude, native)
-    native = tl.where(native >= right_magnitude, native - right_magnitude, native)
+    native = tl.where(
+        native >= right_magnitude, native - right_magnitude, native
+    )
     result_bits = native.to(tl.int32, bitcast=True) | sign
 
-    invalid = (abs_right == 0) | (abs_right > infinity) | (abs_left >= infinity)
+    invalid = (
+        (abs_right == 0) | (abs_right > infinity) | (abs_left >= infinity)
+    )
     algorithm_lane = (~invalid) & (abs_left > abs_right)
     result_bits = tl.where(abs_left < abs_right, left_bits, result_bits)
     result_bits = tl.where(abs_left == abs_right, sign, result_bits)
@@ -148,7 +154,9 @@ def _hybrid_fmodf(left, right):
     # Native fmod converts its quotient to int32 and therefore cannot represent
     # wide exponent ratios.  Keep the exact binary32 path off the common case,
     # but select it for every block that contains a ratio above the safe bound.
-    requires_exact = algorithm_lane & (left_magnitude > right_magnitude * 1048576.0)
+    requires_exact = algorithm_lane & (
+        left_magnitude > right_magnitude * 1048576.0
+    )
     if tl.max(requires_exact.to(tl.int32), axis=0) != 0:
         exact = _ieee_fmodf(left, right)
         result = tl.where(requires_exact, exact, result)
@@ -267,7 +275,9 @@ def binary_contiguous_kernel(
                         mask = offsets < n_elements
                         left = tl.load(x_ptr + offsets, mask=mask, other=0.0)
                         right = tl.load(y_ptr + offsets, mask=mask, other=1.0)
-                        result = _apply_binary_operation(left, right, OP_KIND, ALPHA)
+                        result = _apply_binary_operation(
+                            left, right, OP_KIND, ALPHA
+                        )
                         tl.store(
                             out_ptr + offsets,
                             result.to(out_ptr.dtype.element_ty),
@@ -285,7 +295,9 @@ def binary_contiguous_kernel(
                     mask = offsets < n_elements
                     left = tl.load(x_ptr + offsets, mask=mask, other=0.0)
                     right = tl.load(y_ptr + offsets, mask=mask, other=1.0)
-                    result = _apply_binary_operation(left, right, OP_KIND, ALPHA)
+                    result = _apply_binary_operation(
+                        left, right, OP_KIND, ALPHA
+                    )
                     tl.store(
                         out_ptr + offsets,
                         result.to(out_ptr.dtype.element_ty),

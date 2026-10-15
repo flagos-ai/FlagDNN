@@ -22,10 +22,11 @@ def _convolution_dgrad_3d_pipeline_kernel_configuration(
 ) -> tuple[
     str,
     dict[str, str],
-    dict[str, int | bool | str],
+    dict[str, int | float | str | bool],
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    pointer_abi: list[tuple[str, str | int | None]]
     stage = parameters.get("_dgrad_3d_pipeline_stage")
     if stage not in {"pack", "compute_packed", "compute_ci8_dot"}:
         raise ValueError("unknown 3D DGrad pipeline stage")
@@ -211,10 +212,11 @@ def _convolution_dgrad_stride2_pipeline_kernel_configuration(
 ) -> tuple[
     str,
     dict[str, str],
-    dict[str, int | bool | str],
+    dict[str, int | float | str | bool],
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    pointer_abi: list[tuple[str, str | int | None]]
     stage = parameters.get("_dgrad_pipeline_stage")
     if stage not in {
         "pack",
@@ -505,10 +507,13 @@ def _convolution_backward_kernel_configuration(
 ) -> tuple[
     str,
     dict[str, str],
-    dict[str, int | bool | str],
+    dict[str, int | float | str | bool],
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
+    constants: dict[str, int | float | str | bool]
+    pointer_abi: list[tuple[str, str | int | None]]
+    stride1_constants: dict[str, int | float | str | bool]
     if operation not in {"convolution_dgrad", "convolution_wgrad"}:
         raise ValueError("unknown convolution backward operation")
     if len(tensors) != 3:
@@ -613,7 +618,7 @@ def _convolution_backward_kernel_configuration(
     filter_strides = padded_spatial(filter_tensor["strides"][2:], 0)
     loss_strides = padded_spatial(dy["strides"][2:], 0)
 
-    constants: dict[str, int | bool | str] = {
+    constants = {
         "XD": image_spatial[0],
         "XH": image_spatial[1],
         "XW": image_spatial[2],
@@ -652,7 +657,7 @@ def _convolution_backward_kernel_configuration(
         "W_STRIDE_W": filter_strides[2],
         "INPUT_PRECISION": 1 if data_types[0] == "float32" else 0,
     }
-    pointer_abi: list[tuple[str, str | int | None]] = [
+    pointer_abi = [
         ("tensor", None),
         ("tensor", None),
         ("tensor", None),

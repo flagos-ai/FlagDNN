@@ -33,9 +33,8 @@ def batch_norm_inference_nchw_kernel(
     batch_channel = tl.program_id(0).to(tl.int64)
     channel = batch_channel % C
     batch = batch_channel // C
-    spatial = (
-        tl.program_id(1).to(tl.int64) * BLOCK_SIZE
-        + tl.arange(0, BLOCK_SIZE)
+    spatial = tl.program_id(1).to(tl.int64) * BLOCK_SIZE + tl.arange(
+        0, BLOCK_SIZE
     )
     active = spatial < S
     offsets = (batch * C + channel) * S + spatial

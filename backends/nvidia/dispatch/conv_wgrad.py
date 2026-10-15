@@ -20,11 +20,12 @@ def _convolution_wgrad_pipeline_kernel_configuration(
 ) -> tuple[
     str,
     dict[str, str],
-    dict[str, int | bool | str],
+    dict[str, int | float | str | bool],
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
     """Configure one internal stage of a split/reduce WGrad pipeline."""
+    constants: dict[str, int | float | str | bool]
     pipeline_stage = parameters.get("_wgrad_pipeline_stage")
     if pipeline_stage not in {"split", "reduce"}:
         raise ValueError("unknown convolution WGrad pipeline stage")
@@ -79,7 +80,7 @@ def _convolution_wgrad_pipeline_kernel_configuration(
             if use_col_split
             else 32 if image["data_type"] == "float32" else 64
         )
-        constants: dict[str, int | bool | str] = {
+        constants = {
             "M": n * loss_h * loss_w,
             "IMAGE_H": image_h,
             "IMAGE_W": image_w,
@@ -199,11 +200,12 @@ def _convolution_wgrad_p5_pipeline_kernel_configuration(
 ) -> tuple[
     str,
     dict[str, str],
-    dict[str, int | bool | str],
+    dict[str, int | float | str | bool],
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
     """Configure one stage of the NVIDIA YOLO P5 WGrad pipeline."""
+    constants: dict[str, int | float | str | bool]
     pipeline_stage = parameters.get("_wgrad_pipeline_stage")
     if pipeline_stage not in {"pack", "matmul"}:
         raise ValueError("unknown P5 WGrad pipeline stage")
@@ -235,7 +237,7 @@ def _convolution_wgrad_p5_pipeline_kernel_configuration(
         block_n = 16
         block_k = 32
         group_m = 8
-        constants: dict[str, int | bool | str] = {
+        constants = {
             "CIN_PER_GROUP": c_in,
             "image_stride_c": image["strides"][1],
             "image_stride_h": image["strides"][2],
@@ -320,11 +322,12 @@ def _convolution_wgrad_1x1_pipeline_kernel_configuration(
 ) -> tuple[
     str,
     dict[str, str],
-    dict[str, int | bool | str],
+    dict[str, int | float | str | bool],
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
     """Configure one internal stage of the NVIDIA 1x1 WGrad pipeline."""
+    constants: dict[str, int | float | str | bool]
     pipeline_stage = parameters.get("_wgrad_pipeline_stage")
     if pipeline_stage not in {"direct", "split", "reduce"}:
         raise ValueError("unknown 1x1 WGrad pipeline stage")
@@ -360,7 +363,7 @@ def _convolution_wgrad_1x1_pipeline_kernel_configuration(
         block_co = 16
         block_ci = 32
         block_m = 256
-        constants: dict[str, int | bool | str] = {
+        constants = {
             "BATCH_N": n,
             "HW": image_h * image_w,
             "CIN_PER_GROUP": cin_per_group,
@@ -429,7 +432,7 @@ def _convolution_wgrad_1x1_pipeline_kernel_configuration(
         block_co = 16
         block_ci = 64
         block_m = 256
-        constants: dict[str, int | bool | str] = {
+        constants = {
             "HW": image_h * image_w,
             "C_OUT": c_out,
             "CIN_PER_GROUP": cin_per_group,
@@ -510,11 +513,12 @@ def _convolution_wgrad_stride2_pipeline_kernel_configuration(
 ) -> tuple[
     str,
     dict[str, str],
-    dict[str, int | bool | str],
+    dict[str, int | float | str | bool],
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:
     """Configure the fixed-shape NVIDIA stride-2 WGrad pipeline."""
+    constants: dict[str, int | float | str | bool]
     pipeline_stage = parameters.get("_wgrad_pipeline_stage")
     if pipeline_stage not in {"split", "reduce"}:
         raise ValueError("unknown stride-2 WGrad pipeline stage")
@@ -555,7 +559,7 @@ def _convolution_wgrad_stride2_pipeline_kernel_configuration(
         block_co = 16
         block_ci = 32
         block_hw = 128
-        constants: dict[str, int | bool | str] = {
+        constants = {
             "C_OUT": c_out,
             "CIN_PER_GROUP": cin_per_group,
             "COUT_PER_GROUP": cout_per_group,
@@ -643,7 +647,7 @@ def _convolution_wgrad_batched_pipeline_kernel_configuration(
 ) -> tuple[
     str,
     dict[str, str],
-    dict[str, int | bool | str],
+    dict[str, int | float | str | bool],
     tuple[int, int, int],
     list[tuple[str, str | int | None]],
 ]:

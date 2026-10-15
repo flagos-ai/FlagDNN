@@ -61,6 +61,7 @@ def _reduction_full_signature(
     block_m: int,
     block_n: int,
 ) -> str:
+    constants: tuple[int, ...]
     tokens = [
         _pointer_token(request.input.data_type, request.input.alignment),
         _pointer_token(request.output.data_type, request.output.alignment),

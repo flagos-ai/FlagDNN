@@ -57,7 +57,9 @@ def _ports(operation, parameters):
     if operation == "genstats":
         return ("x",), ("sum", "sq_sum")
     if operation == "bn_finalize":
-        running = _require_integer(parameters, "has_running", minimum=0, maximum=1)
+        running = _require_integer(
+            parameters, "has_running", minimum=0, maximum=1
+        )
         return (
             ("sum", "sq_sum", "scale", "bias")
             + (
@@ -66,14 +68,22 @@ def _ports(operation, parameters):
                 else ()
             ),
             ("eq_scale", "eq_bias", "mean", "inv_variance")
-            + (("next_running_mean", "next_running_variance") if running else ()),
+            + (
+                ("next_running_mean", "next_running_variance")
+                if running
+                else ()
+            ),
         )
     if operation == "resample":
-        index = _require_integer(parameters, "generate_index", minimum=0, maximum=1)
+        index = _require_integer(
+            parameters, "generate_index", minimum=0, maximum=1
+        )
         return ("input",), ("output", "index") if index else ("output",)
     if operation == "causal_conv1d":
         bias = _require_integer(parameters, "has_bias", minimum=0, maximum=1)
-        return ("input", "weight", "bias") if bias else ("input", "weight"), ("output",)
+        return ("input", "weight", "bias") if bias else ("input", "weight"), (
+            "output",
+        )
     return (
         (("dy", "freqs"), ("dx",))
         if operation == "rope_backward"
@@ -85,7 +95,9 @@ def parse_node(node_value, position, node_count, tensor_registry):
     node = _require_object(node_value, f"graph.nodes[{position}]")
     operation = node.get("type")
     if operation not in SUPPORTED_OPERATIONS:
-        raise ValueError(f"unsupported Iluvatar extended operation: {operation!r}")
+        raise ValueError(
+            f"unsupported Iluvatar extended operation: {operation!r}"
+        )
     node_id = _require_integer(node, "id", minimum=0, maximum=node_count - 1)
     compute = node.get("compute_data_type")
     if compute not in ("float32", "float16", "bfloat16", "int32", "boolean"):
@@ -93,7 +105,10 @@ def parse_node(node_value, position, node_count, tensor_registry):
     parameters = _require_object(node.get("attributes"), "node.attributes")
     input_roles, output_roles = _ports(operation, parameters)
     tensors, roles, uids = [], [], []
-    for direction, expected in [("inputs", input_roles), ("outputs", output_roles)]:
+    for direction, expected in [
+        ("inputs", input_roles),
+        ("outputs", output_roles),
+    ]:
         ports = _require_list(node.get(direction), f"node.{direction}")
         if len(ports) != len(expected):
             raise ValueError(f"{operation} {direction} count is invalid")
@@ -121,7 +136,9 @@ def parse_node(node_value, position, node_count, tensor_registry):
 
 def _configuration(operation, parameters, tensors):
     if operation in _NORMALIZATION:
-        return _extended_normalization_configuration(operation, parameters, tensors)
+        return _extended_normalization_configuration(
+            operation, parameters, tensors
+        )
     if operation in {"concatenate", "gen_index"}:
         return _index_kernel_configuration(operation, parameters, tensors)
     if operation in {"rope", "rope_backward"}:
@@ -161,10 +178,15 @@ def plan_kernel_stages(node):
                 raise ValueError("extended kernels require a pointer-only ABI")
             uid = group["tensors"][local]["uid"]
             arguments.append(
-                ("tensor", next(i for i, t in enumerate(tensors) if t["uid"] == uid))
+                (
+                    "tensor",
+                    next(i for i, t in enumerate(tensors) if t["uid"] == uid),
+                )
             )
-        # Common kernels use numeric constexprs and work with CoreX warp size 64.
-        # Keep fixed launch metadata; NVIDIA autotune tables are not applicable.
+        # Common kernels use numeric constexprs and work with CoreX warp size
+        # 64.
+        # Keep fixed launch metadata; NVIDIA autotune tables are not
+        # applicable.
         stages.append(
             KernelStagePlan(
                 operation=operation,

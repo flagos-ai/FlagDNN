@@ -86,7 +86,9 @@ def _workspace_layout(
             raise ValueError("Graph workspace size exceeds int64 range")
         result[uid] = (offset, tensor.storage_size)
         offset += tensor.storage_size
-    return result, (_align_up(offset, GRAPH_WORKSPACE_ALIGNMENT) if offset else 0)
+    return result, (
+        _align_up(offset, GRAPH_WORKSPACE_ALIGNMENT) if offset else 0
+    )
 
 
 def _argument_source(
@@ -121,7 +123,9 @@ def _stage_workspace(
     workspace_layout: dict[int, tuple[int, int]],
 ) -> dict[str, int]:
     ranges = [
-        workspace_layout[tensor.uid] for tensor in stage_tensors if tensor.virtual
+        workspace_layout[tensor.uid]
+        for tensor in stage_tensors
+        if tensor.virtual
     ]
     if not ranges:
         return {"offset": 0, "size": 0, "alignment": 1}
@@ -135,6 +139,9 @@ def _stage_workspace(
 
 
 def plan_graph(graph_value: object) -> PointwiseGraphPlan:
+    batchnorm_meta: dict[str, int | float]
+    input_names: tuple[str, ...]
+    argument_names: tuple[str, ...]
     graph = require_object(graph_value, "graph")
     tensors = _parse_tensor_table(graph)
     nodes = require_list(graph.get("nodes"), "graph.nodes")
@@ -163,7 +170,9 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
             or node_id >= node_count
             or node_id in node_positions
         ):
-            raise ValueError("pointwise graph node IDs must be unique positions")
+            raise ValueError(
+                "pointwise graph node IDs must be unique positions"
+            )
         node_positions.add(node_id)
         operation = node.get("type")
         if operation in BINARY_POINTWISE_MODES:
@@ -221,8 +230,12 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 "Ascend compiler does not support operation " f"{operation!r}"
             )
 
-        inputs = require_list(node.get("inputs"), f"graph.nodes[{position}].inputs")
-        outputs = require_list(node.get("outputs"), f"graph.nodes[{position}].outputs")
+        inputs = require_list(
+            node.get("inputs"), f"graph.nodes[{position}].inputs"
+        )
+        outputs = require_list(
+            node.get("outputs"), f"graph.nodes[{position}].outputs"
+        )
         output_names = (
             ("y", "mean", "inv_variance")
             if kernel_family == "layernorm"
@@ -246,7 +259,9 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 )
             )
         )
-        if len(inputs) != len(input_names) or len(outputs) != len(output_names):
+        if len(inputs) != len(input_names) or len(outputs) != len(
+            output_names
+        ):
             raise ValueError(f"{operation} has invalid arity")
         if kernel_family == "batchnorm_inference":
             input_tensors = _parse_named_ports(
@@ -285,9 +300,14 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
         }:
             input_uids = {tensor.uid for tensor in input_tensors}
             if len(input_uids) != len(input_tensors):
-                raise ValueError(f"{operation} requires distinct input tensor UIDs")
+                raise ValueError(
+                    f"{operation} requires distinct input tensor UIDs"
+                )
             output_uids = {tensor.uid for tensor in output_tensors}
-            if len(output_uids) != len(output_tensors) or input_uids & output_uids:
+            if (
+                len(output_uids) != len(output_tensors)
+                or input_uids & output_uids
+            ):
                 raise ValueError(
                     f"{operation} requires distinct input/output tensor UIDs"
                 )
@@ -310,7 +330,10 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 or output.data_type != a.data_type
             ):
                 raise ValueError(
-                    "matmul A/B/output storage data types must match and be floating"
+                    (
+                        "matmul A/B/output storage data types must match and "
+                        "be floating"
+                    )
                 )
             if node.get("compute_data_type") != NUMERIC_COMPUTE_DATA_TYPE:
                 raise ValueError("matmul requires float32 compute")
@@ -364,7 +387,8 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 )
             ):
                 raise ValueError(
-                    "batchnorm running and saved statistics must use " "float32 storage"
+                    "batchnorm running and saved statistics must use "
+                    "float32 storage"
                 )
             if node.get("compute_data_type") != NUMERIC_COMPUTE_DATA_TYPE:
                 raise ValueError("batchnorm requires float32 compute")
@@ -383,10 +407,13 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 for parameter in (mean, inv_variance, scale, bias)
             ):
                 raise ValueError(
-                    "Ascend batchnorm_inference parameters must use float32 " "storage"
+                    "Ascend batchnorm_inference parameters must use float32 "
+                    "storage"
                 )
             if node.get("compute_data_type") != NUMERIC_COMPUTE_DATA_TYPE:
-                raise ValueError("batchnorm_inference requires float32 compute")
+                raise ValueError(
+                    "batchnorm_inference requires float32 compute"
+                )
         elif rmsnorm_family:
             x, scale, bias = input_tensors
             inv_variance = output_tensors[1]
@@ -401,7 +428,9 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                     "and be floating"
                 )
             if inv_variance.data_type != "float32":
-                raise ValueError("rmsnorm inverse variance must use float32 storage")
+                raise ValueError(
+                    "rmsnorm inverse variance must use float32 storage"
+                )
             if node.get("compute_data_type") != NUMERIC_COMPUTE_DATA_TYPE:
                 raise ValueError("rmsnorm requires float32 compute")
         elif layernorm_family:
@@ -417,13 +446,20 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                     "layernorm X/scale/bias/Y storage data types must match "
                     "and be floating"
                 )
-            if mean.data_type != "float32" or inv_variance.data_type != "float32":
-                raise ValueError("layernorm statistics must use float32 storage")
+            if (
+                mean.data_type != "float32"
+                or inv_variance.data_type != "float32"
+            ):
+                raise ValueError(
+                    "layernorm statistics must use float32 storage"
+                )
             if node.get("compute_data_type") != NUMERIC_COMPUTE_DATA_TYPE:
                 raise ValueError("layernorm requires float32 compute")
         elif layout:
             if input_tensors[0].data_type != output.data_type:
-                raise ValueError("layout operation input/output data types must match")
+                raise ValueError(
+                    "layout operation input/output data types must match"
+                )
             if node.get("compute_data_type") not in ELEMENT_SIZES:
                 raise ValueError("layout compute data type is unsupported")
         elif reduction_family:
@@ -449,7 +485,8 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 )
             if input_tensors[2].data_type != "boolean":
                 raise ValueError(
-                    "binary_select requires a BOOLEAN predicate storage " "data type"
+                    "binary_select requires a BOOLEAN predicate storage "
+                    "data type"
                 )
             if node.get("compute_data_type") != NUMERIC_COMPUTE_DATA_TYPE:
                 raise ValueError("binary_select requires float32 compute")
@@ -466,23 +503,37 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                     "storage data types"
                 )
             if output.data_type != "boolean":
-                raise ValueError("comparison pointwise requires BOOLEAN output storage")
+                raise ValueError(
+                    "comparison pointwise requires BOOLEAN output storage"
+                )
             if node.get("compute_data_type") != BOOLEAN_COMPUTE_DATA_TYPE:
                 raise ValueError(
                     "comparison pointwise requires BOOLEAN compute data type"
                 )
         elif logical:
-            if any(tensor.data_type != output.data_type for tensor in input_tensors):
-                raise ValueError("pointwise input/output data types must match")
+            if any(
+                tensor.data_type != output.data_type
+                for tensor in input_tensors
+            ):
+                raise ValueError(
+                    "pointwise input/output data types must match"
+                )
             if output.data_type != "boolean":
                 raise ValueError(
                     "logical pointwise requires BOOLEAN storage data types"
                 )
             if node.get("compute_data_type") != BOOLEAN_COMPUTE_DATA_TYPE:
-                raise ValueError("logical pointwise requires BOOLEAN compute data type")
+                raise ValueError(
+                    "logical pointwise requires BOOLEAN compute data type"
+                )
         else:
-            if any(tensor.data_type != output.data_type for tensor in input_tensors):
-                raise ValueError("pointwise input/output data types must match")
+            if any(
+                tensor.data_type != output.data_type
+                for tensor in input_tensors
+            ):
+                raise ValueError(
+                    "pointwise input/output data types must match"
+                )
             if output.data_type not in NUMERIC_STORAGE_DATA_TYPES:
                 raise ValueError(
                     "numeric pointwise storage data types must be floating"
@@ -492,7 +543,7 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
         reduction_meta: dict[str, int] = {}
         matmul_meta: dict[str, int] = {}
         convolution_meta: dict[str, int] = {}
-        batchnorm_meta: dict[str, int] = {}
+        batchnorm_meta = {}
         batchnorm_training_meta: dict[str, int | float] = {}
         rmsnorm_meta: dict[str, int | float] = {}
         layernorm_meta: dict[str, int | float] = {}
@@ -502,7 +553,8 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 f"graph.nodes[{position}].attributes",
             )
             if (
-                set(attributes) - {"input_precision"} != {"batch", "m", "n", "k"}
+                set(attributes) - {"input_precision"}
+                != {"batch", "m", "n", "k"}
                 or attributes.get("input_precision", 0) != 0
             ):
                 raise ValueError("matmul attributes are invalid")
@@ -531,7 +583,11 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                     if trailing < len(b_batch)
                     else 1
                 )
-                if a_dimension != b_dimension and a_dimension != 1 and b_dimension != 1:
+                if (
+                    a_dimension != b_dimension
+                    and a_dimension != 1
+                    and b_dimension != 1
+                ):
                     raise ValueError(
                         "matmul batch dimensions are not broadcast-compatible"
                     )
@@ -547,8 +603,12 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 for name in ("batch", "m", "n", "k")
             }
             if encoded != {"batch": batch, "m": m, "n": n, "k": k}:
-                raise ValueError("matmul attributes disagree with Graph tensors")
-            matmul_meta = _matmul_meta(a, b, output, batch=batch, m=m, n=n, k=k)
+                raise ValueError(
+                    "matmul attributes disagree with Graph tensors"
+                )
+            matmul_meta = _matmul_meta(
+                a, b, output, batch=batch, m=m, n=n, k=k
+            )
             expected_dimensions = output.dimensions
         elif convolution_family:
             attributes = require_object(
@@ -565,7 +625,8 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 "dilation",
             }
             if (
-                set(attributes) - {"input_precision"} != expected_attribute_names
+                set(attributes) - {"input_precision"}
+                != expected_attribute_names
                 or attributes.get("input_precision", 0) != 0
             ):
                 raise ValueError("convolution_fprop attributes are invalid")
@@ -607,7 +668,10 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 for tensor in (input_tensor, filter_tensor, output)
             ):
                 raise ValueError(
-                    "convolution_fprop tensor ranks must equal spatial_rank + 2"
+                    (
+                        "convolution_fprop tensor ranks must equal "
+                        "spatial_rank + 2"
+                    )
                 )
             input_channels = input_tensor.dimensions[1]
             output_channels = filter_tensor.dimensions[0]
@@ -616,11 +680,14 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 or output_channels % groups != 0
                 or filter_tensor.dimensions[1] != input_channels // groups
             ):
-                raise ValueError("convolution_fprop channel metadata is invalid")
+                raise ValueError(
+                    "convolution_fprop channel metadata is invalid"
+                )
             expected_output = [input_tensor.dimensions[0], output_channels]
             for axis in range(spatial_rank):
                 effective_filter = (
-                    dilation[axis] * (filter_tensor.dimensions[axis + 2] - 1) + 1
+                    dilation[axis] * (filter_tensor.dimensions[axis + 2] - 1)
+                    + 1
                 )
                 numerator = (
                     input_tensor.dimensions[axis + 2]
@@ -632,9 +699,13 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                     raise ValueError(
                         "convolution_fprop filter is larger than padded input"
                     )
-                expected_output.append(numerator // convolution_stride[axis] + 1)
+                expected_output.append(
+                    numerator // convolution_stride[axis] + 1
+                )
             if output.dimensions != tuple(expected_output):
-                raise ValueError("convolution_fprop output shape is inconsistent")
+                raise ValueError(
+                    "convolution_fprop output shape is inconsistent"
+                )
             if n_outputs != math.prod(output.dimensions):
                 raise ValueError(
                     "convolution_fprop n_outputs disagrees with Graph output"
@@ -687,26 +758,48 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
             if batch != x.dimensions[0]:
                 raise ValueError("batchnorm batch attribute disagrees with X")
             if channels != x.dimensions[1]:
-                raise ValueError("batchnorm channels attribute disagrees with X")
+                raise ValueError(
+                    "batchnorm channels attribute disagrees with X"
+                )
             if spatial != math.prod(x.dimensions[2:]):
-                raise ValueError("batchnorm spatial attribute disagrees with X")
+                raise ValueError(
+                    "batchnorm spatial attribute disagrees with X"
+                )
             if encoded_rank != rank:
                 raise ValueError("batchnorm rank attribute disagrees with X")
             if n_elements != math.prod(x.dimensions):
-                raise ValueError("batchnorm n_elements attribute disagrees with X")
+                raise ValueError(
+                    "batchnorm n_elements attribute disagrees with X"
+                )
             if (
                 tuple(
                     require_integer_list(
-                        attributes, "dimensions", rank, minimum=1, maximum=MAX_I32
+                        attributes,
+                        "dimensions",
+                        rank,
+                        minimum=1,
+                        maximum=MAX_I32,
                     )
                 )
                 != x.dimensions
             ):
-                raise ValueError("batchnorm dimensions attribute disagrees with X")
-            if tuple(require_integer_list(attributes, "x_strides", rank)) != x.strides:
-                raise ValueError("batchnorm x_strides attribute disagrees with X")
-            if tuple(require_integer_list(attributes, "y_strides", rank)) != y.strides:
-                raise ValueError("batchnorm y_strides attribute disagrees with Y")
+                raise ValueError(
+                    "batchnorm dimensions attribute disagrees with X"
+                )
+            if (
+                tuple(require_integer_list(attributes, "x_strides", rank))
+                != x.strides
+            ):
+                raise ValueError(
+                    "batchnorm x_strides attribute disagrees with X"
+                )
+            if (
+                tuple(require_integer_list(attributes, "y_strides", rank))
+                != y.strides
+            ):
+                raise ValueError(
+                    "batchnorm y_strides attribute disagrees with Y"
+                )
             for parameter in (
                 scale,
                 bias,
@@ -780,7 +873,10 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 or len(scale.dimensions) > rank
             ):
                 raise ValueError(
-                    "layernorm scale/bias must be matching contiguous suffix tensors"
+                    (
+                        "layernorm scale/bias must be matching contiguous "
+                        "suffix tensors"
+                    )
                 )
             leading = rank - len(scale.dimensions)
             normalized_start: int | None = None
@@ -792,7 +888,9 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 )
                 if parameter_dimension != 1:
                     if parameter_dimension != dimension:
-                        raise ValueError("layernorm scale shape does not match X")
+                        raise ValueError(
+                            "layernorm scale shape does not match X"
+                        )
                     if normalized_start is None:
                         normalized_start = axis
                 elif normalized_start is not None and dimension != 1:
@@ -872,10 +970,13 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 or len(scale.dimensions) > rank
             ):
                 raise ValueError(
-                    "rmsnorm scale/bias must be matching contiguous suffix tensors"
+                    (
+                        "rmsnorm scale/bias must be matching contiguous "
+                        "suffix tensors"
+                    )
                 )
             leading = rank - len(scale.dimensions)
-            normalized_start: int | None = None
+            normalized_start = None
             normalized_elements = 1
             statistic_dimensions = list(x.dimensions)
             for axis, dimension in enumerate(x.dimensions):
@@ -884,11 +985,15 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 )
                 if parameter_dimension != 1:
                     if parameter_dimension != dimension:
-                        raise ValueError("rmsnorm scale shape does not match X")
+                        raise ValueError(
+                            "rmsnorm scale shape does not match X"
+                        )
                     if normalized_start is None:
                         normalized_start = axis
                 elif normalized_start is not None and dimension != 1:
-                    raise ValueError("rmsnorm scale must describe a contiguous suffix")
+                    raise ValueError(
+                        "rmsnorm scale must describe a contiguous suffix"
+                    )
                 if normalized_start is not None:
                     normalized_elements *= dimension
                     statistic_dimensions[axis] = 1
@@ -914,7 +1019,9 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
             if inv_variance.dimensions != tuple(
                 statistic_dimensions
             ) or not _is_row_major_tensor(inv_variance):
-                raise ValueError("rmsnorm inverse variance metadata is invalid")
+                raise ValueError(
+                    "rmsnorm inverse variance metadata is invalid"
+                )
             rmsnorm_meta = {
                 "ROWS": rows,
                 "NORMALIZED_ELEMENTS": normalized_elements,
@@ -940,7 +1047,9 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
             x = input_tensors[0]
             rank = len(x.dimensions)
             if rank < 2 or rank > MAX_RANK:
-                raise ValueError("batchnorm_inference X rank must be in [2, 8]")
+                raise ValueError(
+                    "batchnorm_inference X rank must be in [2, 8]"
+                )
             channels = require_integer(attributes, "channels")
             spatial = require_integer(attributes, "spatial")
             encoded_rank = require_integer(
@@ -957,11 +1066,17 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                     "batchnorm_inference spatial attribute disagrees with X"
                 )
             if encoded_rank != rank:
-                raise ValueError("batchnorm_inference rank attribute disagrees with X")
+                raise ValueError(
+                    "batchnorm_inference rank attribute disagrees with X"
+                )
             if (
                 tuple(
                     require_integer_list(
-                        attributes, "dimensions", rank, minimum=1, maximum=MAX_I32
+                        attributes,
+                        "dimensions",
+                        rank,
+                        minimum=1,
+                        maximum=MAX_I32,
                     )
                 )
                 != x.dimensions
@@ -969,7 +1084,10 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 raise ValueError(
                     "batchnorm_inference dimensions attribute disagrees with X"
                 )
-            if tuple(require_integer_list(attributes, "x_strides", rank)) != x.strides:
+            if (
+                tuple(require_integer_list(attributes, "x_strides", rank))
+                != x.strides
+            ):
                 raise ValueError(
                     "batchnorm_inference x_strides attribute disagrees with X"
                 )
@@ -1012,7 +1130,9 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 raise ValueError("reduction attributes are invalid")
             mode = require_integer(attributes, "mode", minimum=0, maximum=2)
             if mode != REDUCTION_MODES[operation]:
-                raise ValueError("reduction mode attribute disagrees with operation")
+                raise ValueError(
+                    "reduction mode attribute disagrees with operation"
+                )
             rank = len(input_tensors[0].dimensions)
             if rank < 1:
                 raise ValueError("reduction input rank must be in [1, 8]")
@@ -1040,12 +1160,12 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 or output_elements != expected_output_elements
             ):
                 raise ValueError("reduction decomposition attributes disagree")
-            expected_output_dimensions = list(input_tensors[0].dimensions)
+            reduced_output_dimensions = list(input_tensors[0].dimensions)
             if keep_dimensions:
-                expected_output_dimensions[axis] = 1
+                reduced_output_dimensions[axis] = 1
             else:
-                del expected_output_dimensions[axis]
-            if output.dimensions != tuple(expected_output_dimensions):
+                del reduced_output_dimensions[axis]
+            if output.dimensions != tuple(reduced_output_dimensions):
                 raise ValueError("reduction output shape is inconsistent")
             reduction_meta = _reduction_meta(
                 input_tensors[0],
@@ -1074,7 +1194,9 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
                 virtual=True,
                 storage_size=0,
             )
-            expected_dimensions = _broadcast_dimensions(partial, input_tensors[2])
+            expected_dimensions = _broadcast_dimensions(
+                partial, input_tensors[2]
+            )
         elif operation == "sigmoid_backward":
             if not (
                 input_tensors[0].dimensions
@@ -1099,7 +1221,9 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
             node.get("attributes"), f"graph.nodes[{position}].attributes"
         )
         if matmul_family:
-            n_elements = int(matmul_meta["BATCH"] * matmul_meta["M"] * matmul_meta["N"])
+            n_elements = int(
+                matmul_meta["BATCH"] * matmul_meta["M"] * matmul_meta["N"]
+            )
         elif convolution_family:
             n_elements = math.prod(output.dimensions)
         elif reduction_family:
@@ -1111,7 +1235,9 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
             if n_elements != math.prod(output.dimensions):
                 raise ValueError("parameters.n_elements does not match output")
         if n_elements < 1 or n_elements > MAX_I32:
-            raise ValueError("operation element count must fit the LTJ i32 ABI")
+            raise ValueError(
+                "operation element count must fit the LTJ i32 ABI"
+            )
         alpha = 1.0
         negative_slope = 0.0
         lower_clip = 0.0
@@ -1132,19 +1258,24 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
         ):
             pass
         elif layout:
-            layout_meta = _layout_meta(operation, attributes, input_tensors[0], output)
+            layout_meta = _layout_meta(
+                operation, attributes, input_tensors[0], output
+            )
         elif kernel_family == "binary":
             encoded_mode = require_integer(
                 attributes, "pointwise_mode", minimum=1, maximum=40
             )
             if encoded_mode != pointwise_mode:
                 raise ValueError(
-                    "parameters.pointwise_mode is inconsistent with binary " "operation"
+                    "parameters.pointwise_mode is inconsistent with binary "
+                    "operation"
                 )
             _optional_mode(attributes, "mode", pointwise_mode)
             alpha = require_f32(attributes, "alpha", default=1.0)
             if operation not in {"add", "sub"} and alpha != 1.0:
-                raise ValueError("pointwise alpha is only supported by add and sub")
+                raise ValueError(
+                    "pointwise alpha is only supported by add and sub"
+                )
         elif kernel_family == "unary":
             (
                 negative_slope,
@@ -1265,7 +1396,10 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
             and next_internal_uid <= MAX_I64
             and int(convolution_meta["SPATIAL_RANK"]) == 2
             and int(convolution_meta["GROUPS"]) == 1
-            and (output.dimensions[-1] % 32 == 0 or int(node["n_elements"]) >= 65536)
+            and (
+                output.dimensions[-1] % 32 == 0
+                or int(node["n_elements"]) >= 65536
+            )
             and _is_row_major_tensor(inputs[0])
             and _is_row_major_tensor(inputs[1])
             and _is_row_major_tensor(output)
@@ -1370,14 +1504,18 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
             )
             continue
 
-        def dense_virtual_tensor(uid: int, dimensions: tuple[int, ...]) -> TensorPlan:
+        def dense_virtual_tensor(
+            uid: int, dimensions: tuple[int, ...]
+        ) -> TensorPlan:
             strides = [1] * len(dimensions)
             for axis in range(len(dimensions) - 2, -1, -1):
                 strides[axis] = strides[axis + 1] * dimensions[axis + 1]
             elements = math.prod(dimensions)
             element_size = ELEMENT_SIZES[input_tensor.data_type]
             if elements > MAX_I64 // element_size:
-                raise ValueError("internal convolution workspace exceeds int64")
+                raise ValueError(
+                    "internal convolution workspace exceeds int64"
+                )
             return TensorPlan(
                 uid=uid,
                 data_type=input_tensor.data_type,
@@ -1592,7 +1730,8 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
             )
             batchnorm_meta = node["batchnorm_meta"]
             meta = {
-                name: batchnorm_meta[name] for name in ("RANK", "CHANNELS", "SPATIAL")
+                name: batchnorm_meta[name]
+                for name in ("RANK", "CHANNELS", "SPATIAL")
             }
             if not contiguous:
                 meta.update(
@@ -1654,11 +1793,15 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
             meta["BLOCK_SIZE"] = 256
             argument_names = ("input_ptr", "output_ptr")
         elif node["kernel_family"] == "binary":
-            contiguous = _can_use_contiguous_kernel(inputs[0], inputs[1], output)
-            function_name = (
-                "binary_contiguous_kernel" if contiguous else "binary_strided_kernel"
+            contiguous = _can_use_contiguous_kernel(
+                inputs[0], inputs[1], output
             )
-            meta: dict[str, int | float] = {
+            function_name = (
+                "binary_contiguous_kernel"
+                if contiguous
+                else "binary_strided_kernel"
+            )
+            meta = {
                 "OP_KIND": node["pointwise_mode"],
                 "ALPHA": node["alpha"],
                 "BLOCK_SIZE": 256,
@@ -1702,14 +1845,18 @@ def plan_graph(graph_value: object) -> PointwiseGraphPlan:
             meta = {"BLOCK_SIZE": 256}
             if not contiguous:
                 meta = {
-                    **_ternary_strided_meta(inputs[0], inputs[1], inputs[2], output),
+                    **_ternary_strided_meta(
+                        inputs[0], inputs[1], inputs[2], output
+                    ),
                     **meta,
                 }
             argument_names = ("x_ptr", "y_ptr", "t_ptr", "out_ptr")
         else:
             raise ValueError("Ascend kernel family is unsupported")
         arguments = tuple(
-            _argument_source(index, argument_names[index], tensor, workspace_layout)
+            _argument_source(
+                index, argument_names[index], tensor, workspace_layout
+            )
             for index, tensor in enumerate(stage_tensors)
         ) + (
             {

@@ -4,6 +4,7 @@
 import triton
 import triton.language as tl
 
+
 @triton.jit
 def layout_copy_kernel(
     input_ptr,
@@ -64,9 +65,27 @@ def layout_copy_kernel(
         and INPUT_STRIDE_5 == OUTPUT_STRIDE_5
         and INPUT_STRIDE_6 == OUTPUT_STRIDE_6
         and INPUT_STRIDE_7 == OUTPUT_STRIDE_7
-        and 1 + (INPUT_DIM_0 - 1) * INPUT_STRIDE_0 + (INPUT_DIM_1 - 1) * INPUT_STRIDE_1 + (INPUT_DIM_2 - 1) * INPUT_STRIDE_2 + (INPUT_DIM_3 - 1) * INPUT_STRIDE_3 + (INPUT_DIM_4 - 1) * INPUT_STRIDE_4 + (INPUT_DIM_5 - 1) * INPUT_STRIDE_5 + (INPUT_DIM_6 - 1) * INPUT_STRIDE_6 + (INPUT_DIM_7 - 1) * INPUT_STRIDE_7 == INPUT_DIM_0 * INPUT_DIM_1 * INPUT_DIM_2 * INPUT_DIM_3 * INPUT_DIM_4 * INPUT_DIM_5 * INPUT_DIM_6 * INPUT_DIM_7
+        and 1
+        + (INPUT_DIM_0 - 1) * INPUT_STRIDE_0
+        + (INPUT_DIM_1 - 1) * INPUT_STRIDE_1
+        + (INPUT_DIM_2 - 1) * INPUT_STRIDE_2
+        + (INPUT_DIM_3 - 1) * INPUT_STRIDE_3
+        + (INPUT_DIM_4 - 1) * INPUT_STRIDE_4
+        + (INPUT_DIM_5 - 1) * INPUT_STRIDE_5
+        + (INPUT_DIM_6 - 1) * INPUT_STRIDE_6
+        + (INPUT_DIM_7 - 1) * INPUT_STRIDE_7
+        == INPUT_DIM_0
+        * INPUT_DIM_1
+        * INPUT_DIM_2
+        * INPUT_DIM_3
+        * INPUT_DIM_4
+        * INPUT_DIM_5
+        * INPUT_DIM_6
+        * INPUT_DIM_7
     ):
-        offsets = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+        offsets = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(
+            0, BLOCK_SIZE
+        )
         values = tl.load(input_ptr + offsets, offsets < n_elements, 0)
         tl.store(output_ptr + offsets, values, offsets < n_elements)
     else:
