@@ -17,6 +17,18 @@ namespace {
 using Shape = std::vector<std::int64_t>;
 using ShapePair = std::pair<Shape, Shape>;
 
+// These exact shapes cannot satisfy cuDNN's packed-BOOLEAN eight-element
+// access requirement. Shared performance cases use NVIDIA as the baseline.
+bool has_unsupported_boolean_shape(const BenchmarkCase& specification) {
+  return std::any_of(specification.tensors.begin(), specification.tensors.end(),
+                     [](const TensorSpec& tensor) {
+    return tensor.data_type == FLAGDNN_DATA_BOOLEAN &&
+           (tensor.dimensions == Shape{3, 257, 513} ||
+            tensor.dimensions == Shape{3, 7, 65, 129} ||
+            tensor.dimensions == Shape{5, 7, 65, 129});
+  });
+}
+
 constexpr std::array<flagdnnDataType_t, 3> kDataTypes = {
     FLAGDNN_DATA_FLOAT32,
     FLAGDNN_DATA_FLOAT16,
@@ -322,14 +334,16 @@ std::vector<BenchmarkCase> binary_pointwise_benchmark_cases(
   const std::vector<flagdnnDataType_t> data_types = input_data_types(mode);
   for (std::size_t index = 0; index < shapes.size(); ++index) {
     for (const flagdnnDataType_t data_type : data_types) {
-      result.push_back(make_case(shapes[index],
+      auto specification = make_case(shapes[index],
                                  data_type,
                                  uid,
                                  mode,
                                  operation_name,
                                  input_domain,
-                                 true));
-      uid += 3;
+                                 true);
+      uid += 3;  // Keep retained tensor UIDs stable across catalog revisions.
+      if (!has_unsupported_boolean_shape(specification))
+        result.push_back(std::move(specification));
     }
   }
   return result;
@@ -418,9 +432,11 @@ std::vector<BenchmarkCase> make_binary_select_cases(
   std::int64_t uid = benchmark ? 21000 : 20000;
   for (const ShapeTriple& shape : shapes) {
     for (const flagdnnDataType_t data_type : kDataTypes) {
-      result.push_back(
-          make_binary_select_case(shape, data_type, uid, benchmark));
-      uid += 4;
+      auto specification =
+          make_binary_select_case(shape, data_type, uid, benchmark);
+      uid += 4;  // Preserve the original tensor UID assignment.
+      if (!benchmark || !has_unsupported_boolean_shape(specification))
+        result.push_back(std::move(specification));
     }
   }
   return result;

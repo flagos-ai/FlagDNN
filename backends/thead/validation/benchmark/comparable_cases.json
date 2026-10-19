@@ -3644,11 +3644,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "identity_fp8_e8m0_2x3x4": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "identity_fp32_4x5x6": {
         "status": "comparable",
         "reason_code": "",
@@ -3680,11 +3675,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "identity_fp8_e5m2_4x5x6": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "identity_fp8_e8m0_4x5x6": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -3724,11 +3714,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "identity_fp8_e8m0_1x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "identity_fp32_3x1x17": {
         "status": "comparable",
         "reason_code": "",
@@ -3760,11 +3745,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "identity_fp8_e5m2_3x1x17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "identity_fp8_e8m0_3x1x17": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -3804,11 +3784,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "identity_fp8_e8m0_2x4x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "identity_fp32_5x7x11": {
         "status": "comparable",
         "reason_code": "",
@@ -3840,11 +3815,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "identity_fp8_e5m2_5x7x11": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "identity_fp8_e8m0_5x7x11": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -3884,11 +3854,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "identity_fp8_e8m0_1x33x65": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "identity_fp32_2x16x257": {
         "status": "comparable",
         "reason_code": "",
@@ -3920,11 +3885,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "identity_fp8_e5m2_2x16x257": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "identity_fp8_e8m0_2x16x257": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -3964,11 +3924,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "identity_fp8_e8m0_4x32x128": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "identity_fp32_1x1x2": {
         "status": "comparable",
         "reason_code": "",
@@ -4000,11 +3955,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "identity_fp8_e5m2_1x1x2": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "identity_fp8_e8m0_1x1x2": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -4044,11 +3994,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "identity_fp8_e8m0_1x1x3": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "identity_fp32_2x3x17": {
         "status": "comparable",
         "reason_code": "",
@@ -4080,11 +4025,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "identity_fp8_e5m2_2x3x17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "identity_fp8_e8m0_2x3x17": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -9747,16 +9687,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_eq_perf_bfloat16_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_eq_perf_bfloat16_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_eq_perf_bfloat16_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -9768,11 +9698,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_eq_perf_bfloat16_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_eq_perf_bfloat16_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -9822,16 +9747,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_eq_perf_fp16_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_eq_perf_fp16_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_eq_perf_fp16_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -9843,11 +9758,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_eq_perf_fp16_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_eq_perf_fp16_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -9897,16 +9807,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_eq_perf_fp32_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_eq_perf_fp32_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_eq_perf_fp32_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -9918,11 +9818,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_eq_perf_fp32_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_eq_perf_fp32_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -9974,16 +9869,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_ge_perf_bfloat16_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_ge_perf_bfloat16_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_ge_perf_bfloat16_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -9995,11 +9880,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_ge_perf_bfloat16_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_ge_perf_bfloat16_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -10049,16 +9929,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_ge_perf_fp16_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_ge_perf_fp16_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_ge_perf_fp16_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -10070,11 +9940,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_ge_perf_fp16_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_ge_perf_fp16_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -10124,16 +9989,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_ge_perf_fp32_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_ge_perf_fp32_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_ge_perf_fp32_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -10145,11 +10000,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_ge_perf_fp32_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_ge_perf_fp32_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -10201,16 +10051,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_gt_perf_bfloat16_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_gt_perf_bfloat16_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_gt_perf_bfloat16_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -10222,11 +10062,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_gt_perf_bfloat16_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_gt_perf_bfloat16_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -10276,16 +10111,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_gt_perf_fp16_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_gt_perf_fp16_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_gt_perf_fp16_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -10297,11 +10122,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_gt_perf_fp16_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_gt_perf_fp16_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -10351,16 +10171,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_gt_perf_fp32_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_gt_perf_fp32_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_gt_perf_fp32_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -10372,11 +10182,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_gt_perf_fp32_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_gt_perf_fp32_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -10428,16 +10233,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_le_perf_bfloat16_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_le_perf_bfloat16_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_le_perf_bfloat16_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -10449,11 +10244,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_le_perf_bfloat16_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_le_perf_bfloat16_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -10503,16 +10293,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_le_perf_fp16_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_le_perf_fp16_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_le_perf_fp16_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -10524,11 +10304,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_le_perf_fp16_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_le_perf_fp16_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -10578,16 +10353,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_le_perf_fp32_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_le_perf_fp32_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_le_perf_fp32_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -10599,11 +10364,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_le_perf_fp32_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_le_perf_fp32_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -10655,16 +10415,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_lt_perf_bfloat16_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_lt_perf_bfloat16_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_lt_perf_bfloat16_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -10676,11 +10426,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_lt_perf_bfloat16_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_lt_perf_bfloat16_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -10730,16 +10475,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_lt_perf_fp16_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_lt_perf_fp16_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_lt_perf_fp16_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -10751,11 +10486,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_lt_perf_fp16_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_lt_perf_fp16_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -10805,16 +10535,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_lt_perf_fp32_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_lt_perf_fp32_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_lt_perf_fp32_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -10826,11 +10546,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_lt_perf_fp32_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_lt_perf_fp32_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -10882,16 +10597,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_neq_perf_bfloat16_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_neq_perf_bfloat16_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_neq_perf_bfloat16_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -10903,11 +10608,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_neq_perf_bfloat16_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_neq_perf_bfloat16_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -10957,16 +10657,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_neq_perf_fp16_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_neq_perf_fp16_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_neq_perf_fp16_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -10978,11 +10668,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_neq_perf_fp16_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_neq_perf_fp16_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -11032,16 +10717,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "cmp_neq_perf_fp32_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_neq_perf_fp32_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "cmp_neq_perf_fp32_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -11053,11 +10728,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "cmp_neq_perf_fp32_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "cmp_neq_perf_fp32_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -11670,66 +11340,6 @@
       }
     },
     "reduction": {
-      "reduction_avg_perf_bfloat16_axis1_keepdim_1x32x32x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_perf_bfloat16_axis1_keepdim_1x4x8x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_perf_bfloat16_axis1_keepdim_2x16x8x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_perf_bfloat16_axis1_keepdim_2x8x64x32": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_perf_bfloat16_axis1_keepdim_2x8x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_perf_bfloat16_axis1_keepdim_3x4x16x24": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_perf_bfloat16_axis1_keepdim_4x16x16x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_perf_bfloat16_axis1_keepdim_4x8x16x32": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_perf_bfloat16_axis1_keepdim_4x8x64x64": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_perf_bfloat16_axis1_keepdim_8x4x16x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_perf_bfloat16_axis1_keepdim_8x4x32x64": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_perf_bfloat16_axis1_keepdim_8x8x32x32": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reduction_avg_perf_fp16_axis1_keepdim_1x32x32x16": {
         "status": "comparable",
         "reason_code": "",
@@ -11850,66 +11460,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reduction_mul_perf_bfloat16_axis1_keepdim_1x32x32x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_perf_bfloat16_axis1_keepdim_1x4x8x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_perf_bfloat16_axis1_keepdim_2x16x8x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_perf_bfloat16_axis1_keepdim_2x8x64x32": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_perf_bfloat16_axis1_keepdim_2x8x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_perf_bfloat16_axis1_keepdim_3x4x16x24": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_perf_bfloat16_axis1_keepdim_4x16x16x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_perf_bfloat16_axis1_keepdim_4x8x16x32": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_perf_bfloat16_axis1_keepdim_4x8x64x64": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_perf_bfloat16_axis1_keepdim_8x4x16x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_perf_bfloat16_axis1_keepdim_8x4x32x64": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_perf_bfloat16_axis1_keepdim_8x8x32x32": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reduction_mul_perf_fp16_axis1_keepdim_1x32x32x16": {
         "status": "comparable",
         "reason_code": "",
@@ -12026,66 +11576,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "reduction_mul_perf_fp32_axis1_keepdim_8x8x32x32": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_sum_perf_bfloat16_axis1_keepdim_1x32x32x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_sum_perf_bfloat16_axis1_keepdim_1x4x8x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_sum_perf_bfloat16_axis1_keepdim_2x16x8x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_sum_perf_bfloat16_axis1_keepdim_2x8x64x32": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_sum_perf_bfloat16_axis1_keepdim_2x8x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_sum_perf_bfloat16_axis1_keepdim_3x4x16x24": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_sum_perf_bfloat16_axis1_keepdim_4x16x16x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_sum_perf_bfloat16_axis1_keepdim_4x8x16x32": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_sum_perf_bfloat16_axis1_keepdim_4x8x64x64": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_sum_perf_bfloat16_axis1_keepdim_8x4x16x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_sum_perf_bfloat16_axis1_keepdim_8x4x32x64": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_sum_perf_bfloat16_axis1_keepdim_8x8x32x32": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -12245,27 +11735,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reduction_avg_bfloat16_to_fp32_3_7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_bfloat16_to_fp32_3_7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reduction_sum_int32_to_fp32_3_7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_int32_to_fp32_3_7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_int32_to_fp32_3_7": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -12305,27 +11775,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reduction_avg_bfloat16_to_fp32_2_17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_bfloat16_to_fp32_2_17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reduction_sum_int32_to_fp32_2_17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_int32_to_fp32_2_17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_int32_to_fp32_2_17": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -12365,27 +11815,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reduction_avg_bfloat16_to_fp32_4_31": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_bfloat16_to_fp32_4_31": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reduction_sum_int32_to_fp32_4_31": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_int32_to_fp32_4_31": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_int32_to_fp32_4_31": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -12425,27 +11855,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reduction_avg_bfloat16_to_fp32_2_33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_bfloat16_to_fp32_2_33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reduction_sum_int32_to_fp32_2_33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_int32_to_fp32_2_33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_int32_to_fp32_2_33": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -12485,27 +11895,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reduction_avg_bfloat16_to_fp32_3_65": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_bfloat16_to_fp32_3_65": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reduction_sum_int32_to_fp32_3_65": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_int32_to_fp32_3_65": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_int32_to_fp32_3_65": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -12545,27 +11935,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reduction_avg_bfloat16_to_fp32_2_127": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_bfloat16_to_fp32_2_127": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reduction_sum_int32_to_fp32_2_127": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_int32_to_fp32_2_127": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_int32_to_fp32_2_127": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -12605,27 +11975,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reduction_avg_bfloat16_to_fp32_2_257": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_bfloat16_to_fp32_2_257": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reduction_sum_int32_to_fp32_2_257": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_int32_to_fp32_2_257": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_int32_to_fp32_2_257": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -12656,36 +12006,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "reduction_mul_fp16_to_fp32_3_5_7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_sum_bfloat16_to_fp32_3_5_7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_bfloat16_to_fp32_3_5_7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_bfloat16_to_fp32_3_5_7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_sum_int32_to_fp32_3_5_7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_int32_to_fp32_3_5_7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_int32_to_fp32_3_5_7": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -12725,27 +12045,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reduction_avg_bfloat16_to_fp32_2_3_17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_bfloat16_to_fp32_2_3_17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reduction_sum_int32_to_fp32_2_3_17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_int32_to_fp32_2_3_17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_int32_to_fp32_2_3_17": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -12780,36 +12080,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reduction_sum_bfloat16_to_fp32_4_2_33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_bfloat16_to_fp32_4_2_33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_bfloat16_to_fp32_4_2_33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_sum_int32_to_fp32_4_2_33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_int32_to_fp32_4_2_33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_int32_to_fp32_4_2_33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reduction_sum_fp32_to_fp32_2_7_5_3": {
         "status": "comparable",
         "reason_code": "",
@@ -12836,36 +12106,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "reduction_mul_fp16_to_fp32_2_7_5_3": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_sum_bfloat16_to_fp32_2_7_5_3": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_bfloat16_to_fp32_2_7_5_3": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_bfloat16_to_fp32_2_7_5_3": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_sum_int32_to_fp32_2_7_5_3": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_int32_to_fp32_2_7_5_3": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_int32_to_fp32_2_7_5_3": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -12905,27 +12145,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reduction_avg_bfloat16_to_fp32_1_3_5_9": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_bfloat16_to_fp32_1_3_5_9": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reduction_sum_int32_to_fp32_1_3_5_9": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_avg_int32_to_fp32_1_3_5_9": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reduction_mul_int32_to_fp32_1_3_5_9": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13057,27 +12277,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reshape_int32_2x3x4_to_6x4": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reshape_bool_2x3x4_to_6x4": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e4m3_2x3x4_to_6x4": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e5m2_2x3x4_to_6x4": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e8m0_2x3x4_to_6x4": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13097,27 +12297,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reshape_int32_1x8x16_to_4x32": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reshape_bool_1x8x16_to_4x32": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e4m3_1x8x16_to_4x32": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e5m2_1x8x16_to_4x32": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e8m0_1x8x16_to_4x32": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13137,27 +12317,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reshape_int32_4x5x6_to_2x3x20": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reshape_bool_4x5x6_to_2x3x20": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e4m3_4x5x6_to_2x3x20": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e5m2_4x5x6_to_2x3x20": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e8m0_4x5x6_to_2x3x20": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13177,27 +12337,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reshape_int32_1_to_1x1": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reshape_bool_1_to_1x1": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e4m3_1_to_1x1": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e5m2_1_to_1x1": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e8m0_1_to_1x1": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13217,27 +12357,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reshape_int32_2x3_to_6": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reshape_bool_2x3_to_6": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e4m3_2x3_to_6": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e5m2_2x3_to_6": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e8m0_2x3_to_6": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13257,27 +12377,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reshape_int32_1x1x17_to_17x1": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reshape_bool_1x1x17_to_17x1": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e4m3_1x1x17_to_17x1": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e5m2_1x1x17_to_17x1": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e8m0_1x1x17_to_17x1": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13297,27 +12397,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reshape_int32_2x4x8_to_8x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reshape_bool_2x4x8_to_8x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e4m3_2x4x8_to_8x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e5m2_2x4x8_to_8x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e8m0_2x4x8_to_8x8": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13337,27 +12417,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reshape_int32_3x5x7_to_15x7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reshape_bool_3x5x7_to_15x7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e4m3_3x5x7_to_15x7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e5m2_3x5x7_to_15x7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e8m0_3x5x7_to_15x7": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13377,27 +12437,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reshape_int32_2x3x4x5_to_6x20": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reshape_bool_2x3x4x5_to_6x20": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e4m3_2x3x4x5_to_6x20": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e5m2_2x3x4x5_to_6x20": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e8m0_2x3x4x5_to_6x20": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13417,27 +12457,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reshape_int32_1x32x33_to_33x32": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reshape_bool_1x32x33_to_33x32": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e4m3_1x32x33_to_33x32": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e5m2_1x32x33_to_33x32": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e8m0_1x32x33_to_33x32": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13457,27 +12477,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reshape_int32_2x16x31_to_32x31": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reshape_bool_2x16x31_to_32x31": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e4m3_2x16x31_to_32x31": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e5m2_2x16x31_to_32x31": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e8m0_2x16x31_to_32x31": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13497,27 +12497,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "reshape_int32_4x8x65_to_8x4x65": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "reshape_bool_4x8x65_to_8x4x65": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e4m3_4x8x65_to_8x4x65": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e5m2_4x8x65_to_8x4x65": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "reshape_fp8_e8m0_4x8x65_to_8x4x65": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13614,27 +12594,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "transpose_int32_2x3x4": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "transpose_bool_2x3x4": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e4m3_2x3x4": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e5m2_2x3x4": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e8m0_2x3x4": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13654,27 +12614,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "transpose_int32_1x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "transpose_bool_1x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e4m3_1x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e5m2_1x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e8m0_1x8x16": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13694,27 +12634,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "transpose_int32_2x3x4x5": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "transpose_bool_2x3x4x5": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e4m3_2x3x4x5": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e5m2_2x3x4x5": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e8m0_2x3x4x5": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13734,27 +12654,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "transpose_int32_1": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "transpose_bool_1": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e4m3_1": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e5m2_1": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e8m0_1": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13774,27 +12674,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "transpose_int32_2x3": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "transpose_bool_2x3": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e4m3_2x3": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e5m2_2x3": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e8m0_2x3": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13814,27 +12694,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "transpose_int32_1x1x17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "transpose_bool_1x1x17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e4m3_1x1x17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e5m2_1x1x17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e8m0_1x1x17": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13854,27 +12714,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "transpose_int32_2x4x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "transpose_bool_2x4x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e4m3_2x4x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e5m2_2x4x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e8m0_2x4x8": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13894,27 +12734,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "transpose_int32_3x5x7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "transpose_bool_3x5x7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e4m3_3x5x7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e5m2_3x5x7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e8m0_3x5x7": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13934,27 +12754,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "transpose_int32_1x32x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "transpose_bool_1x32x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e4m3_1x32x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e5m2_1x32x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e8m0_1x32x33": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -13974,27 +12774,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "transpose_int32_2x16x31": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "transpose_bool_2x16x31": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e4m3_2x16x31": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e5m2_2x16x31": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e8m0_2x16x31": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -14014,27 +12794,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "transpose_int32_4x8x65": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "transpose_bool_4x8x65": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e4m3_4x8x65": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e5m2_4x8x65": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e8m0_4x8x65": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -14054,27 +12814,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "transpose_int32_2x4x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "transpose_bool_2x4x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e4m3_2x4x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e5m2_2x4x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "transpose_fp8_e8m0_2x4x8x16": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -14156,27 +12896,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "slice_int32_case0_2x4x5": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "slice_bool_case0_2x4x5": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e4m3_case0_2x4x5": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e5m2_case0_2x4x5": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e8m0_case0_2x4x5": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -14196,27 +12916,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "slice_int32_case1_4x6x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "slice_bool_case1_4x6x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e4m3_case1_4x6x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e5m2_case1_4x6x8": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e8m0_case1_4x6x8": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -14236,27 +12936,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "slice_int32_case2_3x5x7x2": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "slice_bool_case2_3x5x7x2": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e4m3_case2_3x5x7x2": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e5m2_case2_3x5x7x2": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e8m0_case2_3x5x7x2": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -14276,27 +12956,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "slice_int32_case3_1": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "slice_bool_case3_1": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e4m3_case3_1": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e5m2_case3_1": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e8m0_case3_1": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -14316,27 +12976,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "slice_int32_case4_17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "slice_bool_case4_17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e4m3_case4_17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e5m2_case4_17": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e8m0_case4_17": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -14356,27 +12996,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "slice_int32_case5_3x7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "slice_bool_case5_3x7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e4m3_case5_3x7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e5m2_case5_3x7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e8m0_case5_3x7": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -14396,27 +13016,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "slice_int32_case6_2x3x9": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "slice_bool_case6_2x3x9": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e4m3_case6_2x3x9": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e5m2_case6_2x3x9": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e8m0_case6_2x3x9": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -14436,27 +13036,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "slice_int32_case7_1x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "slice_bool_case7_1x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e4m3_case7_1x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e5m2_case7_1x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e8m0_case7_1x8x16": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -14476,27 +13056,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "slice_int32_case8_3x5x7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "slice_bool_case8_3x5x7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e4m3_case8_3x5x7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e5m2_case8_3x5x7": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e8m0_case8_3x5x7": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -14516,27 +13076,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "slice_int32_case9_2x16x31": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "slice_bool_case9_2x16x31": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e4m3_case9_2x16x31": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e5m2_case9_2x16x31": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e8m0_case9_2x16x31": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -14556,27 +13096,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "slice_int32_case10_4x8x65": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "slice_bool_case10_4x8x65": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e4m3_case10_4x8x65": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e5m2_case10_4x8x65": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e8m0_case10_4x8x65": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -14596,27 +13116,7 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "slice_int32_case11_2x4x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "slice_bool_case11_2x4x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e4m3_case11_2x4x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e5m2_case11_2x4x8x16": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "slice_fp8_e8m0_case11_2x4x8x16": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -14880,16 +13380,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "binary_select_perf_bfloat16_3x257x513_by_3x257x513_mask_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "binary_select_perf_bfloat16_3x7x65x129_by_3x7x65x129_mask_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "binary_select_perf_bfloat16_3x8x128_by_3x8x128_mask_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -14901,11 +13391,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "binary_select_perf_bfloat16_4x64x31x33_by_4x64x31x33_mask_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "binary_select_perf_bfloat16_5x7x65x129_by_5x7x65x129_mask_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -14955,16 +13440,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "binary_select_perf_fp16_3x257x513_by_3x257x513_mask_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "binary_select_perf_fp16_3x7x65x129_by_3x7x65x129_mask_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "binary_select_perf_fp16_3x8x128_by_3x8x128_mask_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -14976,11 +13451,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "binary_select_perf_fp16_4x64x31x33_by_4x64x31x33_mask_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "binary_select_perf_fp16_5x7x65x129_by_5x7x65x129_mask_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -15030,16 +13500,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "binary_select_perf_fp32_3x257x513_by_3x257x513_mask_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "binary_select_perf_fp32_3x7x65x129_by_3x7x65x129_mask_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "binary_select_perf_fp32_3x8x128_by_3x8x128_mask_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -15051,11 +13511,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "binary_select_perf_fp32_4x64x31x33_by_4x64x31x33_mask_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "binary_select_perf_fp32_5x7x65x129_by_5x7x65x129_mask_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -15244,16 +13699,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "logical_and_perf_bool_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "logical_and_perf_bool_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "logical_and_perf_bool_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -15265,11 +13710,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "logical_and_perf_bool_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "logical_and_perf_bool_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
@@ -15381,16 +13821,6 @@
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
-      "logical_or_perf_bool_3x257x513_by_3x257x513": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "logical_or_perf_bool_3x7x65x129_by_3x7x65x129": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
       "logical_or_perf_bool_3x8x128_by_3x8x128": {
         "status": "comparable",
         "reason_code": "",
@@ -15402,11 +13832,6 @@
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
       },
       "logical_or_perf_bool_4x64x31x33_by_4x64x31x33": {
-        "status": "comparable",
-        "reason_code": "",
-        "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."
-      },
-      "logical_or_perf_bool_5x7x65x129_by_5x7x65x129": {
         "status": "comparable",
         "reason_code": "",
         "detail": "Paired correctness and serial steady-state timing qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400; complete public matrix verified on 2026-09-18."

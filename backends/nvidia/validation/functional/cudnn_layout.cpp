@@ -168,7 +168,7 @@ class CudnnLayoutTransform final : public cuda::CudnnGraphExecutable {
         input.strides[axis] *= test_case.slice_strides.at(axis);
       }
       input_offset_ *=
-          test_case.input.data_type == FLAGDNN_DATA_FLOAT32 ? 4 : 2;
+          cuda::data_type_size(test_case.input.data_type);
     }
     input_ = std::make_unique<TensorDescriptor>(input);
     output_ = std::make_unique<TensorDescriptor>(output);

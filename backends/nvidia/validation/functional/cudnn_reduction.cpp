@@ -147,7 +147,7 @@ class CudnnReductionExecutable final : public cuda::CudnnGraphExecutable {
         .set_stride(output_specification.strides)
         .set_output(true);
 
-    cuda::check_cudnn_frontend(graph_->build(handle(), {cfe::HeurMode_t::A}),
+    cuda::check_cudnn_frontend(graph_->build(handle(), {cfe::HeurMode_t::A, cfe::HeurMode_t::FALLBACK}),
                                "cuDNN Reduction graph build");
     std::int64_t workspace_size = 0;
     cuda::check_cudnn_frontend(graph_->get_workspace_size(workspace_size),

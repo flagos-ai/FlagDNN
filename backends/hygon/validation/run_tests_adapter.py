@@ -44,7 +44,7 @@ EQUIVALENT_CASE_PATTERN = re.compile(
     + "|".join(sorted(EQUIVALENT_OPERATORS, key=lambda op: (-len(op), op)))
     + r")_)(?:identity_(?:fp8_(?:e4m3|e5m2)|bfloat16|int32|bool)_"
     r"|identity_perf_bfloat16_|batchnorm_perf_(?:fp16|bfloat16)_"
-    r"|reduction_(?:sum_bfloat16|(?:sum|avg|mul)_fp16)_to_fp32_|(?:"
+    r"|reduction_(?:sum_(?:bfloat16|int32)|(?:sum|avg|mul)_fp16)_to_fp32_|(?:"
     + "|".join(
         sorted(EQUIVALENT_BFLOAT16_OPERATORS, key=lambda op: (-len(op), op))
     )

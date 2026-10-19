@@ -84,3 +84,62 @@ concatenate 删除 INT32、BOOL、FP8 E4M3/E5M2/E8M0 各 14 条；pow 删除 14 
 85 条历史失败记录保留在 `reference.unavailable_cases` 中，`status=excluded`、`catalog_status=removed_from_shared_cases`，实测失败类型存于 `measurement_status`。它们不是当前待补测任务；3354 条有效参考、平台峰值及 0.8 门槛不受目录调整影响。[测量摘要](../tools/performance_baseline/measurements/nvidia-supplement-20261015.json)和[工具说明](../tools/performance_baseline/README.md)保留原始补测事实与复现入口。
 
 NVIDIA 相关构建和仓库内 SDK 安装通过；公共批测契约、Thead/MThreads 报告契约、MThreads 主机基线契约通过。目录调整后定点 GPU 功能 15 条、性能 6 条通过，6 条性能的 0.8 门槛检查通过；90 条激活反向采集回归通过。未运行其他平台设备测试或全仓全量测试；主机验证不能替代目标平台设备验证。
+
+## 2026-10-19 Iluvatar 补测与共享目录
+
+Iluvatar 提出的 401 条缺口已逐条核查：92 条补测成功，309 条在 H100、
+cuDNN 9.24 上没有可用的原生对照。另核查核心目录中过滤的 8 条用例，
+保留并补测 2 条单元素 identity，删除 6 条不支持的布尔形状用例。
+新增 94 条参考数据，批次为 `nvidia-iluvatar-20261019`；历史 3354 条有效
+数据、各平台峰值、缩放策略和通过阈值均未改变。
+
+不能将目录过滤视为 cuDNN 不支持。14 条 BF16 reshape/transpose/slice
+以及 3 条单元素 identity 实际可由原生 `cudnnTransformTensor` 执行，
+核心 NVIDIA 引用现在复用已有功能测试的原生回退路径。slice 回退的字节
+偏移按真实 dtype 大小计算。所有补测均保持原始 dtype、shape、stride、
+绑定偏移和输入生成规则，未使用类型重解释、CPU 耗时或其他算子代替 cuDNN。
+
+按照统一 NVIDIA 基准的约定，以下已验证不支持的用例在共享生成器中删除：
+
+- 69 条比较、选择及逻辑算子的特定布尔形状性能用例：cuDNN 要求每次访问
+  至少 8 个布尔元素，原始连续维度不满足条件。
+- 36 条 BF16 输入、BF16 输出的归约性能用例及对应功能用例：
+  原生图没有可用计划，`cudnnReduceTensor` 返回 `CUDNN_STATUS_NOT_SUPPORTED`。
+- 54 条 BF16/INT32 到 FP32 的混合归约用例：图和原生归约均不能执行。
+  保留全部已验证的 FP32/FP16 用例，以及 rank-two 或末轴的 BF16/INT32 SUM，
+  共 97 条混合输出用例；其中原有 20 条、新增 77 条。
+- 144 条 INT32/FP8 布局用例：原始 dtype 的图没有可用计划；INT32 transform
+  返回不支持，FP8 tensor descriptor 返回 `CUDNN_STATUS_BAD_PARAM`。
+- 12 条 FP8 E8M0 identity：原生 cuDNN 图无法建立执行计划。
+
+共享性能目录合计删除 315 条，功能目录删除 246 条。删除在原始枚举之后完成，
+或先推进原始 UID 再决定保留，因此保留用例的 UID 和张量元数据不变。
+NVIDIA/Hygon 的重复核心目录过滤已取消。THead 仅删除静态目录中的对应条目
+和 overrides；Iluvatar 扩展已实测归约名单；Iluvatar/Hygon/MThreads 的
+基准读取器仅增加这一明确批次及其 94 条记录的校验，不放宽元数据验证。
+这些同步是共享目录/数据变化所必需，不修改其他平台 kernel 或运算实现。
+
+Hygon 原有类型目录逐条对齐 NVIDIA，因此同步加入实测支持的 2 条 BF16
+末轴 SUM 和 9 条 INT32 SUM，避免 NVIDIA 扩展后目录契约失败；当 hipDNN
+不支持时，使用原有 CPU oracle 和新增实测等效参考。仅对应类型选择、
+等效入口和报告 v4 的 INT32 SUM 名称校验扩展，原生 FP32/FP16 路径保持原策略。
+Hygon 等效主机目录为 1953 条；NVIDIA/Hygon 类型探针的 16 组 437 条元数据
+逐项一致。共享报告 schema 的扩展仍由各平台适配器约束，其他平台不会自动
+启用 Hygon 策略。401 条请求均已闭环，原始请求 JSON 已从 docs 清理，
+原文在 Git 历史和本地补测证据目录保留。
+
+补测采用 10 次预热、20 个样本、每样本 50 次 CUDA Graph 执行，统计 nearest-rank
+P50。计时前、计时后、清空输出后重放均对照 CPU oracle 全量验证，并检查输入、
+padding 和边界。原始样本、失败原因、源码快照和二进制留在
+`build/nvidia/iluvatar-followup-20261019/`；路径及 SHA-256 记录在正式基准的
+`measurement_summaries.nvidia-iluvatar-20261019` 中，不添加压缩归档到源码。
+各平台性能仍应使用自己的硬件运行验证；共享记录和主机契约通过不代表已完成
+其他平台的设备性能测试。
+
+
+本次回归：NVIDIA 完整配置构建和仓库内 SDK 安装通过；定点功能 26 条、
+成对性能 22 条通过，22 条均满足 0.8 门槛，最低加速比约 1.44。
+公共测试入口完整主机契约、公共性能目录契约、Iluvatar/Hygon/MThreads
+基线读取契约、THead 当前目录覆盖契约通过；采集器 21 项主机测试通过。
+历史 3354 条参考、平台策略和门槛逐项未变，证据 SHA-256 已复核。
+未运行其他平台设备测试或全量 NVIDIA 算子测试。

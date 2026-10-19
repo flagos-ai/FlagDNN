@@ -1,6 +1,7 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
 #include "ops.hpp"
+#include "layout_reference.hpp"
 
 #include "validation/benchmark/cudnn_common.hpp"
 
@@ -70,7 +71,13 @@ class ReshapeExecutable final : public ExecutableBase {
 
 std::unique_ptr<BenchmarkExecutable> build_reshape(
     const BenchmarkCase& specification) {
-  return std::make_unique<ReshapeExecutable>(specification);
+  try {
+    return std::make_unique<ReshapeExecutable>(specification);
+  } catch (const std::runtime_error&) {
+    if (!specification.reshape.logical) throw;
+    return std::make_unique<LayoutReferenceExecutable>(
+        specification, testing::LayoutOperation::kReshape);
+  }
 }
 
 }  // namespace flagdnn::benchmarking::cudnn_detail

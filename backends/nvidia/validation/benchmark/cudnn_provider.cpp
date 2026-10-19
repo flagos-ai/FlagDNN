@@ -32,14 +32,6 @@ std::size_t broadcast_axis_count(const TensorSpec& input,
   return result;
 }
 
-std::size_t element_count(const TensorSpec& tensor) {
-  std::size_t result = 1;
-  for (const std::int64_t dimension : tensor.dimensions) {
-    result *= static_cast<std::size_t>(dimension);
-  }
-  return result;
-}
-
 bool has_gapped_layout(const TensorSpec& tensor) {
   std::size_t elements = 1;
   std::size_t storage_elements = 1;
@@ -270,13 +262,7 @@ ProviderCapability CudnnProvider::capability(
         "cuDNN Frontend has no standalone unary packed-BOOLEAN "
         "LOGICAL_NOT engine on this backend");
   }
-  if (specification.operation == Operation::kPointwise &&
-      specification.pointwise_mode == FLAGDNN_POINTWISE_IDENTITY &&
-      specification.tensors.size() == 2 &&
-      element_count(specification.tensors[0]) == 1) {
-    return ProviderCapability::unsupported(
-        "cuDNN Frontend has no unary Identity engine when C equals one");
-  }
+
   if ((specification.operation == Operation::kRelu ||
        specification.operation == Operation::kPointwise) &&
       (specification.tensors.size() == 2 ||

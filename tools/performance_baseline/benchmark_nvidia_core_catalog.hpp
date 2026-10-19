@@ -192,10 +192,27 @@ inline int capture_standalone_catalog(int, char**, std::span<const BenchmarkCase
 #define main standalone_catalog_entry_batchnorm
 #include "../../benchmark/test_batchnorm.cpp"
 #undef main
+#define main standalone_catalog_entry_reduction
+#include "../../benchmark/test_reduction.cpp"
+#undef main
+#define main standalone_catalog_entry_reshape
+#include "../../benchmark/test_reshape.cpp"
+#undef main
+#define main standalone_catalog_entry_transpose
+#include "../../benchmark/test_transpose.cpp"
+#undef main
+#define main standalone_catalog_entry_slice
+#include "../../benchmark/test_slice.cpp"
+#undef main
 #undef run_benchmark_suite
 namespace standalone_cudnn {
 struct CatalogEntry { const char* name; int (*entry)(int, char**); };
 inline const CatalogEntry catalog_entries[] = {
+  {"reduction", standalone_catalog_entry_reduction},
+  {"reshape", standalone_catalog_entry_reshape},
+  {"transpose", standalone_catalog_entry_transpose},
+  {"slice", standalone_catalog_entry_slice},
+
   {"abs", standalone_catalog_entry_abs},
   {"add", standalone_catalog_entry_add},
   {"add_square", standalone_catalog_entry_add_square},

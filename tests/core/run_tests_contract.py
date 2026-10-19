@@ -2586,7 +2586,7 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
     cases = reference["cases"]
     require(
         reference["platform"] == "nvidia"
-        and len(cases) == reference["coverage"]["case_count"] == 3354
+        and len(cases) == reference["coverage"]["case_count"] == 3448
         and len({case["op"] for case in cases.values()})
         == reference["coverage"]["operator_count"]
         == 82,
@@ -2689,14 +2689,14 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
             if case["op"] in policies
         )
         == {
-            "vector_fp32": 1112,
-            "hbm_copy": 444,
+            "vector_fp32": 1189,
+            "hbm_copy": 461,
             "hbm_triad": 480,
             "hbm_write": 28,
         },
-        # Policy-by-op reference coverage is now 2064 after the 90 native
-        # ELU/softplus measurements. The generated Hygon runtime catalog
-        # remains 1941; adding reference evidence does not expand it.
+        # Policy reference coverage is 2158 after 94 additional measurements.
+        # Hygon's equivalent catalog contains 1953 cases, including the
+        # restored scalar BF16 identity and 11 native-aligned reductions.
         "Hygon-owned policy reference coverage changed during isolation",
     )
     ascend = platforms["ascend"]
@@ -2793,21 +2793,35 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
     iluvatar_policies = iluvatar["scaling"]["case_policies"]
     measured_metrics = {"vector_fp32", "hbm_copy", "hbm_triad", "hbm_write"}
     require(
-        {op: policy["scale_metric"] for op, policy in iluvatar_policies.items()}
+        {
+            op: policy["scale_metric"]
+            for op, policy in iluvatar_policies.items()
+        }
         == expected_metrics
-        and all(policy != policies[op] and policy.get("reason") and policy.get("scope")
-                for op, policy in iluvatar_policies.items())
+        and all(
+            policy != policies[op]
+            and policy.get("reason")
+            and policy.get("scope")
+            for op, policy in iluvatar_policies.items()
+        )
         and iluvatar["device"] == "Iluvatar BI-V150"
         and iluvatar["architecture"] == "corex_71"
         and iluvatar["measured_on"]
-        and all(isinstance(iluvatar["peaks"][metric], (int, float))
-                and iluvatar["peaks"][metric] > 0 for metric in measured_metrics)
-        and all(value is None for metric, value in iluvatar["peaks"].items()
-                if metric not in measured_metrics)
+        and all(
+            isinstance(iluvatar["peaks"][metric], (int, float))
+            and iluvatar["peaks"][metric] > 0
+            for metric in measured_metrics
+        )
+        and all(
+            value is None
+            for metric, value in iluvatar["peaks"].items()
+            if metric not in measured_metrics
+        )
         and iluvatar["measurement"]["sample_count"] > 0
         and iluvatar["measurement"]["collector_sha256"]
         and iluvatar["measurement"]["raw_csv_uncompressed_sha256"],
-        "Iluvatar must own measured peaks and explicitly justified scaling policies",
+        "Iluvatar must own measured peaks and explicitly justified "
+        "scaling policies",
     )
     for name, platform in platforms.items():
         if name in {"hygon", "thead", "ascend", "mthreads", "iluvatar"}:
@@ -2874,14 +2888,37 @@ def check_general_equivalent_performance(runner, hygon) -> None:
     accepted_references = 0
     supplemental_references = 0
     activation_native_references = 0
+    iluvatar_followup_references = 0
+    outside_hygon_followup = 0
     for case, reference in catalog["reference"]["cases"].items():
         operator = reference["op"]
         if operator not in hygon.EQUIVALENT_OPERATORS:
             continue
+        followup = (
+            reference.get("measurement_id") == "nvidia-iluvatar-20261019"
+        )
+        iluvatar_followup_references += followup
         if hygon.EQUIVALENT_CASE_PATTERN.fullmatch(case) is None:
+            # Native FP32/FP16 scalar identity and FP32 mixed-output
+            # reductions retain their existing Hygon provider pairing.
+            outside_followup = followup and (
+                case
+                in {
+                    "identity_perf_fp32_1x1x1",
+                    "identity_perf_fp16_1x1x1",
+                }
+                or (
+                    operator == "reduction"
+                    and reference["tensors"][0]["dtype"] == "fp32"
+                )
+            )
+            outside_hygon_followup += outside_followup
             require(
-                operator in {"relu_backward", "swish_backward"}
-                and case.startswith(operator + "_attributes_"),
+                outside_followup
+                or (
+                    operator in {"relu_backward", "swish_backward"}
+                    and case.startswith(operator + "_attributes_")
+                ),
                 (
                     f"unexpected policy/reference case outside runtime scope: "
                     f"{case}"
@@ -2914,12 +2951,15 @@ def check_general_equivalent_performance(runner, hygon) -> None:
     require(
         len(seen) == 59
         and seen == hygon.EQUIVALENT_OPERATORS
-        and accepted_references == 2058
+        and accepted_references == 2114
         and supplemental_references == 371
-        and activation_native_references == 90,
+        and activation_native_references == 90
+        and iluvatar_followup_references == 94
+        and outside_hygon_followup == 38,
         (
-            "equivalent validation must cover 2058 references across 59 ops, "
-            "including 371 supplemental and 90 native activation records"
+            "equivalent validation must cover 2114 references across 59 ops, "
+            "including 371 historical, 90 activation and 56 new in-scope "
+            "records; another 38 new records retain native Hygon scope"
         ),
     )
 

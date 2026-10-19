@@ -377,11 +377,12 @@ void graph_attributes(const BenchmarkCase& spec, const Value& entry,
 void supplemental_inputs(const BenchmarkCase& spec, const Value& entry,
                          const Value& measurement,
                          const std::vector<InputDomain>& domains) {
-  constexpr std::string_view id = "nvidia-missing-20261012";
-  require(entry.at("measurement_id").as_string() == id,
+  const auto id = entry.at("measurement_id").as_string();
+  const bool historical = id == "nvidia-missing-20261012";
+  require(historical || id == "nvidia-iluvatar-20261019",
           "supplemental measurement identity differs");
   const auto& run = measurement.at("supplemental_runs").at(id);
-  require(run.at("case_count").as_int() == 371 &&
+  require(run.at("case_count").as_int() == (historical ? 371 : 94) &&
               !run.at("source_revision").as_string().empty() &&
               !run.at("manifest").as_string().empty(),
           "supplemental provenance is incomplete");
@@ -406,8 +407,7 @@ void supplemental_inputs(const BenchmarkCase& spec, const Value& entry,
         generation.at("source").as_string() ==
                 "backends/nvidia/validation/benchmark/runner.cpp::make_input" &&
             generation.at("domain_definitions").as_string() ==
-                "measurement.supplemental_runs.nvidia-missing-20261012.input_"
-                "domains",
+                "measurement.supplemental_runs." + id + ".input_domains",
         "core supplemental input generator differs");
     const auto& definitions = run.at("input_domains");
     require(definitions.at("real_value").as_string() ==
@@ -519,10 +519,13 @@ bool supports_equivalent_baseline(const BenchmarkCase& specification) {
     const auto axis = specification.reduction_axis < 0
                           ? specification.reduction_axis + rank
                           : specification.reduction_axis;
-    if (input.data_type == FLAGDNN_DATA_BFLOAT16)
-      return rank == 2 &&
+    if (input.data_type == FLAGDNN_DATA_BFLOAT16 ||
+        input.data_type == FLAGDNN_DATA_INT32)
+      return (rank == 2 || axis == rank - 1) &&
              specification.reduction_mode == FLAGDNN_REDUCTION_ADD &&
-             specification.name.starts_with("reduction_sum_bfloat16_to_fp32_");
+             specification.name.starts_with(
+                 "reduction_sum_" + std::string(dtype_name(input.data_type)) +
+                 "_to_fp32_");
     return input.data_type == FLAGDNN_DATA_FLOAT16 && rank > 2 && axis > 0 &&
            axis < rank - 1 &&
            (specification.reduction_mode == FLAGDNN_REDUCTION_ADD ||

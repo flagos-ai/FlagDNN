@@ -3,6 +3,9 @@
 // --list, --catalog and --self-test never initialize CUDA. This executable
 // builds only native cuDNN references; it never builds a FlagDNN executable.
 #include "common/pointwise.hpp"
+#include "common/layout.hpp"
+#include "reference/cpu/layout.hpp"
+#include "validation/functional/cudnn_extended.hpp"
 #include "common/reduction.hpp"
 #include "reference/cpu/matrix.hpp"
 #include "validation/benchmark/timing.hpp"
@@ -47,9 +50,11 @@ struct Entry {
   std::optional<ReductionTestCase> reduction;
   double atol = 0, rtol = 0;
   bool logical_domain = false;
+  std::optional<LayoutTestCase> layout;
+  bool shared_selection = false;
 };
 
-std::vector<Entry> catalog() {
+std::vector<Entry> catalog(bool all_shared = false) {
   std::vector<Entry> all;
   for (const std::string op : {"identity", "logical_and", "logical_or"}) {
     PointwiseCaseDefinition definition;
@@ -64,10 +69,11 @@ std::vector<Entry> catalog() {
     for (const auto& value : cases) {
       const auto type = value.inputs.front().data_type;
       if (op == "identity" && type != FLAGDNN_DATA_BFLOAT16 &&
-          type != FLAGDNN_DATA_INT32 && type != FLAGDNN_DATA_BOOLEAN) continue;
+          type != FLAGDNN_DATA_INT32 && type != FLAGDNN_DATA_BOOLEAN &&
+          (!all_shared || type != FLAGDNN_DATA_FP8_E8M0)) continue;
       all.push_back({op, op == "identity" ? "auxiliary_copy" : "auxiliary_boolean",
                      value.name, value.inputs, value.output, value, {}, 0, 0,
-                     op != "identity"});
+                     op != "identity", {}});
     }
   }
   for (const auto& value : make_reduction_cases()) {
@@ -79,15 +85,30 @@ std::vector<Entry> catalog() {
     const bool fp16 = value.input.data_type == FLAGDNN_DATA_FLOAT16 &&
         ((value.input.dimensions == std::vector<std::int64_t>{3, 5, 7} && value.axis == 1) ||
          (value.input.dimensions == std::vector<std::int64_t>{2, 7, 5, 3} && value.axis == 2));
-    if (bf16 || fp16)
+    if (all_shared || bf16 || fp16)
       all.push_back({"reduction", "auxiliary_fp32_output", value.name,
                      {value.input}, value.output, {}, value,
-                     value.absolute_tolerance, value.relative_tolerance, false});
+                     value.absolute_tolerance, value.relative_tolerance, false, {}});
   }
+  if (all_shared) {
+    for (const auto& [op, mode] :
+         {std::pair{"reshape", LayoutOperation::kReshape},
+          std::pair{"transpose", LayoutOperation::kTranspose},
+          std::pair{"slice", LayoutOperation::kSlice}}) {
+      for (const auto& value : make_layout_cases(mode)) {
+        Entry entry;
+        entry.op = op; entry.group = "auxiliary_layout";
+        entry.name = value.name; entry.inputs = {value.input};
+        entry.output = value.output; entry.layout = value;
+        all.push_back(std::move(entry));
+      }
+    }
+  }
+  for (auto& entry : all) entry.shared_selection = all_shared;
   std::set<std::string> names;
   for (const auto& entry : all)
     if (!names.insert(entry.name).second) throw std::runtime_error("duplicate auxiliary case");
-  if (all.size() != 80) throw std::runtime_error("auxiliary catalog must contain exactly 80 cases");
+  if (!all_shared && all.size() != 80) throw std::runtime_error("auxiliary catalog must contain exactly 80 cases");
   return all;
 }
 
@@ -113,6 +134,9 @@ const char* dtype(flagdnnDataType_t type) {
     case FLAGDNN_DATA_BFLOAT16: return "bfloat16";
     case FLAGDNN_DATA_INT32: return "int32";
     case FLAGDNN_DATA_BOOLEAN: return "bool";
+    case FLAGDNN_DATA_FP8_E4M3: return "fp8_e4m3";
+    case FLAGDNN_DATA_FP8_E5M2: return "fp8_e5m2";
+    case FLAGDNN_DATA_FP8_E8M0: return "fp8_e8m0";
     default: throw std::invalid_argument("unexpected auxiliary dtype");
   }
 }
@@ -135,16 +159,29 @@ void metadata(std::ostream& out, const Entry& entry) {
   out << "\"op\":" << quote(entry.op) << ",\"case_name\":" << quote(entry.name)
       << ",\"provider\":\"cudnn\",\"group\":" << quote(entry.group)
       << ",\"source_revision\":" << quote(FLAGDNN_AUX_SOURCE_REVISION)
-      << ",\"catalog_source\":" << quote(entry.reduction ? "tests/common/reduction.cpp" : "tests/common/pointwise.cpp")
-      << ",\"selection_source\":\"backends/hygon/validation/benchmark/native_dtype.cpp\""
-      << ",\"reference_builder\":" << quote(entry.reduction ? "build_reduction_reference" : "build_pointwise_reference")
-      << ",\"reference_api\":" << quote(entry.reduction ? "cuDNN Graph, with native cudnnReduceTensor fallback" : "cuDNN Graph pointwise")
+      << ",\"catalog_source\":" << quote(entry.layout ? "tests/common/layout.cpp" : entry.reduction ? "tests/common/reduction.cpp" : "tests/common/pointwise.cpp")
+      << ",\"selection_source\":" << quote(entry.shared_selection
+          ? "backends/iluvatar/validation/benchmark/shared_cases.cpp"
+          : "backends/hygon/validation/benchmark/native_dtype.cpp")
+      << ",\"reference_builder\":" << quote(entry.layout ? "build_layout_reference" : entry.reduction ? "build_reduction_reference" : "build_pointwise_reference")
+      << ",\"reference_api\":" << quote(entry.layout ? "cuDNN Graph layout, with native cudnnTransformTensor fallback" : entry.reduction ? "cuDNN Graph, with native cudnnReduceTensor fallback" : "cuDNN Graph pointwise")
       << ",\"reference_layout_conversion\":false,\"guard_prefix_bytes\":" << kGuard
       << ",\"guard_suffix_bytes\":" << kGuard << ",\"tensors\":[";
   for (std::size_t i = 0; i < entry.inputs.size(); ++i) { if (i) out << ','; tensor(out, entry.inputs[i], "input"); }
   out << ','; tensor(out, entry.output, "output");
   out << "],\"intermediate_tensors\":[],\"attributes\":{";
-  if (entry.reduction) {
+  if (entry.layout) {
+    const auto& layout = *entry.layout;
+    out << "\"permutation\":";
+    array(out, layout.permutation);
+    out << ",\"slices\":[";
+    for (std::size_t i = 0; i < layout.slices.size(); ++i) {
+      if (i) out << ',';
+      out << '[' << layout.slices[i].first << ',' << layout.slices[i].second << ']';
+    }
+    out << "],\"slice_strides\":";
+    array(out, layout.slice_strides);
+  } else if (entry.reduction) {
     const auto& r = *entry.reduction;
     out << "\"mode\":" << int(r.mode) << ",\"mode_name\":"
         << quote(r.mode == FLAGDNN_REDUCTION_ADD ? "sum" : r.mode == FLAGDNN_REDUCTION_AVG ? "avg" : "mul")
@@ -218,6 +255,37 @@ Bytes expected_bytes(const Entry& entry, const std::vector<Bytes>& inputs,
                      std::vector<double>& numeric) {
   const auto& output = entry.output;
   Bytes expected(io::encoded_byte_count(output, kBoolean), 0xA5);
+  if (entry.layout) {
+    const auto& layout = *entry.layout;
+    const flagdnn::reference::cpu::LayoutParameters parameters{
+        entry.op, layout.input.dimensions, layout.output.dimensions,
+        layout.permutation, layout.slices, layout.slice_strides};
+    // Gather raw logical bytes before applying the independent CPU mapping.
+    // BOOLEAN is stored as packed bits by cuDNN and copied as one logical byte
+    // by the CPU oracle; all other types preserve every original storage bit.
+    const auto width = output.data_type == FLAGDNN_DATA_BOOLEAN
+        ? std::size_t{1} : io::data_type_size(output.data_type);
+    Bytes logical(io::element_count(layout.input) * width);
+    for (std::size_t i = 0; i < io::element_count(layout.input); ++i) {
+      const auto offset = io::logical_offset(i, layout.input);
+      if (output.data_type == FLAGDNN_DATA_BOOLEAN)
+        logical[i] = bit(inputs.front(), offset);
+      else
+        std::copy_n(inputs.front().begin() + offset * width, width,
+                    logical.begin() + i * width);
+    }
+    const auto transformed = flagdnn::reference::cpu::evaluate_layout_bytes(
+        parameters, logical, width);
+    for (std::size_t i = 0; i < io::element_count(output); ++i) {
+      const auto offset = io::logical_offset(i, output);
+      if (output.data_type == FLAGDNN_DATA_BOOLEAN)
+        set_bit(expected, offset, transformed.at(i) != 0);
+      else
+        std::copy_n(transformed.begin() + i * width, width,
+                    expected.begin() + offset * width);
+    }
+    return expected;
+  }
   if (entry.reduction) {
     numeric = reduction_expected(entry, inputs.front());
     std::vector<float> logical(numeric.begin(), numeric.end());
@@ -356,7 +424,8 @@ void measure(const Entry& entry, Result& result) {
   Stream stream;
   result.stage = "build";
   const auto start = timing::HostClock::now();
-  auto executable = entry.reduction ? build_reduction_reference(*entry.reduction)
+  auto executable = entry.layout ? build_layout_reference(*entry.layout)
+                    : entry.reduction ? build_reduction_reference(*entry.reduction)
                                     : build_pointwise_reference(*entry.pointwise);
   result.build_us = timing::host_microseconds_since(start);
   result.workspace = executable->workspace_size();
@@ -418,8 +487,9 @@ void emit(std::ostream& out, const Entry& entry, const Result& r) {
       << ",\"reason\":" << quote(r.reason) << ",\"build_us\":" << r.build_us
       << ",\"workspace_bytes\":" << r.workspace << ",\"correctness\":{\"status\":"
       << quote(r.status == "PASS" ? "PASS" : r.phases.empty() ? "NOT_RUN" : "FAIL")
-      << ",\"scope\":" << quote(entry.op == "identity" ? "bit_exact" : "cpu_full")
-      << ",\"oracle\":" << quote(entry.reduction ? "reference/cpu/matrix.cpp:evaluate_reduction; quantized inputs, double accumulation, FP32 output"
+      << ",\"scope\":" << quote(entry.layout || entry.op == "identity" ? "bit_exact" : "cpu_full")
+      << ",\"oracle\":" << quote(entry.layout ? "reference/cpu/layout.cpp:evaluate_layout_bytes; every logical storage byte"
+         : entry.reduction ? "reference/cpu/matrix.cpp:evaluate_reduction; quantized inputs, double accumulation, FP32 output"
          : entry.op == "identity" ? "copy input raw encoding at every logical element" : "CPU boolean truth table at every logical element")
       << ",\"comparison\":" << quote(entry.reduction ? "finite && (absolute <= atol || absolute/max(abs(actual),abs(reference),1e-30) <= rtol)" : "exact logical bits or storage bytes")
       << ",\"absolute_tolerance\":" << entry.atol << ",\"relative_tolerance\":" << entry.rtol
@@ -486,11 +556,12 @@ void self_test(const std::vector<Entry>& entries) {
 int main(int argc, char** argv) {
   using namespace missing_aux;
   try {
-    bool list = false, describe = false, test = false;
+    bool list = false, describe = false, test = false, all_shared = false;
     std::set<std::string> selected;
     for (int i = 1; i < argc; ++i) {
       const std::string arg = argv[i];
-      if (arg == "--list") list = true;
+      if (arg == "--all-shared") all_shared = true;
+      else if (arg == "--list") list = true;
       else if (arg == "--catalog") describe = true;
       else if (arg == "--self-test") test = true;
       else if (arg == "--case" && i + 1 < argc) selected.insert(argv[++i]);
@@ -506,12 +577,12 @@ int main(int argc, char** argv) {
         }
         if (selected.empty()) throw std::invalid_argument("case file contains no cases");
       } else if (arg == "--help") {
-        std::cout << "Usage: benchmark_nvidia_missing_aux [--list|--catalog|--self-test] [--case NAME] [--case-file PATH]\n";
+        std::cout << "Usage: benchmark_nvidia_missing_aux [--all-shared] [--list|--catalog|--self-test] [--case NAME] [--case-file PATH]\n";
         return 0;
       } else throw std::invalid_argument("unknown or incomplete argument: " + arg);
     }
     if (int(list) + int(describe) + int(test) > 1) throw std::invalid_argument("choose one listing/test mode");
-    auto entries = catalog();
+    auto entries = catalog(all_shared);
     std::set<std::string> known;
     for (const auto& e : entries) known.insert(e.name);
     for (const auto& name : selected)

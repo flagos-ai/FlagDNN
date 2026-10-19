@@ -171,3 +171,21 @@ python3 tools/performance_baseline/audit_nvidia_supplement.py --historical-20261
 ```
 
 当前审计保留历史模式，并新增容差及无效误差检查。测量时源码与采集后补充的自动归档工具分别保存在本地证据目录的 `source-snapshot.tar.gz` 和 `post-collection-tooling/` 中。
+
+## 2026-10-19 Iluvatar 缺口补测
+
+`nvidia-iluvatar-20261019` 新增 94 条经过三阶段全量 CPU 对照的 cuDNN 数据。
+401 条请求中 92 条保留并补测，309 条确认不支持后删除共享用例；额外核心核查
+保留 2 条、删除 6 条。删减理由和跨平台同步范围见
+[共享目录说明](../../docs/equivalent-performance-baseline.md#2026-10-19-iluvatar-补测与共享目录)。
+
+核心采集器现在包含 reduction/reshape/transpose/slice 的实际性能入口，
+`--probe-native` 可跳过平台 capability 预判，直接尝试原生 cuDNN 构建与执行。
+它不会恢复已从共享生成器删除的历史用例。辅助采集器的 `--all-shared` 扩展
+混合输出归约和布局覆盖；不带该参数仍保持原有 80 条目录及输入规则。
+两者支持 `--catalog` 和精确 `--case-file`，目录模式不初始化 GPU。
+历史失败的完整原始记录和当时的源码/二进制保留在本地证据目录中。
+
+新增数据的最终采集为 17 条核心用例、77 条辅助归约，全部成功。
+正式 JSON 只追加有效记录；不支持的用例保留具体失败原因和
+`catalog_status=removed_from_shared_cases`，不能作为有效性能耗时使用。

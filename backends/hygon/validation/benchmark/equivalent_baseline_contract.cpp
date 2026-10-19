@@ -274,11 +274,13 @@ std::vector<CatalogCase> full_catalog() {
   for (const auto& value : testing::make_reduction_cases()) {
     if (value.name.find("_to_fp32_") == std::string::npos) continue;
     const auto rank = static_cast<std::int32_t>(value.input.dimensions.size());
-    const bool selected = value.input.data_type == FLAGDNN_DATA_BFLOAT16
-                              ? rank == 2 && value.mode == FLAGDNN_REDUCTION_ADD
-                              : value.input.data_type == FLAGDNN_DATA_FLOAT16 &&
-                                    rank > 2 && value.axis > 0 &&
-                                    value.axis < rank - 1;
+    const bool selected =
+        (value.input.data_type == FLAGDNN_DATA_BFLOAT16 ||
+         value.input.data_type == FLAGDNN_DATA_INT32)
+            ? (rank == 2 || value.axis == rank - 1) &&
+                  value.mode == FLAGDNN_REDUCTION_ADD
+            : value.input.data_type == FLAGDNN_DATA_FLOAT16 &&
+                  rank > 2 && value.axis > 0 && value.axis < rank - 1;
     if (!selected) continue;
     bench::BenchmarkCase spec;
     spec.name = value.name;
@@ -292,7 +294,7 @@ std::vector<CatalogCase> full_catalog() {
     result.push_back({std::move(spec), std::nullopt});
     ++reduction_count;
   }
-  require(reduction_count == 20, "expected exactly 20 supplemental reductions");
+  require(reduction_count == 31, "expected exactly 31 supplemental reductions");
   testing::PointwiseCaseDefinition logical;
   logical.operation_name = "logical_not";
   logical.mode = FLAGDNN_POINTWISE_LOGICAL_NOT;
@@ -391,8 +393,8 @@ int main(int argc, char** argv) {
     }
 
     const auto catalog = full_catalog();
-    require(catalog.size() == 1941,
-            "expected 1570 original + 371 supplemental catalog cases");
+    require(catalog.size() == 1953,
+            "expected 1941 historical + 1 scalar identity + 11 reduction cases");
     std::set<std::string> operations;
     std::set<std::string> names;
     std::set<std::string> supplemental_names;
@@ -404,7 +406,8 @@ int main(int argc, char** argv) {
       const auto* metadata = item.metadata ? &*item.metadata : nullptr;
       const auto value = baseline.lookup(spec, device, architecture, metadata);
       const auto& entry = reference.at("cases").at(spec.name);
-      if (entry.as_object().contains("measurement_id"))
+      if (entry.as_object().contains("measurement_id") &&
+          entry.at("measurement_id").as_string() == "nvidia-missing-20261012")
         supplemental_names.insert(spec.name);
       const auto operation = entry.at("op").as_string();
       operations.insert(operation);
@@ -763,11 +766,11 @@ int main(int argc, char** argv) {
                            "\"op\": \"mul\""), "reference operation");
     bad_json(replace_after(raw, anchor, "\"timing_profile\": \"native\"",
                            "\"timing_profile\": \"attention\""), "timing profile");
-    bad_json(replace_after(raw, "", "\"graph_warmup_replays\": 1",
+    bad_json(replace_after(raw, "\"timing_profiles\"", "\"graph_warmup_replays\": 1",
                            "\"graph_warmup_replays\": 2"), "graph warmup");
     bad_json(replace_after(raw, "\"reference\"", "nearest_rank_p50",
                            "mean"), "timing statistic");
-    bad_json(replace_after(raw, "", "device_events_over_cuda_graph",
+    bad_json(replace_after(raw, "\"reference\"", "device_events_over_cuda_graph",
                            "host_clock"), "timing method");
     bad_json(replace_after(raw, "", "\"vector_fp32\": \"TFLOP/s\"",
                            "\"vector_fp32\": \"GFLOP/s\""), "peak unit");

@@ -382,11 +382,12 @@ void graph_attributes(const BenchmarkCase& spec, const Value& entry,
 void supplemental_inputs(const BenchmarkCase& spec, const Value& entry,
                          const Value& measurement,
                          const std::vector<InputDomain>& domains) {
-  constexpr std::string_view id = "nvidia-missing-20261012";
-  require(entry.at("measurement_id").as_string() == id,
+  const auto id = entry.at("measurement_id").as_string();
+  const bool historical = id == "nvidia-missing-20261012";
+  require(historical || id == "nvidia-iluvatar-20261019",
           "supplemental measurement identity differs");
   const auto& run = measurement.at("supplemental_runs").at(id);
-  require(run.at("case_count").as_int() == 371 &&
+  require(run.at("case_count").as_int() == (historical ? 371 : 94) &&
               !run.at("source_revision").as_string().empty() &&
               !run.at("manifest").as_string().empty(),
           "supplemental provenance is incomplete");
@@ -411,8 +412,7 @@ void supplemental_inputs(const BenchmarkCase& spec, const Value& entry,
         generation.at("source").as_string() ==
                 "backends/nvidia/validation/benchmark/runner.cpp::make_input" &&
             generation.at("domain_definitions").as_string() ==
-                "measurement.supplemental_runs.nvidia-missing-20261012.input_"
-                "domains",
+                "measurement.supplemental_runs." + id + ".input_domains",
         "core supplemental input generator differs");
     const auto& definitions = run.at("input_domains");
     require(definitions.at("real_value").as_string() ==

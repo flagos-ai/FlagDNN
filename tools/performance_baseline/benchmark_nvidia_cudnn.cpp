@@ -122,10 +122,12 @@ template <typename Provider>
 void measure(const bench::BenchmarkCase& spec, Provider& provider,
              bench::Stream& stream, Measurements& result,
              InputGenerator generate = make_input,
-             SampledOracle sample_oracle = sampled_reference<>) {
+             SampledOracle sample_oracle = sampled_reference<>,
+             bool probe_native = false) {
   result.stage = "capability";
   const auto capability = provider.capability(spec);
-  if (!capability.supported) throw bench::BenchmarkUnsupportedError(capability.reason);
+  if (!probe_native && !capability.supported)
+    throw bench::BenchmarkUnsupportedError(capability.reason);
   result.stage = "input_preparation";
   std::vector<std::unique_ptr<DeviceBuffer>> buffers;
   std::vector<CoreTensorStorage> storage;
@@ -398,6 +400,22 @@ void emit_case_metadata(std::ostream& out, const bench::BenchmarkCase& spec) {
       << ",\"reduction_axis\":" << spec.reduction_axis
       << ",\"keep_dimensions\":" << (spec.keep_dimensions ? "true" : "false") << ',';
   emit_convolution_attributes(out, spec.convolution);
+  if (spec.operation == bench::Operation::kReshape ||
+      spec.operation == bench::Operation::kTranspose ||
+      spec.operation == bench::Operation::kSlice) {
+    out << ",\"reshape_logical\":" << (spec.reshape.logical ? "true" : "false")
+        << ",\"reshape_dimensions\":"; array(out, spec.reshape.dimensions);
+    out << ",\"reshape_strides\":"; array(out, spec.reshape.strides);
+    out << ",\"permutation\":"; array(out, spec.transpose.permutation);
+    out << ",\"slice_strides\":"; array(out, spec.slice.strides);
+    out << ",\"slices\":[";
+    for (std::size_t i = 0; i < spec.slice.slices.size(); ++i) {
+      if (i) out << ',';
+      out << '[' << spec.slice.slices[i].first << ','
+          << spec.slice.slices[i].second << ']';
+    }
+    out << ']';
+  }
   out << "},\"graph_nodes\":[";
   for (std::size_t i = 0; i < spec.graph.nodes.size(); ++i) {
     if (i) out << ',';
@@ -529,13 +547,14 @@ int main(int argc, char** argv) {
   using namespace standalone_cudnn;
   try {
     std::string op = "all", case_name, dtype_filter, exclude_file, case_file;
-    bool list = false, catalog_json = false;
+    bool list = false, catalog_json = false, probe_native = false;
     for (int i = 1; i < argc; ++i) {
       const std::string argument = argv[i];
       if (argument == "--help") {
-        std::cout << "--list|--catalog --op all|NAME[,NAME...] --dtype fp32|fp16|bfloat16 --case EXACT_NAME --case-file PATH --exclude-file PATH\n";
+        std::cout << "--list|--catalog --probe-native --op all|NAME[,NAME...] --dtype fp32|fp16|bfloat16 --case EXACT_NAME --case-file PATH --exclude-file PATH\n";
         return 0;
       }
+      if (argument == "--probe-native") { probe_native = true; continue; }
       if (argument == "--list") { list = true; continue; }
       if (argument == "--catalog") { catalog_json = true; continue; }
       if (++i == argc) throw std::invalid_argument("missing value for " + argument);
@@ -569,7 +588,10 @@ int main(int argc, char** argv) {
     for (const auto& operation : catalog_entries) {
       if (!matches(operation.name)) continue;
       operation.entry(0, nullptr);
-      for (auto spec : bench::cudnn_benchmark_cases(bench::captured_standalone_cases)) {
+      // Explicit support probes bypass historical catalog/capability exclusions.
+      const auto cases = probe_native ? bench::captured_standalone_cases
+          : bench::cudnn_benchmark_cases(bench::captured_standalone_cases);
+      for (auto spec : cases) {
         if (!case_name.empty() && spec.name != case_name) continue;
         if (!dtype_filter.empty() && dtype_filter != dtype(spec.tensors[0].data_type)) continue;
         if (excluded.contains(spec.name)) continue;
@@ -610,7 +632,8 @@ int main(int argc, char** argv) {
         Measurements result;
         std::string error;
         try {
-          measure(spec, provider, stream, result);
+          measure(spec, provider, stream, result, make_input,
+                  sampled_reference<>, probe_native);
         } catch (const std::exception& exception) {
           error = exception.what();
           ++failed;

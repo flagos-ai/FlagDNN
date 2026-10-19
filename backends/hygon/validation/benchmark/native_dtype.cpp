@@ -221,8 +221,11 @@ int run_native_dtype_benchmark(int argc, char **argv,
       // Match NVIDIA's fp32_output group; do not invent a smaller Hygon shape
       // set.
       const bool selected =
-          value.input.data_type == FLAGDNN_DATA_BFLOAT16
-              ? value.input.dimensions.size() == 2 &&
+          (value.input.data_type == FLAGDNN_DATA_BFLOAT16 ||
+           value.input.data_type == FLAGDNN_DATA_INT32)
+              ? (value.input.dimensions.size() == 2 ||
+                 value.axis == static_cast<std::int32_t>(
+                                   value.input.dimensions.size() - 1)) &&
                     value.output.data_type == FLAGDNN_DATA_FLOAT32 &&
                     value.mode == FLAGDNN_REDUCTION_ADD
               : value.input.data_type == FLAGDNN_DATA_FLOAT32 ||

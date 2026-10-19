@@ -378,7 +378,10 @@ std::vector<ReductionTestCase> make_reduction_cases() {
         test_case.axis = 1;
         test_case.keep_dimensions = true;
         set_tolerance(test_case);
-        result.push_back(std::move(test_case));
+        // The matching BF16-output performance cases have no native cuDNN
+        // reference; keep this shared functional catalog in the same scope.
+        if (data_type != FLAGDNN_DATA_BFLOAT16)
+          result.push_back(std::move(test_case));
         uid += 2;
       }
     }
@@ -436,6 +439,19 @@ std::vector<ReductionTestCase> make_reduction_cases() {
     result.push_back(std::move(test_case));
     uid += 2;
   }
+  // For the mixed-output catalog, native cuDNN accepts INT32/BF16 SUM
+  // only for rank-two inputs or a last-axis reduction. Probed AVG/MUL and
+  // other axes return NOT_SUPPORTED. Keep all FP32/FP16 cases and stable UIDs.
+  std::erase_if(result, [](const ReductionTestCase& value) {
+    if (value.name.find("_to_fp32_") == std::string::npos ||
+        (value.input.data_type != FLAGDNN_DATA_INT32 &&
+         value.input.data_type != FLAGDNN_DATA_BFLOAT16))
+      return false;
+    return value.mode != FLAGDNN_REDUCTION_ADD ||
+           (value.input.dimensions.size() != 2 &&
+            value.axis != static_cast<std::int32_t>(
+                              value.input.dimensions.size() - 1));
+  });
   for (const ReductionTestCase& test_case : result) {
     validate_reduction_case(test_case);
   }

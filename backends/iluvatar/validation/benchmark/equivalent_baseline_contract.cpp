@@ -1,6 +1,7 @@
 // Copyright 2026 FlagOS Contributors
 // SPDX-License-Identifier: Apache-2.0
 #include "benchmark/equivalent_baseline.hpp"
+#include "benchmark/shared_cases.hpp"
 #include "common/cases.hpp"
 #include <cmath>
 #include <iostream>
@@ -30,6 +31,46 @@ int main(int argc, char **argv) {
           result.limit_us() != expected / result.min_relative_efficiency)
         throw std::runtime_error("incorrect equivalent-performance formula");
     }
+    // Exercise the actual shared adapter and both supplemental batches.
+    // A missing record must fail; an in-scope case must never become a skip.
+    const auto reductions =
+        flagdnn::iluvatar::validation::benchmark::shared_benchmark_cases(
+            "FLAGDNN_REDUCTION_BENCHMARK");
+    if (reductions.size() != 97)
+      throw std::runtime_error("unexpected retained mixed-reduction catalog");
+    for (auto spec : reductions) {
+      if (!spec.name.ends_with("_shared"))
+        throw std::runtime_error("missing shared adapter suffix");
+      spec.name.resize(spec.name.size() - 7);
+      spec.benchmark = {10, 20, 50};
+      (void)lookup(spec);
+      ++spec.reduction_axis;
+      rejects([&] { (void)lookup(spec); });
+    }
+    std::size_t added_core = 0;
+    for (auto spec : b::unary_pointwise_benchmark_cases(
+             FLAGDNN_POINTWISE_IDENTITY, "identity")) {
+      if (spec.tensors.front().dimensions !=
+          std::vector<std::int64_t>{1, 1, 1}) continue;
+      spec.benchmark = {10, 20, 50};
+      (void)lookup(spec);
+      ++added_core;
+    }
+    for (const auto factory : {b::reshape_benchmark_cases,
+                                b::transpose_benchmark_cases,
+                                b::slice_benchmark_cases}) {
+      for (auto spec : factory()) {
+        if (spec.tensors.front().data_type != FLAGDNN_DATA_BFLOAT16) continue;
+        spec.benchmark = {10, 20, 50};
+        (void)lookup(spec);
+        ++added_core;
+        spec.tensors.back().strides.back() += 1;
+        rejects([&] { (void)lookup(spec); });
+      }
+    }
+    if (added_core != 17)
+      throw std::runtime_error("incomplete supplemented core catalog");
+
     const auto original = cases.front();
     rejects([&] { (void)baseline.lookup(original, "different device", "corex_71"); });
     rejects([&] { (void)baseline.lookup(original, "Iluvatar BI-V150", "corex_80"); });

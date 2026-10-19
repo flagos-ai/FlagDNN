@@ -1,6 +1,7 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
 #include "ops.hpp"
+#include "layout_reference.hpp"
 
 #include "validation/benchmark/cudnn_common.hpp"
 
@@ -64,7 +65,12 @@ class TransposeExecutable final : public ExecutableBase {
 
 std::unique_ptr<BenchmarkExecutable> build_transpose(
     const BenchmarkCase& specification) {
-  return std::make_unique<TransposeExecutable>(specification);
+  try {
+    return std::make_unique<TransposeExecutable>(specification);
+  } catch (const std::runtime_error&) {
+    return std::make_unique<LayoutReferenceExecutable>(
+        specification, testing::LayoutOperation::kTranspose);
+  }
 }
 
 }  // namespace flagdnn::benchmarking::cudnn_detail

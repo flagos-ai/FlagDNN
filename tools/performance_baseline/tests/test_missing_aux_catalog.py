@@ -13,7 +13,6 @@ from collections import Counter
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import tempfile
 import unittest
@@ -53,31 +52,37 @@ class AuxiliaryCatalogContract(unittest.TestCase):
             for line in invoke("--catalog").stdout.splitlines()
         ]
 
-    def test_matches_appendix_one_exactly(self) -> None:
-        document = (
-            ROOT / "docs/nvidia-performance-missing-cases-20261012.md"
-        ).read_text()
-        appendix = document.split("## 附录一 ", 1)[1].split("## 附录二 ", 1)[0]
+    def test_matches_measured_inventory_exactly(self) -> None:
+        baseline = json.loads(
+            (ROOT / "docs/performance-baseline.json").read_text()
+        )
         documented = {
-            line
-            for block in re.findall(r"```text\n(.*?)```", appendix, re.S)
-            for line in block.splitlines()
-            if line.startswith(
-                (
-                    "identity_bfloat16_",
-                    "identity_int32_",
-                    "identity_bool_",
-                    "logical_and_bool_",
-                    "logical_or_bool_",
-                    "reduction_",
-                )
-            )
+            name
+            for name, row in baseline["reference"]["cases"].items()
+            if row.get("measurement_id") == "nvidia-missing-20261012"
+            and "_perf_" not in name
         }
         actual = [row["case_name"] for row in self.rows]
         self.assertEqual(len(documented), 80)
         self.assertEqual(len(actual), 80)
         self.assertEqual(set(actual), documented)
         self.assertEqual(set(invoke("--list").stdout.splitlines()), documented)
+
+    def test_expanded_shared_catalog_and_oracles(self) -> None:
+        rows = [
+            json.loads(line)
+            for line in invoke("--all-shared", "--catalog").stdout.splitlines()
+        ]
+        self.assertEqual(len(rows), 301)
+        reductions = [row for row in rows if row["op"] == "reduction"]
+        self.assertEqual(
+            Counter(row["tensors"][0]["dtype"] for row in reductions),
+            {"fp32": 36, "fp16": 36, "bfloat16": 16, "int32": 9},
+        )
+        result = json.loads(invoke("--all-shared", "--self-test").stdout)
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["cases"], len(rows))
+        self.assertEqual(result["negative_controls_per_case"], 3)
 
     def test_group_counts_and_metadata(self) -> None:
         self.assertEqual(

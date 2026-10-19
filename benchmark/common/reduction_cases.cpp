@@ -222,8 +222,12 @@ std::vector<BenchmarkCase> reduction_benchmark_cases() {
   for (const auto& shape : shapes) {
     for (const flagdnnReductionMode_t mode : kModes) {
       for (const flagdnnDataType_t data_type : kDataTypes) {
-        result.push_back(make_benchmark_case(mode, data_type, uid, shape));
-        uid += 2;
+        auto specification = make_benchmark_case(mode, data_type, uid, shape);
+        uid += 2;  // Preserve tensor UIDs for retained cases.
+        // Native cuDNN cannot execute these BF16-input/BF16-output reductions.
+        // Mixed-output cases remain in tests/common/reduction.cpp.
+        if (data_type != FLAGDNN_DATA_BFLOAT16)
+          result.push_back(std::move(specification));
       }
     }
   }

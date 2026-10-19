@@ -629,6 +629,12 @@ std::vector<PointwiseTestCase> make_unary_pointwise_cases(
     validate_pointwise_case(test_case);
     result.push_back(std::move(test_case));
   }
+  // E8M0 identity has no native cuDNN execution plan on the H100 baseline.
+  // Erase after enumeration to keep every retained tensor UID unchanged.
+  if (definition.mode == FLAGDNN_POINTWISE_IDENTITY)
+    std::erase_if(result, [](const PointwiseTestCase& value) {
+      return value.inputs.front().data_type == FLAGDNN_DATA_FP8_E8M0;
+    });
   return result;
 }
 

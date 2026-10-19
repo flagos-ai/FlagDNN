@@ -1,6 +1,7 @@
 /* Copyright (c) 2025-2026 BAAI. SPDX-License-Identifier: Apache-2.0 */
 
 #include "ops.hpp"
+#include "layout_reference.hpp"
 
 #include "validation/benchmark/cudnn_common.hpp"
 #include <cuda_bf16.h>
@@ -466,6 +467,12 @@ class PointwiseExecutable final : public ExecutableBase {
 
 std::unique_ptr<BenchmarkExecutable> build_pointwise(
     const BenchmarkCase& specification) {
+  if (specification.pointwise_mode == FLAGDNN_POINTWISE_IDENTITY &&
+      specification.tensors.size() == 2 &&
+      element_count(specification.tensors.front()) == 1) {
+    return std::make_unique<LayoutReferenceExecutable>(
+        specification, testing::LayoutOperation::kReshape);
+  }
   return std::make_unique<PointwiseExecutable>(specification);
 }
 

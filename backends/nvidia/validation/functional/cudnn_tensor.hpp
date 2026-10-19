@@ -31,6 +31,20 @@ class TensorDescriptor {
       case FLAGDNN_DATA_BFLOAT16:
         type = CUDNN_DATA_BFLOAT16;
         break;
+      case FLAGDNN_DATA_INT32:
+        type = CUDNN_DATA_INT32;
+        break;
+      case FLAGDNN_DATA_FP8_E4M3:
+        type = CUDNN_DATA_FP8_E4M3;
+        break;
+      case FLAGDNN_DATA_FP8_E5M2:
+        type = CUDNN_DATA_FP8_E5M2;
+        break;
+#if CUDNN_VERSION >= 90700
+      case FLAGDNN_DATA_FP8_E8M0:
+        type = CUDNN_DATA_FP8_E8M0;
+        break;
+#endif
       default:
         throw std::invalid_argument("cuDNN tensor dtype unsupported");
     }

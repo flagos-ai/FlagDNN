@@ -372,6 +372,13 @@ std::vector<LayoutTestCase> make_layout_cases(LayoutOperation operation) {
       result = slice_cases();
       break;
   }
+  // Native cuDNN graph and tensor-transform probes reject these original
+  // dtypes. Retained UIDs are stable because enumeration happens first.
+  std::erase_if(result, [](const LayoutTestCase& value) {
+    const auto type = value.input.data_type;
+    return type == FLAGDNN_DATA_INT32 || type == FLAGDNN_DATA_FP8_E4M3 ||
+           type == FLAGDNN_DATA_FP8_E5M2 || type == FLAGDNN_DATA_FP8_E8M0;
+  });
   for (const LayoutTestCase& test_case : result) {
     validate_layout_case(test_case);
   }
