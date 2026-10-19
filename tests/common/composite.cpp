@@ -434,6 +434,10 @@ std::vector<AddSquareTestCase> make_add_square_cases() {
     for (const flagdnnDataType_t data_type :
          {FLAGDNN_DATA_FLOAT32, FLAGDNN_DATA_FLOAT16, FLAGDNN_DATA_BFLOAT16,
           FLAGDNN_DATA_INT32}) {
+      if (data_type == FLAGDNN_DATA_INT32) {
+        uid += 3;  // Preserve the remaining shared tensor UIDs.
+        continue;
+      }
       result.push_back(make_add_square_case(shape, data_type, uid));
       uid += 3;
     }

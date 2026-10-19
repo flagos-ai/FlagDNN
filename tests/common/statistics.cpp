@@ -31,11 +31,7 @@ class Executable final : public TestExecutable {
                             .set_data_type(frontend_type(input.data_type))
                             .set_dim(input.dimensions)
                             .set_stride(input.strides)));
-    if (test_case.operation == "genstats") {
-      const auto result = graph_.genstats(
-          inputs[0], fe::graph::Genstats_attributes().set_name(test_case.name));
-      outputs.assign(result.begin(), result.end());
-    } else if (test_case.operation == "bn_finalize") {
+    if (test_case.operation == "bn_finalize") {
       auto attributes = fe::graph::BN_finalize_attributes()
                             .set_name(test_case.name)
                             .set_compute_data_type(fe::DataType_t::FLOAT);
@@ -83,56 +79,7 @@ class Executable final : public TestExecutable {
   std::size_t workspace_size_ = 0;
 };
 }  // namespace
-std::vector<StatisticsTestCase> make_genstats_cases() {
-  const std::vector<std::vector<std::int64_t>> shapes = {
-      {1, 3},          {3, 7},
-      {2, 8, 17},      {4, 3, 33},
-      {2, 7, 65},      {3, 8, 127},
-      {2, 16, 257},    {2, 3, 5, 7},
-      {1, 8, 17, 19},  {3, 16, 7, 9},
-      {2, 32, 16, 17}, {4, 8, 31, 33},
-      {2, 3, 5, 7, 9}, {1, 2, 3, 2, 3, 2, 3, 2}};
-  std::vector<StatisticsTestCase> result;
-  for (std::size_t index = 0; index < shapes.size(); ++index) {
-    for (auto type :
-         {FLAGDNN_DATA_FLOAT32, FLAGDNN_DATA_FLOAT16, FLAGDNN_DATA_BFLOAT16}) {
-      StatisticsTestCase test_case;
-      test_case.name =
-          std::string("genstats_") + (type == FLAGDNN_DATA_FLOAT32   ? "fp32"
-                                      : type == FLAGDNN_DATA_FLOAT16 ? "fp16"
-                                                                     : "bf16");
-      const auto& shape = shapes[index];
-      for (auto dimension : shape)
-        test_case.name += "_" + std::to_string(dimension);
-      std::vector<std::int64_t> strides(shape.size());
-      std::int64_t stride = index % 3 == 0 ? 2 : 1;
-      if (index % 2) {
-        strides[1] = stride;
-        stride *= shape[1];
-        for (std::size_t axis = shape.size(); axis > 2; --axis) {
-          strides[axis - 1] = stride;
-          stride *= shape[axis - 1];
-        }
-        strides[0] = stride;
-      } else {
-        for (std::size_t axis = shape.size(); axis != 0; --axis) {
-          strides[axis - 1] = stride;
-          stride *= shape[axis - 1];
-        }
-      }
-      test_case.inputs.push_back({1, type, shape, strides});
-      std::vector<std::int64_t> output_shape(shape.size(), 1),
-          output_stride(shape.size(), 1);
-      output_shape[1] = shape[1];
-      output_stride[1] = index % 2 + 1;
-      test_case.outputs = {
-          {2, FLAGDNN_DATA_FLOAT32, output_shape, output_stride},
-          {3, FLAGDNN_DATA_FLOAT32, output_shape, output_stride}};
-      result.push_back(std::move(test_case));
-    }
-  }
-  return result;
-}
+
 std::vector<StatisticsTestCase> make_bn_finalize_cases() {
   std::vector<StatisticsTestCase> result;
   const std::array<std::int64_t, 14> channels = {

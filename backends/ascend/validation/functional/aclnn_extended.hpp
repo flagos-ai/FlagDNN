@@ -6,7 +6,6 @@
 #include "common/moe_matmul.hpp"
 #include "common/normalization_extended.hpp"
 #include "common/pointwise.hpp"
-#include "common/position_embedding.hpp"
 #include "common/resample.hpp"
 #include "common/statistics.hpp"
 namespace flagdnn::testing {
@@ -22,7 +21,6 @@ std::unique_ptr<TestExecutable>
 build_aclnn_extended_normalization(const ExtendedNormalizationTestCase &);
 std::unique_ptr<TestExecutable> build_aclnn_index(const IndexTestCase &);
 std::unique_ptr<TestExecutable> build_aclnn_resample(const ResampleTestCase &);
-std::unique_ptr<TestExecutable> build_aclnn_rope(const RoPETestCase &);
 std::unique_ptr<TestExecutable>
 build_aclnn_statistics(const StatisticsTestCase &);
 } // namespace flagdnn::testing

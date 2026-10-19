@@ -328,6 +328,11 @@ std::vector<MatmulTestCase> make_matmul_cases() {
       result.push_back(std::move(test_case));
     }
   }
+  // Native cuDNN has no plan for the cross-broadcast rank-four workload.
+  // Preserve UIDs of the supported rank-two/rank-three cases.
+  std::erase_if(result, [](const MatmulTestCase& value) {
+    return value.output.dimensions.size() > 3;
+  });
   result.front().autotune = true;
   for (const MatmulTestCase& test_case : result) {
     validate_matmul_case(test_case);

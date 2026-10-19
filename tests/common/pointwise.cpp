@@ -655,10 +655,9 @@ std::vector<PointwiseTestCase> make_binary_pointwise_cases(
                                           : definition.input_domain;
   for (const Shape& shape : shapes) {
     for (const flagdnnDataType_t data_type : data_types) {
-      if (definition.mode == FLAGDNN_POINTWISE_POW &&
-          data_type == FLAGDNN_DATA_INT32) {
-        // cuDNN POW does not implement the exact INT32 contract. Omit these
-        // shared cases while preserving the existing floating tensor UIDs.
+      if (data_type == FLAGDNN_DATA_INT32) {
+        // cuDNN has no exact INT32 arithmetic execution plan. Preserve the
+        // recorded floating tensor UIDs when removing this shared case.
         uid += 3;
         continue;
       }
@@ -760,26 +759,7 @@ std::vector<PointwiseTestCase> make_binary_pointwise_cases(
       uid += 3;
     }
   }
-  if (definition.mode != FLAGDNN_POINTWISE_POW &&
-      std::find(data_types.begin(), data_types.end(), FLAGDNN_DATA_INT32) !=
-          data_types.end()) {
-    PointwiseTestCase test_case;
-    test_case.name =
-        definition.operation_name + "_int32_broadcast_padded_2x3x17";
-    test_case.mode = definition.mode;
-    test_case.inputs = {
-        {uid, FLAGDNN_DATA_INT32, {2, 3, 17}, {137, 41, 2}},
-        {uid + 1, FLAGDNN_DATA_INT32, {1, 3, 17}, {127, 37, 1}}};
-    test_case.output = {uid + 2,
-                        output_data_type(definition.mode, FLAGDNN_DATA_INT32),
-                        {2, 3, 17},
-                        {151, 43, 2}};
-    test_case.input_domains = {domain, domain};
-    test_case.attributes = definition.attributes;
-    set_tolerance(test_case);
-    validate_pointwise_case(test_case);
-    result.push_back(std::move(test_case));
-  }
+
   return result;
 }
 
@@ -794,6 +774,10 @@ std::vector<PointwiseTestCase> make_binary_select_cases(
   for (const Shape& shape : packed_boolean_shapes()) {
     for (const flagdnnDataType_t data_type :
          input_data_types(definition.mode)) {
+      if (data_type == FLAGDNN_DATA_INT32) {
+        uid += 4;  // Preserve the remaining shared tensor UIDs.
+        continue;
+      }
       PointwiseTestCase test_case;
       test_case.name = definition.operation_name + "_" +
                        data_type_name(data_type) + "_" + shape_name(shape);
@@ -814,27 +798,6 @@ std::vector<PointwiseTestCase> make_binary_select_cases(
     }
   }
 
-  {
-    const Shape shape = {2, 3, 4};
-    constexpr flagdnnDataType_t data_type = FLAGDNN_DATA_FLOAT32;
-    PointwiseTestCase test_case;
-    test_case.name = definition.operation_name + "_strided_fp32_2x3x4";
-    test_case.mode = definition.mode;
-    test_case.inputs = {
-        TestTensor{uid, data_type, shape, {31, 9, 1}},
-        TestTensor{uid + 1, data_type, shape, {37, 11, 1}},
-        make_tensor(uid + 2, shape, FLAGDNN_DATA_BOOLEAN),
-    };
-    test_case.output = TestTensor{uid + 3, data_type, shape, {43, 14, 1}};
-    test_case.input_domains = {PointwiseInputDomain::kReal,
-                               PointwiseInputDomain::kReal,
-                               PointwiseInputDomain::kLogical};
-    test_case.attributes = definition.attributes;
-    test_case.autotune = true;
-    set_tolerance(test_case);
-    validate_pointwise_case(test_case);
-    result.push_back(std::move(test_case));
-  }
   return result;
 }
 

@@ -348,38 +348,31 @@ std::unique_ptr<TestExecutable> reference(
 }
 std::unique_ptr<TestExecutable> reference(const StatisticsTestCase& c) {
   auto p = std::make_unique<NativeProgram>(c.inputs, c.outputs);
-  if (c.operation == "genstats") {
-    const auto x = p->floating(0);
-    std::vector<int> axes;
-    for (std::size_t i = 0; i < c.inputs[0].dimensions.size(); ++i)
-      if (i != 1) axes.push_back(static_cast<int>(i));
-    p->reduce_to(p->output(0), Reduce::ADD, x, axes);
-    p->reduce_to(p->output(1), Reduce::ADD, p->unary(Unary::SQUARE, x), axes);
-  } else {
-    const auto mean = p->unary(Unary::DIV, 0, c.accum_count);
-    const auto variance =
-        p->unary(Unary::MAX,
-                 p->binary(Binary::SUB, p->unary(Unary::DIV, 1, c.accum_count),
-                           p->unary(Unary::SQUARE, mean)),
-                 0.0);
-    p->unary_to(p->output(2), Unary::IDENTITY, mean);
-    p->unary_to(p->output(3), Unary::RSQRT,
-                p->unary(Unary::ADD, variance, c.epsilon));
-    p->binary_to(p->output(0), Binary::MUL, 2, p->output(3));
-    p->binary_to(p->output(1), Binary::SUB, 3,
-                 p->binary(Binary::MUL, mean, p->output(0)));
-    if (c.inputs.size() == 6) {
-      p->binary_to(p->output(4), Binary::ADD,
-                   p->unary(Unary::MUL, 4, 1 - c.momentum),
-                   p->unary(Unary::MUL, mean, c.momentum));
-      p->binary_to(
-          p->output(5), Binary::ADD, p->unary(Unary::MUL, 5, 1 - c.momentum),
-          p->unary(Unary::MUL, variance,
-                   c.momentum * (c.accum_count > 1
-                                     ? c.accum_count / (c.accum_count - 1)
-                                     : 0)));
-    }
+
+  const auto mean = p->unary(Unary::DIV, 0, c.accum_count);
+  const auto variance =
+      p->unary(Unary::MAX,
+               p->binary(Binary::SUB, p->unary(Unary::DIV, 1, c.accum_count),
+                         p->unary(Unary::SQUARE, mean)),
+               0.0);
+  p->unary_to(p->output(2), Unary::IDENTITY, mean);
+  p->unary_to(p->output(3), Unary::RSQRT,
+              p->unary(Unary::ADD, variance, c.epsilon));
+  p->binary_to(p->output(0), Binary::MUL, 2, p->output(3));
+  p->binary_to(p->output(1), Binary::SUB, 3,
+               p->binary(Binary::MUL, mean, p->output(0)));
+  if (c.inputs.size() == 6) {
+    p->binary_to(p->output(4), Binary::ADD,
+                 p->unary(Unary::MUL, 4, 1 - c.momentum),
+                 p->unary(Unary::MUL, mean, c.momentum));
+    p->binary_to(
+        p->output(5), Binary::ADD, p->unary(Unary::MUL, 5, 1 - c.momentum),
+        p->unary(Unary::MUL, variance,
+                 c.momentum * (c.accum_count > 1
+                                   ? c.accum_count / (c.accum_count - 1)
+                                   : 0)));
   }
+
   return p;
 }
 std::unique_ptr<TestExecutable> reference(const ResampleTestCase& c) {
@@ -491,60 +484,5 @@ std::unique_ptr<TestExecutable> reference(const ResampleTestCase& c) {
   }
   return p;
 }
-std::unique_ptr<TestExecutable> reference(const RoPETestCase& c) {
-  auto p = std::make_unique<NativeProgram>(c.inputs, c.outputs);
-  // muDNN Rope uses BSHD metadata. Materialize a contiguous input and output
-  // so all public strided layouts keep their external padding untouched.
-  const auto& d = c.inputs[0].dimensions;
-  Shape shape{d[0], d[2], d[1], d[3]};
-  Shape strides{c.inputs[0].strides[0], c.inputs[0].strides[2],
-                c.inputs[0].strides[1], c.inputs[0].strides[3]};
-  const auto input_view = p->view(0, shape, strides);
-  const auto input = p->temporary(shape, c.inputs[0].data_type);
-  p->unary_to(input, Unary::IDENTITY, input_view);
-  const auto dense_frequencies = p->unary(Unary::IDENTITY, 1);
-  const auto width = c.inputs[1].dimensions.back();
-  const auto frequencies =
-      p->view(dense_frequencies, {d[2], width}, {width, 1});
-  const auto output = p->temporary(shape, c.outputs[0].data_type);
-  auto rotation_input = input;
-  auto rotation_output = output;
-  std::size_t rotated_output_view = output;
-  if (width != d[3]) {
-    // Public RoPE rotates the trailing channels. muDNN requires its input
-    // width to equal the frequency width, so rotate a native dense slice.
-    auto rotated_shape = shape;
-    rotated_shape.back() = width;
-    const auto offset = static_cast<std::size_t>(d[3] - width) *
-                        io::data_type_size(c.inputs[0].data_type);
-    const auto input_tail =
-        p->view(input, rotated_shape, contiguous(shape), offset);
-    rotation_input = p->temporary(rotated_shape, c.inputs[0].data_type);
-    rotation_output = p->temporary(rotated_shape, c.outputs[0].data_type);
-    p->unary_to(rotation_input, Unary::IDENTITY, input_tail);
-    p->unary_to(output, Unary::IDENTITY, input);
-    rotated_output_view =
-        p->view(output, rotated_shape, contiguous(shape), offset);
-  }
-  auto op = std::make_shared<md::Rope>();
-  mv::check_mudnn(op->SetRotaryInterleaved(false), "muDNN Rope split half");
-  mv::check_mudnn(op->SetBatchFirst(true), "muDNN Rope batch first");
-  p->add([r = p.get(), op, input = rotation_input, frequencies,
-          output = rotation_output,
-          backward = c.operation == "rope_backward"] {
-    const auto status =
-        backward ? op->RunBwd(r->handle(), r->tensor(output), r->tensor(input),
-                              r->tensor(frequencies))
-                 : op->Run(r->handle(), r->tensor(output), r->tensor(input),
-                           r->tensor(frequencies));
-    mv::check_mudnn(status, "muDNN Rope::Run/RunBwd");
-  });
-  if (width != d[3])
-    p->unary_to(rotated_output_view, Unary::IDENTITY, rotation_output);
-  const auto out = p->view(p->output(0), shape,
-                           {c.outputs[0].strides[0], c.outputs[0].strides[2],
-                            c.outputs[0].strides[1], c.outputs[0].strides[3]});
-  p->unary_to(out, Unary::MUL, output, c.output_scale);
-  return p;
-}
+
 }  // namespace flagdnn::testing::mthreads

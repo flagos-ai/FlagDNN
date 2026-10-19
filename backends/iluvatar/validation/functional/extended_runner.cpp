@@ -3,8 +3,6 @@
 #include "common/causal_convolution.hpp"
 #include "common/index.hpp"
 #include "common/normalization_extended.hpp"
-#include "common/position_embedding.hpp"
-#include "common/random.hpp"
 #include "common/resample.hpp"
 #include "common/statistics.hpp"
 #include "extended_reference.hpp"
@@ -13,8 +11,6 @@
 #include "reference/cpu/causal_convolution.hpp"
 #include "reference/cpu/index.hpp"
 #include "reference/cpu/normalization.hpp"
-#include "reference/cpu/position_embedding.hpp"
-#include "reference/cpu/random.hpp"
 #include "reference/cpu/resample.hpp"
 #include "reference/cpu/statistics.hpp"
 #include <algorithm>
@@ -118,31 +114,7 @@ int run_causal_convolution_functional_test(
                    values);
              });
 }
-int run_rope_functional_test(int argc, char **argv,
-                             std::span<const RoPETestCase> cases,
-                             bool benchmark) {
-  return run(argc, argv, cases, cases.front().operation, benchmark,
-             build_flagdnn_rope, rope_inputs,
-             [](const auto &c, const Values &values) {
-               return cpu::evaluate_rope(
-                   c.inputs[0].dimensions, c.rope_dim, c.output_scale,
-                   c.operation == "rope_backward", values);
-             });
-}
-int run_rng_functional_test(int argc, char **argv,
-                            std::span<const RngTestCase> cases,
-                            bool benchmark) {
-  return run(
-      argc, argv, cases, "rng", benchmark, build_flagdnn_rng,
-      [](const auto &) { return Values{}; },
-      [](const auto &c, const Values &) {
-        const int bits = c.outputs[0].data_type == FLAGDNN_DATA_FLOAT32   ? 24
-                         : c.outputs[0].data_type == FLAGDNN_DATA_FLOAT16 ? 11
-                                                                          : 8;
-        return cpu::evaluate_rng({c.outputs[0].dimensions, c.seed, c.offset,
-                                  c.distribution, bits, c.probability});
-      });
-}
+
 int run_resample_functional_test(int argc, char **argv,
                                  std::span<const ResampleTestCase> cases,
                                  bool benchmark) {
@@ -172,8 +144,7 @@ int run_statistics_functional_test(int argc, char **argv,
         return values;
       },
       [](const auto &c, const Values &values) {
-        return cpu::evaluate_statistics(c.operation, c.inputs[0].dimensions,
-                                        c.outputs.size(), c.epsilon,
+        return cpu::evaluate_bn_finalize(c.outputs.size(), c.epsilon,
                                         c.accum_count, c.momentum, values);
       });
 }

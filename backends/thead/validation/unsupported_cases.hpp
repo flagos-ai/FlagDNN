@@ -9,8 +9,6 @@
 #include "common/index.hpp"
 #include "common/moe_matmul.hpp"
 #include "common/normalization_extended.hpp"
-#include "common/position_embedding.hpp"
-#include "common/random.hpp"
 namespace flagdnn::validation::thead {
 struct UnsupportedCase {
   std::string name;
@@ -29,15 +27,11 @@ inline std::vector<UnsupportedCase> unsupported_cases(
     }
     return result;
   };
-  if (operation == "moe_grouped_matmul" ||
-      operation == "moe_grouped_matmul_bwd")
-    return convert(make_moe_matmul_cases(operation.ends_with("_bwd")));
+  if (operation == "moe_grouped_matmul")
+    return convert(make_moe_matmul_cases());
   if (operation == "matmul_fp8") return convert(make_fp8_matmul_cases());
   if (operation == "causal_conv1d")
     return convert(make_causal_convolution_cases());
-  if (operation == "rng") return convert(make_rng_cases());
-  if (operation == "rope" || operation == "rope_backward")
-    return convert(make_rope_cases(operation.ends_with("_backward")));
   if (operation == "concatenate" || operation == "gen_index")
     return convert(make_index_cases(operation));
   if (operation == "instancenorm" || operation == "adalayernorm" ||

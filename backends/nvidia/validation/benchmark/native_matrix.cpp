@@ -5,7 +5,6 @@
 #include "common/matmul.hpp"
 #include "common/reduction.hpp"
 #include "validation/functional/cudnn_precision.hpp"
-#include "validation/functional/cudnn_reduction.hpp"
 #include "validation/functional/paired.hpp"
 namespace flagdnn::testing {
 namespace {
@@ -91,8 +90,7 @@ int run_native_precision_benchmark(int argc, char** argv,
 int run_native_reduction_benchmark(int argc, char** argv) {
   std::vector<Case<ReductionTestCase>> cases;
   for (const auto& value : make_reduction_cases())
-    if (cuda::cudnn_reduction_case(value) &&
-        value.name.find("_to_fp32_") != std::string::npos)
+    if (value.name.find("_to_fp32_") != std::string::npos)
       cases.push_back({value.name, {value.input}, {value.output}, value});
   return cuda::run_paired_cases(
       argc, argv, std::span<const Case<ReductionTestCase>>(cases),

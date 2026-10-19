@@ -3,22 +3,6 @@
 
 include("${PROJECT_SOURCE_DIR}/cmake/Operators.cmake")
 
-# Standalone operators without an executable cuDNN comparator on the
-# qualified NVIDIA stack. The unified runner consumes the same manifest.
-set(_flagdnn_cudnn_unsupported_manifest
-  "${CMAKE_CURRENT_SOURCE_DIR}/cudnn_unsupported_operators.txt")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-  "${_flagdnn_cudnn_unsupported_manifest}")
-file(STRINGS "${_flagdnn_cudnn_unsupported_manifest}"
-  _flagdnn_cudnn_unsupported_operators)
-set(_flagdnn_cudnn_functional_operators ${FLAGDNN_FUNCTIONAL_OPERATORS})
-set(_flagdnn_cudnn_extended_operators ${FLAGDNN_EXTENDED_OPERATORS})
-list(REMOVE_ITEM _flagdnn_cudnn_functional_operators
-  ${_flagdnn_cudnn_unsupported_operators})
-list(REMOVE_ITEM _flagdnn_cudnn_extended_operators
-  ${_flagdnn_cudnn_unsupported_operators})
-
-
 if(NOT TARGET flagdnn_backend_nvidia)
   message(FATAL_ERROR
     "NVIDIA validation requires FLAGDNN_BACKENDS=nvidia")
@@ -87,8 +71,6 @@ else()
     "${PROJECT_SOURCE_DIR}/tests/common/statistics.cpp"
     "${PROJECT_SOURCE_DIR}/tests/common/normalization_extended.cpp"
     "${PROJECT_SOURCE_DIR}/tests/common/index.cpp"
-    "${PROJECT_SOURCE_DIR}/tests/common/position_embedding.cpp"
-    "${PROJECT_SOURCE_DIR}/tests/common/random.cpp"
     "${PROJECT_SOURCE_DIR}/tests/common/resample.cpp"
     "${PROJECT_SOURCE_DIR}/tests/common/causal_convolution.cpp"
     "${PROJECT_SOURCE_DIR}/tests/common/fp8_matmul.cpp"
@@ -237,7 +219,7 @@ if(FLAGDNN_BUILD_TESTS)
 
   flagdnn_register_functional_suite(
     PLATFORM nvidia
-    OPERATORS ${_flagdnn_cudnn_functional_operators}
+    OPERATORS ${FLAGDNN_FUNCTIONAL_OPERATORS}
     ADAPTER_TARGET flagdnn_test_nvidia_adapter
     BACKEND_TARGET flagdnn_backend_nvidia
     COMMAND_ARGS
@@ -424,7 +406,7 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     BUILD_RPATH "${_flagdnn_nvidia_validation_cudnn_directory}")
   flagdnn_register_benchmark_suite(
     PLATFORM nvidia
-    OPERATORS ${_flagdnn_cudnn_extended_operators}
+    OPERATORS ${FLAGDNN_EXTENDED_OPERATORS}
     ADAPTER_TARGET flagdnn_validation_nvidia_extended
     BACKEND_TARGET flagdnn_backend_nvidia
     COMMAND_ARGS "${FLAGDNN_CODEGEN_PYTHON}" "${FLAGDNN_CODEGEN_COMPILER}"

@@ -27,7 +27,7 @@ int run_native_benchmark_test(int argc, char** argv,
                                           true);
   if (operation == "moe_grouped_matmul")
     return run_moe_matmul_functional_test(argc, argv,
-                                          make_moe_matmul_cases(false), true);
+                                          make_moe_matmul_cases(), true);
   if (operation == "concatenate" || operation == "gen_index")
     return run_index_functional_test(argc, argv, make_index_cases(operation),
                                      true);

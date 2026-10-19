@@ -322,15 +322,7 @@ int run_cudnn_pointwise_tests(int argc, char** argv,
         continue;
       }
       const auto type = test_case.inputs.front().data_type;
-      if ((type == FLAGDNN_DATA_INT32 &&
-           test_case.mode != FLAGDNN_POINTWISE_IDENTITY) ||
-          type == FLAGDNN_DATA_FP8_E8M0 ||
-          ((test_case.mode == FLAGDNN_POINTWISE_NEG ||
-            test_case.mode == FLAGDNN_POINTWISE_BINARY_SELECT) &&
-           cuda::storage_element_count(test_case.output) !=
-               cuda::element_count(test_case.output))) {
-        continue;
-      }
+
       if (test_case.mode == FLAGDNN_POINTWISE_IDENTITY &&
           (type == FLAGDNN_DATA_INT32 || type == FLAGDNN_DATA_FP8_E4M3 ||
            type == FLAGDNN_DATA_FP8_E5M2)) {

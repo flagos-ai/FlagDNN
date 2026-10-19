@@ -37,21 +37,9 @@ def select_operator_manifests(
     unknown = set(additional) - set(manifests["functional"])
     if unknown or len(set(additional)) != len(additional):
         raise ValueError("Invalid NVIDIA additional benchmark operators")
-    unsupported = set(
-        (Path(__file__).parent / "cudnn_unsupported_operators.txt")
-        .read_text(encoding="utf-8")
-        .split()
-    )
-    unknown = unsupported - set(manifests["functional"])
-    if unknown:
-        raise ValueError(f"Unknown NVIDIA cuDNN exclusions: {sorted(unknown)}")
-    selected = [op for op in manifests["benchmark"] if op not in unsupported]
     return {
         **manifests,
-        "functional": [
-            op for op in manifests["functional"] if op not in unsupported
-        ],
-        "benchmark": list(dict.fromkeys(selected + additional)),
+        "benchmark": list(dict.fromkeys(manifests["benchmark"] + additional)),
     }
 
 

@@ -119,7 +119,6 @@ if(FLAGDNN_BUILD_TESTS)
     RUN_SERIAL TRUE
     TIMEOUT 120)
 
-
   add_test(NAME integration.iluvatar.corex_cudnn_environment
     COMMAND "${CMAKE_COMMAND}"
       "-DSOURCE_ROOT=${PROJECT_SOURCE_DIR}"
@@ -572,7 +571,7 @@ if(FLAGDNN_BUILD_BENCHMARKS)
       flagdnn_test_iluvatar_adapter flagdnn_benchmark_iluvatar_adapter)
     flagdnn_enable_warnings(flagdnn_benchmark_iluvatar_extended)
     set(_iluvatar_extended_benchmarks ${FLAGDNN_EXTENDED_OPERATORS} sdpa sdpa_backward sdpa_fp8 sdpa_fp8_backward)
-    list(REMOVE_ITEM _iluvatar_extended_benchmarks moe_grouped_matmul moe_grouped_matmul_bwd matmul_fp8)
+    list(REMOVE_ITEM _iluvatar_extended_benchmarks moe_grouped_matmul matmul_fp8)
     flagdnn_register_benchmark_suite(
       PLATFORM iluvatar OPERATORS ${_iluvatar_extended_benchmarks}
       ADAPTER_TARGET flagdnn_benchmark_iluvatar_extended
@@ -584,7 +583,7 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     foreach(_operator IN LISTS _iluvatar_extended_benchmarks)
       set_tests_properties("benchmark.iluvatar.${_operator}" PROPERTIES SKIP_RETURN_CODE 77)
     endforeach()
-    foreach(_operator IN ITEMS moe_grouped_matmul moe_grouped_matmul_bwd matmul_fp8)
+    foreach(_operator IN ITEMS moe_grouped_matmul matmul_fp8)
       set(_target "flagdnn_benchmark_iluvatar_${_operator}")
       add_executable("${_target}" "${CMAKE_CURRENT_SOURCE_DIR}/dnn_capability_gate.cpp")
       target_link_libraries("${_target}" PRIVATE flagdnn_validation_iluvatar_reference)

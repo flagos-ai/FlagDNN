@@ -10,7 +10,6 @@
 #include "common/index.hpp"
 #include "common/moe_matmul.hpp"
 #include "common/normalization_extended.hpp"
-#include "common/position_embedding.hpp"
 #include "common/resample.hpp"
 #include "common/statistics.hpp"
 
@@ -76,7 +75,6 @@ std::unique_ptr<TestExecutable> reference(const IndexTestCase&);
 std::unique_ptr<TestExecutable> reference(const StatisticsTestCase&);
 std::unique_ptr<TestExecutable> reference(
     const ExtendedNormalizationTestCase&);
-std::unique_ptr<TestExecutable> reference(const RoPETestCase&);
 std::unique_ptr<TestExecutable> reference(const ResampleTestCase&);
 std::unique_ptr<TestExecutable> reference(const CausalConvolutionTestCase&);
 std::unique_ptr<TestExecutable> reference(const Fp8MatmulTestCase&);

@@ -70,13 +70,7 @@ int run_pointwise_functional_test(int argc, char **argv,
           {values}, {reference::cpu::evaluate_identity_bytes(values)}, reference);
       continue;
     }
-    if (test_case.inputs[0].data_type == FLAGDNN_DATA_INT32) {
-      functional::run_integer_case(
-          suite, plan, test_case.mode,
-          static_cast<std::int32_t>(test_case.alpha),
-          [&] { return build_flagdnn_pointwise(suite.handle(), test_case); });
-      continue;
-    }
+
     const bool sigmoid_composition =
         (operation == "swish_backward" || operation == "softplus_backward") &&
         test_case.inputs[0].data_type != FLAGDNN_DATA_BFLOAT16;

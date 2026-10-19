@@ -246,7 +246,6 @@ int run_suite(int argc, char** argv, std::span<const Case> cases,
     std::size_t executed = 0;
     for (const Case& test_case : cases) {
       if constexpr (std::is_same_v<Case, AddSquareTestCase>) {
-        if (test_case.left.data_type == FLAGDNN_DATA_INT32) continue;
       }
       if (filter != nullptr &&
           test_case.name.find(filter) == std::string::npos) {

@@ -232,33 +232,6 @@ std::vector<float> evaluate_binary_pointwise_with_alpha(
   return output;
 }
 
-std::vector<std::int32_t> evaluate_binary_pointwise_int32(
-    flagdnnPointwiseMode_t mode, std::span<const std::int32_t> left,
-    std::span<const std::int64_t> left_dimensions,
-    std::span<const std::int32_t> right,
-    std::span<const std::int64_t> right_dimensions,
-    std::span<const std::int64_t> output_dimensions, std::int32_t alpha) {
-  if (!supports_binary_pointwise(mode)) {
-    throw std::invalid_argument(
-        "CPU reference does not support this pointwise mode");
-  }
-  const std::size_t output_count =
-      checked_element_count(output_dimensions, "output");
-  validate_input(left, left_dimensions, output_dimensions, "left input");
-  validate_input(right, right_dimensions, output_dimensions, "right input");
-
-  std::vector<std::int32_t> output(output_count);
-  for (std::size_t index = 0; index < output_count; ++index) {
-    const std::int32_t left_value =
-        left[broadcast_index(index, left_dimensions, output_dimensions)];
-    const std::int32_t right_value =
-        right[broadcast_index(index, right_dimensions, output_dimensions)];
-    output[index] = pointwise_integer_reference(
-        mode, left_value, right_value, false, alpha);
-  }
-  return output;
-}
-
 bool supports_activation_backward(flagdnnPointwiseMode_t mode) noexcept {
   switch (mode) {
     case FLAGDNN_POINTWISE_RELU_BWD:
@@ -377,31 +350,6 @@ std::vector<float> evaluate_activation_backward(
   return result;
 }
 
-std::vector<std::int32_t> evaluate_binary_select_int32(
-    std::span<const std::int32_t> left,
-    std::span<const std::int64_t> left_dimensions,
-    std::span<const std::int32_t> right,
-    std::span<const std::int64_t> right_dimensions,
-    std::span<const std::uint8_t> predicate,
-    std::span<const std::int64_t> predicate_dimensions,
-    std::span<const std::int64_t> output_dimensions) {
-  const auto count = checked_element_count(output_dimensions, "output");
-  validate_input(left, left_dimensions, output_dimensions, "left input");
-  validate_input(right, right_dimensions, output_dimensions, "right input");
-  validate_input(predicate, predicate_dimensions, output_dimensions, "predicate");
-  std::vector<std::int32_t> output(count);
-  for (std::size_t index = 0; index < count; ++index) {
-    output[index] = pointwise_integer_reference(
-        FLAGDNN_POINTWISE_BINARY_SELECT,
-        left[broadcast_index(index, left_dimensions, output_dimensions)],
-        right[broadcast_index(index, right_dimensions, output_dimensions)],
-        predicate[broadcast_index(index, predicate_dimensions, output_dimensions)]
-            != 0,
-        1);
-  }
-  return output;
-}
-
 std::vector<float> evaluate_add_square(
     std::span<const float> left,
     std::span<const std::int64_t> left_dimensions,
@@ -421,78 +369,6 @@ std::vector<float> evaluate_add_square(
     throw std::invalid_argument("AddSquare virtual quantizer changed value count");
   return evaluate_binary_pointwise(FLAGDNN_POINTWISE_ADD,
       left, left_dimensions, square, right_dimensions, output_dimensions);
-}
-
-std::vector<std::int32_t> evaluate_add_square_int32(
-    std::span<const std::int32_t> left,
-    std::span<const std::int64_t> left_dimensions,
-    std::span<const std::int32_t> right,
-    std::span<const std::int64_t> right_dimensions,
-    std::span<const std::int64_t> output_dimensions) {
-  (void)checked_element_count(output_dimensions, "output");
-  validate_input(left, left_dimensions, output_dimensions, "left input");
-  validate_input(right, right_dimensions, output_dimensions, "right input");
-  const auto square = evaluate_binary_pointwise_int32(FLAGDNN_POINTWISE_MUL,
-      right, right_dimensions, right, right_dimensions, right_dimensions);
-  return evaluate_binary_pointwise_int32(FLAGDNN_POINTWISE_ADD,
-      left, left_dimensions, square, right_dimensions, output_dimensions);
-}
-
-std::int32_t pointwise_integer_reference(flagdnnPointwiseMode_t mode,
-                                         std::int32_t left, std::int32_t right,
-                                         bool predicate, std::int32_t alpha) {
-  const auto a = static_cast<std::uint32_t>(left);
-  const auto b = static_cast<std::uint32_t>(right);
-  const auto wrap = [](std::uint32_t value) {
-    return std::bit_cast<std::int32_t>(value);
-  };
-  switch (mode) {
-    case FLAGDNN_POINTWISE_IDENTITY:
-      return left;
-    case FLAGDNN_POINTWISE_ADD:
-      return wrap(a + static_cast<std::uint32_t>(alpha) * b);
-    case FLAGDNN_POINTWISE_SUB:
-      return wrap(a - static_cast<std::uint32_t>(alpha) * b);
-    case FLAGDNN_POINTWISE_MUL:
-      return wrap(a * b);
-    case FLAGDNN_POINTWISE_DIV:
-      return right == 0 ? 0
-                        : wrap(static_cast<std::uint32_t>(
-                              static_cast<std::int64_t>(left) / right));
-    case FLAGDNN_POINTWISE_MOD:
-      return right == 0 ? 0
-                        : static_cast<std::int32_t>(
-                              static_cast<std::int64_t>(left) % right);
-    case FLAGDNN_POINTWISE_POW: {
-      if (right < 0)
-        return left == 1 ? 1 : left == -1 ? ((right % 2) ? -1 : 1) : 0;
-      // Small exponents allow a straightforward repeated-multiplication oracle.
-      std::uint32_t result = 1;
-      for (std::int32_t exponent = 0; exponent < right; ++exponent) result *= a;
-      return wrap(result);
-    }
-    case FLAGDNN_POINTWISE_MIN:
-      return std::min(left, right);
-    case FLAGDNN_POINTWISE_MAX:
-      return std::max(left, right);
-    case FLAGDNN_POINTWISE_CMP_EQ:
-      return left == right;
-    case FLAGDNN_POINTWISE_CMP_NEQ:
-      return left != right;
-    case FLAGDNN_POINTWISE_CMP_GT:
-      return left > right;
-    case FLAGDNN_POINTWISE_CMP_GE:
-      return left >= right;
-    case FLAGDNN_POINTWISE_CMP_LT:
-      return left < right;
-    case FLAGDNN_POINTWISE_CMP_LE:
-      return left <= right;
-    case FLAGDNN_POINTWISE_BINARY_SELECT:
-      return predicate ? left : right;
-    default:
-      throw std::invalid_argument(
-          "integer oracle does not implement this mode");
-  }
 }
 
 }  // namespace flagdnn::reference::cpu

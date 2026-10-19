@@ -365,12 +365,6 @@
             "cudnnOpTensor(ADD)"
           ]
         },
-        "add_broadcast_integer_int32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "classic CoreX cuDNN reference adapter does not implement this dtype/precision contract; production is checked independently",
-          "primitive_sequence": []
-        },
         "add_contiguous_autotune_fp32": {
           "classification": "qualified_supported",
           "reason": "",
@@ -419,12 +413,6 @@
             "cudnnOpTensor(ADD)"
           ]
         },
-        "add_shape_1_1_31_int32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "classic CoreX cuDNN reference adapter does not implement this dtype/precision contract; production is checked independently",
-          "primitive_sequence": []
-        },
         "add_shape_1_1_32_bf16": {
           "classification": "qualified_supported",
           "reason": "",
@@ -448,12 +436,6 @@
           "primitive_sequence": [
             "cudnnOpTensor(ADD)"
           ]
-        },
-        "add_shape_1_1_32_int32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "classic CoreX cuDNN reference adapter does not implement this dtype/precision contract; production is checked independently",
-          "primitive_sequence": []
         },
         "add_shape_1_1_33_bf16": {
           "classification": "qualified_supported",
@@ -479,12 +461,6 @@
             "cudnnOpTensor(ADD)"
           ]
         },
-        "add_shape_1_1_33_int32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "classic CoreX cuDNN reference adapter does not implement this dtype/precision contract; production is checked independently",
-          "primitive_sequence": []
-        },
         "add_shape_1_1_8_bf16": {
           "classification": "qualified_supported",
           "reason": "",
@@ -508,12 +484,6 @@
           "primitive_sequence": [
             "cudnnOpTensor(ADD)"
           ]
-        },
-        "add_shape_1_1_8_int32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "classic CoreX cuDNN reference adapter does not implement this dtype/precision contract; production is checked independently",
-          "primitive_sequence": []
         },
         "add_shape_1_8_3_5_bf16": {
           "classification": "qualified_supported",
@@ -539,12 +509,6 @@
             "cudnnOpTensor(ADD)"
           ]
         },
-        "add_shape_1_8_3_5_int32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "classic CoreX cuDNN reference adapter does not implement this dtype/precision contract; production is checked independently",
-          "primitive_sequence": []
-        },
         "add_shape_2_16_7_9_bf16": {
           "classification": "qualified_supported",
           "reason": "",
@@ -568,12 +532,6 @@
           "primitive_sequence": [
             "cudnnOpTensor(ADD)"
           ]
-        },
-        "add_shape_2_16_7_9_int32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "classic CoreX cuDNN reference adapter does not implement this dtype/precision contract; production is checked independently",
-          "primitive_sequence": []
         },
         "add_shape_2_3_16_bf16": {
           "classification": "qualified_supported",
@@ -599,12 +557,6 @@
             "cudnnOpTensor(ADD)"
           ]
         },
-        "add_shape_2_3_16_int32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "classic CoreX cuDNN reference adapter does not implement this dtype/precision contract; production is checked independently",
-          "primitive_sequence": []
-        },
         "add_shape_2_4_17_bf16": {
           "classification": "qualified_supported",
           "reason": "",
@@ -628,12 +580,6 @@
           "primitive_sequence": [
             "cudnnOpTensor(ADD)"
           ]
-        },
-        "add_shape_2_4_17_int32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "classic CoreX cuDNN reference adapter does not implement this dtype/precision contract; production is checked independently",
-          "primitive_sequence": []
         },
         "add_shape_2_8_16_16_bf16": {
           "classification": "qualified_supported",
@@ -659,12 +605,6 @@
             "cudnnOpTensor(ADD)"
           ]
         },
-        "add_shape_2_8_16_16_int32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "classic CoreX cuDNN reference adapter does not implement this dtype/precision contract; production is checked independently",
-          "primitive_sequence": []
-        },
         "add_shape_3_32_5_7_bf16": {
           "classification": "qualified_supported",
           "reason": "",
@@ -688,12 +628,6 @@
           "primitive_sequence": [
             "cudnnOpTensor(ADD)"
           ]
-        },
-        "add_shape_3_32_5_7_int32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "classic CoreX cuDNN reference adapter does not implement this dtype/precision contract; production is checked independently",
-          "primitive_sequence": []
         },
         "add_shape_3_5_32_bf16": {
           "classification": "qualified_supported",
@@ -719,12 +653,6 @@
             "cudnnOpTensor(ADD)"
           ]
         },
-        "add_shape_3_5_32_int32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "classic CoreX cuDNN reference adapter does not implement this dtype/precision contract; production is checked independently",
-          "primitive_sequence": []
-        },
         "add_shape_4_8_16_bf16": {
           "classification": "qualified_supported",
           "reason": "",
@@ -748,12 +676,6 @@
           "primitive_sequence": [
             "cudnnOpTensor(ADD)"
           ]
-        },
-        "add_shape_4_8_16_int32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "classic CoreX cuDNN reference adapter does not implement this dtype/precision contract; production is checked independently",
-          "primitive_sequence": []
         }
       }
     },
@@ -1082,78 +1004,6 @@
             "cudnnOpTensor(ADD)",
             "cudnnOpTensor(MUL,self)"
           ]
-        },
-        "add_square_int32_1x1x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "add_square_int32_1x1x31": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "add_square_int32_1x1x32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "add_square_int32_1x1x33": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "add_square_int32_1x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "add_square_int32_1x3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "add_square_int32_1x4x8x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "add_square_int32_2x3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "add_square_int32_2x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "add_square_int32_2x4x8x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "add_square_int32_2x7x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "add_square_int32_3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
         }
       }
     },
@@ -2172,84 +2022,6 @@
           "reason": "NO_EXACT_CUDNN_PRIMITIVE",
           "detail": "no exact classic CoreX cuDNN primitive or sequence",
           "primitive_sequence": []
-        },
-        "binary_select_int32_1x16x3x5": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "binary_select_int32_1x1x128": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "binary_select_int32_1x1x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "binary_select_int32_1x1x24": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "binary_select_int32_1x1x256": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "binary_select_int32_1x1x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "binary_select_int32_1x8x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "binary_select_int32_2x16x7x9": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "binary_select_int32_2x8x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "binary_select_int32_2x8x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "binary_select_int32_3x32x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "binary_select_int32_3x5x32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "binary_select_strided_fp32_2x3x4": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "no exact classic CoreX cuDNN primitive or sequence",
-          "primitive_sequence": []
         }
       }
     },
@@ -2726,84 +2498,6 @@
           "reason": "NO_EXACT_CUDNN_PRIMITIVE",
           "detail": "no exact classic CoreX cuDNN primitive or sequence",
           "primitive_sequence": []
-        },
-        "cmp_eq_int32_1x16x3x5": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_eq_int32_1x1x128": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_eq_int32_1x1x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_eq_int32_1x1x24": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_eq_int32_1x1x256": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_eq_int32_1x1x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_eq_int32_1x8x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_eq_int32_2x16x7x9": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_eq_int32_2x8x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_eq_int32_2x8x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_eq_int32_3x32x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_eq_int32_3x5x32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_eq_int32_broadcast_padded_2x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
         }
       }
     },
@@ -3023,84 +2717,6 @@
           "classification": "semantic_unsupported",
           "reason": "NO_EXACT_CUDNN_PRIMITIVE",
           "detail": "no exact classic CoreX cuDNN primitive or sequence",
-          "primitive_sequence": []
-        },
-        "cmp_ge_int32_1x16x3x5": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_ge_int32_1x1x128": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_ge_int32_1x1x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_ge_int32_1x1x24": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_ge_int32_1x1x256": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_ge_int32_1x1x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_ge_int32_1x8x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_ge_int32_2x16x7x9": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_ge_int32_2x8x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_ge_int32_2x8x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_ge_int32_3x32x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_ge_int32_3x5x32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_ge_int32_broadcast_padded_2x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
           "primitive_sequence": []
         }
       }
@@ -3322,84 +2938,6 @@
           "reason": "NO_EXACT_CUDNN_PRIMITIVE",
           "detail": "no exact classic CoreX cuDNN primitive or sequence",
           "primitive_sequence": []
-        },
-        "cmp_gt_int32_1x16x3x5": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_gt_int32_1x1x128": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_gt_int32_1x1x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_gt_int32_1x1x24": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_gt_int32_1x1x256": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_gt_int32_1x1x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_gt_int32_1x8x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_gt_int32_2x16x7x9": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_gt_int32_2x8x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_gt_int32_2x8x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_gt_int32_3x32x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_gt_int32_3x5x32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_gt_int32_broadcast_padded_2x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
         }
       }
     },
@@ -3619,84 +3157,6 @@
           "classification": "semantic_unsupported",
           "reason": "NO_EXACT_CUDNN_PRIMITIVE",
           "detail": "no exact classic CoreX cuDNN primitive or sequence",
-          "primitive_sequence": []
-        },
-        "cmp_le_int32_1x16x3x5": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_le_int32_1x1x128": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_le_int32_1x1x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_le_int32_1x1x24": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_le_int32_1x1x256": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_le_int32_1x1x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_le_int32_1x8x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_le_int32_2x16x7x9": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_le_int32_2x8x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_le_int32_2x8x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_le_int32_3x32x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_le_int32_3x5x32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_le_int32_broadcast_padded_2x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
           "primitive_sequence": []
         }
       }
@@ -3918,84 +3378,6 @@
           "reason": "NO_EXACT_CUDNN_PRIMITIVE",
           "detail": "no exact classic CoreX cuDNN primitive or sequence",
           "primitive_sequence": []
-        },
-        "cmp_lt_int32_1x16x3x5": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_lt_int32_1x1x128": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_lt_int32_1x1x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_lt_int32_1x1x24": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_lt_int32_1x1x256": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_lt_int32_1x1x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_lt_int32_1x8x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_lt_int32_2x16x7x9": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_lt_int32_2x8x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_lt_int32_2x8x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_lt_int32_3x32x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_lt_int32_3x5x32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_lt_int32_broadcast_padded_2x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
         }
       }
     },
@@ -4215,84 +3597,6 @@
           "classification": "semantic_unsupported",
           "reason": "NO_EXACT_CUDNN_PRIMITIVE",
           "detail": "no exact classic CoreX cuDNN primitive or sequence",
-          "primitive_sequence": []
-        },
-        "cmp_neq_int32_1x16x3x5": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_neq_int32_1x1x128": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_neq_int32_1x1x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_neq_int32_1x1x24": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_neq_int32_1x1x256": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_neq_int32_1x1x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_neq_int32_1x8x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_neq_int32_2x16x7x9": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_neq_int32_2x8x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_neq_int32_2x8x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_neq_int32_3x32x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_neq_int32_3x5x32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "cmp_neq_int32_broadcast_padded_2x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
           "primitive_sequence": []
         }
       }
@@ -6669,96 +5973,6 @@
           "classification": "semantic_unsupported",
           "reason": "NO_EXACT_CUDNN_PRIMITIVE",
           "detail": "no exact classic CoreX cuDNN primitive or sequence",
-          "primitive_sequence": []
-        },
-        "div_int32_1x1x1023": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "div_int32_1x1x1025": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "div_int32_1x1x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "div_int32_1x1x31": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "div_int32_1x1x32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "div_int32_1x1x33": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "div_int32_1x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "div_int32_1x3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "div_int32_1x4x8x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "div_int32_2x3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "div_int32_2x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "div_int32_2x4x8x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "div_int32_2x7x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "div_int32_3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "div_int32_broadcast_padded_2x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
           "primitive_sequence": []
         }
       }
@@ -11491,12 +10705,6 @@
           "detail": "no exact classic CoreX cuDNN primitive or sequence",
           "primitive_sequence": []
         },
-        "matmul_bfloat16_2x1x17x30_by_3x30x23": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "no exact classic CoreX cuDNN primitive or sequence",
-          "primitive_sequence": []
-        },
         "matmul_bfloat16_2x31x64_by_2x64x33": {
           "classification": "semantic_unsupported",
           "reason": "NO_EXACT_CUDNN_PRIMITIVE",
@@ -11564,12 +10772,6 @@
           "primitive_sequence": []
         },
         "matmul_fp16_1x64x64_by_1x64x64": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "no exact classic CoreX cuDNN primitive or sequence",
-          "primitive_sequence": []
-        },
-        "matmul_fp16_2x1x17x30_by_3x30x23": {
           "classification": "semantic_unsupported",
           "reason": "NO_EXACT_CUDNN_PRIMITIVE",
           "detail": "no exact classic CoreX cuDNN primitive or sequence",
@@ -11738,12 +10940,6 @@
           "primitive_sequence": []
         },
         "matmul_fp32_2x17x40_by_2x40x32_tf32": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "no exact classic CoreX cuDNN primitive or sequence",
-          "primitive_sequence": []
-        },
-        "matmul_fp32_2x1x17x30_by_3x30x23": {
           "classification": "semantic_unsupported",
           "reason": "NO_EXACT_CUDNN_PRIMITIVE",
           "detail": "no exact classic CoreX cuDNN primitive or sequence",
@@ -12208,96 +11404,6 @@
           "primitive_sequence": [
             "cudnnOpTensor(MAX)"
           ]
-        },
-        "max_int32_1x1x1023": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "max_int32_1x1x1025": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "max_int32_1x1x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "max_int32_1x1x31": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "max_int32_1x1x32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "max_int32_1x1x33": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "max_int32_1x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "max_int32_1x3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "max_int32_1x4x8x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "max_int32_2x3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "max_int32_2x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "max_int32_2x4x8x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "max_int32_2x7x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "max_int32_3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "max_int32_broadcast_padded_2x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
         }
       }
     },
@@ -12638,96 +11744,6 @@
           "primitive_sequence": [
             "cudnnOpTensor(MIN)"
           ]
-        },
-        "min_int32_1x1x1023": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "min_int32_1x1x1025": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "min_int32_1x1x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "min_int32_1x1x31": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "min_int32_1x1x32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "min_int32_1x1x33": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "min_int32_1x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "min_int32_1x3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "min_int32_1x4x8x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "min_int32_2x3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "min_int32_2x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "min_int32_2x4x8x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "min_int32_2x7x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "min_int32_3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "min_int32_broadcast_padded_2x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
         }
       }
     },
@@ -13003,97 +12019,7 @@
           "detail": "no exact classic CoreX cuDNN primitive or sequence",
           "primitive_sequence": []
         },
-        "mod_int32_1x1x1023": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mod_int32_1x1x1025": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mod_int32_1x1x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mod_int32_1x1x31": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mod_int32_1x1x32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mod_int32_1x1x33": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
         "mod_int32_1x1x6_signed": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mod_int32_1x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mod_int32_1x3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mod_int32_1x4x8x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mod_int32_2x3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mod_int32_2x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mod_int32_2x4x8x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mod_int32_2x7x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mod_int32_3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mod_int32_broadcast_padded_2x3x17": {
           "classification": "semantic_unsupported",
           "reason": "DTYPE_UNSUPPORTED",
           "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
@@ -13438,96 +12364,6 @@
           "primitive_sequence": [
             "cudnnOpTensor(MUL)"
           ]
-        },
-        "mul_int32_1x1x1023": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mul_int32_1x1x1025": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mul_int32_1x1x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mul_int32_1x1x31": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mul_int32_1x1x32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mul_int32_1x1x33": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mul_int32_1x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mul_int32_1x3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mul_int32_1x4x8x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mul_int32_2x3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mul_int32_2x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mul_int32_2x4x8x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mul_int32_2x7x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mul_int32_3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "mul_int32_broadcast_padded_2x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
         }
       }
     },
@@ -14363,22 +13199,6 @@
     },
     "reduction": {
       "cases": {
-        "reduction_avg_bfloat16_axis1_keepdim_2x4x8x8": {
-          "classification": "vendor_unsupported",
-          "reason": "CUDNN_STATUS_NOT_SUPPORTED",
-          "detail": "CoreX cuDNN 7.6.5 reports functionality not presently supported for BF16 ReduceTensor",
-          "primitive_sequence": [
-            "cudnnReduceTensor"
-          ]
-        },
-        "reduction_avg_bfloat16_channels_last_axis1_keepdim_2x3x5x5": {
-          "classification": "vendor_unsupported",
-          "reason": "CUDNN_STATUS_NOT_SUPPORTED",
-          "detail": "CoreX cuDNN 7.6.5 reports functionality not presently supported for BF16 ReduceTensor",
-          "primitive_sequence": [
-            "cudnnReduceTensor"
-          ]
-        },
         "reduction_avg_fp16_axis1_1x32x32x16": {
           "classification": "qualified_supported",
           "reason": "",
@@ -14747,20 +13567,6 @@
           "detail": "classic CoreX cuDNN reference adapter does not implement this dtype/precision contract; production is checked independently",
           "primitive_sequence": []
         },
-        "reduction_mul_bfloat16_axis1_keepdim_2x4x8x8": {
-          "classification": "vendor_unsupported",
-          "reason": "CUDNN_STATUS_NOT_SUPPORTED",
-          "detail": "CoreX cuDNN 7.6.5 reports functionality not presently supported for BF16 ReduceTensor",
-          "primitive_sequence": [
-            "cudnnReduceTensor"
-          ]
-        },
-        "reduction_mul_bfloat16_channels_last_axis1_keepdim_2x3x5x5": {
-          "classification": "semantic_unsupported",
-          "reason": "SEMANTIC_MISMATCH",
-          "detail": "CoreX cuDNN 7.6.5 ReduceTensor MUL returns incorrect zeros for channels-last strides",
-          "primitive_sequence": []
-        },
         "reduction_mul_fp16_axis1_1x32x32x16": {
           "classification": "qualified_supported",
           "reason": "",
@@ -15125,22 +13931,6 @@
           "detail": "classic CoreX cuDNN reference adapter does not implement this dtype/precision contract; production is checked independently",
           "primitive_sequence": []
         },
-        "reduction_sum_bfloat16_axis1_keepdim_2x4x8x8": {
-          "classification": "vendor_unsupported",
-          "reason": "CUDNN_STATUS_NOT_SUPPORTED",
-          "detail": "CoreX cuDNN 7.6.5 reports functionality not presently supported for BF16 ReduceTensor",
-          "primitive_sequence": [
-            "cudnnReduceTensor"
-          ]
-        },
-        "reduction_sum_bfloat16_channels_last_axis1_keepdim_2x3x5x5": {
-          "classification": "vendor_unsupported",
-          "reason": "CUDNN_STATUS_NOT_SUPPORTED",
-          "detail": "CoreX cuDNN 7.6.5 reports functionality not presently supported for BF16 ReduceTensor",
-          "primitive_sequence": [
-            "cudnnReduceTensor"
-          ]
-        },
         "reduction_sum_bfloat16_to_fp32_16_32": {
           "classification": "semantic_unsupported",
           "reason": "DTYPE_UNSUPPORTED",
@@ -15235,12 +14025,6 @@
           "classification": "semantic_unsupported",
           "reason": "DTYPE_UNSUPPORTED",
           "detail": "classic CoreX cuDNN reference adapter does not implement this dtype/precision contract; production is checked independently",
-          "primitive_sequence": []
-        },
-        "reduction_sum_bfloat16_unaligned_input_entrance_axis1_2x4x8x8": {
-          "classification": "semantic_unsupported",
-          "reason": "SEMANTIC_MISMATCH",
-          "detail": "CoreX cuDNN 7.6.5 ReduceTensor ignores padded input strides for this unaligned entrance case",
           "primitive_sequence": []
         },
         "reduction_sum_fp16_axis1_1x32x32x16": {
@@ -17684,96 +16468,6 @@
           "primitive_sequence": [
             "cudnnOpTensor(MUL)"
           ]
-        },
-        "scale_int32_1x1x1023": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "scale_int32_1x1x1025": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "scale_int32_1x1x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "scale_int32_1x1x31": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "scale_int32_1x1x32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "scale_int32_1x1x33": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "scale_int32_1x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "scale_int32_1x3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "scale_int32_1x4x8x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "scale_int32_2x3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "scale_int32_2x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "scale_int32_2x4x8x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "scale_int32_2x7x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "scale_int32_3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "scale_int32_broadcast_padded_2x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
         }
       }
     },
@@ -17924,78 +16618,6 @@
           "primitive_sequence": []
         },
         "sdpa_coverage_fp16_2_4_2_48_64_64": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_coverage_fp32_1_1_1_16_16_32": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_coverage_fp32_1_2_2_24_32_32": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_coverage_fp32_1_2_2_32_48_64": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_coverage_fp32_1_2_2_64_64_64": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_coverage_fp32_1_2_2_80_96_128": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_coverage_fp32_1_4_2_112_128_64": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_coverage_fp32_1_4_2_48_48_64": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_coverage_fp32_1_4_4_96_96_64": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_coverage_fp32_1_8_2_128_128_64": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_coverage_fp32_2_2_2_32_32_64": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_coverage_fp32_2_2_2_64_80_128": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_coverage_fp32_2_4_2_48_64_64": {
           "classification": "semantic_unsupported",
           "reason": "NO_EXACT_CUDNN_PRIMITIVE",
           "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
@@ -18179,90 +16801,6 @@
           "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
           "primitive_sequence": []
         },
-        "sdpa_backward_coverage_fp32_1_1_1_16_16_32": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_backward_coverage_fp32_1_2_2_24_32_32": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_backward_coverage_fp32_1_2_2_32_48_64": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_backward_coverage_fp32_1_2_2_64_64_64": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_backward_coverage_fp32_1_2_2_80_96_128": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_backward_coverage_fp32_1_2_2_80_96_128_autotune": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_backward_coverage_fp32_1_4_2_112_128_64": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_backward_coverage_fp32_1_4_2_48_48_64": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_backward_coverage_fp32_1_4_4_96_96_64": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_backward_coverage_fp32_1_8_2_128_128_64": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_backward_coverage_fp32_1_8_2_128_128_64_autotune": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_backward_coverage_fp32_2_2_2_32_32_64": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_backward_coverage_fp32_2_2_2_64_80_128": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_backward_coverage_fp32_2_4_2_48_64_64": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
         "sdpa_backward_dimension_mismatch_bfloat16_q32_v64": {
           "classification": "semantic_unsupported",
           "reason": "NO_EXACT_CUDNN_PRIMITIVE",
@@ -18300,18 +16838,6 @@
           "primitive_sequence": []
         },
         "sdpa_backward_fp16_different_value_dimension": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_backward_fp32_different_value_dimension": {
-          "classification": "semantic_unsupported",
-          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
-          "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
-          "primitive_sequence": []
-        },
-        "sdpa_backward_fp32_different_value_dimension_autotune": {
           "classification": "semantic_unsupported",
           "reason": "NO_EXACT_CUDNN_PRIMITIVE",
           "detail": "CoreX libcudnn.so.7 exports no Flash Attention entry points",
@@ -21417,97 +19943,7 @@
             "cudnnOpTensor(ADD,alpha2=-alpha)"
           ]
         },
-        "sub_int32_1x1x1023": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "sub_int32_1x1x1025": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "sub_int32_1x1x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "sub_int32_1x1x31": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "sub_int32_1x1x32": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "sub_int32_1x1x33": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "sub_int32_1x3x17": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "sub_int32_1x3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "sub_int32_1x4x8x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "sub_int32_2x3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "sub_int32_2x4x8": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
         "sub_int32_2x4x8_alpha_neg2": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "sub_int32_2x4x8x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "sub_int32_2x7x16": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "sub_int32_3x5x7": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
-        },
-        "sub_int32_broadcast_padded_2x3x17": {
           "classification": "semantic_unsupported",
           "reason": "DTYPE_UNSUPPORTED",
           "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",

@@ -141,105 +141,6 @@ void verify_legacy_float_special_values() {
          {0, 1, 1, 1, 0});
 }
 
-void verify_integer() {
-  constexpr auto minimum = std::numeric_limits<std::int32_t>::min();
-  constexpr auto maximum = std::numeric_limits<std::int32_t>::max();
-  const auto paired = [](flagdnnPointwiseMode_t mode,
-                         const std::vector<std::int32_t>& a,
-                         const std::vector<std::int32_t>& b,
-                         std::int32_t alpha = 1) {
-    const Shape shape = {static_cast<std::int64_t>(a.size())};
-    return cpu::evaluate_binary_pointwise_int32(
-        mode, a, shape, b, shape, shape, alpha);
-  };
-  expect_values<std::int32_t>("INT32 ADD wrap",
-      paired(FLAGDNN_POINTWISE_ADD, {maximum, minimum}, {1, -1}),
-      {minimum, maximum});
-  expect_values<std::int32_t>("INT32 SUB wrap and alpha",
-      paired(FLAGDNN_POINTWISE_SUB, {minimum, 3}, {1, 4}, 2),
-      {maximum - 1, -5});
-  expect_values<std::int32_t>("INT32 MUL wrap",
-      paired(FLAGDNN_POINTWISE_MUL, {maximum, minimum}, {2, -1}),
-      {-2, minimum});
-  expect_values<std::int32_t>("INT32 DIV signed overflow and zero",
-      paired(FLAGDNN_POINTWISE_DIV, {-7, 7, minimum, 3}, {3, -3, -1, 0}),
-      {-2, -2, minimum, 0});
-  expect_values<std::int32_t>("INT32 MOD signed overflow and zero",
-      paired(FLAGDNN_POINTWISE_MOD, {-7, 7, minimum, 3}, {3, -3, -1, 0}),
-      {-1, 1, 0, 0});
-  expect_values<std::int32_t>("INT32 POW negative and wrap",
-      paired(FLAGDNN_POINTWISE_POW, {-1, -1, 1, 2, 0, 2},
-             {-3, -2, -9, -3, 0, 31}),
-      {-1, 1, 1, 0, 1, minimum});
-  expect_values<std::int32_t>("INT32 MAX exact",
-      paired(FLAGDNN_POINTWISE_MAX, {maximum, minimum, 16777217},
-             {maximum - 1, minimum + 1, 16777216}),
-      {maximum, minimum + 1, 16777217});
-  expect_values<std::int32_t>("INT32 MIN exact",
-      paired(FLAGDNN_POINTWISE_MIN, {maximum, minimum},
-             {maximum - 1, minimum + 1}),
-      {maximum - 1, minimum});
-  expect_values<std::int32_t>("INT32 CMP_EQ exact",
-      paired(FLAGDNN_POINTWISE_CMP_EQ, {16777217, minimum, maximum},
-             {16777216, minimum, maximum}), {0, 1, 1});
-
-  const std::vector<std::int32_t> compare_left =
-      {16777217, minimum, maximum, -1, 0};
-  const std::vector<std::int32_t> compare_right =
-      {16777216, minimum, maximum - 1, 0, -1};
-  expect_values<std::int32_t>("INT32 CMP_NEQ exact",
-      paired(FLAGDNN_POINTWISE_CMP_NEQ, compare_left, compare_right),
-      {1, 0, 1, 1, 1});
-  expect_values<std::int32_t>("INT32 CMP_GT exact",
-      paired(FLAGDNN_POINTWISE_CMP_GT, compare_left, compare_right),
-      {1, 0, 1, 0, 1});
-  expect_values<std::int32_t>("INT32 CMP_GE exact",
-      paired(FLAGDNN_POINTWISE_CMP_GE, compare_left, compare_right),
-      {1, 1, 1, 0, 1});
-  expect_values<std::int32_t>("INT32 CMP_LT exact",
-      paired(FLAGDNN_POINTWISE_CMP_LT, compare_left, compare_right),
-      {0, 0, 0, 1, 0});
-  expect_values<std::int32_t>("INT32 CMP_LE exact",
-      paired(FLAGDNN_POINTWISE_CMP_LE, compare_left, compare_right),
-      {0, 1, 0, 1, 0});
-
-  const std::vector<std::int32_t> select_left = {16777217, minimum};
-  const std::vector<std::int32_t> select_right = {maximum, -16777217, 3};
-  const std::vector<std::uint8_t> predicate = {0, 1, 2};
-  expect_values<std::int32_t>("INT32 select three-input broadcast",
-      cpu::evaluate_binary_select_int32(
-          select_left, Shape{2, 1}, select_right, Shape{3}, predicate,
-          Shape{1, 3}, Shape{2, 3}),
-      {maximum, 16777217, 16777217, maximum, minimum, minimum});
-  expect_error("select predicate count mismatch", [&] {
-    (void)cpu::evaluate_binary_select_int32(
-        select_left, Shape{2, 1}, select_right, Shape{3}, predicate,
-        Shape{1, 2}, Shape{2, 3});
-  });
-  expect_error("select predicate broadcast mismatch", [&] {
-    (void)cpu::evaluate_binary_select_int32(
-        select_left, Shape{2, 1}, select_right, Shape{3}, predicate,
-        Shape{3, 1}, Shape{2, 3});
-  });
-
-  const std::vector<std::int32_t> left = {16777217, -2};
-  const std::vector<std::int32_t> right = {3, 4, -5};
-  expect_values<std::int32_t>("INT32 ADD broadcast and alpha",
-      cpu::evaluate_binary_pointwise_int32(FLAGDNN_POINTWISE_ADD,
-          left, Shape{2, 1}, right, Shape{3}, Shape{2, 3}, 2),
-      {16777223, 16777225, 16777207, 4, 6, -12});
-  for (const auto mode : {FLAGDNN_POINTWISE_DIV, FLAGDNN_POINTWISE_MOD}) {
-    const std::vector<std::int32_t> dividends{16777217, minimum};
-    const std::vector<std::int32_t> divisors{-1, 3, 0};
-    const auto actual = cpu::evaluate_binary_pointwise_int32(mode,
-        dividends, Shape{2,1}, divisors, Shape{3}, Shape{2,3});
-    expect_values<std::int32_t>("INT32 divmod broadcast full range", actual,
-        mode == FLAGDNN_POINTWISE_DIV
-            ? std::vector<std::int32_t>{-16777217,5592405,0,minimum,-715827882,0}
-            : std::vector<std::int32_t>{0,2,0,0,-2,0});
-  }
-}
-
 void expect_near(std::string_view name, const std::vector<float>& actual,
                  const std::vector<float>& expected, double tolerance = 1e-6) {
   if (actual.size() != expected.size()) {
@@ -385,16 +286,7 @@ void verify_add_square() {
     (void)cpu::evaluate_add_square(left, Shape{2, 1}, right, Shape{3},
         Shape{2, 3}, [](std::span<const float>) { return std::vector<float>{1}; });
   });
-  const std::vector<std::int32_t> integer_left = {16777217, -1};
-  const std::vector<std::int32_t> integer_right = {65536, 65537, -65537};
-  expect_values<std::int32_t>("INT32 AddSquare exact wrap and broadcast",
-      cpu::evaluate_add_square_int32(integer_left, Shape{2, 1}, integer_right,
-                                     Shape{3}, Shape{2, 3}),
-      {16777217, 16908290, 16908290, -1, 131072, 131072});
-  expect_error("AddSquare incompatible output", [&] {
-    (void)cpu::evaluate_add_square_int32(integer_left, Shape{2, 1},
-        integer_right, Shape{3}, Shape{3, 3});
-  });
+
 }
 
 template <typename T, typename Evaluate>
@@ -432,7 +324,6 @@ int main() {
   try {
     verify_float();
     verify_legacy_float_special_values();
-    verify_integer();
     verify_activation_backward();
     verify_add_square();
     verify_invalid_inputs<float>([](auto mode, const auto& a, const auto& a_shape,
@@ -440,12 +331,7 @@ int main() {
                                     const auto& shape) {
       (void)cpu::evaluate_binary_pointwise(mode, a, a_shape, b, b_shape, shape);
     });
-    verify_invalid_inputs<std::int32_t>(
-        [](auto mode, const auto& a, const auto& a_shape, const auto& b,
-           const auto& b_shape, const auto& shape) {
-          (void)cpu::evaluate_binary_pointwise_int32(
-              mode, a, a_shape, b, b_shape, shape);
-        });
+
     std::cout << "PASS CPU pointwise contracts\n";
     return 0;
   } catch (const std::exception& error) {

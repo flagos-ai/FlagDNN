@@ -388,28 +388,6 @@ Accuracy run_case(const PointwiseTestCase& test_case,
                  test_case);
 }
 
-std::size_t broadcast_offset(std::size_t logical_index,
-                             const TestTensor& input,
-                             const TestTensor& output) {
-  const std::size_t leading =
-      output.dimensions.size() - input.dimensions.size();
-  std::size_t offset = 0;
-  for (std::size_t axis = output.dimensions.size(); axis != 0; --axis) {
-    const auto dimension =
-        static_cast<std::size_t>(output.dimensions[axis - 1]);
-    const std::size_t coordinate = logical_index % dimension;
-    logical_index /= dimension;
-    if (axis - 1 >= leading) {
-      const std::size_t input_axis = axis - 1 - leading;
-      if (input.dimensions[input_axis] != 1) {
-        offset += coordinate *
-                  static_cast<std::size_t>(input.strides[input_axis]);
-      }
-    }
-  }
-  return offset;
-}
-
 bool supports_cpu_reference(const PointwiseTestCase& test_case) {
   if (test_case.inputs.size() != 2) return false;
   const auto data_type = test_case.output.data_type;
@@ -417,9 +395,7 @@ bool supports_cpu_reference(const PointwiseTestCase& test_case) {
       test_case.inputs[1].data_type != data_type) {
     return false;
   }
-  return (test_case.mode == FLAGDNN_POINTWISE_POW &&
-          data_type == FLAGDNN_DATA_INT32) ||
-         (reference::cpu::supports_activation_backward(test_case.mode) &&
+  return (reference::cpu::supports_activation_backward(test_case.mode) &&
           (data_type == FLAGDNN_DATA_FLOAT32 || data_type == FLAGDNN_DATA_FLOAT16 ||
            data_type == FLAGDNN_DATA_BFLOAT16));
 }
@@ -440,44 +416,21 @@ Accuracy run_cpu_reference_case(const PointwiseTestCase& test_case,
   PreparedExecution state = prepare_execution(
       test_case, logical_inputs, *production, stream);
 
-  const bool integer = test_case.output.data_type == FLAGDNN_DATA_INT32;
-  std::vector<std::uint8_t> expected_bytes;
   std::vector<float> expected_values;
-  if (integer) {
-    // Read encoded GPU inputs as integers. Neither the integer oracle nor
-    // its comparison passes through float, which would lose bits above 2^24.
-    expected_bytes = state.output.bytes;
-    const auto output_offsets = io::logical_offsets(test_case.output);
-    for (std::size_t index = 0; index < output_offsets.size(); ++index) {
-      std::array<std::int32_t, 2> operands;
-      for (std::size_t input = 0; input < operands.size(); ++input) {
-        const auto offset = broadcast_offset(
-            index, test_case.inputs[input], test_case.output);
-        std::memcpy(&operands[input],
-                    state.inputs[input].bytes.data() +
-                        offset * sizeof(std::int32_t),
-                    sizeof(std::int32_t));
-      }
-      const auto value = reference::cpu::pointwise_integer_reference(
-          test_case.mode, operands[0], operands[1], false, 1);
-      std::memcpy(expected_bytes.data() + output_offsets[index] * sizeof(value),
-                  &value, sizeof(value));
-    }
-  } else {
-    std::array<std::vector<float>, 2> quantized_inputs;
-    for (std::size_t index = 0; index < quantized_inputs.size(); ++index) {
-      quantized_inputs[index] = io::gather(
-          io::decode(state.inputs[index].bytes,
-                     test_case.inputs[index].data_type),
-          test_case.inputs[index]);
-    }
-    const auto expected = reference::cpu::evaluate_activation_backward(
-        test_case.mode, quantized_inputs[0], quantized_inputs[1],
-        mv::normalize_frontend_pointwise_attributes(test_case.attributes));
-    expected_values = io::decode(
-        io::encode(expected, test_case.output.data_type),
-        test_case.output.data_type);
+
+  std::array<std::vector<float>, 2> quantized_inputs;
+  for (std::size_t index = 0; index < quantized_inputs.size(); ++index) {
+    quantized_inputs[index] = io::gather(
+        io::decode(state.inputs[index].bytes,
+                   test_case.inputs[index].data_type),
+        test_case.inputs[index]);
   }
+  const auto expected = reference::cpu::evaluate_activation_backward(
+      test_case.mode, quantized_inputs[0], quantized_inputs[1],
+      mv::normalize_frontend_pointwise_attributes(test_case.attributes));
+  expected_values = io::decode(
+      io::encode(expected, test_case.output.data_type),
+      test_case.output.data_type);
 
   Accuracy accuracy;
   const auto verify = [&] {
@@ -496,12 +449,7 @@ Accuracy run_cpu_reference_case(const PointwiseTestCase& test_case,
     }
     io::require_padding_unchanged("FlagDNN pointwise", observed_output,
                                   test_case.output);
-    if (integer) {
-      io::require_bytes_equal(test_case.name + " FlagDNN vs CPU INT32 output",
-                              observed_output, expected_bytes);
-      accuracy = {};
-      return;
-    }
+
     accuracy = compare(
         io::gather(io::decode(observed_output, test_case.output.data_type),
                    test_case.output),
@@ -513,25 +461,15 @@ Accuracy run_cpu_reference_case(const PointwiseTestCase& test_case,
   // CPU reference calculation and readback stay outside GPU timing.
   if (mv::benchmark_enabled()) {
     std::vector<std::uint8_t> reset_bytes;
-    if (integer) {
-      reset_bytes = expected_bytes;
-      for (const auto offset : io::logical_offsets(test_case.output)) {
-        std::uint32_t value;
-        std::memcpy(&value, reset_bytes.data() + offset * sizeof(value),
-                    sizeof(value));
-        value ^= 1U;  // Every logical output differs from its expected value.
-        std::memcpy(reset_bytes.data() + offset * sizeof(value), &value,
-                    sizeof(value));
-      }
-    } else {
-      std::vector<float> reset_values;
-      reset_values.reserve(expected_values.size());
-      for (const float value : expected_values) {
-        reset_values.push_back(value >= 0.0F ? -1.0F : 1.0F);
-      }
-      reset_bytes = io::encode(io::scatter(reset_values, test_case.output),
-                               test_case.output.data_type);
+
+    std::vector<float> reset_values;
+    reset_values.reserve(expected_values.size());
+    for (const float value : expected_values) {
+      reset_values.push_back(value >= 0.0F ? -1.0F : 1.0F);
     }
+    reset_bytes = io::encode(io::scatter(reset_values, test_case.output),
+                             test_case.output.data_type);
+
     const auto reset_outputs = [&] {
       state.output.device->copy_from_host_at(
           reset_bytes.data(), reset_bytes.size(),

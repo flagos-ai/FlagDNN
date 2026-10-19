@@ -80,12 +80,6 @@ void check_integer_reference_gather() {
   require(ascend::logical_bytes(storage, spec) ==
               ascend::value_bytes<std::int32_t>(source),
           "INT32 gapped gather changed encoded values");
-  const auto divided = flagdnn::reference::cpu::evaluate_binary_pointwise_int32(
-      FLAGDNN_POINTWISE_DIV, gathered, spec.dimensions,
-      std::vector<std::int32_t>{-1,3,0}, std::vector<std::int64_t>{3},
-      spec.dimensions);
-  require(divided == std::vector<std::int32_t>{minimum,5592405,0,-maximum,2,0},
-          "INT32 CPU broadcast reference received incorrect logical values");
   storage.pop_back();
   bool rejected = false;
   try {

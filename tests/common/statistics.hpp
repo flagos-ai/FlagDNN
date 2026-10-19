@@ -10,12 +10,11 @@
 namespace flagdnn::testing {
 struct StatisticsTestCase {
   std::string name;
-  std::string operation = "genstats";
+  std::string operation = "bn_finalize";
   std::vector<TestTensor> inputs;
   std::vector<TestTensor> outputs;
   double epsilon = 1.0e-5, accum_count = 17.0, momentum = 0.1;
 };
-[[nodiscard]] std::vector<StatisticsTestCase> make_genstats_cases();
 [[nodiscard]] std::vector<StatisticsTestCase> make_bn_finalize_cases();
 float statistics_input_value(const StatisticsTestCase& test_case,
                              std::size_t input, std::size_t index);

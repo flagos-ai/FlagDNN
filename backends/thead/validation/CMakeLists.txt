@@ -101,8 +101,6 @@ else()
     "${PROJECT_SOURCE_DIR}/tests/common/normalization_extended.cpp"
     "${PROJECT_SOURCE_DIR}/tests/common/resample.cpp"
     "${PROJECT_SOURCE_DIR}/tests/common/index.cpp"
-    "${PROJECT_SOURCE_DIR}/tests/common/position_embedding.cpp"
-    "${PROJECT_SOURCE_DIR}/tests/common/random.cpp"
     "${PROJECT_SOURCE_DIR}/tests/common/causal_convolution.cpp"
     "${PROJECT_SOURCE_DIR}/tests/common/fp8_matmul.cpp"
     "${PROJECT_SOURCE_DIR}/tests/common/moe_matmul.cpp")
@@ -152,7 +150,7 @@ else()
 endif()
 flagdnn_enable_warnings(flagdnn_test_thead_adapter)
 
-set(_flagdnn_thead_extended_supported batchnorm_backward genstats bn_finalize resample concatenate gen_index)
+set(_flagdnn_thead_extended_supported batchnorm_backward bn_finalize resample concatenate gen_index)
 set(_flagdnn_thead_unsupported ${FLAGDNN_EXTENDED_OPERATORS})
 list(REMOVE_ITEM _flagdnn_thead_unsupported ${_flagdnn_thead_extended_supported})
 
@@ -1093,7 +1091,7 @@ if(FLAGDNN_BUILD_BENCHMARKS)
 
   include("${PROJECT_SOURCE_DIR}/cmake/Operators.cmake")
   set(_flagdnn_thead_benchmark_operators ${FLAGDNN_BENCHMARK_OPERATORS}
-    batchnorm_backward genstats bn_finalize resample concatenate gen_index
+    batchnorm_backward bn_finalize resample concatenate gen_index
     sdpa sdpa_backward sdpa_fp8 sdpa_fp8_backward)
   flagdnn_register_benchmark_suite(
     PLATFORM thead

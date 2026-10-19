@@ -16,9 +16,6 @@ int run_native_benchmark_test(int argc, char** argv,
   if (operation == "bn_finalize")
     return run_statistics_functional_test(argc, argv, make_bn_finalize_cases(),
                                           true);
-  if (operation == "genstats")
-    return run_statistics_functional_test(argc, argv, make_genstats_cases(),
-                                          true);
   if (operation == "resample")
     return run_resample_functional_test(argc, argv, make_resample_cases(),
                                         true);

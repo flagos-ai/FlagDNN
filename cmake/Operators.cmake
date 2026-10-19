@@ -78,13 +78,9 @@ set(FLAGDNN_BENCHMARK_OPERATORS
 # adapter or an explicit capability gate.
 set(FLAGDNN_EXTENDED_OPERATORS
   moe_grouped_matmul
-  moe_grouped_matmul_bwd
   matmul_fp8
   causal_conv1d
   resample
-  rng
-  rope
-  rope_backward
   bn_finalize
   instancenorm
   adalayernorm
@@ -94,8 +90,7 @@ set(FLAGDNN_EXTENDED_OPERATORS
   rmsnorm_backward
   batchnorm_backward
   concatenate
-  gen_index
-  genstats)
+  gen_index)
 
 set(FLAGDNN_FUNCTIONAL_OPERATORS
   ${FLAGDNN_EXTENDED_OPERATORS}

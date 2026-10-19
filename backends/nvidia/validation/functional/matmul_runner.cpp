@@ -225,7 +225,6 @@ int run_matmul_functional_test(int argc, char** argv,
           test_case.name.find(filter) == std::string::npos) {
         continue;
       }
-      if (test_case.output.dimensions.size() > 3) continue;
       run_graph_case(test_case, handle, stream);
       ++executed;
     }

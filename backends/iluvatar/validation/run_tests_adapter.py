@@ -22,9 +22,7 @@ SUPPORTS_MIN_SPEEDUP = True
 FILTER_REGISTERED_TESTS = False
 
 
-UNSUPPORTED_OPERATORS = frozenset(
-    {"moe_grouped_matmul", "moe_grouped_matmul_bwd", "matmul_fp8"}
-)
+UNSUPPORTED_OPERATORS = frozenset({"moe_grouped_matmul", "matmul_fp8"})
 
 
 def select_operator_manifests(manifests):

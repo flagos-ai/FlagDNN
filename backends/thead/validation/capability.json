@@ -1284,58 +1284,45 @@
       "case_names": [
         "add_alpha_half_fp32",
         "add_alpha_negative_bf16",
-        "add_broadcast_integer_int32",
         "add_contiguous_autotune_fp32",
         "add_nhwc_layout_bf16",
         "add_odd_extent_fp16",
         "add_shape_1_1_31_bf16",
         "add_shape_1_1_31_fp16",
         "add_shape_1_1_31_fp32",
-        "add_shape_1_1_31_int32",
         "add_shape_1_1_32_bf16",
         "add_shape_1_1_32_fp16",
         "add_shape_1_1_32_fp32",
-        "add_shape_1_1_32_int32",
         "add_shape_1_1_33_bf16",
         "add_shape_1_1_33_fp16",
         "add_shape_1_1_33_fp32",
-        "add_shape_1_1_33_int32",
         "add_shape_1_1_8_bf16",
         "add_shape_1_1_8_fp16",
         "add_shape_1_1_8_fp32",
-        "add_shape_1_1_8_int32",
         "add_shape_1_8_3_5_bf16",
         "add_shape_1_8_3_5_fp16",
         "add_shape_1_8_3_5_fp32",
-        "add_shape_1_8_3_5_int32",
         "add_shape_2_16_7_9_bf16",
         "add_shape_2_16_7_9_fp16",
         "add_shape_2_16_7_9_fp32",
-        "add_shape_2_16_7_9_int32",
         "add_shape_2_3_16_bf16",
         "add_shape_2_3_16_fp16",
         "add_shape_2_3_16_fp32",
-        "add_shape_2_3_16_int32",
         "add_shape_2_4_17_bf16",
         "add_shape_2_4_17_fp16",
         "add_shape_2_4_17_fp32",
-        "add_shape_2_4_17_int32",
         "add_shape_2_8_16_16_bf16",
         "add_shape_2_8_16_16_fp16",
         "add_shape_2_8_16_16_fp32",
-        "add_shape_2_8_16_16_int32",
         "add_shape_3_32_5_7_bf16",
         "add_shape_3_32_5_7_fp16",
         "add_shape_3_32_5_7_fp32",
-        "add_shape_3_32_5_7_int32",
         "add_shape_3_5_32_bf16",
         "add_shape_3_5_32_fp16",
         "add_shape_3_5_32_fp32",
-        "add_shape_3_5_32_int32",
         "add_shape_4_8_16_bf16",
         "add_shape_4_8_16_fp16",
-        "add_shape_4_8_16_fp32",
-        "add_shape_4_8_16_int32"
+        "add_shape_4_8_16_fp32"
       ],
       "default": {
         "constraints": null,
@@ -2861,19 +2848,7 @@
         "add_square_fp32_2x4x8",
         "add_square_fp32_2x4x8x16",
         "add_square_fp32_2x7x16",
-        "add_square_fp32_3x5x7",
-        "add_square_int32_1x1x16",
-        "add_square_int32_1x1x31",
-        "add_square_int32_1x1x32",
-        "add_square_int32_1x1x33",
-        "add_square_int32_1x3x17",
-        "add_square_int32_1x3x5x7",
-        "add_square_int32_1x4x8x16",
-        "add_square_int32_2x3x5x7",
-        "add_square_int32_2x4x8",
-        "add_square_int32_2x4x8x16",
-        "add_square_int32_2x7x16",
-        "add_square_int32_3x5x7"
+        "add_square_fp32_3x5x7"
       ],
       "default": {
         "constraints": null,
@@ -8046,20 +8021,7 @@
         "binary_select_fp32_2x8x4x8",
         "binary_select_fp32_2x8x8",
         "binary_select_fp32_3x32x5x7",
-        "binary_select_fp32_3x5x32",
-        "binary_select_int32_1x16x3x5",
-        "binary_select_int32_1x1x128",
-        "binary_select_int32_1x1x16",
-        "binary_select_int32_1x1x24",
-        "binary_select_int32_1x1x256",
-        "binary_select_int32_1x1x8",
-        "binary_select_int32_1x8x4x8",
-        "binary_select_int32_2x16x7x9",
-        "binary_select_int32_2x8x4x8",
-        "binary_select_int32_2x8x8",
-        "binary_select_int32_3x32x5x7",
-        "binary_select_int32_3x5x32",
-        "binary_select_strided_fp32_2x3x4"
+        "binary_select_fp32_3x5x32"
       ],
       "default": {
         "constraints": null,
@@ -9581,45 +9543,6 @@
           },
           "reason_code": "",
           "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "binary_select_strided_fp32_2x3x4": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-fp32)",
-            "acdnnTransformTensor(layout-if-needed)",
-            "acdnnBackendExecute(POINTWISE_MUL,SUB,ADD,select-DAG)",
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "fp32"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 1,
-              "max": 8
-            },
-            "shape": [
-              "same_shape",
-              "positive_extents"
-            ],
-            "layouts": [
-              "explicit_strided"
-            ],
-            "stride_policy": "explicit_strides",
-            "broadcast": "none",
-            "attributes": {
-              "autotune": [
-                "true"
-              ],
-              "reference_input_domain": [
-                "finite"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
         }
       }
     },
@@ -10929,20 +10852,7 @@
         "cmp_eq_fp32_2x8x4x8",
         "cmp_eq_fp32_2x8x8",
         "cmp_eq_fp32_3x32x5x7",
-        "cmp_eq_fp32_3x5x32",
-        "cmp_eq_int32_1x16x3x5",
-        "cmp_eq_int32_1x1x128",
-        "cmp_eq_int32_1x1x16",
-        "cmp_eq_int32_1x1x24",
-        "cmp_eq_int32_1x1x256",
-        "cmp_eq_int32_1x1x8",
-        "cmp_eq_int32_1x8x4x8",
-        "cmp_eq_int32_2x16x7x9",
-        "cmp_eq_int32_2x8x4x8",
-        "cmp_eq_int32_2x8x8",
-        "cmp_eq_int32_3x32x5x7",
-        "cmp_eq_int32_3x5x32",
-        "cmp_eq_int32_broadcast_padded_2x3x17"
+        "cmp_eq_fp32_3x5x32"
       ],
       "default": {
         "constraints": null,
@@ -12288,20 +12198,7 @@
         "cmp_ge_fp32_2x8x4x8",
         "cmp_ge_fp32_2x8x8",
         "cmp_ge_fp32_3x32x5x7",
-        "cmp_ge_fp32_3x5x32",
-        "cmp_ge_int32_1x16x3x5",
-        "cmp_ge_int32_1x1x128",
-        "cmp_ge_int32_1x1x16",
-        "cmp_ge_int32_1x1x24",
-        "cmp_ge_int32_1x1x256",
-        "cmp_ge_int32_1x1x8",
-        "cmp_ge_int32_1x8x4x8",
-        "cmp_ge_int32_2x16x7x9",
-        "cmp_ge_int32_2x8x4x8",
-        "cmp_ge_int32_2x8x8",
-        "cmp_ge_int32_3x32x5x7",
-        "cmp_ge_int32_3x5x32",
-        "cmp_ge_int32_broadcast_padded_2x3x17"
+        "cmp_ge_fp32_3x5x32"
       ],
       "default": {
         "constraints": null,
@@ -13647,20 +13544,7 @@
         "cmp_gt_fp32_2x8x4x8",
         "cmp_gt_fp32_2x8x8",
         "cmp_gt_fp32_3x32x5x7",
-        "cmp_gt_fp32_3x5x32",
-        "cmp_gt_int32_1x16x3x5",
-        "cmp_gt_int32_1x1x128",
-        "cmp_gt_int32_1x1x16",
-        "cmp_gt_int32_1x1x24",
-        "cmp_gt_int32_1x1x256",
-        "cmp_gt_int32_1x1x8",
-        "cmp_gt_int32_1x8x4x8",
-        "cmp_gt_int32_2x16x7x9",
-        "cmp_gt_int32_2x8x4x8",
-        "cmp_gt_int32_2x8x8",
-        "cmp_gt_int32_3x32x5x7",
-        "cmp_gt_int32_3x5x32",
-        "cmp_gt_int32_broadcast_padded_2x3x17"
+        "cmp_gt_fp32_3x5x32"
       ],
       "default": {
         "constraints": null,
@@ -15006,20 +14890,7 @@
         "cmp_le_fp32_2x8x4x8",
         "cmp_le_fp32_2x8x8",
         "cmp_le_fp32_3x32x5x7",
-        "cmp_le_fp32_3x5x32",
-        "cmp_le_int32_1x16x3x5",
-        "cmp_le_int32_1x1x128",
-        "cmp_le_int32_1x1x16",
-        "cmp_le_int32_1x1x24",
-        "cmp_le_int32_1x1x256",
-        "cmp_le_int32_1x1x8",
-        "cmp_le_int32_1x8x4x8",
-        "cmp_le_int32_2x16x7x9",
-        "cmp_le_int32_2x8x4x8",
-        "cmp_le_int32_2x8x8",
-        "cmp_le_int32_3x32x5x7",
-        "cmp_le_int32_3x5x32",
-        "cmp_le_int32_broadcast_padded_2x3x17"
+        "cmp_le_fp32_3x5x32"
       ],
       "default": {
         "constraints": null,
@@ -16365,20 +16236,7 @@
         "cmp_lt_fp32_2x8x4x8",
         "cmp_lt_fp32_2x8x8",
         "cmp_lt_fp32_3x32x5x7",
-        "cmp_lt_fp32_3x5x32",
-        "cmp_lt_int32_1x16x3x5",
-        "cmp_lt_int32_1x1x128",
-        "cmp_lt_int32_1x1x16",
-        "cmp_lt_int32_1x1x24",
-        "cmp_lt_int32_1x1x256",
-        "cmp_lt_int32_1x1x8",
-        "cmp_lt_int32_1x8x4x8",
-        "cmp_lt_int32_2x16x7x9",
-        "cmp_lt_int32_2x8x4x8",
-        "cmp_lt_int32_2x8x8",
-        "cmp_lt_int32_3x32x5x7",
-        "cmp_lt_int32_3x5x32",
-        "cmp_lt_int32_broadcast_padded_2x3x17"
+        "cmp_lt_fp32_3x5x32"
       ],
       "default": {
         "constraints": null,
@@ -17724,20 +17582,7 @@
         "cmp_neq_fp32_2x8x4x8",
         "cmp_neq_fp32_2x8x8",
         "cmp_neq_fp32_3x32x5x7",
-        "cmp_neq_fp32_3x5x32",
-        "cmp_neq_int32_1x16x3x5",
-        "cmp_neq_int32_1x1x128",
-        "cmp_neq_int32_1x1x16",
-        "cmp_neq_int32_1x1x24",
-        "cmp_neq_int32_1x1x256",
-        "cmp_neq_int32_1x1x8",
-        "cmp_neq_int32_1x8x4x8",
-        "cmp_neq_int32_2x16x7x9",
-        "cmp_neq_int32_2x8x4x8",
-        "cmp_neq_int32_2x8x8",
-        "cmp_neq_int32_3x32x5x7",
-        "cmp_neq_int32_3x5x32",
-        "cmp_neq_int32_broadcast_padded_2x3x17"
+        "cmp_neq_fp32_3x5x32"
       ],
       "default": {
         "constraints": null,
@@ -28619,22 +28464,7 @@
         "div_fp32_2x4x8",
         "div_fp32_2x4x8x16",
         "div_fp32_2x7x16",
-        "div_fp32_3x5x7",
-        "div_int32_1x1x1023",
-        "div_int32_1x1x1025",
-        "div_int32_1x1x16",
-        "div_int32_1x1x31",
-        "div_int32_1x1x32",
-        "div_int32_1x1x33",
-        "div_int32_1x3x17",
-        "div_int32_1x3x5x7",
-        "div_int32_1x4x8x16",
-        "div_int32_2x3x5x7",
-        "div_int32_2x4x8",
-        "div_int32_2x4x8x16",
-        "div_int32_2x7x16",
-        "div_int32_3x5x7",
-        "div_int32_broadcast_padded_2x3x17"
+        "div_fp32_3x5x7"
       ],
       "default": {
         "constraints": null,
@@ -46597,7 +46427,6 @@
         "matmul_bfloat16_1x128x256_by_1x256x64",
         "matmul_bfloat16_1x1x8_by_1x8x16",
         "matmul_bfloat16_1x64x64_by_1x64x64",
-        "matmul_bfloat16_2x1x17x30_by_3x30x23",
         "matmul_bfloat16_2x31x64_by_2x64x33",
         "matmul_bfloat16_2x65x130_by_2x130x33",
         "matmul_bfloat16_32x64_by_64x24",
@@ -46610,7 +46439,6 @@
         "matmul_fp16_1x128x256_by_1x256x64",
         "matmul_fp16_1x1x8_by_1x8x16",
         "matmul_fp16_1x64x64_by_1x64x64",
-        "matmul_fp16_2x1x17x30_by_3x30x23",
         "matmul_fp16_2x31x64_by_2x64x33",
         "matmul_fp16_2x65x130_by_2x130x33",
         "matmul_fp16_32x64_by_64x24",
@@ -46639,7 +46467,6 @@
         "matmul_fp32_2x128x32_by_2x32x96_tf32",
         "matmul_fp32_2x17x40_by_2x40x32_ieee",
         "matmul_fp32_2x17x40_by_2x40x32_tf32",
-        "matmul_fp32_2x1x17x30_by_3x30x23",
         "matmul_fp32_2x256x256_by_2x256x160_ieee",
         "matmul_fp32_2x256x256_by_2x256x160_tf32",
         "matmul_fp32_2x31x64_by_2x64x33",
@@ -46811,42 +46638,6 @@
           "path": "backend_descriptor",
           "reference_plan": [
             "acdnnBackendExecute(MATMUL)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "bf16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 2,
-              "max": 8
-            },
-            "shape": [
-              "matmul_compatible",
-              "positive_extents"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "numpy_trailing",
-            "attributes": {
-              "autotune": [
-                "false"
-              ],
-              "precision": [
-                "ieee_fp32"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "matmul_bfloat16_2x1x17x30_by_3x30x23": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(MATMUL,batch-segments)"
           ],
           "constraints": {
             "dtypes": [
@@ -47279,42 +47070,6 @@
           "path": "backend_descriptor",
           "reference_plan": [
             "acdnnBackendExecute(MATMUL)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "fp16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 2,
-              "max": 8
-            },
-            "shape": [
-              "matmul_compatible",
-              "positive_extents"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "numpy_trailing",
-            "attributes": {
-              "autotune": [
-                "false"
-              ],
-              "precision": [
-                "ieee_fp32"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "matmul_fp16_2x1x17x30_by_3x30x23": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(MATMUL,batch-segments)"
           ],
           "constraints": {
             "dtypes": [
@@ -47811,42 +47566,6 @@
           "constraints": null,
           "reason_code": "attribute_unsupported",
           "detail": "All three acDNN 1400 MatMul heuristic engines accept ACDNN_DATA_TF32 but execute FP16 round-to-nearest operand semantics on public matrix shapes; no equivalent TF32 round-toward-zero conversion is available in stable or backend pointwise APIs."
-        },
-        "matmul_fp32_2x1x17x30_by_3x30x23": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(MATMUL,batch-segments)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "fp32"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 2,
-              "max": 8
-            },
-            "shape": [
-              "matmul_compatible",
-              "positive_extents"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "numpy_trailing",
-            "attributes": {
-              "autotune": [
-                "false"
-              ],
-              "precision": [
-                "ieee_fp32"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
         },
         "matmul_fp32_2x256x256_by_2x256x160_tf32": {
           "status": "unsupported",
@@ -48431,22 +48150,7 @@
         "max_fp32_2x4x8",
         "max_fp32_2x4x8x16",
         "max_fp32_2x7x16",
-        "max_fp32_3x5x7",
-        "max_int32_1x1x1023",
-        "max_int32_1x1x1025",
-        "max_int32_1x1x16",
-        "max_int32_1x1x31",
-        "max_int32_1x1x32",
-        "max_int32_1x1x33",
-        "max_int32_1x3x17",
-        "max_int32_1x3x5x7",
-        "max_int32_1x4x8x16",
-        "max_int32_2x3x5x7",
-        "max_int32_2x4x8",
-        "max_int32_2x4x8x16",
-        "max_int32_2x7x16",
-        "max_int32_3x5x7",
-        "max_int32_broadcast_padded_2x3x17"
+        "max_fp32_3x5x7"
       ],
       "default": {
         "constraints": null,
@@ -50056,22 +49760,7 @@
         "min_fp32_2x4x8",
         "min_fp32_2x4x8x16",
         "min_fp32_2x7x16",
-        "min_fp32_3x5x7",
-        "min_int32_1x1x1023",
-        "min_int32_1x1x1025",
-        "min_int32_1x1x16",
-        "min_int32_1x1x31",
-        "min_int32_1x1x32",
-        "min_int32_1x1x33",
-        "min_int32_1x3x17",
-        "min_int32_1x3x5x7",
-        "min_int32_1x4x8x16",
-        "min_int32_2x3x5x7",
-        "min_int32_2x4x8",
-        "min_int32_2x4x8x16",
-        "min_int32_2x7x16",
-        "min_int32_3x5x7",
-        "min_int32_broadcast_padded_2x3x17"
+        "min_fp32_3x5x7"
       ],
       "default": {
         "constraints": null,
@@ -51685,22 +51374,7 @@
         "mod_fp32_2x4x8x16",
         "mod_fp32_2x7x16",
         "mod_fp32_3x5x7",
-        "mod_int32_1x1x1023",
-        "mod_int32_1x1x1025",
-        "mod_int32_1x1x16",
-        "mod_int32_1x1x31",
-        "mod_int32_1x1x32",
-        "mod_int32_1x1x33",
-        "mod_int32_1x1x6_signed",
-        "mod_int32_1x3x17",
-        "mod_int32_1x3x5x7",
-        "mod_int32_1x4x8x16",
-        "mod_int32_2x3x5x7",
-        "mod_int32_2x4x8",
-        "mod_int32_2x4x8x16",
-        "mod_int32_2x7x16",
-        "mod_int32_3x5x7",
-        "mod_int32_broadcast_padded_2x3x17"
+        "mod_int32_1x1x6_signed"
       ],
       "default": {
         "constraints": null,
@@ -53646,22 +53320,7 @@
         "mul_fp32_2x4x8",
         "mul_fp32_2x4x8x16",
         "mul_fp32_2x7x16",
-        "mul_fp32_3x5x7",
-        "mul_int32_1x1x1023",
-        "mul_int32_1x1x1025",
-        "mul_int32_1x1x16",
-        "mul_int32_1x1x31",
-        "mul_int32_1x1x32",
-        "mul_int32_1x1x33",
-        "mul_int32_1x3x17",
-        "mul_int32_1x3x5x7",
-        "mul_int32_1x4x8x16",
-        "mul_int32_2x3x5x7",
-        "mul_int32_2x4x8",
-        "mul_int32_2x4x8x16",
-        "mul_int32_2x7x16",
-        "mul_int32_3x5x7",
-        "mul_int32_broadcast_padded_2x3x17"
+        "mul_fp32_3x5x7"
       ],
       "default": {
         "constraints": null,
@@ -59328,8 +58987,6 @@
     },
     "reduction": {
       "case_names": [
-        "reduction_avg_bfloat16_axis1_keepdim_2x4x8x8",
-        "reduction_avg_bfloat16_channels_last_axis1_keepdim_2x3x5x5",
         "reduction_avg_fp16_axis1_1x32x32x16",
         "reduction_avg_fp16_axis1_1x4x8x8",
         "reduction_avg_fp16_axis1_2x16x8x8",
@@ -59382,8 +59039,6 @@
         "reduction_avg_fp32_to_fp32_3_7",
         "reduction_avg_fp32_to_fp32_4_2_33",
         "reduction_avg_fp32_to_fp32_4_31",
-        "reduction_mul_bfloat16_axis1_keepdim_2x4x8x8",
-        "reduction_mul_bfloat16_channels_last_axis1_keepdim_2x3x5x5",
         "reduction_mul_fp16_axis1_1x32x32x16",
         "reduction_mul_fp16_axis1_1x4x8x8",
         "reduction_mul_fp16_axis1_2x16x8x8",
@@ -59436,8 +59091,6 @@
         "reduction_mul_fp32_to_fp32_3_7",
         "reduction_mul_fp32_to_fp32_4_2_33",
         "reduction_mul_fp32_to_fp32_4_31",
-        "reduction_sum_bfloat16_axis1_keepdim_2x4x8x8",
-        "reduction_sum_bfloat16_channels_last_axis1_keepdim_2x3x5x5",
         "reduction_sum_bfloat16_to_fp32_16_32",
         "reduction_sum_bfloat16_to_fp32_17_64",
         "reduction_sum_bfloat16_to_fp32_1_3_5_9",
@@ -59454,7 +59107,6 @@
         "reduction_sum_bfloat16_to_fp32_64_512",
         "reduction_sum_bfloat16_to_fp32_8_8",
         "reduction_sum_bfloat16_to_fp32_9_16",
-        "reduction_sum_bfloat16_unaligned_input_entrance_axis1_2x4x8x8",
         "reduction_sum_fp16_axis1_1x32x32x16",
         "reduction_sum_fp16_axis1_1x4x8x8",
         "reduction_sum_fp16_axis1_2x16x8x8",
@@ -59530,82 +59182,6 @@
         "status": "unsupported"
       },
       "overrides": {
-        "reduction_avg_bfloat16_axis1_keepdim_2x4x8x8": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-pack-fp32)",
-            "acdnnReduceTensor(AVG,alpha=1,beta=0)",
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-bfloat16)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "bf16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 1,
-              "max": 8
-            },
-            "shape": [
-              "positive_extents",
-              "non_scalar_output"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "none",
-            "attributes": {
-              "mode": [
-                "avg"
-              ],
-              "autotune": [
-                "false"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "reduction_avg_bfloat16_channels_last_axis1_keepdim_2x3x5x5": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-pack-fp32)",
-            "acdnnReduceTensor(AVG,alpha=1,beta=0)",
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-bfloat16)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "bf16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 1,
-              "max": 8
-            },
-            "shape": [
-              "positive_extents",
-              "non_scalar_output"
-            ],
-            "layouts": [
-              "nhwc"
-            ],
-            "stride_policy": "explicit_strides",
-            "broadcast": "none",
-            "attributes": {
-              "mode": [
-                "avg"
-              ],
-              "autotune": [
-                "false"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
         "reduction_avg_fp16_axis1_1x32x32x16": {
           "status": "supported",
           "path": "stable_primitive",
@@ -61486,82 +61062,6 @@
               ],
               "autotune": [
                 "true"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "reduction_mul_bfloat16_axis1_keepdim_2x4x8x8": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-pack-fp32)",
-            "acdnnReduceTensor(MUL,alpha=1,beta=0)",
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-bfloat16)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "bf16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 1,
-              "max": 8
-            },
-            "shape": [
-              "positive_extents",
-              "non_scalar_output"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "none",
-            "attributes": {
-              "mode": [
-                "mul"
-              ],
-              "autotune": [
-                "false"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "reduction_mul_bfloat16_channels_last_axis1_keepdim_2x3x5x5": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-pack-fp32)",
-            "acdnnReduceTensor(MUL,alpha=1,beta=0)",
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-bfloat16)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "bf16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 1,
-              "max": 8
-            },
-            "shape": [
-              "positive_extents",
-              "non_scalar_output"
-            ],
-            "layouts": [
-              "nhwc"
-            ],
-            "stride_policy": "explicit_strides",
-            "broadcast": "none",
-            "attributes": {
-              "mode": [
-                "mul"
-              ],
-              "autotune": [
-                "false"
               ]
             }
           },
@@ -63454,82 +62954,6 @@
           "reason_code": "",
           "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
         },
-        "reduction_sum_bfloat16_axis1_keepdim_2x4x8x8": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-pack-fp32)",
-            "acdnnReduceTensor(ADD,alpha=1,beta=0)",
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-bfloat16)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "bf16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 1,
-              "max": 8
-            },
-            "shape": [
-              "positive_extents",
-              "non_scalar_output"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "none",
-            "attributes": {
-              "mode": [
-                "sum"
-              ],
-              "autotune": [
-                "false"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "reduction_sum_bfloat16_channels_last_axis1_keepdim_2x3x5x5": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-pack-fp32)",
-            "acdnnReduceTensor(ADD,alpha=1,beta=0)",
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-bfloat16)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "bf16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 1,
-              "max": 8
-            },
-            "shape": [
-              "positive_extents",
-              "non_scalar_output"
-            ],
-            "layouts": [
-              "nhwc"
-            ],
-            "stride_policy": "explicit_strides",
-            "broadcast": "none",
-            "attributes": {
-              "mode": [
-                "sum"
-              ],
-              "autotune": [
-                "false"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
         "reduction_sum_bfloat16_to_fp32_16_32": {
           "status": "supported",
           "path": "backend_descriptor",
@@ -64109,44 +63533,6 @@
               "contiguous"
             ],
             "stride_policy": "dense_contiguous",
-            "broadcast": "none",
-            "attributes": {
-              "mode": [
-                "sum"
-              ],
-              "autotune": [
-                "false"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "reduction_sum_bfloat16_unaligned_input_entrance_axis1_2x4x8x8": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-pack-fp32)",
-            "acdnnReduceTensor(ADD,alpha=1,beta=0)",
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-bfloat16)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "bf16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 1,
-              "max": 8
-            },
-            "shape": [
-              "positive_extents",
-              "non_scalar_output"
-            ],
-            "layouts": [
-              "explicit_strided"
-            ],
-            "stride_policy": "explicit_strides",
             "broadcast": "none",
             "attributes": {
               "mode": [
@@ -73015,22 +72401,7 @@
         "scale_fp32_2x4x8",
         "scale_fp32_2x4x8x16",
         "scale_fp32_2x7x16",
-        "scale_fp32_3x5x7",
-        "scale_int32_1x1x1023",
-        "scale_int32_1x1x1025",
-        "scale_int32_1x1x16",
-        "scale_int32_1x1x31",
-        "scale_int32_1x1x32",
-        "scale_int32_1x1x33",
-        "scale_int32_1x3x17",
-        "scale_int32_1x3x5x7",
-        "scale_int32_1x4x8x16",
-        "scale_int32_2x3x5x7",
-        "scale_int32_2x4x8",
-        "scale_int32_2x4x8x16",
-        "scale_int32_2x7x16",
-        "scale_int32_3x5x7",
-        "scale_int32_broadcast_padded_2x3x17"
+        "scale_fp32_3x5x7"
       ],
       "default": {
         "constraints": null,
@@ -74582,18 +73953,6 @@
         "sdpa_coverage_fp16_2_2_2_32_32_64",
         "sdpa_coverage_fp16_2_2_2_64_80_128",
         "sdpa_coverage_fp16_2_4_2_48_64_64",
-        "sdpa_coverage_fp32_1_1_1_16_16_32",
-        "sdpa_coverage_fp32_1_2_2_24_32_32",
-        "sdpa_coverage_fp32_1_2_2_32_48_64",
-        "sdpa_coverage_fp32_1_2_2_64_64_64",
-        "sdpa_coverage_fp32_1_2_2_80_96_128",
-        "sdpa_coverage_fp32_1_4_2_112_128_64",
-        "sdpa_coverage_fp32_1_4_2_48_48_64",
-        "sdpa_coverage_fp32_1_4_4_96_96_64",
-        "sdpa_coverage_fp32_1_8_2_128_128_64",
-        "sdpa_coverage_fp32_2_2_2_32_32_64",
-        "sdpa_coverage_fp32_2_2_2_64_80_128",
-        "sdpa_coverage_fp32_2_4_2_48_64_64",
         "sdpa_fp16_broadcast_bias",
         "sdpa_fp16_dense_autotune",
         "sdpa_fp16_inference_without_stats",
@@ -75182,393 +74541,6 @@
           "reason_code": "",
           "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
         },
-        "sdpa_coverage_fp32_1_2_2_24_32_32": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
-            "acdnnBackendExecute(MATMUL,attention-heads)",
-            "acdnnBackendExecute(IDENTITY,SUB,ADD,FP32-matmul-residual-if-needed)",
-            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
-            "acdnnSoftmaxForward(ACCURATE,CHANNEL)",
-            "acdnnSoftmaxForward(LOG,CHANNEL)",
-            "acdnnBackendExecute(POINTWISE_SUB,attention-statistics)",
-            "acdnnTransformTensor(attention-statistics-column)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "fp16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 4,
-              "max": 4
-            },
-            "shape": [
-              "positive_extents",
-              "qualified_attention_profile"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "numpy_trailing",
-            "attributes": {
-              "reference_input_domain": [
-                "finite"
-              ],
-              "mask": [
-                "none"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "sdpa_coverage_fp32_1_2_2_32_48_64": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
-            "acdnnBackendExecute(MATMUL,attention-heads)",
-            "acdnnBackendExecute(IDENTITY,SUB,ADD,FP32-matmul-residual-if-needed)",
-            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
-            "acdnnSoftmaxForward(ACCURATE,CHANNEL)",
-            "acdnnSoftmaxForward(LOG,CHANNEL)",
-            "acdnnBackendExecute(POINTWISE_SUB,attention-statistics)",
-            "acdnnTransformTensor(attention-statistics-column)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "fp16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 4,
-              "max": 4
-            },
-            "shape": [
-              "positive_extents",
-              "qualified_attention_profile"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "numpy_trailing",
-            "attributes": {
-              "reference_input_domain": [
-                "finite"
-              ],
-              "mask": [
-                "none"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "sdpa_coverage_fp32_1_2_2_64_64_64": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
-            "acdnnBackendExecute(MATMUL,attention-heads)",
-            "acdnnBackendExecute(IDENTITY,SUB,ADD,FP32-matmul-residual-if-needed)",
-            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
-            "acdnnSoftmaxForward(ACCURATE,CHANNEL)",
-            "acdnnSoftmaxForward(LOG,CHANNEL)",
-            "acdnnBackendExecute(POINTWISE_SUB,attention-statistics)",
-            "acdnnTransformTensor(attention-statistics-column)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "fp16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 4,
-              "max": 4
-            },
-            "shape": [
-              "positive_extents",
-              "qualified_attention_profile"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "numpy_trailing",
-            "attributes": {
-              "reference_input_domain": [
-                "finite"
-              ],
-              "mask": [
-                "none"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "sdpa_coverage_fp32_1_4_2_112_128_64": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
-            "acdnnBackendExecute(MATMUL,attention-heads)",
-            "acdnnBackendExecute(IDENTITY,SUB,ADD,FP32-matmul-residual-if-needed)",
-            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
-            "acdnnSoftmaxForward(ACCURATE,CHANNEL)",
-            "acdnnSoftmaxForward(LOG,CHANNEL)",
-            "acdnnBackendExecute(POINTWISE_SUB,attention-statistics)",
-            "acdnnTransformTensor(attention-statistics-column)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "fp16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 4,
-              "max": 4
-            },
-            "shape": [
-              "positive_extents",
-              "qualified_attention_profile"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "numpy_trailing",
-            "attributes": {
-              "reference_input_domain": [
-                "finite"
-              ],
-              "mask": [
-                "none"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "sdpa_coverage_fp32_1_4_2_48_48_64": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
-            "acdnnBackendExecute(MATMUL,attention-heads)",
-            "acdnnBackendExecute(IDENTITY,SUB,ADD,FP32-matmul-residual-if-needed)",
-            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
-            "acdnnSoftmaxForward(ACCURATE,CHANNEL)",
-            "acdnnSoftmaxForward(LOG,CHANNEL)",
-            "acdnnBackendExecute(POINTWISE_SUB,attention-statistics)",
-            "acdnnTransformTensor(attention-statistics-column)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "fp16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 4,
-              "max": 4
-            },
-            "shape": [
-              "positive_extents",
-              "qualified_attention_profile"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "numpy_trailing",
-            "attributes": {
-              "reference_input_domain": [
-                "finite"
-              ],
-              "mask": [
-                "none"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "sdpa_coverage_fp32_1_8_2_128_128_64": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
-            "acdnnBackendExecute(MATMUL,attention-heads)",
-            "acdnnBackendExecute(IDENTITY,SUB,ADD,FP32-matmul-residual-if-needed)",
-            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
-            "acdnnSoftmaxForward(ACCURATE,CHANNEL)",
-            "acdnnSoftmaxForward(LOG,CHANNEL)",
-            "acdnnBackendExecute(POINTWISE_SUB,attention-statistics)",
-            "acdnnTransformTensor(attention-statistics-column)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "fp16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 4,
-              "max": 4
-            },
-            "shape": [
-              "positive_extents",
-              "qualified_attention_profile"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "numpy_trailing",
-            "attributes": {
-              "reference_input_domain": [
-                "finite"
-              ],
-              "mask": [
-                "none"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "sdpa_coverage_fp32_2_2_2_32_32_64": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
-            "acdnnBackendExecute(MATMUL,attention-heads)",
-            "acdnnBackendExecute(IDENTITY,SUB,ADD,FP32-matmul-residual-if-needed)",
-            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
-            "acdnnSoftmaxForward(ACCURATE,CHANNEL)",
-            "acdnnSoftmaxForward(LOG,CHANNEL)",
-            "acdnnBackendExecute(POINTWISE_SUB,attention-statistics)",
-            "acdnnTransformTensor(attention-statistics-column)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "fp16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 4,
-              "max": 4
-            },
-            "shape": [
-              "positive_extents",
-              "qualified_attention_profile"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "numpy_trailing",
-            "attributes": {
-              "reference_input_domain": [
-                "finite"
-              ],
-              "mask": [
-                "none"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "sdpa_coverage_fp32_2_2_2_64_80_128": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
-            "acdnnBackendExecute(MATMUL,attention-heads)",
-            "acdnnBackendExecute(IDENTITY,SUB,ADD,FP32-matmul-residual-if-needed)",
-            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
-            "acdnnSoftmaxForward(ACCURATE,CHANNEL)",
-            "acdnnSoftmaxForward(LOG,CHANNEL)",
-            "acdnnBackendExecute(POINTWISE_SUB,attention-statistics)",
-            "acdnnTransformTensor(attention-statistics-column)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "fp16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 4,
-              "max": 4
-            },
-            "shape": [
-              "positive_extents",
-              "qualified_attention_profile"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "numpy_trailing",
-            "attributes": {
-              "reference_input_domain": [
-                "finite"
-              ],
-              "mask": [
-                "none"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "sdpa_coverage_fp32_2_4_2_48_64_64": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
-            "acdnnBackendExecute(MATMUL,attention-heads)",
-            "acdnnBackendExecute(IDENTITY,SUB,ADD,FP32-matmul-residual-if-needed)",
-            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
-            "acdnnSoftmaxForward(ACCURATE,CHANNEL)",
-            "acdnnSoftmaxForward(LOG,CHANNEL)",
-            "acdnnBackendExecute(POINTWISE_SUB,attention-statistics)",
-            "acdnnTransformTensor(attention-statistics-column)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "fp16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 4,
-              "max": 4
-            },
-            "shape": [
-              "positive_extents",
-              "qualified_attention_profile"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "numpy_trailing",
-            "attributes": {
-              "reference_input_domain": [
-                "finite"
-              ],
-              "mask": [
-                "none"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
         "sdpa_fp16_broadcast_bias": {
           "status": "supported",
           "path": "backend_descriptor",
@@ -75728,20 +74700,6 @@
         "sdpa_backward_coverage_fp16_2_2_2_32_32_64",
         "sdpa_backward_coverage_fp16_2_2_2_64_80_128",
         "sdpa_backward_coverage_fp16_2_4_2_48_64_64",
-        "sdpa_backward_coverage_fp32_1_1_1_16_16_32",
-        "sdpa_backward_coverage_fp32_1_2_2_24_32_32",
-        "sdpa_backward_coverage_fp32_1_2_2_32_48_64",
-        "sdpa_backward_coverage_fp32_1_2_2_64_64_64",
-        "sdpa_backward_coverage_fp32_1_2_2_80_96_128",
-        "sdpa_backward_coverage_fp32_1_2_2_80_96_128_autotune",
-        "sdpa_backward_coverage_fp32_1_4_2_112_128_64",
-        "sdpa_backward_coverage_fp32_1_4_2_48_48_64",
-        "sdpa_backward_coverage_fp32_1_4_4_96_96_64",
-        "sdpa_backward_coverage_fp32_1_8_2_128_128_64",
-        "sdpa_backward_coverage_fp32_1_8_2_128_128_64_autotune",
-        "sdpa_backward_coverage_fp32_2_2_2_32_32_64",
-        "sdpa_backward_coverage_fp32_2_2_2_64_80_128",
-        "sdpa_backward_coverage_fp32_2_4_2_48_64_64",
         "sdpa_backward_dimension_mismatch_bfloat16_q32_v64",
         "sdpa_backward_dimension_mismatch_bfloat16_q64_v32",
         "sdpa_backward_dimension_mismatch_fp16_q64_v32",
@@ -75749,8 +74707,6 @@
         "sdpa_backward_fp16_causal_split",
         "sdpa_backward_fp16_dense_autotune",
         "sdpa_backward_fp16_different_value_dimension",
-        "sdpa_backward_fp32_different_value_dimension",
-        "sdpa_backward_fp32_different_value_dimension_autotune",
         "sdpa_backward_perf_bfloat16_1_1_1_64_64_32",
         "sdpa_backward_perf_bfloat16_1_2_2_128_192_64",
         "sdpa_backward_perf_bfloat16_1_2_2_256_256_64",
@@ -76394,138 +75350,6 @@
           "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
         },
         "sdpa_backward_coverage_bfloat16_2_4_2_48_64_64": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
-            "acdnnBackendExecute(MATMUL,attention-heads)",
-            "acdnnBackendExecute(IDENTITY,SUB,ADD,FP32-matmul-residual-if-needed)",
-            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
-            "acdnnBackendExecute(POINTWISE_EXP,MUL,SUB,attention-saved-primal-gradient)",
-            "acdnnBackendExecute(IDENTITY,attention-gradient-operand-dtype)",
-            "acdnnOpTensor(ADD,attention-row-broadcast)",
-            "acdnnReduceTensor(ADD,attention-output-gradient-dot)",
-            "acdnnBackendExecute(MATMUL,POINTWISE_ADD,attention-gradients)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "bf16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 4,
-              "max": 4
-            },
-            "shape": [
-              "positive_extents",
-              "qualified_attention_profile"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "numpy_trailing",
-            "attributes": {
-              "reference_input_domain": [
-                "finite"
-              ],
-              "mask": [
-                "top_left_causal"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "sdpa_backward_coverage_fp32_1_1_1_16_16_32": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
-            "acdnnBackendExecute(MATMUL,attention-heads)",
-            "acdnnBackendExecute(IDENTITY,SUB,ADD,FP32-matmul-residual-if-needed)",
-            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
-            "acdnnBackendExecute(POINTWISE_EXP,MUL,SUB,attention-saved-primal-gradient)",
-            "acdnnBackendExecute(IDENTITY,attention-gradient-operand-dtype)",
-            "acdnnOpTensor(ADD,attention-row-broadcast)",
-            "acdnnReduceTensor(ADD,attention-output-gradient-dot)",
-            "acdnnBackendExecute(MATMUL,POINTWISE_ADD,attention-gradients)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "bf16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 4,
-              "max": 4
-            },
-            "shape": [
-              "positive_extents",
-              "qualified_attention_profile"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "numpy_trailing",
-            "attributes": {
-              "reference_input_domain": [
-                "finite"
-              ],
-              "mask": [
-                "top_left_causal"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "sdpa_backward_coverage_fp32_1_2_2_80_96_128": {
-          "status": "supported",
-          "path": "backend_descriptor",
-          "reference_plan": [
-            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,attention-conversion)",
-            "acdnnBackendExecute(MATMUL,attention-heads)",
-            "acdnnBackendExecute(IDENTITY,SUB,ADD,FP32-matmul-residual-if-needed)",
-            "acdnnBackendExecute(POINTWISE_MUL,ADD,attention-scale-bias-mask)",
-            "acdnnBackendExecute(POINTWISE_EXP,MUL,SUB,attention-saved-primal-gradient)",
-            "acdnnBackendExecute(IDENTITY,attention-gradient-operand-dtype)",
-            "acdnnOpTensor(ADD,attention-row-broadcast)",
-            "acdnnReduceTensor(ADD,attention-output-gradient-dot)",
-            "acdnnBackendExecute(MATMUL,POINTWISE_ADD,attention-gradients)"
-          ],
-          "constraints": {
-            "dtypes": [
-              "bf16"
-            ],
-            "compute_type": "fp32",
-            "rank": {
-              "min": 4,
-              "max": 4
-            },
-            "shape": [
-              "positive_extents",
-              "qualified_attention_profile"
-            ],
-            "layouts": [
-              "contiguous"
-            ],
-            "stride_policy": "dense_contiguous",
-            "broadcast": "numpy_trailing",
-            "attributes": {
-              "reference_input_domain": [
-                "finite"
-              ],
-              "mask": [
-                "top_left_causal"
-              ]
-            }
-          },
-          "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
-        },
-        "sdpa_backward_coverage_fp32_1_4_4_96_96_64": {
           "status": "supported",
           "path": "backend_descriptor",
           "reference_plan": [
@@ -87770,22 +86594,7 @@
         "sub_fp32_2x4x8x16",
         "sub_fp32_2x7x16",
         "sub_fp32_3x5x7",
-        "sub_int32_1x1x1023",
-        "sub_int32_1x1x1025",
-        "sub_int32_1x1x16",
-        "sub_int32_1x1x31",
-        "sub_int32_1x1x32",
-        "sub_int32_1x1x33",
-        "sub_int32_1x3x17",
-        "sub_int32_1x3x5x7",
-        "sub_int32_1x4x8x16",
-        "sub_int32_2x3x5x7",
-        "sub_int32_2x4x8",
-        "sub_int32_2x4x8_alpha_neg2",
-        "sub_int32_2x4x8x16",
-        "sub_int32_2x7x16",
-        "sub_int32_3x5x7",
-        "sub_int32_broadcast_padded_2x3x17"
+        "sub_int32_2x4x8_alpha_neg2"
       ],
       "default": {
         "constraints": null,
@@ -104770,61 +103579,6 @@
       },
       "overrides": {}
     },
-    "genstats": {
-      "case_names": [
-        "genstats_bf16_1_2_3_2_3_2_3_2",
-        "genstats_bf16_1_3",
-        "genstats_bf16_1_8_17_19",
-        "genstats_bf16_2_16_257",
-        "genstats_bf16_2_32_16_17",
-        "genstats_bf16_2_3_5_7",
-        "genstats_bf16_2_3_5_7_9",
-        "genstats_bf16_2_7_65",
-        "genstats_bf16_2_8_17",
-        "genstats_bf16_3_16_7_9",
-        "genstats_bf16_3_7",
-        "genstats_bf16_3_8_127",
-        "genstats_bf16_4_3_33",
-        "genstats_bf16_4_8_31_33",
-        "genstats_fp16_1_2_3_2_3_2_3_2",
-        "genstats_fp16_1_3",
-        "genstats_fp16_1_8_17_19",
-        "genstats_fp16_2_16_257",
-        "genstats_fp16_2_32_16_17",
-        "genstats_fp16_2_3_5_7",
-        "genstats_fp16_2_3_5_7_9",
-        "genstats_fp16_2_7_65",
-        "genstats_fp16_2_8_17",
-        "genstats_fp16_3_16_7_9",
-        "genstats_fp16_3_7",
-        "genstats_fp16_3_8_127",
-        "genstats_fp16_4_3_33",
-        "genstats_fp16_4_8_31_33",
-        "genstats_fp32_1_2_3_2_3_2_3_2",
-        "genstats_fp32_1_3",
-        "genstats_fp32_1_8_17_19",
-        "genstats_fp32_2_16_257",
-        "genstats_fp32_2_32_16_17",
-        "genstats_fp32_2_3_5_7",
-        "genstats_fp32_2_3_5_7_9",
-        "genstats_fp32_2_7_65",
-        "genstats_fp32_2_8_17",
-        "genstats_fp32_3_16_7_9",
-        "genstats_fp32_3_7",
-        "genstats_fp32_3_8_127",
-        "genstats_fp32_4_3_33",
-        "genstats_fp32_4_8_31_33"
-      ],
-      "default": {
-        "constraints": null,
-        "detail": "acDNN 1400 declares the operation descriptor but acdnnBackendCreateDescriptor returns ACDNN_STATUS_NOT_SUPPORTED.",
-        "path": null,
-        "reason_code": "acdnn_status_not_supported",
-        "reference_plan": [],
-        "status": "unsupported"
-      },
-      "overrides": {}
-    },
     "instancenorm": {
       "case_names": [
         "instancenorm_bf16_1_16_8_33",
@@ -105461,75 +104215,6 @@
         "moe_grouped_matmul_fp16_mode2_5_3_256_64",
         "moe_grouped_matmul_fp16_mode2_7_3_32_32",
         "moe_grouped_matmul_fp16_mode2_8_4_32_64"
-      ],
-      "default": {
-        "constraints": null,
-        "detail": "acDNN 1400 does not implement the corresponding operator interface.",
-        "path": null,
-        "reason_code": "no_certified_acdnn_primitive",
-        "reference_plan": [],
-        "status": "unsupported"
-      },
-      "overrides": {}
-    },
-    "moe_grouped_matmul_bwd": {
-      "case_names": [
-        "moe_grouped_matmul_bwd_bf16_mode0_128_4_64_64",
-        "moe_grouped_matmul_bwd_bf16_mode0_16_2_32_64",
-        "moe_grouped_matmul_bwd_bf16_mode0_17_7_128_64",
-        "moe_grouped_matmul_bwd_bf16_mode0_17_8_64_32",
-        "moe_grouped_matmul_bwd_bf16_mode0_1_1_16_16",
-        "moe_grouped_matmul_bwd_bf16_mode0_256_4_64_64",
-        "moe_grouped_matmul_bwd_bf16_mode0_31_5_64_64",
-        "moe_grouped_matmul_bwd_bf16_mode0_32_3_128_64",
-        "moe_grouped_matmul_bwd_bf16_mode0_33_17_64_128",
-        "moe_grouped_matmul_bwd_bf16_mode0_4_8_128_128",
-        "moe_grouped_matmul_bwd_bf16_mode0_5_3_256_64",
-        "moe_grouped_matmul_bwd_bf16_mode0_64_4_96_32",
-        "moe_grouped_matmul_bwd_bf16_mode0_65_8_256_128",
-        "moe_grouped_matmul_bwd_bf16_mode0_7_3_32_32",
-        "moe_grouped_matmul_bwd_e4m3_mode0_128_4_64_64",
-        "moe_grouped_matmul_bwd_e4m3_mode0_16_2_32_64",
-        "moe_grouped_matmul_bwd_e4m3_mode0_17_7_128_64",
-        "moe_grouped_matmul_bwd_e4m3_mode0_17_8_64_32",
-        "moe_grouped_matmul_bwd_e4m3_mode0_1_1_16_16",
-        "moe_grouped_matmul_bwd_e4m3_mode0_256_4_64_64",
-        "moe_grouped_matmul_bwd_e4m3_mode0_31_5_64_64",
-        "moe_grouped_matmul_bwd_e4m3_mode0_32_3_128_64",
-        "moe_grouped_matmul_bwd_e4m3_mode0_33_17_64_128",
-        "moe_grouped_matmul_bwd_e4m3_mode0_4_8_128_128",
-        "moe_grouped_matmul_bwd_e4m3_mode0_5_3_256_64",
-        "moe_grouped_matmul_bwd_e4m3_mode0_64_4_96_32",
-        "moe_grouped_matmul_bwd_e4m3_mode0_65_8_256_128",
-        "moe_grouped_matmul_bwd_e4m3_mode0_7_3_32_32",
-        "moe_grouped_matmul_bwd_e5m2_mode0_128_4_64_64",
-        "moe_grouped_matmul_bwd_e5m2_mode0_16_2_32_64",
-        "moe_grouped_matmul_bwd_e5m2_mode0_17_7_128_64",
-        "moe_grouped_matmul_bwd_e5m2_mode0_17_8_64_32",
-        "moe_grouped_matmul_bwd_e5m2_mode0_1_1_16_16",
-        "moe_grouped_matmul_bwd_e5m2_mode0_256_4_64_64",
-        "moe_grouped_matmul_bwd_e5m2_mode0_31_5_64_64",
-        "moe_grouped_matmul_bwd_e5m2_mode0_32_3_128_64",
-        "moe_grouped_matmul_bwd_e5m2_mode0_33_17_64_128",
-        "moe_grouped_matmul_bwd_e5m2_mode0_4_8_128_128",
-        "moe_grouped_matmul_bwd_e5m2_mode0_5_3_256_64",
-        "moe_grouped_matmul_bwd_e5m2_mode0_64_4_96_32",
-        "moe_grouped_matmul_bwd_e5m2_mode0_65_8_256_128",
-        "moe_grouped_matmul_bwd_e5m2_mode0_7_3_32_32",
-        "moe_grouped_matmul_bwd_fp16_mode0_128_4_64_64",
-        "moe_grouped_matmul_bwd_fp16_mode0_16_2_32_64",
-        "moe_grouped_matmul_bwd_fp16_mode0_17_7_128_64",
-        "moe_grouped_matmul_bwd_fp16_mode0_17_8_64_32",
-        "moe_grouped_matmul_bwd_fp16_mode0_1_1_16_16",
-        "moe_grouped_matmul_bwd_fp16_mode0_256_4_64_64",
-        "moe_grouped_matmul_bwd_fp16_mode0_31_5_64_64",
-        "moe_grouped_matmul_bwd_fp16_mode0_32_3_128_64",
-        "moe_grouped_matmul_bwd_fp16_mode0_33_17_64_128",
-        "moe_grouped_matmul_bwd_fp16_mode0_4_8_128_128",
-        "moe_grouped_matmul_bwd_fp16_mode0_5_3_256_64",
-        "moe_grouped_matmul_bwd_fp16_mode0_64_4_96_32",
-        "moe_grouped_matmul_bwd_fp16_mode0_65_8_256_128",
-        "moe_grouped_matmul_bwd_fp16_mode0_7_3_32_32"
       ],
       "default": {
         "constraints": null,
@@ -107188,255 +105873,6 @@
         "rmsnorm_backward_fp32_3_4_16_1024",
         "rmsnorm_backward_fp32_4_16_16_129",
         "rmsnorm_backward_fp32_4_8_16_64"
-      ],
-      "default": {
-        "constraints": null,
-        "detail": "acDNN 1400 does not implement the corresponding operator interface.",
-        "path": null,
-        "reason_code": "no_certified_acdnn_primitive",
-        "reference_plan": [],
-        "status": "unsupported"
-      },
-      "overrides": {}
-    },
-    "rng": {
-      "case_names": [
-        "rng_bernoulli_bf16_1",
-        "rng_bernoulli_bf16_1025",
-        "rng_bernoulli_bf16_127",
-        "rng_bernoulli_bf16_17",
-        "rng_bernoulli_bf16_1_2_3_2_3_2_3_2",
-        "rng_bernoulli_bf16_257",
-        "rng_bernoulli_bf16_2_3_17",
-        "rng_bernoulli_bf16_2_4_31_33",
-        "rng_bernoulli_bf16_3_5_7",
-        "rng_bernoulli_bf16_4096",
-        "rng_bernoulli_bf16_513",
-        "rng_bernoulli_bf16_65",
-        "rng_bernoulli_bf16_65536",
-        "rng_bernoulli_bf16_7",
-        "rng_bernoulli_fp16_1",
-        "rng_bernoulli_fp16_1025",
-        "rng_bernoulli_fp16_127",
-        "rng_bernoulli_fp16_17",
-        "rng_bernoulli_fp16_1_2_3_2_3_2_3_2",
-        "rng_bernoulli_fp16_257",
-        "rng_bernoulli_fp16_2_3_17",
-        "rng_bernoulli_fp16_2_4_31_33",
-        "rng_bernoulli_fp16_3_5_7",
-        "rng_bernoulli_fp16_4096",
-        "rng_bernoulli_fp16_513",
-        "rng_bernoulli_fp16_65",
-        "rng_bernoulli_fp16_65536",
-        "rng_bernoulli_fp16_7",
-        "rng_bernoulli_fp32_1",
-        "rng_bernoulli_fp32_1025",
-        "rng_bernoulli_fp32_127",
-        "rng_bernoulli_fp32_17",
-        "rng_bernoulli_fp32_1_2_3_2_3_2_3_2",
-        "rng_bernoulli_fp32_257",
-        "rng_bernoulli_fp32_2_3_17",
-        "rng_bernoulli_fp32_2_4_31_33",
-        "rng_bernoulli_fp32_3_5_7",
-        "rng_bernoulli_fp32_4096",
-        "rng_bernoulli_fp32_513",
-        "rng_bernoulli_fp32_65",
-        "rng_bernoulli_fp32_65536",
-        "rng_bernoulli_fp32_7",
-        "rng_normal_bf16_1",
-        "rng_normal_bf16_1025",
-        "rng_normal_bf16_127",
-        "rng_normal_bf16_17",
-        "rng_normal_bf16_1_2_3_2_3_2_3_2",
-        "rng_normal_bf16_257",
-        "rng_normal_bf16_2_3_17",
-        "rng_normal_bf16_2_4_31_33",
-        "rng_normal_bf16_3_5_7",
-        "rng_normal_bf16_4096",
-        "rng_normal_bf16_513",
-        "rng_normal_bf16_65",
-        "rng_normal_bf16_65536",
-        "rng_normal_bf16_7",
-        "rng_normal_fp16_1",
-        "rng_normal_fp16_1025",
-        "rng_normal_fp16_127",
-        "rng_normal_fp16_17",
-        "rng_normal_fp16_1_2_3_2_3_2_3_2",
-        "rng_normal_fp16_257",
-        "rng_normal_fp16_2_3_17",
-        "rng_normal_fp16_2_4_31_33",
-        "rng_normal_fp16_3_5_7",
-        "rng_normal_fp16_4096",
-        "rng_normal_fp16_513",
-        "rng_normal_fp16_65",
-        "rng_normal_fp16_65536",
-        "rng_normal_fp16_7",
-        "rng_normal_fp32_1",
-        "rng_normal_fp32_1025",
-        "rng_normal_fp32_127",
-        "rng_normal_fp32_17",
-        "rng_normal_fp32_1_2_3_2_3_2_3_2",
-        "rng_normal_fp32_257",
-        "rng_normal_fp32_2_3_17",
-        "rng_normal_fp32_2_4_31_33",
-        "rng_normal_fp32_3_5_7",
-        "rng_normal_fp32_4096",
-        "rng_normal_fp32_513",
-        "rng_normal_fp32_65",
-        "rng_normal_fp32_65536",
-        "rng_normal_fp32_7",
-        "rng_uniform_bf16_1",
-        "rng_uniform_bf16_1025",
-        "rng_uniform_bf16_127",
-        "rng_uniform_bf16_17",
-        "rng_uniform_bf16_1_2_3_2_3_2_3_2",
-        "rng_uniform_bf16_257",
-        "rng_uniform_bf16_2_3_17",
-        "rng_uniform_bf16_2_4_31_33",
-        "rng_uniform_bf16_3_5_7",
-        "rng_uniform_bf16_4096",
-        "rng_uniform_bf16_513",
-        "rng_uniform_bf16_65",
-        "rng_uniform_bf16_65536",
-        "rng_uniform_bf16_7",
-        "rng_uniform_fp16_1",
-        "rng_uniform_fp16_1025",
-        "rng_uniform_fp16_127",
-        "rng_uniform_fp16_17",
-        "rng_uniform_fp16_1_2_3_2_3_2_3_2",
-        "rng_uniform_fp16_257",
-        "rng_uniform_fp16_2_3_17",
-        "rng_uniform_fp16_2_4_31_33",
-        "rng_uniform_fp16_3_5_7",
-        "rng_uniform_fp16_4096",
-        "rng_uniform_fp16_513",
-        "rng_uniform_fp16_65",
-        "rng_uniform_fp16_65536",
-        "rng_uniform_fp16_7",
-        "rng_uniform_fp32_1",
-        "rng_uniform_fp32_1025",
-        "rng_uniform_fp32_127",
-        "rng_uniform_fp32_17",
-        "rng_uniform_fp32_1_2_3_2_3_2_3_2",
-        "rng_uniform_fp32_257",
-        "rng_uniform_fp32_2_3_17",
-        "rng_uniform_fp32_2_4_31_33",
-        "rng_uniform_fp32_3_5_7",
-        "rng_uniform_fp32_4096",
-        "rng_uniform_fp32_513",
-        "rng_uniform_fp32_65",
-        "rng_uniform_fp32_65536",
-        "rng_uniform_fp32_7"
-      ],
-      "default": {
-        "constraints": null,
-        "detail": "acDNN 1400 does not implement the corresponding operator interface.",
-        "path": null,
-        "reason_code": "no_certified_acdnn_primitive",
-        "reference_plan": [],
-        "status": "unsupported"
-      },
-      "overrides": {}
-    },
-    "rope": {
-      "case_names": [
-        "rope_bf16_1_16_513_128",
-        "rope_bf16_1_1_3_2",
-        "rope_bf16_1_2_7_34",
-        "rope_bf16_1_3_129_128",
-        "rope_bf16_1_4_17_16",
-        "rope_bf16_1_8_65_80",
-        "rope_bf16_2_3_31_32",
-        "rope_bf16_2_3_5_130",
-        "rope_bf16_2_3_7_8",
-        "rope_bf16_2_4_127_96",
-        "rope_bf16_2_4_257_64",
-        "rope_bf16_2_8_17_192",
-        "rope_bf16_3_2_33_64",
-        "rope_bf16_4_2_33_256",
-        "rope_fp16_1_16_513_128",
-        "rope_fp16_1_1_3_2",
-        "rope_fp16_1_2_7_34",
-        "rope_fp16_1_3_129_128",
-        "rope_fp16_1_4_17_16",
-        "rope_fp16_1_8_65_80",
-        "rope_fp16_2_3_31_32",
-        "rope_fp16_2_3_5_130",
-        "rope_fp16_2_3_7_8",
-        "rope_fp16_2_4_127_96",
-        "rope_fp16_2_4_257_64",
-        "rope_fp16_2_8_17_192",
-        "rope_fp16_3_2_33_64",
-        "rope_fp16_4_2_33_256",
-        "rope_fp32_1_16_513_128",
-        "rope_fp32_1_1_3_2",
-        "rope_fp32_1_2_7_34",
-        "rope_fp32_1_3_129_128",
-        "rope_fp32_1_4_17_16",
-        "rope_fp32_1_8_65_80",
-        "rope_fp32_2_3_31_32",
-        "rope_fp32_2_3_5_130",
-        "rope_fp32_2_3_7_8",
-        "rope_fp32_2_4_127_96",
-        "rope_fp32_2_4_257_64",
-        "rope_fp32_2_8_17_192",
-        "rope_fp32_3_2_33_64",
-        "rope_fp32_4_2_33_256"
-      ],
-      "default": {
-        "constraints": null,
-        "detail": "acDNN 1400 does not implement the corresponding operator interface.",
-        "path": null,
-        "reason_code": "no_certified_acdnn_primitive",
-        "reference_plan": [],
-        "status": "unsupported"
-      },
-      "overrides": {}
-    },
-    "rope_backward": {
-      "case_names": [
-        "rope_backward_bf16_1_16_513_128",
-        "rope_backward_bf16_1_1_3_2",
-        "rope_backward_bf16_1_2_7_34",
-        "rope_backward_bf16_1_3_129_128",
-        "rope_backward_bf16_1_4_17_16",
-        "rope_backward_bf16_1_8_65_80",
-        "rope_backward_bf16_2_3_31_32",
-        "rope_backward_bf16_2_3_5_130",
-        "rope_backward_bf16_2_3_7_8",
-        "rope_backward_bf16_2_4_127_96",
-        "rope_backward_bf16_2_4_257_64",
-        "rope_backward_bf16_2_8_17_192",
-        "rope_backward_bf16_3_2_33_64",
-        "rope_backward_bf16_4_2_33_256",
-        "rope_backward_fp16_1_16_513_128",
-        "rope_backward_fp16_1_1_3_2",
-        "rope_backward_fp16_1_2_7_34",
-        "rope_backward_fp16_1_3_129_128",
-        "rope_backward_fp16_1_4_17_16",
-        "rope_backward_fp16_1_8_65_80",
-        "rope_backward_fp16_2_3_31_32",
-        "rope_backward_fp16_2_3_5_130",
-        "rope_backward_fp16_2_3_7_8",
-        "rope_backward_fp16_2_4_127_96",
-        "rope_backward_fp16_2_4_257_64",
-        "rope_backward_fp16_2_8_17_192",
-        "rope_backward_fp16_3_2_33_64",
-        "rope_backward_fp16_4_2_33_256",
-        "rope_backward_fp32_1_16_513_128",
-        "rope_backward_fp32_1_1_3_2",
-        "rope_backward_fp32_1_2_7_34",
-        "rope_backward_fp32_1_3_129_128",
-        "rope_backward_fp32_1_4_17_16",
-        "rope_backward_fp32_1_8_65_80",
-        "rope_backward_fp32_2_3_31_32",
-        "rope_backward_fp32_2_3_5_130",
-        "rope_backward_fp32_2_3_7_8",
-        "rope_backward_fp32_2_4_127_96",
-        "rope_backward_fp32_2_4_257_64",
-        "rope_backward_fp32_2_8_17_192",
-        "rope_backward_fp32_3_2_33_64",
-        "rope_backward_fp32_4_2_33_256"
       ],
       "default": {
         "constraints": null,

@@ -10,7 +10,7 @@ source_directory="$(cd -- "${script_directory}/../.." && pwd)"
 build_directory="${FLAGDNN_REFERENCE_BUILD_DIR:-${FLAGDNN_BUILD_DIR:-build/nvidia}}"
 [[ "${build_directory}" == /* ]] || build_directory="${source_directory}/${build_directory}"
 cache_file="${build_directory}/CMakeCache.txt"
-target_name="flagdnn_reference_cpu_pointwise_cudnn"
+target_name="flagdnn_reference_cpu_cudnn_tests"
 build_configuration="${FLAGDNN_BUILD_TYPE:-Release}"
 
 fail() {

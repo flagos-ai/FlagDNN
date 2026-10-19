@@ -402,6 +402,27 @@ class CudnnLegacyAdd final : public cuda::CudnnGraphExecutable {
   float alpha_;
   cudnnOpTensorDescriptor_t operation_ = nullptr;
 };
+class CudnnLegacyNeg final : public cuda::CudnnGraphExecutable {
+ public:
+  explicit CudnnLegacyNeg(const PointwiseTestCase& test_case)
+      : input_(test_case.inputs.at(0)), output_(test_case.output),
+        input_uid_(test_case.inputs[0].uid), output_uid_(test_case.output.uid) {}
+  void execute(std::span<const flagdnnBinding_t> bindings, void* workspace,
+               std::size_t size, flagdnnStream_t stream) override {
+    begin_execute(workspace, size, stream);
+    const auto pointers = cuda::make_cudnn_binding_map(bindings);
+    const float negative_one = -1.0F, zero = 0.0F;
+    cuda::check_cudnn(
+        cudnnTransformTensor(handle(), &negative_one, input_.get(),
+                             pointers.at(input_uid_), &zero, output_.get(),
+                             pointers.at(output_uid_)),
+        "cudnnTransformTensor(NEG)");
+  }
+
+ private:
+  cuda::TensorDescriptor input_, output_;
+  std::int64_t input_uid_, output_uid_;
+};
 #pragma GCC diagnostic pop
 
 }  // namespace
@@ -410,7 +431,11 @@ std::unique_ptr<PointwiseExecutable> build_pointwise_reference(
     const PointwiseTestCase& test_case) {
   try {
     return std::make_unique<CudnnPointwiseExecutable>(test_case);
-  } catch (const std::runtime_error&) {
+  } catch (const std::runtime_error& error) {
+    if (test_case.mode == FLAGDNN_POINTWISE_NEG &&
+        std::string_view(error.what()).starts_with(
+            "cuDNN pointwise graph build failed: No valid engine configs"))
+      return std::make_unique<CudnnLegacyNeg>(test_case);
     if (test_case.mode != FLAGDNN_POINTWISE_ADD) throw;
     return std::make_unique<CudnnLegacyAdd>(test_case);
   }

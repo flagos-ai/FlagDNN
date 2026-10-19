@@ -70,11 +70,7 @@ int run_pointwise_functional_test(int argc, char **argv,
             ++executed;
             continue;
           }
-          if (test_case.inputs.front().data_type == FLAGDNN_DATA_INT32) {
-            host::run_integer_pointwise(test_case, get_handle, stream);
-            ++executed;
-            continue;
-          }
+
           if (unsupported_dtype(test_case)) {
             support::emit_skip(
                 family, test_case.name,

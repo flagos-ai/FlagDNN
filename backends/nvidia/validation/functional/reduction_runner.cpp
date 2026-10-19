@@ -22,7 +22,6 @@
 
 #include "common/reduction.hpp"
 #include "validation/cuda_driver.hpp"
-#include "validation/functional/cudnn_reduction.hpp"
 #include "validation/tensor_io.hpp"
 
 namespace flagdnn::testing {
@@ -231,7 +230,6 @@ int run_reduction_functional_test(int argc, char** argv,
     const char* filter = std::getenv("FLAGDNN_REDUCTION_CASE");
     std::size_t executed = 0;
     for (const ReductionTestCase& test_case : cases) {
-      if (!cuda::cudnn_reduction_case(test_case)) continue;
       if (filter != nullptr &&
           test_case.name.find(filter) == std::string::npos) {
         continue;

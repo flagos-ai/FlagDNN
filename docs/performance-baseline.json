@@ -1645,11 +1645,11 @@
         "validation_failed": 184
       },
       "unavailable_operator_reasons": {
-        "genstats": "NVIDIA native reference unavailable: operation listed in backends/nvidia/validation/cudnn_unsupported_operators.txt; no registered executable cuDNN comparator",
-        "rng": "NVIDIA native reference unavailable: operation listed in backends/nvidia/validation/cudnn_unsupported_operators.txt; no registered executable cuDNN comparator",
-        "rope": "NVIDIA native reference unavailable: operation listed in backends/nvidia/validation/cudnn_unsupported_operators.txt; no registered executable cuDNN comparator",
-        "rope_backward": "NVIDIA native reference unavailable: operation listed in backends/nvidia/validation/cudnn_unsupported_operators.txt; no registered executable cuDNN comparator",
-        "moe_grouped_matmul_bwd": "NVIDIA native reference unavailable: operation listed in backends/nvidia/validation/cudnn_unsupported_operators.txt; no registered executable cuDNN comparator"
+        "genstats": "Removed from the shared validation scope: no executable cuDNN comparator on the qualified NVIDIA stack; see docs/testing.md",
+        "rng": "Removed from the shared validation scope: no executable cuDNN comparator on the qualified NVIDIA stack; see docs/testing.md",
+        "rope": "Removed from the shared validation scope: no executable cuDNN comparator on the qualified NVIDIA stack; see docs/testing.md",
+        "rope_backward": "Removed from the shared validation scope: no executable cuDNN comparator on the qualified NVIDIA stack; see docs/testing.md",
+        "moe_grouped_matmul_bwd": "Removed from the shared validation scope: no executable cuDNN comparator on the qualified NVIDIA stack; see docs/testing.md"
       },
       "catalog_limits": {
         "resample": "Bilinear: FP32, 2x upsample, align_corners=false only. No nearest or maxpool INT32 indices; AvgPool cases use symmetric padding.",

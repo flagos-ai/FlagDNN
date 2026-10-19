@@ -439,15 +439,15 @@ std::vector<ReductionTestCase> make_reduction_cases() {
     result.push_back(std::move(test_case));
     uid += 2;
   }
-  // For the mixed-output catalog, native cuDNN accepts INT32/BF16 SUM
-  // only for rank-two inputs or a last-axis reduction. Probed AVG/MUL and
-  // other axes return NOT_SUPPORTED. Keep all FP32/FP16 cases and stable UIDs.
+  // cuDNN Graph supports INT32/BF16 SUM -> FP32 for rank-two inputs or
+  // the last axis. Legacy ReduceTensor supports the FP32/FP16 cases.
+  // Remove unsupported shared workloads after enumeration to preserve UIDs.
   std::erase_if(result, [](const ReductionTestCase& value) {
-    if (value.name.find("_to_fp32_") == std::string::npos ||
-        (value.input.data_type != FLAGDNN_DATA_INT32 &&
-         value.input.data_type != FLAGDNN_DATA_BFLOAT16))
+    if (value.input.data_type != FLAGDNN_DATA_INT32 &&
+        value.input.data_type != FLAGDNN_DATA_BFLOAT16)
       return false;
-    return value.mode != FLAGDNN_REDUCTION_ADD ||
+    return value.output.data_type != FLAGDNN_DATA_FLOAT32 ||
+           value.mode != FLAGDNN_REDUCTION_ADD ||
            (value.input.dimensions.size() != 2 &&
             value.axis != static_cast<std::int32_t>(
                               value.input.dimensions.size() - 1));

@@ -1,6 +1,5 @@
 include("${PROJECT_SOURCE_DIR}/cmake/Operators.cmake")
 
-
 # Platform-neutral case data and FlagDNN Graph construction. Platform adapters
 # consume these objects and provide device I/O plus an independent reference.
 add_library(flagdnn_test_common_objects OBJECT
@@ -20,8 +19,6 @@ add_library(flagdnn_test_common_objects OBJECT
   common/fp8_matmul.cpp
   common/causal_convolution.cpp
   common/resample.cpp
-  common/random.cpp
-  common/position_embedding.cpp
   common/normalization_extended.cpp)
 target_compile_features(flagdnn_test_common_objects PUBLIC cxx_std_20)
 target_include_directories(flagdnn_test_common_objects PUBLIC

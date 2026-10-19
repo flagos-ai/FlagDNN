@@ -67,21 +67,6 @@ BoundTensor upload_raw(const TestTensor& tensor,
   return {tensor, std::move(buffer)};
 }
 
-BoundTensor integer_input(const TestTensor& tensor, std::size_t input_index,
-                          flagdnnPointwiseMode_t mode, CUstream stream,
-                          std::vector<std::int32_t>& logical) {
-  std::vector<std::byte> bytes(allocation_size(tensor), std::byte{0xa5});
-  logical.resize(element_count(tensor));
-  for (std::size_t index = 0; index < logical.size(); ++index) {
-    logical[index] =
-        flagdnn::testing::pointwise_integer_input(index, input_index, mode);
-    const auto offset = tensor.binding_byte_offset +
-                        physical_index(index, tensor) * sizeof(std::int32_t);
-    std::memcpy(bytes.data() + offset, &logical[index], sizeof(std::int32_t));
-  }
-  return upload_raw(tensor, bytes, stream);
-}
-
 void require_raw_padding_unchanged(std::span<const std::byte> actual,
                                    std::span<const std::byte> initial,
                                    const PointwiseTestCase& test_case) {
@@ -162,19 +147,14 @@ bool comparison_mode(flagdnnPointwiseMode_t mode) {
 }
 
 bool supports_cpu_pointwise_case(const PointwiseTestCase& test_case) {
-  const bool select = test_case.mode == FLAGDNN_POINTWISE_BINARY_SELECT;
-  if ((!select && !cpu::supports_binary_pointwise(test_case.mode)) ||
-      test_case.inputs.size() != (select ? 3U : 2U) ||
+  if (!cpu::supports_binary_pointwise(test_case.mode) ||
+      test_case.inputs.size() != 2 ||
       test_case.inputs[0].data_type != test_case.inputs[1].data_type) {
     return false;
   }
   const auto type = test_case.inputs[0].data_type;
-  if (select && (type != FLAGDNN_DATA_INT32 ||
-                  test_case.inputs[2].data_type != FLAGDNN_DATA_BOOLEAN)) {
-    return false;
-  }
   if (type != FLAGDNN_DATA_FLOAT32 && type != FLAGDNN_DATA_FLOAT16 &&
-      type != FLAGDNN_DATA_BFLOAT16 && type != FLAGDNN_DATA_INT32) {
+      type != FLAGDNN_DATA_BFLOAT16) {
     return false;
   }
   return test_case.output.data_type ==
@@ -193,36 +173,20 @@ void run_cpu_pointwise_case(const PointwiseTestCase& test_case,
                       test_case.alpha != 1.0))) {
     throw std::invalid_argument("unsupported CPU pointwise fallback case");
   }
-  const bool integer = test_case.inputs[0].data_type == FLAGDNN_DATA_INT32;
   std::vector<BoundTensor> inputs;
   std::array<std::vector<float>, 2> floating_inputs;
-  std::array<std::vector<std::int32_t>, 2> integer_inputs;
   inputs.reserve(test_case.inputs.size());
   for (std::size_t index = 0; index < 2; ++index) {
     const auto& specification = test_case.inputs[index];
-    if (integer) {
-      inputs.push_back(integer_input(specification, index, test_case.mode,
-                                     stream.get(), integer_inputs[index]));
-    } else {
-      inputs.push_back(make_input_buffer(specification, index, stream.get(),
-                                         test_case.input_domains.at(index)));
-      // Reading back the uploaded values makes input dtype quantization explicit.
-      floating_inputs[index] =
-          gather(read_output(inputs.back(), stream.get()), specification);
-    }
+
+    inputs.push_back(make_input_buffer(specification, index, stream.get(),
+                                       test_case.input_domains.at(index)));
+    // Reading back the uploaded values makes input dtype quantization explicit.
+    floating_inputs[index] =
+        gather(read_output(inputs.back(), stream.get()), specification);
+
   }
 
-  std::vector<std::uint8_t> predicate;
-  if (test_case.mode == FLAGDNN_POINTWISE_BINARY_SELECT) {
-    const auto& specification = test_case.inputs[2];
-    inputs.push_back(make_input_buffer(
-        specification, 2, stream.get(),
-        flagdnn::testing::PointwiseInputDomain::kLogical));
-    const auto values = gather(read_output(inputs.back(), stream.get()),
-                               specification);
-    predicate.reserve(values.size());
-    for (const auto value : values) predicate.push_back(value != 0);
-  }
   // Input bytes, including offsets and padding, must remain unchanged.
   std::vector<std::vector<std::byte>> initial_inputs;
   initial_inputs.reserve(inputs.size());
@@ -237,50 +201,29 @@ void run_cpu_pointwise_case(const PointwiseTestCase& test_case,
   const auto& right_shape = test_case.inputs[1].dimensions;
   const auto& output_shape = test_case.output.dimensions;
   std::vector<float> floating_expected;
-  std::vector<std::int32_t> integer_expected;
-  if (integer) {
-    if (test_case.alpha < std::numeric_limits<std::int32_t>::min() ||
-        test_case.alpha > std::numeric_limits<std::int32_t>::max() ||
-        std::trunc(test_case.alpha) != test_case.alpha) {
-      throw std::invalid_argument("CPU int32 pointwise alpha is not an int32");
-    }
-    const auto& right = integer_inputs[1];
-    if (add_square) {
-      integer_expected = cpu::evaluate_add_square_int32(
-          integer_inputs[0], left_shape, right, right_shape, output_shape);
-    } else if (test_case.mode == FLAGDNN_POINTWISE_BINARY_SELECT) {
-      integer_expected = cpu::evaluate_binary_select_int32(
-          integer_inputs[0], left_shape, right, right_shape, predicate,
-          test_case.inputs[2].dimensions, output_shape);
-    } else {
-      integer_expected = cpu::evaluate_binary_pointwise_int32(
-          test_case.mode, integer_inputs[0], left_shape, right, right_shape,
-          output_shape, static_cast<std::int32_t>(test_case.alpha));
-    }
+
+  const auto& right = floating_inputs[1];
+  if (add_square) {
+    floating_expected = cpu::evaluate_add_square(
+        floating_inputs[0], left_shape, right, right_shape, output_shape,
+        [&](std::span<const float> values) {
+          return decode_floating(test_case.output.data_type,
+              encode_floating(test_case.output.data_type, values));
+        });
   } else {
-    const auto& right = floating_inputs[1];
-    if (add_square) {
-      floating_expected = cpu::evaluate_add_square(
-          floating_inputs[0], left_shape, right, right_shape, output_shape,
-          [&](std::span<const float> values) {
-            return decode_floating(test_case.output.data_type,
-                encode_floating(test_case.output.data_type, values));
-          });
-    } else {
-      floating_expected = cpu::evaluate_binary_pointwise_with_alpha(
-          test_case.mode, floating_inputs[0], left_shape, right, right_shape,
-          output_shape, test_case.alpha);
-    }
-    if (test_case.output.data_type != FLAGDNN_DATA_BOOLEAN) {
-      floating_expected = decode_floating(
-          test_case.output.data_type,
-          encode_floating(test_case.output.data_type, floating_expected));
-    }
+    floating_expected = cpu::evaluate_binary_pointwise_with_alpha(
+        test_case.mode, floating_inputs[0], left_shape, right, right_shape,
+        output_shape, test_case.alpha);
+  }
+  if (test_case.output.data_type != FLAGDNN_DATA_BOOLEAN) {
+    floating_expected = decode_floating(
+        test_case.output.data_type,
+        encode_floating(test_case.output.data_type, floating_expected));
   }
 
   std::vector<std::byte> initial(allocation_size(test_case.output),
                                   std::byte{0xa5});
-  if (!integer && test_case.output.data_type != FLAGDNN_DATA_BOOLEAN) {
+  if (test_case.output.data_type != FLAGDNN_DATA_BOOLEAN) {
     // Raw 0xa5 bytes decode to tiny floats that can pass near-zero tolerances.
     // Use a representable sentinel for logical values; keep padding byte-exact.
     const std::array<float, 1> sentinel = {kPaddingSentinel};
@@ -314,9 +257,7 @@ void run_cpu_pointwise_case(const PointwiseTestCase& test_case,
 
   const auto payload = std::span<const std::byte>(actual).subspan(
       test_case.output.binding_byte_offset);
-  if (integer) {
-    compare_exact<std::int32_t>(payload, integer_expected, test_case);
-  } else if (test_case.output.data_type == FLAGDNN_DATA_BOOLEAN) {
+  if (test_case.output.data_type == FLAGDNN_DATA_BOOLEAN) {
     compare_exact<float>(payload, floating_expected, test_case);
   } else {
     compare_floating(

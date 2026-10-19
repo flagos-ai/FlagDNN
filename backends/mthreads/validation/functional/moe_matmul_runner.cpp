@@ -8,7 +8,7 @@ int run_moe_matmul_functional_test(int argc, char** argv,
                                    bool benchmark) {
   return mthreads::run_paired_cases(
       argc, argv, cases, "FLAGDNN_MOE_MATMUL_CASE",
-      cases.front().backward ? "moe_grouped_matmul_bwd" : "moe_grouped_matmul",
+      "moe_grouped_matmul",
       build_flagdnn_moe_matmul, moe_matmul_inputs,
       [](const auto& c) { return mthreads::reference(c); },
       [](const MoeMatmulTestCase& test_case, std::size_t) {

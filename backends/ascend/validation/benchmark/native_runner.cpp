@@ -6,7 +6,6 @@
 #include "common/index.hpp"
 #include "common/moe_matmul.hpp"
 #include "common/normalization_extended.hpp"
-#include "common/position_embedding.hpp"
 #include "common/resample.hpp"
 #include "common/statistics.hpp"
 #include <cstdlib>
@@ -23,9 +22,9 @@ int run_attention_benchmark_test(int argc, char **argv,
   return 77;
 }
 int run_native_benchmark_test(int argc, char **argv, std::string_view op) {
-  if (op == "moe_grouped_matmul" || op == "moe_grouped_matmul_bwd")
+  if (op == "moe_grouped_matmul")
     return run_moe_matmul_functional_test(
-        argc, argv, make_moe_matmul_cases(op == "moe_grouped_matmul_bwd"),
+        argc, argv, make_moe_matmul_cases(),
         true);
   if (op == "causal_conv1d")
     return run_causal_convolution_functional_test(
@@ -33,14 +32,8 @@ int run_native_benchmark_test(int argc, char **argv, std::string_view op) {
   if (op == "resample")
     return run_resample_functional_test(argc, argv, make_resample_cases(),
                                         true);
-  if (op == "rope" || op == "rope_backward")
-    return run_rope_functional_test(
-        argc, argv, make_rope_cases(op == "rope_backward"), true);
   if (op == "concatenate" || op == "gen_index")
     return run_index_functional_test(argc, argv, make_index_cases(op), true);
-  if (op == "genstats")
-    return run_statistics_functional_test(argc, argv, make_genstats_cases(),
-                                          true);
   if (op == "bn_finalize")
     return run_statistics_functional_test(argc, argv, make_bn_finalize_cases(),
                                           true);

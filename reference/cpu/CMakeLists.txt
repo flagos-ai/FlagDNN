@@ -2,7 +2,6 @@ add_library(flagdnn_validation_cpu_reference STATIC
   pointwise.cpp
   attention.cpp
   matrix.cpp
-  random.cpp
   index.cpp
   moe_matmul.cpp
   fp8_matmul.cpp
@@ -11,8 +10,7 @@ add_library(flagdnn_validation_cpu_reference STATIC
   normalization.cpp
   causal_convolution.cpp
   benchmark.cpp
-  statistics.cpp
-  position_embedding.cpp)
+  statistics.cpp)
 
 target_compile_features(flagdnn_validation_cpu_reference PUBLIC cxx_std_20)
 target_include_directories(flagdnn_validation_cpu_reference PUBLIC

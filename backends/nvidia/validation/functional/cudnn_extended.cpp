@@ -34,23 +34,19 @@ std::unique_ptr<TestExecutable> build_cudnn_statistics(
   std::vector<Tensor> inputs, outputs;
   for (const auto& input : test_case.inputs)
     inputs.push_back(cuda::make_cudnn_tensor(graph, input, "input"));
-  if (test_case.operation == "genstats") {
-    const auto result =
-        graph->genstats(inputs[0], cfe::graph::Genstats_attributes());
-    outputs.assign(result.begin(), result.end());
-  } else {
-    auto attributes = cfe::graph::BN_finalize_attributes();
-    auto momentum = graph->tensor(static_cast<float>(test_case.momentum));
-    if (inputs.size() == 6)
-      attributes.set_previous_running_stats(inputs[4], inputs[5], momentum);
-    const auto result = graph->bn_finalize(
-        inputs[0], inputs[1], inputs[2], inputs[3],
-        graph->tensor(static_cast<float>(test_case.epsilon)),
-        graph->tensor(static_cast<std::int64_t>(test_case.accum_count)),
-        attributes);
-    for (const auto& output : result)
-      if (output) outputs.push_back(output);
-  }
+
+  auto attributes = cfe::graph::BN_finalize_attributes();
+  auto momentum = graph->tensor(static_cast<float>(test_case.momentum));
+  if (inputs.size() == 6)
+    attributes.set_previous_running_stats(inputs[4], inputs[5], momentum);
+  const auto result = graph->bn_finalize(
+      inputs[0], inputs[1], inputs[2], inputs[3],
+      graph->tensor(static_cast<float>(test_case.epsilon)),
+      graph->tensor(static_cast<std::int64_t>(test_case.accum_count)),
+      attributes);
+  for (const auto& output : result)
+    if (output) outputs.push_back(output);
+
   for (std::size_t index = 0; index < outputs.size(); ++index)
     mark_output(outputs[index], test_case.outputs.at(index));
   return cuda::build_cudnn_graph(std::move(graph));
@@ -127,21 +123,17 @@ std::unique_ptr<TestExecutable> build_cudnn_moe_matmul(
   for (const auto& input : test_case.inputs)
     inputs.push_back(cuda::make_cudnn_tensor(graph, input, "input"));
   Tensor output;
-  if (test_case.backward) {
-    output = graph->moe_grouped_matmul_bwd(
-        inputs[0], inputs[1], inputs[2],
-        cfe::graph::Moe_grouped_matmul_bwd_attributes());
-  } else {
-    const auto mode = test_case.mode == 0 ? cfe::MoeGroupedMatmulMode_t::NONE
-                      : test_case.mode == 1
-                          ? cfe::MoeGroupedMatmulMode_t::GATHER
-                          : cfe::MoeGroupedMatmulMode_t::SCATTER;
-    output = graph->moe_grouped_matmul(
-        inputs[0], inputs[1], inputs[2], test_case.mode ? inputs[3] : nullptr,
-        test_case.mode == 2 ? inputs[4] : nullptr,
-        cfe::graph::Moe_grouped_matmul_attributes().set_mode(mode).set_top_k(
-            test_case.top_k));
-  }
+
+  const auto mode = test_case.mode == 0 ? cfe::MoeGroupedMatmulMode_t::NONE
+                    : test_case.mode == 1
+                        ? cfe::MoeGroupedMatmulMode_t::GATHER
+                        : cfe::MoeGroupedMatmulMode_t::SCATTER;
+  output = graph->moe_grouped_matmul(
+      inputs[0], inputs[1], inputs[2], test_case.mode ? inputs[3] : nullptr,
+      test_case.mode == 2 ? inputs[4] : nullptr,
+      cfe::graph::Moe_grouped_matmul_attributes().set_mode(mode).set_top_k(
+          test_case.top_k));
+
   mark_output(output, test_case.outputs.at(0));
   return cuda::build_cudnn_graph(std::move(graph));
 }

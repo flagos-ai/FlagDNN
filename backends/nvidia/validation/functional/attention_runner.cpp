@@ -1117,7 +1117,6 @@ int run_attention_benchmark_cases(int argc, char** argv, const Cases& cases,
     const char* filter = std::getenv("FLAGDNN_BENCHMARK_CASE");
     std::size_t executed = 0;
     for (const auto& test_case : cases) {
-      if (test_case.q.data_type == FLAGDNN_DATA_FLOAT32) continue;
       if (filter != nullptr && filter[0] != '\0' && test_case.name != filter)
         continue;
       run_case(test_case, handle, cache.path(), stream, true);
@@ -1155,7 +1154,6 @@ int run_sdpa_functional_test(int argc, char** argv,
     const char* filter = std::getenv("FLAGDNN_SDPA_CASE");
     std::size_t executed = 0;
     for (const SdpaTestCase& test_case : cases) {
-      if (test_case.q.data_type == FLAGDNN_DATA_FLOAT32) continue;
       if (filter != nullptr &&
           test_case.name.find(filter) == std::string::npos) {
         continue;
@@ -1194,7 +1192,6 @@ int run_sdpa_backward_functional_test(
     const char* filter = std::getenv("FLAGDNN_SDPA_BACKWARD_CASE");
     std::size_t executed = 0;
     for (const SdpaBackwardTestCase& test_case : cases) {
-      if (test_case.q.data_type == FLAGDNN_DATA_FLOAT32) continue;
       if (filter != nullptr &&
           test_case.name.find(filter) == std::string::npos) {
         continue;

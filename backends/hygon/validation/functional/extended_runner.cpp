@@ -4,8 +4,6 @@
 #include "common/index.hpp"
 #include "common/moe_matmul.hpp"
 #include "common/normalization_extended.hpp"
-#include "common/position_embedding.hpp"
-#include "common/random.hpp"
 #include "common/resample.hpp"
 #include "common/statistics.hpp"
 #include "host_runner.hpp"
@@ -14,8 +12,6 @@
 #include "reference/cpu/index.hpp"
 #include "reference/cpu/moe_matmul.hpp"
 #include "reference/cpu/normalization.hpp"
-#include "reference/cpu/position_embedding.hpp"
-#include "reference/cpu/random.hpp"
 #include "reference/cpu/resample.hpp"
 #include "reference/cpu/statistics.hpp"
 namespace flagdnn::testing {
@@ -38,8 +34,7 @@ int run_statistics_functional_test(int argc, char **argv,
             c.name, c.inputs, c.outputs, values, handle, stream,
             [&](flagdnn::Handle &h) { return build_flagdnn_statistics(h, c); },
             [&](const host::Values &v) {
-              return cpu::evaluate_statistics(
-                  c.operation, c.inputs[0].dimensions, c.outputs.size(),
+              return cpu::evaluate_bn_finalize(c.outputs.size(),
                   c.epsilon, c.accum_count, c.momentum, v);
             },
             2e-5, 2e-4, {}, kPairedComparison);
@@ -87,8 +82,7 @@ int run_moe_matmul_functional_test(int argc, char **argv,
                                    bool benchmark) {
   return host::run_suite(
       argc, argv, cases,
-      !cases.empty() && cases.front().backward ? "moe_grouped_matmul_bwd"
-                                               : "moe_grouped_matmul",
+      "moe_grouped_matmul",
       benchmark,
       [](const MoeMatmulTestCase &c, const auto &handle, auto &stream) {
         const auto type = c.outputs[0].data_type;
@@ -109,7 +103,7 @@ int run_moe_matmul_functional_test(int argc, char **argv,
             [&](const host::Values &v) {
               return cpu::evaluate_moe_matmul(
                   {host::shapes(c.inputs), c.outputs[0].dimensions, c.offsets,
-                   c.token_index, c.token_ks, c.mode, c.top_k, c.backward},
+                   c.token_index, c.token_ks, c.mode, c.top_k},
                   v);
             },
             absolute, relative, {}, kPairedComparison,
@@ -166,43 +160,7 @@ int run_resample_functional_test(int argc, char **argv,
             -1, -1, limits, kPairedComparison);
       });
 }
-int run_rng_functional_test(int argc, char **argv,
-                            std::span<const RngTestCase> cases,
-                            bool benchmark) {
-  return host::run_suite(
-      argc, argv, cases, "rng", benchmark,
-      [](const RngTestCase &c, const auto &handle, auto &stream) {
-        host::run_case(
-            c.name, c.inputs, c.outputs, host::Values{}, handle, stream,
-            [&](flagdnn::Handle &h) { return build_flagdnn_rng(h, c); },
-            [&](const host::Values &) {
-              return cpu::evaluate_rng(
-                  {c.outputs[0].dimensions, c.seed, c.offset, c.distribution,
-                   c.outputs[0].data_type == FLAGDNN_DATA_FLOAT32   ? 24
-                   : c.outputs[0].data_type == FLAGDNN_DATA_FLOAT16 ? 11
-                                                                    : 8,
-                   c.probability});
-            },
-            -1, -1, {}, kPairedComparison);
-      });
-}
-int run_rope_functional_test(int argc, char **argv,
-                             std::span<const RoPETestCase> cases,
-                             bool benchmark) {
-  return host::run_suite(
-      argc, argv, cases, cases.empty() ? "extended" : cases.front().operation,
-      benchmark, [](const RoPETestCase &c, const auto &handle, auto &stream) {
-        host::run_case(
-            c.name, c.inputs, c.outputs, rope_inputs(c), handle, stream,
-            [&](flagdnn::Handle &h) { return build_flagdnn_rope(h, c); },
-            [&](const host::Values &v) {
-              return cpu::evaluate_rope(c.inputs[0].dimensions, c.rope_dim,
-                                        c.output_scale,
-                                        c.operation == "rope_backward", v);
-            },
-            -1, -1, {}, kPairedComparison);
-      });
-}
+
 int run_extended_normalization_functional_test(
     int argc, char **argv, std::span<const ExtendedNormalizationTestCase> cases,
     bool benchmark) {

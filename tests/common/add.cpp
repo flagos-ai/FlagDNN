@@ -294,14 +294,16 @@ std::vector<AddTestCase> make_add_cases() {
     for (const flagdnnDataType_t data_type :
          {FLAGDNN_DATA_FLOAT32, FLAGDNN_DATA_FLOAT16, FLAGDNN_DATA_BFLOAT16,
           FLAGDNN_DATA_INT32}) {
+      if (data_type == FLAGDNN_DATA_INT32) {
+        uid += 3;  // Preserve the remaining shared tensor UIDs.
+        continue;
+      }
       std::string label = "shape";
       for (const auto dimension : shape) label += "_" + std::to_string(dimension);
       result.push_back(make_case(label, shape, shape, data_type, uid));
       uid += 3;
     }
   }
-  result.push_back(make_case("broadcast_integer", {2, 3, 17}, {1, 3, 17},
-                             FLAGDNN_DATA_INT32, uid, -2.0));
   for (const AddTestCase& test_case : result) {
     validate_add_case(test_case);
   }

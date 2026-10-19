@@ -246,54 +246,6 @@ void run_copy(std::string_view name, std::span<const TestTensor> inputs,
   execute_raw(name, buffers, std::move(expected), handle, stream, build);
 }
 
-template <class Build, class Evaluate>
-void run_integer_case(const PointwiseTestCase &c,
-                      const std::function<flagdnn::Handle &()> &handle,
-                      hv::Stream &stream, Build build, Evaluate evaluate) {
-  std::vector<Buffer> buffers;
-  std::vector<std::vector<std::int32_t>> values;
-  for (std::size_t j = 0; j < c.inputs.size(); ++j) {
-    const auto &t = c.inputs[j];
-    buffers.push_back(raw_buffer(t, stream));
-    values.emplace_back(io::element_count(t));
-    for (std::size_t i = 0; i < values.back().size(); ++i) {
-      values.back()[i] = t.data_type == FLAGDNN_DATA_BOOLEAN
-                             ? (i + j) % 2
-                             : pointwise_integer_input(i, j, c.mode);
-      std::memcpy(raw_element(buffers.back(), i), &values.back()[i],
-                  io::data_type_size(t.data_type));
-    }
-  }
-  buffers.push_back(raw_buffer(c.output, stream));
-  auto expected = buffers.back().initial;
-  for (std::size_t i = 0; i < io::element_count(c.output); ++i) {
-    const auto input = [&](std::size_t j) {
-      return j < values.size()
-                 ? values[j][pw::broadcast_index(i, c.inputs[j], c.output)]
-                 : 0;
-    };
-    const auto result = evaluate(input(0), input(1), input(2) != 0,
-                                 static_cast<std::int32_t>(c.alpha));
-    std::memcpy(expected.data() + c.output.binding_byte_offset +
-                    io::logical_offset(i, c.output) *
-                        io::data_type_size(c.output.data_type),
-                &result, io::data_type_size(c.output.data_type));
-  }
-  execute_raw(c.name, buffers, std::move(expected), handle, stream, build);
-}
-inline void
-run_integer_pointwise(const PointwiseTestCase &c,
-                      const std::function<flagdnn::Handle &()> &handle,
-                      hv::Stream &stream) {
-  run_integer_case(
-      c, handle, stream,
-      [&](flagdnn::Handle &h) { return build_flagdnn_pointwise(h, c); },
-      [&](auto a, auto b, bool p, auto alpha) {
-        return reference::cpu::pointwise_integer_reference(c.mode, a, b, p,
-                                                           alpha);
-      });
-}
-
 template <class Case, class Run>
 int run_suite(int argc, char **argv, std::span<const Case> cases,
               std::string_view operation, bool benchmark, Run run) {
@@ -325,19 +277,16 @@ int run_suite(int argc, char **argv, std::span<const Case> cases,
             family = "LAYOUT";
           else if (operation == "add_square")
             family = "COMPOSITE";
-          else if (operation == "genstats" || operation == "bn_finalize")
+          else if (operation == "bn_finalize")
             family = "STATISTICS";
           else if (operation == "gen_index" || operation == "concatenate")
             family = "INDEX";
-          else if (operation == "moe_grouped_matmul" ||
-                   operation == "moe_grouped_matmul_bwd")
+          else if (operation == "moe_grouped_matmul")
             family = "MOE_MATMUL";
           else if (operation == "causal_conv1d")
             family = "CAUSAL_CONVOLUTION";
           else if (operation == "matmul_fp8" || operation == "matmul")
             family = "FP8_MATMUL";
-          else if (operation == "rope" || operation == "rope_backward")
-            family = "ROPE";
           else if (operation.find("norm") != std::string_view::npos)
             family = "NORMALIZATION_EXTENDED";
           filter = std::getenv(("FLAGDNN_" + family + "_CASE").c_str());

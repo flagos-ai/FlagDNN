@@ -10,7 +10,6 @@ struct MoeMatmulParameters {
   std::vector<std::int64_t> output_shape;
   std::vector<std::int32_t> offsets, token_index, token_ks;
   int mode = 0, top_k = 1;
-  bool backward = false;
 };
 std::vector<std::vector<float>> evaluate_moe_matmul(
     const MoeMatmulParameters& parameters,

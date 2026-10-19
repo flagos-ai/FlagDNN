@@ -2,7 +2,6 @@
 #include "validation/functional/aclnn_extended.hpp"
 #include "validation/functional/aclnn_plan.hpp"
 #include <aclnnop/aclnn_add.h>
-#include <aclnnop/aclnn_fill_scalar.h>
 #include <aclnnop/aclnn_index_select.h>
 #include <aclnnop/aclnn_matmul.h>
 #include <aclnnop/aclnn_mul.h>
@@ -17,13 +16,11 @@ build_aclnn_moe_matmul(const MoeMatmulTestCase &c) {
   specs.insert(specs.end(), c.outputs.begin(), c.outputs.end());
   return std::make_unique<Plan>(std::move(specs), [c](Plan &p) {
     const auto e = static_cast<std::int64_t>(c.offsets.size());
-    const auto routed =
-        c.backward ? c.inputs[0].dimensions[1] : c.outputs[0].dimensions[1];
-    const auto k =
-        c.backward ? c.inputs[1].dimensions[2] : c.inputs[0].dimensions[2];
+    const auto routed = c.outputs[0].dimensions[1];
+    const auto k = c.inputs[0].dimensions[2];
     const auto n = c.outputs[0].dimensions[2];
-    auto *tokens = p.ports[c.backward ? 1 : 0];
-    auto *matrices = p.ports[c.backward ? 0 : 1];
+    auto *tokens = p.ports[0];
+    auto *matrices = p.ports[1];
     auto *out = p.ports.back();
     auto type = c.outputs[0].data_type;
     auto temporary = [&](std::vector<std::int64_t> shape, flagdnnDataType_t t) {
@@ -40,12 +37,7 @@ build_aclnn_moe_matmul(const MoeMatmulTestCase &c) {
     }
     if (c.mode == 2)
       out = temporary({1, routed, n}, type);
-    if (c.backward) {
-      auto *zero = p.scalar(0);
-      p.add(aclnnInplaceFillScalar, [&](auto *w, auto **exec) {
-        return aclnnInplaceFillScalarGetWorkspaceSize(out, zero, w, exec);
-      });
-    }
+
     // The reference fixture supplies expert boundaries; routing gathers and
     // scatters, and every contraction, execute through independent ACLNN ops.
     for (std::int64_t expert = 0; expert < e; ++expert) {
@@ -54,12 +46,9 @@ build_aclnn_moe_matmul(const MoeMatmulTestCase &c) {
       const auto count = end - begin;
       if (!count)
         continue;
-      auto *a = c.backward ? p.alias(tokens, {k, count}, {1, k}, begin * k)
-                           : p.alias(tokens, {count, k}, {k, 1}, begin * k);
-      auto *b = c.backward ? p.alias(matrices, {count, n}, {n, 1}, begin * n)
-                           : p.alias(matrices, {k, n}, {n, 1}, expert * k * n);
-      auto *y = c.backward ? p.alias(out, {k, n}, {n, 1}, expert * k * n)
-                           : p.alias(out, {count, n}, {n, 1}, begin * n);
+      auto *a = p.alias(tokens, {count, k}, {k, 1}, begin * k);
+      auto *b = p.alias(matrices, {k, n}, {n, 1}, expert * k * n);
+      auto *y = p.alias(out, {count, n}, {n, 1}, begin * n);
       p.add(aclnnMatmul, [&](auto *w, auto **exec) {
         return aclnnMatmulGetWorkspaceSize(a, b, y, 0, w, exec);
       });

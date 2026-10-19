@@ -22,8 +22,6 @@ else()
     "${PROJECT_SOURCE_DIR}/tests/common/statistics.cpp"
     "${PROJECT_SOURCE_DIR}/tests/common/causal_convolution.cpp"
     "${PROJECT_SOURCE_DIR}/tests/common/resample.cpp"
-    "${PROJECT_SOURCE_DIR}/tests/common/random.cpp"
-    "${PROJECT_SOURCE_DIR}/tests/common/position_embedding.cpp"
     "${PROJECT_SOURCE_DIR}/tests/common/normalization_extended.cpp"
   )
   target_compile_features(flagdnn_iluvatar_case_objects PUBLIC cxx_std_20)
@@ -137,7 +135,7 @@ if(FLAGDNN_BUILD_TESTS)
     "${FLAGDNN_ILUVATAR_RESOLVED_CUDNN_LIBRARY}" DIRECTORY)
   flagdnn_register_functional_suite(
     PLATFORM iluvatar
-    UNSUPPORTED_OPERATORS moe_grouped_matmul moe_grouped_matmul_bwd matmul_fp8
+    UNSUPPORTED_OPERATORS moe_grouped_matmul matmul_fp8
     ADAPTER_TARGET flagdnn_test_iluvatar_adapter
     BACKEND_TARGET flagdnn_backend_iluvatar
     COMMAND_ARGS
@@ -148,7 +146,7 @@ if(FLAGDNN_BUILD_TESTS)
     LABELS "corex;cudnn"
     TIMEOUT 3600
     BUILD_RPATH "${_flagdnn_iluvatar_cudnn_library_directory}")
-  foreach(_operator IN ITEMS moe_grouped_matmul moe_grouped_matmul_bwd matmul_fp8)
+  foreach(_operator IN ITEMS moe_grouped_matmul matmul_fp8)
     set_property(TARGET "flagdnn_test_iluvatar_${_operator}" PROPERTY SOURCES
       "${CMAKE_CURRENT_SOURCE_DIR}/dnn_capability_gate.cpp")
     target_link_libraries("flagdnn_test_iluvatar_${_operator}" PRIVATE flagdnn_validation_iluvatar_reference)

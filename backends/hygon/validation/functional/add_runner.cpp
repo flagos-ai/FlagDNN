@@ -14,17 +14,7 @@ int run_add_functional_test(int argc, char **argv,
         pointwise.output = c.output;
         pointwise.mode = FLAGDNN_POINTWISE_ADD;
         pointwise.alpha = c.alpha;
-        if (c.left.data_type == FLAGDNN_DATA_INT32) {
-          host::run_integer_case(
-              pointwise, handle, stream,
-              [&](flagdnn::Handle &h) { return build_flagdnn_add(h, c); },
-              [&](auto a, auto b, bool predicate, auto alpha) {
-                (void)predicate;
-                return reference::cpu::pointwise_integer_reference(
-                    FLAGDNN_POINTWISE_ADD, a, b, false, alpha);
-              });
-          return;
-        }
+
         host::run_case(
             c.name, pointwise.inputs, std::vector<TestTensor>{c.output},
             host::default_inputs(pointwise.inputs), handle, stream,

@@ -232,13 +232,11 @@ add_library(
   functional/statistics_runner.cpp
   functional/normalization_extended_runner.cpp
   functional/resample_runner.cpp
-  functional/rope_runner.cpp
   functional/mudnn_extended.cpp
   functional/mudnn_extended_matrix.cpp
   functional/causal_convolution_runner.cpp
   functional/fp8_matmul_runner.cpp
   functional/moe_matmul_runner.cpp
-  functional/random_runner.cpp
   functional/add_runner.cpp
   functional/attention_runner.cpp
   functional/composite_runner.cpp

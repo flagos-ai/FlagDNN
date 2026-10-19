@@ -70,53 +70,59 @@ Graph；没有合适的 Graph 执行计划时，使用 cuDNN 共享库中的实�
 双方使用相同的量化输入，并按各自 SDK 的存储格式编码；输出和 workspace 独立
 分配。输出通过校验后才计时。
 
-cuDNN 不支持的 shape、dtype、布局或语义配置从 NVIDIA case 集合移除，补充
-可执行的配置。找不到独立 cuDNN 对照的算子记录于
-`backends/nvidia/validation/cudnn_unsupported_operators.txt`，不注册其 NVIDIA
-功能和性能 suite；生产算子仍保留。已注册 case 在计划构建、执行或比较时失败，
-必须作为失败报告，不能动态跳过或改用 CPU。每个具备 cuDNN 对照的算子/dtype
-至少覆盖 12 种 shape，参数或布局变体不重复计数。
+功能和性能的共享范围以当前合格 NVIDIA 栈（H100、cuDNN 9.24、Frontend 1.26）
+实际可执行的 cuDNN 对照为准。先使用 Frontend，缺少对应执行计划时检查原生
+cuDNN API；两者均不支持的算子或配置从 `cmake/Operators.cmake`、
+`tests/common` 及功能/性能入口移除，所有平台使用同一份精简后的用例。
+不能只在 NVIDIA runner 内过滤，再让其他平台用未经 cuDNN 验证的 CPU 公式补齐。
+生产 Graph API、编译器和 Triton kernel 不因测试范围收缩而删除或修改。
 
-其他平台的 reference 策略由各自 adapter 决定。Hygon 的 `div`、`pow`、`mod`、
-`cmp_eq` 功能测试使用 `reference/cpu`，CTest 标记为 `cpu-reference`；其余
-vendor-reference 功能测试标记为 `hipdnn`，对应 benchmark 仍结构化 SKIP。
-`reference/tests` 在 NVIDIA 构建中把这四个 CPU 算子分别注册为独立 CTest；每个算子
-使用 6 组相同形状、标量、右对齐和多轴广播 case 与 cuDNN Graph 对照。该 suite 只
-证明 CPU semantic oracle，不执行 FlagDNN 生产 backend，也不产生性能结论。
+2026-10-19 清理的范围及依据：
 
-Iluvatar 的 `div`、`pow`、`mod`、`cmp_eq` 功能测试在 CoreX cuDNN 能力表
-标记不支持，或执行时返回 `CUDNN_STATUS_NOT_SUPPORTED` 时，使用现有的
-`reference/cpu` 实现校验 FlagDNN GPU 输出；有可用的 cuDNN 对照时仍优先使用它。
-CPU 输入与 GPU 使用相同的 dtype 量化值，并按逻辑布局处理广播。
-回退成功计为功能测试通过，日志保留 `fallback_reason`；数值不匹配及其他
-cuDNN 错误仍然失败。其他算子的对照策略和性能测试的跳过策略保持不变，
-不将 CPU reference 用作性能基线。
+| 范围 | 处理 |
+| --- | --- |
+| GenStats、RNG、RoPE 前向/反向、MoE 反向 | 无独立可执行 cuDNN 对照，删除共享功能/性能测试、对应 CPU 实现及平台适配调用；保留 BN Finalize 和 MoE 前向 |
+| 精确 INT32 逐元素算术、比较、选择和 AddSquare | INT32 compute 无计划；FLOAT compute 存在整数舍入/精度差异，删除该测试范围和 CPU 整数公式；保留已验证的 INT32 identity/拼接等存储操作 |
+| FP32 Q/K/V 的 SDPA | 删除共享用例，保留 FP16/BF16 及已有可执行的 FP8 对照 |
+| 四维交叉广播 MatMul | 原用例无原生执行计划，移除该用例，保留二维/三维及精度用例 |
+| BF16 reduction 输出 BF16，以及不支持的混合输出配置 | Graph 与原生 ReduceTensor 均不支持的配置移除；保留 FP32/FP16，以及已验证的 BF16/INT32 SUM 到 FP32 |
+| 带 padding 的 Binary Select | 原生 Graph 无计划且无对应 legacy API，移除该配置 |
+| 带 padding 的 NEG | 保留，通过 cuDNN 原生 TransformTensor 的负缩放进行对照 |
 
-MThreads 的 `pow` INT32 功能 case 在 muDNN 不支持而原本跳过时，改用
-`reference/cpu` 的整数语义 oracle 校验 FlagDNN GPU 输出，包括带 padding 的
-广播 case。CPU 对照读取与 GPU 相同的编码输入，遵循 tensor strides 和广播规则，
-以 INT32 原始字节精确比较，保留整数溢出和负指数语义。只有这些原本跳过的
-accuracy case 使用 CPU；其余 case 继续与 muDNN 对照。benchmark（包括复用
-功能程序的 native benchmark）保留原有 muDNN 对照与跳过策略，不使用 CPU 性能基线。
+本次共享变更需要同步修改其他平台 validation：删除已不存在的 CPU 调用、
+无入口的测试 adapter 和注册项，并按实际共享生成器收缩 THead/天数能力表。
+保留条目的平台资格和测量值不变，不将删除用例统计为通过。用例在生成后收缩的
+位置保留既有 tensor UID，以免改变其他平台已有基准的 workload 标识。
+相比保留空壳 CPU 函数或返回 SKIP，这样能直接消除编译依赖和两套测试范围。
+现有 Graph/编译协议的 host contract 仍可保护保留的生产实现，不代表这些配置
+已通过数值或性能验收。
 
-THead 默认批量算子 `add`、`sub`、`mul`、`div`、`pow`、`max`、`min`、`mod`、
-`add_square`、`cmp_eq` 的功能测试优先使用 acDNN；能力表明确不支持，或 acDNN
-返回 `ACDNN_STATUS_NOT_SUPPORTED` 时，使用 `reference/cpu` 校验实际 FlagDNN
-Graph 输出。上述算子的 THead 生产路径支持精确 INT32 运算，二元运算支持右对齐
-广播和显式步长；整数比较和 CPU 对照均不经过浮点转换。成功日志记录
-`FlagDNN Graph vs CPU reference PASS fallback_reason=<reason>`，并计入
-`executed`；只有实际完成且通过的 CPU 对照才能补足 accuracy 覆盖。数值不匹配
-和执行错误仍判失败，未执行的 SKIP 仍计为跳过。性能测试保持 acDNN 对照策略，
-不支持的 case 继续结构化 SKIP，不生成 CPU 性能基线。
+已注册 NVIDIA 用例在计划构建、执行或比较时失败，必须报错，不能动态跳过或
+替换成 CPU 对照。具备 cuDNN 对照的算子/dtype 继续使用共享 shape 集合。
 
-本次 Ascend 适配中，用于功能对比的 CPU 算子计算放在 `reference/cpu`。Ascend 验证代码负责
-输入生成、dtype 编解码、strides 的 gather/scatter 和设备执行，再调用共享
-CPU 实现。相关实现包含字节级 identity、布局和
-拼接，以及逐点、归一化等参考。迁移时保留原有 FP32/FP64 累加、
-中间量化和统计口径，相关契约位于 `reference/tests`。Ascend 的原始存储类型
-用例在 ACLNN 可用时也额外核对 CPU 字节参考，日志以 `CPU_ORACLE` 标明；
-CPU 计算在计时区间外，不作为性能对照耗时。
-本次不迁移其他平台的 CPU 参考，也不修改其他平台的后端代码。
+`reference/tests` 为保留的 `reference/cpu` 提供独立 CPU/cuDNN 功能测试，
+覆盖矩阵、卷积、reduction、归一化、attention、索引/布局、浮点逐元素、BN Finalize、
+重采样、因果卷积、FP8/MoE 前向及通用公式。原有 `div/pow/mod/cmp_eq` 的
+24 条广播对照保留。测试直接执行 cuDNN，比较完整逻辑输出，并检查输入、
+输出保护区和 padding；INT32 identity 等按原始字节比较。
+IEEE FP32 与 TF32 使用独立进程及对应的 `NVIDIA_TF32_OVERRIDE` 设置。
+BN Finalize 同时校验四/六输出，归一化检查各反向输出和 running statistics。
+CPU/cuDNN 测试不再以“无计划”作为成功或跳过；保留测试都必须真正完成对照。
+
+CPU 数学函数没有存储 dtype 的路径，使用 cuDNN 支持的 dtype 和相同量化输入验证，
+例如 attention 的 FP16/BF16。代表性小用例用于验证实现，不等同于穷举所有参数。
+`reference/cpu/benchmark.cpp` 的公式也做功能校验；对应的
+`reference.cpu.formulas.cudnn` 不调用性能 runner、不测 CPU 耗时。
+所有平台的 CPU 参考只用于功能正确性，性能比较仍使用厂商 DNN 或规定的等效性能。
+
+此次 H100 验证中，16 个 CPU/cuDNN 测试分组全部通过（493 条数值/存储对照），
+另有 4 个 CPU host contract 通过；无失败、无跳过。
+
+
+其他平台缺少厂商功能对照时，仅可调用保留且经过 cuDNN 对照的 CPU 功能。
+Hygon、Iluvatar 和 THead 的浮点逐元素回退保留；MThreads 保留浮点激活反向回退；
+Ascend 保留原始字节 identity 等已验证路径。整数算术回退及依赖它的功能测试
+随本次 CPU API 删除一起移除。数值不匹配、非法参数和执行错误仍然失败。
 
 ## 4. CMake 装配顺序
 
@@ -187,6 +193,9 @@ cmake --build /tmp/flagdnn-build-nvidia -j
 ```bash
 reference/tests/build.sh
 reference/tests/run.sh
+
+# 严格验收：只要有 CPU 功能缺少可执行的 cuDNN 对照，也返回失败。
+FLAGDNN_REFERENCE_REQUIRE_ALL=1 reference/tests/run.sh
 ```
 
 通过 `FLAGDNN_REFERENCE_BUILD_DIR` 选择构建目录，通过 `FLAGDNN_BUILD_TYPE` 选择

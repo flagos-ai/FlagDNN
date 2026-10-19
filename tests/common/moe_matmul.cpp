@@ -37,12 +37,6 @@ class Executable final : public TestExecutable {
                             .set_dim(input.dimensions)
                             .set_stride(input.strides)));
     fe::graph::Graph::Tensor output;
-    if (test_case.backward)
-      output = graph_.moe_grouped_matmul_bwd(
-          inputs[0], inputs[1], inputs[2],
-          fe::graph::Moe_grouped_matmul_bwd_attributes().set_name(
-              test_case.name));
-    else
       output = graph_.moe_grouped_matmul(
           inputs[0], inputs[1], inputs[2], test_case.mode ? inputs[3] : nullptr,
           test_case.mode == 2 ? inputs[4] : nullptr,
@@ -89,7 +83,7 @@ TestTensor tensor(std::int64_t uid, flagdnnDataType_t type, Shape shape) {
   return {uid, type, std::move(shape), std::move(strides), 16};
 }
 }  // namespace
-std::vector<MoeMatmulTestCase> make_moe_matmul_cases(bool backward) {
+std::vector<MoeMatmulTestCase> make_moe_matmul_cases() {
   // S, E, K, N. Keep large routed groups for NONE/GATHER workloads.
   const std::vector<std::array<std::int64_t, 4>> shapes = {
       {1, 1, 16, 16},   {7, 3, 32, 32},   {16, 2, 32, 64},   {17, 8, 64, 32},
@@ -111,18 +105,16 @@ std::vector<MoeMatmulTestCase> make_moe_matmul_cases(bool backward) {
                          : format == 1 ? FLAGDNN_DATA_BFLOAT16
                          : format == 2 ? FLAGDNN_DATA_FP8_E4M3
                                        : FLAGDNN_DATA_FP8_E5M2;
-      for (int mode = 0; mode < (backward ? 1 : 3); ++mode) {
+      for (int mode = 0; mode < 3; ++mode) {
         const auto& shape = mode == 2 ? scatter_shapes[index] : shapes[index];
         const auto [s, e, k, n] = shape;
         const auto top_k =
             std::min(static_cast<int>(index % 3) + 1, static_cast<int>(e));
         const auto routed = s * top_k;
         MoeMatmulTestCase test_case;
-        test_case.backward = backward;
         test_case.mode = mode;
         test_case.top_k = top_k;
-        test_case.name = std::string(backward ? "moe_grouped_matmul_bwd"
-                                              : "moe_grouped_matmul") +
+        test_case.name = std::string("moe_grouped_matmul") +
                          (format == 0   ? "_fp16"
                           : format == 1 ? "_bf16"
                           : format == 2 ? "_e4m3"
@@ -147,10 +139,7 @@ std::vector<MoeMatmulTestCase> make_moe_matmul_cases(bool backward) {
           }
         }
         const auto offset = tensor(3, FLAGDNN_DATA_INT32, {e, 1, 1});
-        if (backward)
-          test_case.inputs = {tensor(1, dtype, {1, routed, n}),
-                              tensor(2, dtype, {1, routed, k}), offset};
-        else {
+
           test_case.inputs = {tensor(1, dtype, {1, mode == 1 ? s : routed, k}),
                               tensor(2, dtype, {e, k, n}), offset};
           if (mode)
@@ -159,10 +148,10 @@ std::vector<MoeMatmulTestCase> make_moe_matmul_cases(bool backward) {
           if (mode == 2)
             test_case.inputs.push_back(
                 tensor(5, FLAGDNN_DATA_INT32, {1, routed, 1}));
-        }
+
         const auto out_type = format < 2 ? dtype : FLAGDNN_DATA_FLOAT32;
         test_case.outputs = {tensor(
-            6, out_type, backward ? Shape{e, k, n} : Shape{1, routed, n})};
+            6, out_type, Shape{1, routed, n})};
         result.push_back(std::move(test_case));
       }
     }

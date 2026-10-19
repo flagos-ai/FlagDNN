@@ -82,16 +82,14 @@ std::unique_ptr<TestExecutable> reference(const MoeMatmulTestCase& c) {
   auto p = std::make_unique<NativeProgram>(c.inputs, c.outputs);
   const auto experts = static_cast<std::int64_t>(c.offsets.size());
   const auto routed = static_cast<std::int64_t>(c.token_index.size());
-  const auto k =
-      c.backward ? c.inputs[1].dimensions[2] : c.inputs[0].dimensions[2];
-  const auto n =
-      c.backward ? c.inputs[0].dimensions[2] : c.inputs[1].dimensions[2];
+  const auto k = c.inputs[0].dimensions[2];
+  const auto n = c.inputs[1].dimensions[2];
   const auto type = c.inputs[0].data_type;
   const auto item_size =
       type == FLAGDNN_DATA_FLOAT16 || type == FLAGDNN_DATA_BFLOAT16 ? 2U : 1U;
   const auto out_size =
       c.outputs[0].data_type == FLAGDNN_DATA_FLOAT32 ? 4U : 2U;
-  std::size_t tokens = c.backward ? 1 : 0;
+  std::size_t tokens = 0;
   if (c.mode == 1) {
     const auto input = p->view(0, {c.inputs[0].dimensions[1], k}, {k, 1});
     const auto index = p->view(3, {routed}, {1});
@@ -121,22 +119,17 @@ std::unique_ptr<TestExecutable> reference(const MoeMatmulTestCase& c) {
                        end = e + 1 < experts ? c.offsets[e + 1] : routed;
     const auto count = end - begin;
     if (!count) continue;
-    if (c.backward) {
-      groups.push_back(
-          {p->view(tokens, {count, k}, {k, 1}, begin * k * item_size),
-           p->view(0, {count, n}, {n, 1}, begin * n * item_size),
-           p->view(result, {k, n}, {n, 1}, e * k * n * out_size)});
-    } else {
-      groups.push_back(
-          {p->view(tokens, {count, k}, {k, 1}, begin * k * item_size),
-           p->view(1, {k, n}, {n, 1}, e * k * n * item_size),
-           p->view(result, {count, n}, {n, 1}, begin * n * out_size)});
-    }
+
+    groups.push_back(
+        {p->view(tokens, {count, k}, {k, 1}, begin * k * item_size),
+         p->view(1, {k, n}, {n, 1}, e * k * n * item_size),
+         p->view(result, {count, n}, {n, 1}, begin * n * out_size)});
+
   }
   auto op = std::make_shared<md::GroupedMatMul>();
   mv::check_mudnn(op->SetComputeMode(md::GroupedMatMul::ComputeMode::TENSOR),
                   "muDNN MoE compute mode");
-  mv::check_mudnn(op->SetTranspose(c.backward, false), "muDNN MoE transpose");
+  mv::check_mudnn(op->SetTranspose(false, false), "muDNN MoE transpose");
   mv::check_mudnn(op->SetAlpha(1.0), "muDNN MoE alpha");
   mv::check_mudnn(op->SetBeta(0.0), "muDNN MoE beta");
   const auto params = std::shared_ptr<md::MatMulLtParam[]>(

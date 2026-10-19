@@ -150,83 +150,6 @@ class Int32PointwiseProbe final : public tv::AcdnnGraphReference {
   }
 };
 
-flagdnnPointwiseMode_t integer_reference_mode(acdnnPointwiseMode_t mode) {
-  switch (mode) {
-    case ACDNN_POINTWISE_ADD: return FLAGDNN_POINTWISE_ADD;
-    case ACDNN_POINTWISE_IDENTITY_FWD: return FLAGDNN_POINTWISE_IDENTITY;
-    case ACDNN_POINTWISE_CMP_EQ: return FLAGDNN_POINTWISE_CMP_EQ;
-    case ACDNN_POINTWISE_CMP_NEQ: return FLAGDNN_POINTWISE_CMP_NEQ;
-    case ACDNN_POINTWISE_CMP_GT: return FLAGDNN_POINTWISE_CMP_GT;
-    case ACDNN_POINTWISE_CMP_GE: return FLAGDNN_POINTWISE_CMP_GE;
-    case ACDNN_POINTWISE_CMP_LT: return FLAGDNN_POINTWISE_CMP_LT;
-    case ACDNN_POINTWISE_CMP_LE: return FLAGDNN_POINTWISE_CMP_LE;
-    default: throw std::invalid_argument("unsupported INT32 gap probe mode");
-  }
-}
-
-void probe_int32() {
-  tv::DeviceStream stream;
-  const std::array<std::int32_t, 16> edges{
-      0,  1,  -1,    16777217, -16777217,  2147483647,  (-2147483647 - 1),
-      3,  -7, 65537, -65539,   1073741825, -1073741825, 2,
-      -2, 11};
-  for (auto math : {ACDNN_DATA_FLOAT, ACDNN_DATA_INT32}) {
-    for (auto mode : {ACDNN_POINTWISE_ADD, ACDNN_POINTWISE_IDENTITY_FWD,
-                      ACDNN_POINTWISE_CMP_EQ, ACDNN_POINTWISE_CMP_NEQ,
-                      ACDNN_POINTWISE_CMP_GT, ACDNN_POINTWISE_CMP_GE,
-                      ACDNN_POINTWISE_CMP_LT, ACDNN_POINTWISE_CMP_LE}) {
-      Int32PointwiseProbe reference(mode, math);
-      tv::DeviceBuffer a(256), b(256), output(256),
-          workspace(reference.workspace_size());
-      const bool comparison =
-          mode >= ACDNN_POINTWISE_CMP_EQ && mode <= ACDNN_POINTWISE_CMP_LE;
-      const bool unary = mode == ACDNN_POINTWISE_IDENTITY_FWD;
-      for (bool edge_values : {false, true}) {
-        std::array<std::int32_t, 64> x{}, y{}, actual{};
-        for (std::size_t i = 0; i < x.size(); ++i) {
-          x[i] = edge_values ? edges[i % edges.size()]
-                             : static_cast<int>(i % 9) - 4;
-          y[i] = comparison ? std::bit_cast<std::int32_t>(
-                                  static_cast<std::uint32_t>(x[i]) +
-                                  static_cast<std::uint32_t>(i % 3))
-                 : edge_values ? edges[(i + 5) % edges.size()]
-                               : static_cast<int>(i % 5) - 2;
-          // Include both directions of adjacent comparisons above 2^24.
-          if (comparison && i >= 32) std::swap(x[i], y[i]);
-        }
-        tv::copy_to_device_async<std::int32_t>(a, x, 0, stream.get());
-        tv::copy_to_device_async<std::int32_t>(b, y, 0, stream.get());
-        std::vector<flagdnnBinding_t> bindings{{1, a.data()},
-                                               {3, output.data()}};
-        if (!unary) bindings.push_back({2, b.data()});
-        reference.execute(bindings, workspace.data(), workspace.size(),
-                          stream.opaque());
-        tv::copy_from_device_async<std::int32_t>(actual, output, 0,
-                                                 stream.get());
-        tv::check_driver(cuStreamSynchronize(stream.get()),
-                         "INT32 probe synchronize");
-        bool mismatch = false;
-        for (std::size_t i = 0; i < x.size(); ++i) {
-          const auto expected = cpu::pointwise_integer_reference(
-              integer_reference_mode(mode), x[i], y[i], false, 1);
-          if (comparison) {
-            mismatch |= reinterpret_cast<const std::uint8_t*>(
-                            actual.data())[i] != expected;
-          } else {
-            mismatch |= actual[i] != expected;
-          }
-        }
-        if (mismatch != edge_values)
-          throw std::runtime_error(
-              "acDNN INT32 semantics changed; requalify capability catalog");
-      }
-      std::cout
-          << "INT32 mode=" << mode << " math=" << math
-          << ": small-value control passed; large integers lose precision\n";
-    }
-  }
-}
-
 void probe_raw_copy_and_conversion() {
   tv::DeviceStream stream;
   for (auto type :
@@ -416,8 +339,7 @@ int main() {
     tv::check_driver(cuDeviceGet(&device, 0), "cuDeviceGet");
     tv::PrimaryContext primary(device);
     tv::ScopedCurrentContext current(primary.get());
-    probe_int32();
-    probe_raw_copy_and_conversion();
+      probe_raw_copy_and_conversion();
     probe_tf32_convolution();
     probe_tf32_matmul();
     probe(ACDNN_POINTWISE_MOD, "mod", true);

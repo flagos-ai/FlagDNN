@@ -196,7 +196,6 @@ CaseMap neutral_cases() {
 
   add_cases(output, "batchnorm_backward",
             make_extended_normalization_cases("batchnorm_backward"));
-  add_cases(output, "genstats", make_genstats_cases());
   add_cases(output, "bn_finalize", make_bn_finalize_cases());
   add_cases(output, "resample", make_resample_cases());
   add_cases(output, "add", make_add_cases());
@@ -228,8 +227,8 @@ CaseMap neutral_cases() {
   add_cases(output, "sdpa_fp8_backward",
             make_sdpa_fp8_backward_benchmark_cases());
   for (const auto *op :
-       {"moe_grouped_matmul", "moe_grouped_matmul_bwd", "matmul_fp8",
-        "causal_conv1d", "rng", "rope", "rope_backward", "instancenorm",
+       {"moe_grouped_matmul", "matmul_fp8",
+        "causal_conv1d", "instancenorm",
         "adalayernorm", "instancenorm_backward", "adalayernorm_backward",
         "layernorm_backward", "rmsnorm_backward", "concatenate", "gen_index"}) {
     add_cases(output, op, flagdnn::validation::thead::unsupported_cases(op));

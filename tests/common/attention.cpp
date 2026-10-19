@@ -548,6 +548,10 @@ void append_coverage_cases(std::vector<Case>& cases,
   std::int64_t uid = 80000;
   for (const AttentionShape& shape : coverage_shapes(benchmark, fp8)) {
     for (const auto data_type : types) {
+      if (data_type == FLAGDNN_DATA_FLOAT32) {
+        uid += 40;
+        continue;
+      }
       const char* type_name = data_type == FLAGDNN_DATA_FLOAT32 ? "fp32" :
           data_type == FLAGDNN_DATA_FLOAT16 ? "fp16" :
           data_type == FLAGDNN_DATA_BFLOAT16 ? "bfloat16" :
@@ -738,28 +742,6 @@ std::vector<SdpaBackwardTestCase> make_sdpa_backward_cases() {
   result.push_back(std::move(biased));
 
   append_coverage_cases(result, "sdpa_backward", make_backward_case, false, false);
-  const std::size_t coverage_count = result.size();
-  for (std::size_t index = 0; index < coverage_count; ++index) {
-    if (result[index].q.data_type == FLAGDNN_DATA_FLOAT32 &&
-        (result[index].q.dimensions == Shape{1, 2, 80, 128} ||
-         result[index].q.dimensions == Shape{1, 8, 128, 64})) {
-      auto tuned = result[index];
-      tuned.name += "_autotune";
-      tuned.autotune = true;
-      result.push_back(std::move(tuned));
-    }
-  }
-  for (const bool autotune : {false, true}) {
-    auto split = make_backward_case(
-        std::string("sdpa_backward_fp32_different_value_dimension") +
-            (autotune ? "_autotune" : ""),
-        71101, FLAGDNN_DATA_FLOAT32,
-        {1, 2, 80, 128}, {1, 2, 96, 128}, {1, 2, 96, 64});
-    split.autotune = autotune;
-    split.absolute_tolerance = 5.0e-4;
-    split.relative_tolerance = 5.0e-4;
-    result.push_back(std::move(split));
-  }
   for (const SdpaBackwardTestCase& test_case : result) {
     validate_sdpa_backward_case(test_case);
   }

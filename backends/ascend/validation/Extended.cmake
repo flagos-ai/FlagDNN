@@ -9,7 +9,7 @@ find_library(_ascend_validation_opapi_cv NAMES opapi_cv
 file(SHA256 "${_ascend_validation_opapi_cv}" _ascend_validation_opapi_cv_sha256)
 set(_ascend_extended_operators
   sdpa sdpa_backward conv_dgrad conv_wgrad
-  moe_grouped_matmul moe_grouped_matmul_bwd causal_conv1d rope rope_backward resample concatenate gen_index genstats bn_finalize instancenorm adalayernorm
+  moe_grouped_matmul causal_conv1d resample concatenate gen_index bn_finalize instancenorm adalayernorm
   instancenorm_backward adalayernorm_backward layernorm_backward rmsnorm_backward batchnorm_backward)
 # Ascend owns the adapters; workloads stay in the shared test catalog.
 if(NOT TARGET flagdnn_validation_cpu_reference)
@@ -26,8 +26,6 @@ add_library(flagdnn_validation_ascend_extended STATIC
   functional/moe_matmul_runner.cpp
   functional/aclnn_causal_convolution.cpp
   functional/causal_convolution_runner.cpp
-  functional/aclnn_rope.cpp
-  functional/rope_runner.cpp
   functional/aclnn_resample.cpp
   functional/resample_runner.cpp
   functional/aclnn_index.cpp
@@ -113,7 +111,6 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     LABELS "aclnn;device" TIMEOUT 3600 BUILD_RPATH "${_flagdnn_validation_library_directory}")
 endif()
 
-
 foreach(operator IN LISTS _ascend_extended_operators FLAGDNN_ACTIVATION_BACKWARD_EXTENSIONS)
   foreach(suite IN ITEMS functional benchmark)
     if(TEST "${suite}.ascend.${operator}")
@@ -135,7 +132,7 @@ endforeach()
 add_executable(flagdnn_ascend_capability_gate capability_gate.cpp)
 target_compile_features(flagdnn_ascend_capability_gate PRIVATE cxx_std_20)
 flagdnn_enable_warnings(flagdnn_ascend_capability_gate)
-foreach(operator IN ITEMS rng matmul_fp8 sdpa_fp8 sdpa_fp8_backward)
+foreach(operator IN ITEMS matmul_fp8 sdpa_fp8 sdpa_fp8_backward)
   foreach(suite IN ITEMS functional benchmark)
     if((suite STREQUAL "functional" AND FLAGDNN_BUILD_TESTS) OR
        (suite STREQUAL "benchmark" AND FLAGDNN_BUILD_BENCHMARKS))

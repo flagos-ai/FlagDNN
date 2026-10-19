@@ -17,8 +17,8 @@ std::int64_t elements(const Shape& shape) {
 std::vector<std::vector<float>> evaluate_moe_matmul(
     const MoeMatmulParameters& parameters,
     const std::vector<std::vector<float>>& inputs) {
-  const auto& td = parameters.input_shapes[parameters.backward ? 1 : 0];
-  const auto& md = parameters.input_shapes[parameters.backward ? 0 : 1];
+  const auto& td = parameters.input_shapes[0];
+  const auto& md = parameters.input_shapes[1];
   const auto k = td[2], n = md[2],
              routed = static_cast<std::int64_t>(parameters.token_index.size());
   std::vector<double> output(elements(parameters.output_shape));
@@ -28,13 +28,7 @@ std::vector<std::vector<float>> evaluate_moe_matmul(
                          ? parameters.offsets[expert + 1]
                          : routed;
     for (auto slot = begin; slot < end; ++slot) {
-      if (parameters.backward) {
-        for (std::int64_t row = 0; row < k; ++row)
-          for (std::int64_t col = 0; col < n; ++col)
-            output[(expert * k + row) * n + col] +=
-                static_cast<double>(inputs[1][slot * k + row]) *
-                inputs[0][slot * n + col];
-      } else {
+
         const auto source =
             parameters.mode == 1 ? parameters.token_index[slot] : slot;
         const auto target =
@@ -47,7 +41,7 @@ std::vector<std::vector<float>> evaluate_moe_matmul(
             output[target * n + col] +=
                 static_cast<double>(inputs[0][source * k + inner]) *
                 inputs[1][(expert * k + inner) * n + col];
-      }
+
     }
   }
   return {std::vector<float>(output.begin(), output.end())};

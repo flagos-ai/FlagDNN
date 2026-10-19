@@ -34,8 +34,7 @@ fi
 [[ -n "${ctest_command}" && -x "${ctest_command}" ]] || \
   fail "ctest was not found; set FLAGDNN_CTEST_COMMAND"
 
-test_regex='^reference[.]cpu[.]pointwise[.](div|pow|mod|cmp_eq)[.]cudnn$'
-echo "Running the four CPU pointwise cuDNN tests from ${build_directory}"
+test_regex='^reference[.]cpu[.].*[.]cudnn$'
 ctest_arguments=(--test-dir "${build_directory}" --output-on-failure
                  --no-tests=error -R "${test_regex}")
 if [[ -n "$(cache_value CMAKE_CONFIGURATION_TYPES)" ]]; then

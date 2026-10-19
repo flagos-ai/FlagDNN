@@ -61,22 +61,7 @@ cpu_raw_pointwise_reference(
         reference::cpu::evaluate_identity_bytes(
             logical_bytes(inputs[0], c.inputs[0]))};
   }
-  if ((c.mode != FLAGDNN_POINTWISE_DIV && c.mode != FLAGDNN_POINTWISE_MOD) ||
-      c.output.data_type != FLAGDNN_DATA_INT32 ||
-      std::any_of(c.inputs.begin(), c.inputs.end(), [](const auto &t) {
-        return t.data_type != FLAGDNN_DATA_INT32;
-      }))
-    return std::nullopt;
-  validate_pointwise_case(c);
-  if (inputs.size() != 2)
-    throw std::invalid_argument("CPU integer reference requires two inputs");
-  const auto left = logical_values<std::int32_t>(inputs[0], c.inputs[0]);
-  const auto right = logical_values<std::int32_t>(inputs[1], c.inputs[1]);
-  const auto values = reference::cpu::evaluate_binary_pointwise_int32(
-      c.mode, left, c.inputs[0].dimensions, right, c.inputs[1].dimensions,
-      c.output.dimensions);
-  auto output = value_bytes<std::int32_t>(values);
-  return std::vector<std::vector<std::uint8_t>>{std::move(output)};
+  return std::nullopt;
 }
 std::unique_ptr<TestExecutable>
 reference_pointwise(const PointwiseTestCase &c) {

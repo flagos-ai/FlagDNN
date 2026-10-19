@@ -3854,13 +3854,12 @@ def main() -> int:
         "moe_grouped_matmul_bwd",
     }
     require(
-        set(nvidia_manifests["functional"])
-        == set(manifests["functional"]) - unsupported_nvidia
-        and set(nvidia_manifests["benchmark"])
-        == set(manifests["functional"]) - unsupported_nvidia
+        set(nvidia_manifests["functional"]) == set(manifests["functional"])
+        and set(nvidia_manifests["benchmark"]) == set(manifests["functional"])
+        and not unsupported_nvidia.intersection(manifests["functional"])
         and not nvidia.FILTER_REGISTERED_TESTS,
-        "NVIDIA cuDNN qualification must exclude unsupported standalone "
-        "operators and retain missing-test errors",
+        "Shared cuDNN scope must exclude unsupported standalone operators "
+        "and retain missing-test errors",
     )
     manifest_operators = list(
         dict.fromkeys(

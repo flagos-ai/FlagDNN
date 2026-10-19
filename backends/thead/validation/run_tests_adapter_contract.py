@@ -762,7 +762,7 @@ def main() -> int:
         == set(runner.operator_manifests()["functional"])
         and set(selected["benchmark"]) == set(selected["functional"])
         and "relu_backward" in selected["benchmark"]
-        and "rng" in selected["functional"],
+        and "rng" not in selected["functional"],
         "THead must retain every public operator, including explicit"
         " capability gates",
     )

@@ -123,7 +123,7 @@ else()
   set(_flagdnn_hygon_case_sources)
   foreach(family IN ITEMS add attention composite convolution index layout matmul
       normalization pointwise reduction statistics moe_matmul fp8_matmul
-      causal_convolution resample random position_embedding normalization_extended)
+      causal_convolution resample normalization_extended)
     list(APPEND _flagdnn_hygon_case_sources "${PROJECT_SOURCE_DIR}/tests/common/${family}.cpp")
   endforeach()
 endif()
@@ -239,7 +239,6 @@ if(FLAGDNN_BUILD_TESTS)
       "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}")
   set_tests_properties(integration.hygon.catalog_registration PROPERTIES
     LABELS "integration;hygon;catalog")
-
 
   add_executable(flagdnn_test_hygon_validation_contract
     benchmark/convolution.cpp

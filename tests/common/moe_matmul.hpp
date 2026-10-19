@@ -10,10 +10,9 @@ struct MoeMatmulTestCase {
   std::string name;
   std::vector<TestTensor> inputs, outputs;
   int mode = 0, top_k = 1;
-  bool backward = false;
   std::vector<std::int32_t> offsets, token_index, token_ks;
 };
-std::vector<MoeMatmulTestCase> make_moe_matmul_cases(bool backward);
+std::vector<MoeMatmulTestCase> make_moe_matmul_cases();
 std::unique_ptr<TestExecutable> build_flagdnn_moe_matmul(
     flagdnn::Handle&, const MoeMatmulTestCase&);
 std::vector<std::vector<float>> moe_matmul_inputs(const MoeMatmulTestCase&);
