@@ -48,7 +48,13 @@ int run_reduction_functional_test(int argc, char **argv,
         [&suite, &test_case] {
           return build_flagdnn_reduction(suite.handle(), test_case);
         },
-        [&test_case] { return build_reduction_reference(test_case); });
+        [&test_case] { return build_reduction_reference(test_case); }, {}, false,
+        [&](const auto &inputs) {
+          return std::vector<std::vector<float>>{
+              reference::cpu::evaluate_reduction(
+                  {test_case.input.dimensions, test_case.axis, test_case.mode},
+                  inputs[0])};
+        });
   }
   return suite.finish();
 }

@@ -459,6 +459,7 @@ if(FLAGDNN_BUILD_BENCHMARKS)
   add_library(flagdnn_benchmark_iluvatar_adapter STATIC
     $<TARGET_OBJECTS:${_iluvatar_case_objects}>
     benchmark/shared_cases.cpp
+    benchmark/equivalent_baseline.cpp
     benchmark/convolution.cpp
     benchmark/corex_cudnn_capability_policy.cpp
     benchmark/corex_cudnn_provider.cpp
@@ -477,6 +478,7 @@ if(FLAGDNN_BUILD_BENCHMARKS)
   target_compile_features(flagdnn_benchmark_iluvatar_adapter PUBLIC
     cxx_std_20)
   target_compile_definitions(flagdnn_benchmark_iluvatar_adapter PRIVATE
+    FLAGDNN_PERFORMANCE_BASELINE_FILE="${PROJECT_SOURCE_DIR}/docs/performance-baseline.json"
     FLAGDNN_ILUVATAR_CUDNN_CAPABILITY_CATALOG="${CMAKE_CURRENT_SOURCE_DIR}/corex_cudnn_capabilities.json")
   target_include_directories(flagdnn_benchmark_iluvatar_adapter
     SYSTEM PUBLIC
@@ -485,10 +487,12 @@ if(FLAGDNN_BUILD_BENCHMARKS)
   target_include_directories(flagdnn_benchmark_iluvatar_adapter PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${PROJECT_SOURCE_DIR}/benchmark"
-    "${PROJECT_SOURCE_DIR}/tests")
+    "${PROJECT_SOURCE_DIR}/tests"
+    "${PROJECT_SOURCE_DIR}/src")
   target_link_libraries(flagdnn_benchmark_iluvatar_adapter PUBLIC
     FlagDNN::flagdnn
     flagdnn_benchmark_cases
+    flagdnn_validation_cpu_reference
     flagdnn_validation_iluvatar_reference
     "${FLAGDNN_ILUVATAR_RESOLVED_CUDNN_LIBRARY}"
     "${FLAGDNN_ILUVATAR_RESOLVED_CUDA_RUNTIME_LIBRARY}"
@@ -498,6 +502,21 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     "${FLAGDNN_ILUVATAR_RESOLVED_COREX_ROOT}/lib64"
     "${FLAGDNN_ILUVATAR_RESOLVED_COREX_ROOT}/lib")
   flagdnn_enable_warnings(flagdnn_benchmark_iluvatar_adapter)
+
+  add_executable(flagdnn_test_iluvatar_equivalent_baseline
+    benchmark/equivalent_baseline_contract.cpp)
+  target_link_libraries(flagdnn_test_iluvatar_equivalent_baseline PRIVATE
+    flagdnn_benchmark_iluvatar_adapter)
+  flagdnn_enable_warnings(flagdnn_test_iluvatar_equivalent_baseline)
+  add_test(NAME integration.iluvatar.equivalent_baseline
+    COMMAND flagdnn_test_iluvatar_equivalent_baseline
+      "${PROJECT_SOURCE_DIR}/docs/performance-baseline.json")
+  add_test(NAME integration.iluvatar.equivalent_record
+    COMMAND "${FLAGDNN_CODEGEN_PYTHON}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/equivalent_record_contract.py")
+  set_tests_properties(integration.iluvatar.equivalent_baseline
+    integration.iluvatar.equivalent_record PROPERTIES
+    LABELS "integration;iluvatar;benchmark;contract" TIMEOUT 120)
 
   add_executable(flagdnn_test_iluvatar_benchmark_runner_contract
     benchmark/capability_contract.cpp
@@ -544,11 +563,13 @@ if(FLAGDNN_BUILD_BENCHMARKS)
       SKIP_RETURN_CODE 77)
   endforeach()
 
-    add_library(flagdnn_benchmark_iluvatar_extended STATIC benchmark/extended.cpp)
+    add_library(flagdnn_benchmark_iluvatar_extended STATIC
+      benchmark/extended.cpp benchmark/index.cpp)
     target_compile_features(flagdnn_benchmark_iluvatar_extended PUBLIC cxx_std_20)
     target_include_directories(flagdnn_benchmark_iluvatar_extended PUBLIC
       "${PROJECT_SOURCE_DIR}/benchmark" "${PROJECT_SOURCE_DIR}/tests")
-    target_link_libraries(flagdnn_benchmark_iluvatar_extended PUBLIC flagdnn_test_iluvatar_adapter)
+    target_link_libraries(flagdnn_benchmark_iluvatar_extended PUBLIC
+      flagdnn_test_iluvatar_adapter flagdnn_benchmark_iluvatar_adapter)
     flagdnn_enable_warnings(flagdnn_benchmark_iluvatar_extended)
     set(_iluvatar_extended_benchmarks ${FLAGDNN_EXTENDED_OPERATORS} sdpa sdpa_backward sdpa_fp8 sdpa_fp8_backward)
     list(REMOVE_ITEM _iluvatar_extended_benchmarks moe_grouped_matmul moe_grouped_matmul_bwd matmul_fp8)

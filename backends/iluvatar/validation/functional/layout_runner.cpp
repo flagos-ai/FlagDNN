@@ -42,12 +42,9 @@ int run_layout_functional_test(int argc, char **argv,
   for (const LayoutTestCase &test_case : cases) {
     validate_layout_case(test_case);
     if (test_case.input.data_type != FLAGDNN_DATA_FLOAT32 &&
-        test_case.input.data_type != FLAGDNN_DATA_FLOAT16 &&
-        test_case.input.data_type != FLAGDNN_DATA_BFLOAT16) {
+        test_case.input.data_type != FLAGDNN_DATA_FLOAT16) {
       const auto values = functional::raw_pattern(test_case.input);
       const auto width = functional::data_type_size(test_case.input.data_type);
-      functional::Bytes expected(functional::element_count(test_case.output) *
-                                 width);
       const reference::cpu::LayoutParameters parameters{
           operation,
           test_case.input.dimensions,
@@ -55,12 +52,8 @@ int run_layout_functional_test(int argc, char **argv,
           test_case.permutation,
           test_case.slices,
           test_case.slice_strides};
-      for (std::size_t i = 0; i < functional::element_count(test_case.output);
-           ++i)
-        std::copy_n(values.data() +
-                        reference::cpu::layout_source_index(parameters, i) *
-                            width,
-                    width, expected.data() + i * width);
+      const auto expected = reference::cpu::evaluate_layout_bytes(
+          parameters, values, width);
       functional::BuildExecutable reference;
       if (test_case.input.data_type == FLAGDNN_DATA_BOOLEAN)
         reference = [&] { return build_layout_reference(test_case); };

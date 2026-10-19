@@ -2789,8 +2789,28 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
         },
         "Thead-owned policy reference coverage must remain 115 measured cases",
     )
+    iluvatar = platforms["iluvatar"]
+    iluvatar_policies = iluvatar["scaling"]["case_policies"]
+    measured_metrics = {"vector_fp32", "hbm_copy", "hbm_triad", "hbm_write"}
+    require(
+        {op: policy["scale_metric"] for op, policy in iluvatar_policies.items()}
+        == expected_metrics
+        and all(policy != policies[op] and policy.get("reason") and policy.get("scope")
+                for op, policy in iluvatar_policies.items())
+        and iluvatar["device"] == "Iluvatar BI-V150"
+        and iluvatar["architecture"] == "corex_71"
+        and iluvatar["measured_on"]
+        and all(isinstance(iluvatar["peaks"][metric], (int, float))
+                and iluvatar["peaks"][metric] > 0 for metric in measured_metrics)
+        and all(value is None for metric, value in iluvatar["peaks"].items()
+                if metric not in measured_metrics)
+        and iluvatar["measurement"]["sample_count"] > 0
+        and iluvatar["measurement"]["collector_sha256"]
+        and iluvatar["measurement"]["raw_csv_uncompressed_sha256"],
+        "Iluvatar must own measured peaks and explicitly justified scaling policies",
+    )
     for name, platform in platforms.items():
-        if name in {"hygon", "thead", "ascend", "mthreads"}:
+        if name in {"hygon", "thead", "ascend", "mthreads", "iluvatar"}:
             continue
         require(
             not platform.get("scaling", {}).get("case_policies"),

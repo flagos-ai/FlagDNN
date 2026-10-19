@@ -562,10 +562,10 @@
       }
     },
     "iluvatar": {
-      "device": null,
-      "measured_on": null,
+      "device": "Iluvatar BI-V150",
+      "measured_on": "2026-10-15",
       "peaks": {
-        "vector_fp32": null,
+        "vector_fp32": 12.542022056929653,
         "vector_fp16": null,
         "vector_bf16": null,
         "vector_fp64": null,
@@ -576,11 +576,632 @@
         "tensor_fp64": null,
         "tensor_fp8_e4m3": null,
         "tensor_int8": null,
-        "hbm_triad": null,
-        "hbm_copy": null,
+        "hbm_triad": 0.4234051125871194,
+        "hbm_copy": 0.46386173468425945,
         "hbm_read": null,
-        "hbm_write": null,
+        "hbm_write": 0.6853824194632212,
         "tensor_fp8_e5m2_e4m3": null
+      },
+      "architecture": "corex_71",
+      "measurement": {
+        "compute_units": 16,
+        "total_memory_bytes": 34359738368,
+        "l2_bytes": 16777216,
+        "architecture": "corex_71",
+        "device_ordinal": 0,
+        "collector": "tools/performance_baseline/benchmark_iluvatar_vector_memory.py",
+        "collector_sha256": "badde82833c9541b27530c5acefc73a556e1d4542c353ec10a1aa44c4460afde",
+        "raw_csv": "tools/performance_baseline/measurements/iluvatar-20261015/samples.csv.gz",
+        "raw_csv_uncompressed_sha256": "6a77a2c3d816ab80f6a34c2b9f7642620b87510f14bf812aec34207330a79453",
+        "summary": "tools/performance_baseline/measurements/iluvatar-20261015/summary.json",
+        "configuration_count": 27,
+        "sample_count": 2700,
+        "warmup_iterations": 20,
+        "rounds": 5,
+        "samples_per_round": 20,
+        "timing_method": "cuda_events_graph_replay",
+        "statistic": "maximum_across_configurations_of_work_divided_by_all_sample_median_elapsed_time",
+        "validation": "All FP32 FMA outputs checked exactly; Memory output and both inputs checked exactly in 32 distributed 1024-element windows; Validation before/after timing and after output reset plus graph replay",
+        "packages": {
+          "torch": "2.7.1+corex.4.4.0",
+          "triton": "3.6.0"
+        },
+        "launches_per_sample": 10,
+        "graph_warmup_replays": 1
+      },
+      "scaling": {
+        "case_policies": {
+          "identity": {
+            "scale_metric": "hbm_copy",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "reshape": {
+            "scale_metric": "hbm_copy",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "transpose": {
+            "scale_metric": "hbm_copy",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "slice": {
+            "scale_metric": "hbm_copy",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "concatenate": {
+            "scale_metric": "hbm_copy",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "gen_index": {
+            "scale_metric": "hbm_write",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "add": {
+            "scale_metric": "hbm_triad",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "sub": {
+            "scale_metric": "hbm_triad",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "mul": {
+            "scale_metric": "hbm_triad",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "div": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "pow": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "max": {
+            "scale_metric": "hbm_triad",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "min": {
+            "scale_metric": "hbm_triad",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "mod": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "add_square": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "cmp_eq": {
+            "scale_metric": "hbm_triad",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "cmp_neq": {
+            "scale_metric": "hbm_triad",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "cmp_gt": {
+            "scale_metric": "hbm_triad",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "cmp_ge": {
+            "scale_metric": "hbm_triad",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "cmp_lt": {
+            "scale_metric": "hbm_triad",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "cmp_le": {
+            "scale_metric": "hbm_triad",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "logical_and": {
+            "scale_metric": "hbm_triad",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "logical_or": {
+            "scale_metric": "hbm_triad",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "logical_not": {
+            "scale_metric": "hbm_copy",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "binary_select": {
+            "scale_metric": "hbm_triad",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "abs": {
+            "scale_metric": "hbm_copy",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "neg": {
+            "scale_metric": "hbm_copy",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "sqrt": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "rsqrt": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "reciprocal": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "ceil": {
+            "scale_metric": "hbm_copy",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "floor": {
+            "scale_metric": "hbm_copy",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "exp": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "log": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "erf": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "sin": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "cos": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "tan": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "scale": {
+            "scale_metric": "hbm_triad",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "relu": {
+            "scale_metric": "hbm_copy",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "relu_backward": {
+            "scale_metric": "hbm_triad",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "leaky_relu": {
+            "scale_metric": "hbm_copy",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "leaky_relu_backward": {
+            "scale_metric": "hbm_triad",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "Explicit logical traffic proxy selected from operator semantics before measurement; ignores padding. Cache and launch latency can dominate. BOOL storage width differences require the recorded traffic correction.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "elu": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "elu_backward": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "gelu": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "gelu_backward": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "gelu_approx_tanh": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "gelu_approx_tanh_backward": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "sigmoid": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "sigmoid_backward": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "swish": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "swish_backward": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "tanh": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "tanh_backward": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "softplus": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "softplus_backward": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "reduction": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          },
+          "batchnorm": {
+            "scale_metric": "vector_fp32",
+            "scope": "Only exact matched NVIDIA records when no usable native CoreX cuDNN comparison exists.",
+            "reason": "FP32 arithmetic proxy selected from actual floating-point evaluation, including FP16/BF16 storage. FMA peak is an approximation for special functions and reduction/normalization; launch, cache and instruction mix are not modeled.",
+            "compute_sources": [
+              "backends/iluvatar/dispatch/pointwise.py",
+              "backends/iluvatar/dispatch/normalization.py",
+              "backends/iluvatar/validation/benchmark/equivalent_baseline.cpp"
+            ]
+          }
+        }
       }
     },
     "mthreads": {

@@ -156,6 +156,8 @@ def main() -> int:
         "integration.iluvatar.graph",
         "integration.iluvatar.installed_consumer",
         "integration.iluvatar.catalog_closure",
+        "integration.iluvatar.equivalent_baseline",
+        "integration.iluvatar.equivalent_record",
     }
     actual_preflight = {
         test

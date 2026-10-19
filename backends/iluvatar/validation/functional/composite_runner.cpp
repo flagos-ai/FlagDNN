@@ -36,7 +36,19 @@ int run_add_square_functional_test(int argc, char **argv,
         [&suite, &test_case] {
           return build_flagdnn_add_square(suite.handle(), test_case);
         },
-        [&test_case] { return build_add_square_reference(test_case); });
+        [&test_case] { return build_add_square_reference(test_case); }, {}, false,
+        [&](const auto &inputs) {
+          return std::vector<std::vector<float>>{
+              reference::cpu::evaluate_add_square(
+                  inputs[0], test_case.left.dimensions,
+                  inputs[1], test_case.right.dimensions,
+                  test_case.output.dimensions,
+                  [&](std::span<const float> values) {
+                    const auto dtype = test_case.right.data_type;
+                    return functional::decode(functional::encode(values, dtype),
+                                              dtype, values.size());
+                  })};
+        });
   }
   return suite.finish();
 }

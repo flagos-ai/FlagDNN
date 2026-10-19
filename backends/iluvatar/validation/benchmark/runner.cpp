@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "common/runner.hpp"
+#include "benchmark/equivalent_runner.hpp"
+#include "reference/cpu/benchmark.hpp"
 #include "benchmark/shared_cases.hpp"
 
 #include "benchmark/corex_cudnn_provider.hpp"
@@ -119,6 +121,14 @@ std::vector<float> make_logical_input(const BenchmarkCase &specification,
   const auto tensor = test_tensor(specification.tensors.at(input_index));
   const std::size_t count = fr::element_count(tensor);
   std::vector<float> result(count);
+  if (specification.operation == Operation::kPointwise &&
+      specification.pointwise_mode == FLAGDNN_POINTWISE_IDENTITY &&
+      (tensor.data_type == FLAGDNN_DATA_FP8_E4M3 ||
+       tensor.data_type == FLAGDNN_DATA_FP8_E5M2)) {
+    for (std::size_t i = 0; i < count; ++i)
+      result[i] = static_cast<float>(1U << (i % 6));
+    return result;
+  }
   const InputDomain domain = input_domain(specification, input_index);
   for (std::size_t index = 0; index < count; ++index) {
     const int centered =
@@ -284,7 +294,12 @@ std::vector<float> read_output(PreparedBuffers &buffers,
     occupied[logical_offset(index, output.specification)] = true;
   }
   for (std::size_t index = 0; index < physical.size(); ++index) {
-    if (!occupied[index] && physical[index] != fr::kPaddingSentinel) {
+    const auto width = fr::data_type_size(output.specification.data_type);
+    const auto start = entrance + index * width;
+    if (!occupied[index] &&
+        !std::equal(allocation.begin() + start,
+                    allocation.begin() + start + width,
+                    output.initial_allocation.begin() + start)) {
       throw std::runtime_error(std::string(provider) +
                                " modified output padding for uid " +
                                std::to_string(output.specification.uid));
@@ -448,8 +463,11 @@ std::string json_escape(std::string_view input) {
 }
 
 void emit_samples(std::string_view provider, const BenchmarkCase &specification,
-                  std::span<const double> samples) {
-  std::cout << "{\"schema_version\":1,\"kind\":\"steady_state\","
+                  std::span<const double> samples,
+                  const EquivalentBaseline *baseline = nullptr) {
+  const auto precision = std::cout.precision();
+  std::cout << std::setprecision(17);
+  std::cout << "{\"schema_version\":" << (baseline ? 4 : 1) << ",\"kind\":\"steady_state\","
             << "\"provider\":\"" << provider << "\",\"case\":\""
             << json_escape(specification.name)
             << "\",\"unit\":\"us\",\"median\":" << ivb::percentile(samples, 0.5)
@@ -460,7 +478,131 @@ void emit_samples(std::string_view provider, const BenchmarkCase &specification,
     }
     std::cout << samples[index];
   }
-  std::cout << "]}" << std::endl;
+  std::cout << ']';
+  if (baseline != nullptr) {
+    const double measured = ivb::percentile(samples, 0.5);
+    std::cout << ",\"equivalent_baseline\":{"
+              << "\"provider\":\"nvidia_equivalent\","
+              << "\"platform\":\"nvidia\",\"target_platform\":\"iluvatar\","
+              << "\"scale_metric\":\"" << baseline->scale_metric << "\","
+              << "\"timing_profile\":\"" << baseline->timing_profile << "\","
+              << "\"reference_time_us\":" << baseline->reference_time_us
+              << ",\"reference_peak\":" << baseline->reference_peak
+              << ",\"target_peak\":" << baseline->target_peak
+              << ",\"traffic_ratio\":" << baseline->traffic_ratio
+              << ",\"reference_validation\":\""
+              << baseline->reference_validation << '"'
+              << ",\"min_relative_efficiency\":"
+              << baseline->min_relative_efficiency
+              << ",\"equivalent_time_us\":" << baseline->equivalent_time_us()
+              << ",\"limit_us\":" << baseline->limit_us()
+              << ",\"relative_efficiency\":"
+              << baseline->equivalent_time_us() / measured << ",\"passed\":"
+              << (measured <= baseline->limit_us() ? "true" : "false") << '}';
+  }
+  std::cout << "}" << std::endl << std::setprecision(precision);
+}
+
+const PerformanceBaseline &performance_baseline() {
+  static const PerformanceBaseline baseline([] {
+    const char *path = std::getenv("FLAGDNN_PERFORMANCE_BASELINE");
+    return std::filesystem::path(path && *path ? path
+                                             : FLAGDNN_PERFORMANCE_BASELINE_FILE);
+  }());
+  return baseline;
+}
+
+void run_equivalent_case(
+    const BenchmarkCase &specification,
+    const std::function<std::unique_ptr<BenchmarkExecutable>()> &build,
+    ivb::CudaStream &stream, const EquivalentOracle &oracle = {},
+    const NativeBaselineMetadata *metadata = nullptr) {
+  int device = 0;
+  cudaDeviceProp properties{};
+  ivb::check_cuda_runtime(cudaGetDevice(&device), "cudaGetDevice");
+  ivb::check_cuda_runtime(cudaGetDeviceProperties(&properties, device),
+                          "cudaGetDeviceProperties");
+  auto canonical = specification;
+  if (canonical.name.ends_with("_shared"))
+    canonical.name.resize(canonical.name.size() - 7);
+  const auto baseline = performance_baseline().lookup(
+      canonical, properties.name,
+      "corex_" + std::to_string(properties.major) +
+          std::to_string(properties.minor), metadata);
+  auto buffers = prepare_buffers(specification, stream);
+  std::vector<std::vector<float>> inputs;
+  for (std::size_t i = 0; i < buffers.input_count; ++i) {
+    const auto &tensor = buffers.tensors[i];
+    const auto storage = std::span(tensor.initial_allocation).subspan(
+        tensor.specification.binding_byte_offset, tensor.storage_bytes);
+    inputs.push_back(fr::gather(fr::decode(storage, tensor.specification.data_type,
+                                          fr::storage_element_count(tensor.specification)),
+                                tensor.specification));
+  }
+  const auto expected = oracle ? oracle(inputs) : reference::cpu::evaluate_benchmark(
+      canonical, inputs, [](std::span<const float> values, flagdnnDataType_t dtype) {
+        return fr::decode(fr::encode(values, dtype), dtype, values.size());
+      });
+  if (expected.size() != specification.output_count)
+    throw std::runtime_error("equivalent CPU output count mismatch");
+  auto executable = build();
+  ivb::CudaDeviceBuffer workspace(executable->workspace_size());
+  const bool identity = canonical.operation == Operation::kPointwise &&
+                        canonical.pointwise_mode == FLAGDNN_POINTWISE_IDENTITY;
+  const auto validate = [&] {
+    for (std::size_t i = 0; i < buffers.input_count; ++i) {
+      const auto &tensor = buffers.tensors[i];
+      std::vector<std::uint8_t> actual(tensor.buffer->size());
+      tensor.buffer->copy_to_host(actual.data(), actual.size(), 0, stream.get());
+      stream.synchronize();
+      if (actual != tensor.initial_allocation)
+        throw std::runtime_error(specification.name + " modified input or padding");
+    }
+    for (std::size_t i = 0; i < expected.size(); ++i)
+      compare_outputs(read_output(buffers, i, stream, "FlagDNN equivalent", true),
+                      expected[i], specification, i, "FlagDNN", "CPU reference");
+    if (identity) {
+      const auto &input = buffers.tensors.front();
+      const auto &output = buffers.tensors.back();
+      const auto width = fr::data_type_size(input.specification.data_type);
+      std::vector<std::uint8_t> actual(output.buffer->size());
+      output.buffer->copy_to_host(actual.data(), actual.size(), 0, stream.get());
+      stream.synchronize();
+      for (std::size_t i = 0; i < fr::element_count(input.specification); ++i) {
+        const auto source = input.specification.binding_byte_offset +
+                            logical_offset(i, input.specification) * width;
+        const auto target = output.specification.binding_byte_offset +
+                            logical_offset(i, output.specification) * width;
+        if (!std::equal(input.initial_allocation.begin() + source,
+                         input.initial_allocation.begin() + source + width,
+                         actual.begin() + target))
+          throw std::runtime_error(specification.name + " identity byte mismatch");
+      }
+    }
+  };
+  execute(*executable, buffers.bindings, workspace, stream);
+  stream.synchronize();
+  validate();
+  const auto &config = specification.benchmark;
+  warmup(*executable, buffers.bindings, workspace, stream, config.warmup_iterations);
+  ivb::CapturedExecutionBatch batch(stream.get(), config.iterations_per_sample,
+      [&] { execute(*executable, buffers.bindings, workspace, stream); });
+  batch.launch(stream.get());
+  stream.synchronize();
+  validate();
+  ivb::CudaEventTimer timer;
+  std::vector<double> samples;
+  for (int i = 0; i < config.sample_count; ++i)
+    samples.push_back(timer.measure_microseconds_per_execution(stream.get(), batch));
+  ivb::require_positive_finite_samples(samples, config.sample_count, "flagdnn");
+  validate();
+  reset_outputs(buffers, stream);
+  batch.launch(stream.get());
+  stream.synchronize();
+  validate();
+  std::cout << specification.name << ": FlagDNN Graph vs CPU reference PASS"
+            << " postcheck=true fresh_replay=true input_integrity=true\n";
+  emit_samples("flagdnn", specification, samples, &baseline);
 }
 
 CaseResult run_case(const BenchmarkCase &specification,
@@ -474,6 +616,19 @@ CaseResult run_case(const BenchmarkCase &specification,
     throw std::invalid_argument("benchmark sample configuration is invalid");
   }
 
+  const auto fallback = [&](std::string_view reason) {
+    if (!supports_equivalent_baseline(specification)) {
+      emit_skip(corex_cudnn_provider, specification, reason);
+      std::cout << "[unavailable-equivalent] case=" << specification.name
+                << " reason=OUTSIDE_NVIDIA_REFERENCE_COVERAGE\n";
+      return CaseResult::kReferenceSkipped;
+    }
+    std::cout << "[equivalent] case=" << specification.name
+              << " native_reason=" << reason << '\n';
+    run_equivalent_case(specification,
+        [&] { return flagdnn_provider.build(specification); }, flagdnn_stream);
+    return CaseResult::kComparable;
+  };
   // The functional suite validates production execution independently.
   // A known missing reference cannot produce a paired benchmark result;
   // account for that case before allocating buffers or invoking the JIT.
@@ -481,8 +636,7 @@ CaseResult run_case(const BenchmarkCase &specification,
   const ProviderCapability capability =
       corex_cudnn_provider.capability(specification);
   if (!capability.supported) {
-    emit_skip(corex_cudnn_provider, specification, capability.reason);
-    return CaseResult::kReferenceSkipped;
+    return fallback(capability.reason);
   }
 
   std::unique_ptr<BenchmarkExecutable> flagdnn =
@@ -506,15 +660,12 @@ CaseResult run_case(const BenchmarkCase &specification,
   try {
     reference = corex_cudnn_provider.build(specification);
   } catch (const BenchmarkUnsupportedError &error) {
-    emit_skip(corex_cudnn_provider, specification, error.what());
-    return CaseResult::kReferenceSkipped;
+    return fallback(error.what());
   } catch (const iv::CorexCudnnStatusError &error) {
     if (!iv::cudnn_status_is_runtime_capability(error.status())) {
       throw;
     }
-    emit_skip(corex_cudnn_provider, specification,
-              "CUDNN_STATUS_NOT_SUPPORTED");
-    return CaseResult::kReferenceSkipped;
+    return fallback("CUDNN_STATUS_NOT_SUPPORTED");
   }
 
   PreparedBuffers reference_buffers =
@@ -528,9 +679,7 @@ CaseResult run_case(const BenchmarkCase &specification,
     if (!iv::cudnn_status_is_runtime_capability(error.status())) {
       throw;
     }
-    emit_skip(corex_cudnn_provider, specification,
-              "CUDNN_STATUS_NOT_SUPPORTED");
-    return CaseResult::kReferenceSkipped;
+    return fallback("CUDNN_STATUS_NOT_SUPPORTED");
   }
 
   std::vector<std::vector<float>> reference_outputs;
@@ -557,9 +706,7 @@ CaseResult run_case(const BenchmarkCase &specification,
     if (!iv::cudnn_status_is_runtime_capability(error.status())) {
       throw;
     }
-    emit_skip(corex_cudnn_provider, specification,
-              "CUDNN_STATUS_NOT_SUPPORTED");
-    return CaseResult::kReferenceSkipped;
+    return fallback("CUDNN_STATUS_NOT_SUPPORTED");
   }
 
   std::unique_ptr<ivb::CapturedExecutionBatch> flagdnn_batch;
@@ -570,8 +717,7 @@ CaseResult run_case(const BenchmarkCase &specification,
                   flagdnn_stream);
         });
   } catch (const ivb::StreamCaptureUnsupported &) {
-    emit_skip(corex_cudnn_provider, specification, "CAPTURE_UNSUPPORTED");
-    return CaseResult::kReferenceSkipped;
+    throw;
   }
 
   std::unique_ptr<ivb::CapturedExecutionBatch> reference_batch;
@@ -585,12 +731,9 @@ CaseResult run_case(const BenchmarkCase &specification,
     if (!iv::cudnn_status_is_runtime_capability(error.status())) {
       throw;
     }
-    emit_skip(corex_cudnn_provider, specification,
-              "CUDNN_STATUS_NOT_SUPPORTED");
-    return CaseResult::kReferenceSkipped;
+    return fallback("CUDNN_STATUS_NOT_SUPPORTED");
   } catch (const ivb::StreamCaptureUnsupported &) {
-    emit_skip(corex_cudnn_provider, specification, "CAPTURE_UNSUPPORTED");
-    return CaseResult::kReferenceSkipped;
+    return fallback("CAPTURE_UNSUPPORTED");
   }
 
   if (ivb::validate_capture_pair(true, ivb::CaptureCapability::kSupported,
@@ -607,8 +750,7 @@ CaseResult run_case(const BenchmarkCase &specification,
     reference_batch->launch(corex_cudnn_stream.get());
     corex_cudnn_stream.synchronize();
   } catch (const ivb::StreamCaptureUnsupported &) {
-    emit_skip(corex_cudnn_provider, specification, "CAPTURE_UNSUPPORTED");
-    return CaseResult::kReferenceSkipped;
+    return fallback("CAPTURE_UNSUPPORTED");
   }
 
   ivb::CudaEventTimer flagdnn_timer;
@@ -671,6 +813,29 @@ CaseResult run_case(const BenchmarkCase &specification,
 }
 
 } // namespace
+
+
+void run_equivalent_native(
+    const BenchmarkCase &specification, const fr::BuildExecutable &build,
+    const EquivalentOracle &oracle, const NativeBaselineMetadata &metadata) {
+  class Adapter final : public BenchmarkExecutable {
+  public:
+    explicit Adapter(std::unique_ptr<testing::TestExecutable> executable)
+        : executable_(std::move(executable)) {}
+    std::size_t workspace_size() const noexcept override {
+      return executable_->workspace_size();
+    }
+    void execute(std::span<const flagdnnBinding_t> bindings, void *workspace,
+                 std::size_t size, flagdnnStream_t stream) override {
+      executable_->execute(bindings, workspace, size, stream);
+    }
+  private:
+    std::unique_ptr<testing::TestExecutable> executable_;
+  };
+  ivb::CudaStream stream;
+  run_equivalent_case(specification, [&] { return std::make_unique<Adapter>(build()); },
+                      stream, oracle, &metadata);
+}
 
 int run_benchmark_suite(int argc, char **argv,
                         std::span<const BenchmarkCase> cases,

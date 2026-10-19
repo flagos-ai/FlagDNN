@@ -107,32 +107,12 @@ int run_batchnorm_functional_test(int argc, char **argv,
       // The classic CoreX training reference only qualifies FP32. Validate
       // low-precision production, including running statistics, on the CPU.
       host_reference = [&test_case](const auto &inputs) {
-        std::vector<std::size_t> axes;
-        for (std::size_t axis = 0; axis < test_case.x.dimensions.size(); ++axis)
-          if (axis != 1)
-            axes.push_back(axis);
-        auto outputs = reference::cpu::evaluate_normalization(
-            {"batchnorm", test_case.x.dimensions, test_case.scale.dimensions,
-             axes, test_case.epsilon},
-            inputs);
-        const auto channels = outputs[1].size();
-        const double count = static_cast<double>(inputs[0].size() / channels);
-        std::vector<float> mean(channels), variance(channels);
-        for (std::size_t c = 0; c < channels; ++c) {
-          const double inverse = outputs[2][c];
-          const double population =
-              std::max(0.0, 1.0 / (inverse * inverse) - test_case.epsilon);
-          const double unbiased =
-              count > 1 ? population * count / (count - 1) : 0;
-          mean[c] = static_cast<float>((1 - test_case.momentum) * inputs[3][c] +
-                                       test_case.momentum * outputs[1][c]);
-          variance[c] =
-              static_cast<float>((1 - test_case.momentum) * inputs[4][c] +
-                                 test_case.momentum * unbiased);
-        }
-        outputs.push_back(std::move(mean));
-        outputs.push_back(std::move(variance));
-        return outputs;
+        const auto channels = static_cast<std::size_t>(test_case.x.dimensions[1]);
+        const auto batch = static_cast<std::size_t>(test_case.x.dimensions[0]);
+        const auto spatial = inputs[0].size() / (batch * channels);
+        return reference::cpu::evaluate_batchnorm_training(
+            inputs[0], spatial, inputs[1], inputs[2], inputs[3], inputs[4],
+            test_case.epsilon, test_case.momentum);
       };
     }
     suite.run(

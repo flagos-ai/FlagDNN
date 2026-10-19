@@ -18,12 +18,14 @@
 #include <iostream>
 #include <stdexcept>
 namespace flagdnn::testing {
+int run_index_equivalent_benchmark(int argc, char **argv,
+                                   std::span<const IndexTestCase> cases);
 int run_native_benchmark_test(int argc, char **argv, std::string_view op) {
   if (op == "causal_conv1d")
     return run_causal_convolution_functional_test(
         argc, argv, make_causal_convolution_cases(), true);
   if (op == "concatenate" || op == "gen_index")
-    return run_index_functional_test(argc, argv, make_index_cases(op), true);
+    return run_index_equivalent_benchmark(argc, argv, make_index_cases(op));
   if (op == "rng")
     return run_rng_functional_test(argc, argv, make_rng_cases(), true);
   if (op == "resample")

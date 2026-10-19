@@ -3,6 +3,7 @@
 
 #include "common/add.hpp"
 #include "functional/raw_reference.hpp"
+#include "functional/cpu_reference.hpp"
 #include "functional/runner_support.hpp"
 
 #include <algorithm>
@@ -36,7 +37,9 @@ int run_add_functional_test(int argc, char **argv,
         [&suite, &test_case] {
           return build_flagdnn_add(suite.handle(), test_case);
         },
-        [&test_case] { return build_add_reference(test_case); });
+        [&test_case] { return build_add_reference(test_case); }, {}, false,
+        functional::pointwise_cpu_reference(
+            plan, FLAGDNN_POINTWISE_ADD, test_case.alpha));
   }
   return suite.finish();
 }

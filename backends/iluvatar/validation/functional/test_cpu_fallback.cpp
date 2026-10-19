@@ -1,7 +1,7 @@
 // Copyright 2026 FlagOS Contributors
 // SPDX-License-Identifier: Apache-2.0
 #include "corex_cudnn_status.hpp"
-#include "functional/raw_reference.hpp"
+#include "functional/cpu_reference.hpp"
 
 #include <array>
 #include <iostream>
@@ -51,6 +51,11 @@ int main(int argc, char **argv) {
         Case{"pow", FLAGDNN_POINTWISE_POW, {1, 16}},
         Case{"mod", FLAGDNN_POINTWISE_MOD, {1, 2}},
         Case{"cmp_eq", FLAGDNN_POINTWISE_CMP_EQ, {1, 0}},
+        Case{"add", FLAGDNN_POINTWISE_ADD, {4, 6}},
+        Case{"sub", FLAGDNN_POINTWISE_SUB, {-2, -2}},
+        Case{"mul", FLAGDNN_POINTWISE_MUL, {3, 8}},
+        Case{"max", FLAGDNN_POINTWISE_MAX, {3, 4}},
+        Case{"min", FLAGDNN_POINTWISE_MIN, {1, 2}},
     };
     const f::BuildExecutable unsupported = []()
         -> std::unique_ptr<flagdnn::testing::TestExecutable> {
@@ -73,7 +78,7 @@ int main(int argc, char **argv) {
         suite.run(plan, [&] {
           return std::make_unique<KnownOutput>(output, test.expected);
         }, unsupported, {}, true,
-            f::binary_cpu_reference(plan, test.mode));
+            f::pointwise_cpu_reference(plan, test.mode));
         require(suite.finish() == 0, "CPU fallback did not count as executed");
       }
     }
@@ -89,12 +94,6 @@ int main(int argc, char **argv) {
     const f::BuildExecutable correct = [&] {
       return std::make_unique<KnownOutput>(output, Values{1.0F / 3, 0.5F});
     };
-    for (auto mode : {FLAGDNN_POINTWISE_ADD, FLAGDNN_POINTWISE_SUB,
-                      FLAGDNN_POINTWISE_MUL, FLAGDNN_POINTWISE_MAX,
-                      FLAGDNN_POINTWISE_MIN, FLAGDNN_POINTWISE_RELU_FWD}) {
-      require(!f::binary_cpu_reference(plan, mode),
-              "unrelated operator unexpectedly acquired a CPU fallback");
-    }
     // Catalog-declared gaps must use CPU without trying the vendor API.
     const f::BuildExecutable forbidden = []()
         -> std::unique_ptr<flagdnn::testing::TestExecutable> {
@@ -103,7 +102,7 @@ int main(int argc, char **argv) {
     {
       f::FunctionalSuite suite(argc, argv, "div", "CONTRACT_FUNCTIONAL");
       suite.run(plan, correct, forbidden, {}, false,
-                f::binary_cpu_reference(plan, FLAGDNN_POINTWISE_DIV));
+                f::pointwise_cpu_reference(plan, FLAGDNN_POINTWISE_DIV));
       require(suite.finish() == 0, "catalog gap did not use CPU");
     }
     // Wrong numerical results must fail, even though production ran normally.
@@ -114,7 +113,7 @@ int main(int argc, char **argv) {
         suite.run(plan, [&] {
           return std::make_unique<KnownOutput>(output, Values{9, 9});
         }, forbidden, {}, false,
-                  f::binary_cpu_reference(plan, FLAGDNN_POINTWISE_DIV));
+                  f::pointwise_cpu_reference(plan, FLAGDNN_POINTWISE_DIV));
       } catch (const std::runtime_error &error) {
         rejected = std::string(error.what()).find("differs in") != std::string::npos;
       }

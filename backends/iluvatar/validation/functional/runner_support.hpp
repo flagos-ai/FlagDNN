@@ -143,6 +143,16 @@ public:
   FunctionalSuite &operator=(const FunctionalSuite &) = delete;
 
   [[nodiscard]] flagdnn::Handle &handle() noexcept { return handle_; }
+  // The callback must execute, independently validate and time the production
+  // kernel before this case can enter the successful benchmark accounting.
+  void run_external_benchmark(const CasePlan &plan,
+                              const std::function<void()> &run) {
+    if (!benchmark_ || finished_ || plan.operation != operation_)
+      throw std::logic_error("invalid external benchmark case");
+    run();
+    ++cases_;
+    ++reference_executed_;
+  }
   void run(const CasePlan &plan, const BuildExecutable &build_production,
            const BuildExecutable &build_reference,
            const HostReference &host_reference = {},

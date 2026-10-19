@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 import re
 import shutil
@@ -9,6 +10,7 @@ import tempfile
 from typing import Any
 
 SPEEDUP_METRIC = "corex_cudnn_median_us/flagdnn_median_us"
+EQUIVALENT_METRIC = "nvidia_equivalent_time_us/flagdnn_median_us"
 CONVOLUTION_CASE_PATTERN = re.compile(
     r"^conv[123]d_(fprop|dgrad|wgrad)(?:_|$)"
 )
@@ -62,7 +64,9 @@ def preflight_tests(_suites: list[str] | tuple[str, ...]) -> set[str]:
         "integration.iluvatar.graph",
         "integration.iluvatar.installed_consumer",
         "integration.iluvatar.catalog_closure",
-    }
+    } | ({"integration.iluvatar.equivalent_baseline",
+          "integration.iluvatar.equivalent_record"}
+         if "benchmark" in _suites else set())
 
 
 def convolution_case_operator(case: str) -> str | None:
@@ -401,6 +405,12 @@ def validate_iluvatar_benchmark_pairs(
                 f"expected owner={operator}"
             )
         actual_order = list(providers)
+        if actual_order == ["flagdnn"] and "equivalent_baseline" in providers["flagdnn"]:
+            try:
+                validate_benchmark_record(providers["flagdnn"])
+            except ValueError as error:
+                errors.append(f"Iluvatar equivalent benchmark case={case}: {error}")
+            continue
         if actual_order != expected_order:
             errors.append(
                 f"Iluvatar benchmark case={case} "
@@ -420,7 +430,7 @@ def validate_iluvatar_benchmark_pairs(
 def iluvatar_speedup_summary(
     results: dict[str, dict[str, Any]], threshold: float | None
 ) -> dict[str, Any]:
-    """Summarize strict CoreX-cuDNN/FlagDNN median speedups."""
+    """Summarize native speedups and separately identified equivalent efficiency."""
     cases: list[dict[str, Any]] = []
     benchmark_results: list[dict[str, Any]] = []
     for operator, operator_results in results.items():
@@ -434,10 +444,20 @@ def iluvatar_speedup_summary(
         if not isinstance(records, dict):
             continue
         for case, providers in records.items():
-            if not isinstance(providers, dict) or list(providers) != [
-                "flagdnn",
-                "corex_cudnn",
-            ]:
+            if not isinstance(providers, dict):
+                continue
+            if list(providers) == ["flagdnn"] and "equivalent_baseline" in providers["flagdnn"]:
+                measured = providers["flagdnn"]
+                baseline = measured["equivalent_baseline"]
+                cases.append({
+                    "operator": operator, "case": case,
+                    "flagdnn_median_us": float(measured["median"]),
+                    "equivalent_time_us": baseline["equivalent_time_us"],
+                    "speedup": baseline["relative_efficiency"],
+                    "equivalent_baseline": baseline,
+                })
+                continue
+            if list(providers) != ["flagdnn", "corex_cudnn"]:
                 continue
             flagdnn_us = float(providers["flagdnn"]["median"])
             reference_us = float(providers["corex_cudnn"]["median"])
@@ -462,11 +482,14 @@ def iluvatar_speedup_summary(
     failures = (
         []
         if threshold is None
-        else [record for record in cases if record["speedup"] < threshold]
+        else [record for record in cases if record["speedup"] < (
+            max(threshold, record["equivalent_baseline"]["min_relative_efficiency"])
+            if "equivalent_baseline" in record else threshold)]
     )
     ratio_gate_passed = threshold is None or (bool(cases) and not failures)
     return {
         "metric": SPEEDUP_METRIC,
+        "equivalent_metric": EQUIVALENT_METRIC,
         "threshold": threshold,
         "gate_passed": ratio_gate_passed and coverage_verified,
         "ratio_gate_passed": ratio_gate_passed,
@@ -657,6 +680,7 @@ def finalize(
 ) -> dict[str, Any]:
     del suite_operators, preflight_passed
     complete_pairs = 0
+    equivalent_cases = 0
     skip_record_errors = 0
     accounting_errors = 0
     record_errors = 0
@@ -680,6 +704,11 @@ def finalize(
                 complete_pairs += sum(
                     isinstance(providers, dict)
                     and list(providers) == ["flagdnn", "corex_cudnn"]
+                    for providers in records.values()
+                )
+                equivalent_cases += sum(
+                    isinstance(providers, dict) and list(providers) == ["flagdnn"]
+                    and "equivalent_baseline" in providers["flagdnn"]
                     for providers in records.values()
                 )
             record_errors += len(result.get("record_errors", []))
@@ -715,11 +744,12 @@ def finalize(
     comparable_coverage: dict[str, Any] | None = None
     failed = False
     if performance is not None:
-        missing_pairs = max(0, comparable_executed - complete_pairs)
+        missing_pairs = max(0, comparable_executed - complete_pairs - equivalent_cases)
         comparable_coverage = {
             "metric": SPEEDUP_METRIC,
             "required_case_count": comparable_executed,
             "observed_pair_case_count": complete_pairs,
+            "equivalent_case_count": equivalent_cases,
             "missing_case_count": missing_pairs,
             "verified": (
                 performance["coverage_gate_passed"] and missing_pairs == 0
@@ -728,7 +758,8 @@ def finalize(
         if not comparable_coverage["verified"]:
             print(
                 "Iluvatar comparable coverage gate failed: "
-                f"pairs={complete_pairs} accounted={comparable_executed}",
+                f"native_pairs={complete_pairs} equivalent_cases={equivalent_cases} "
+                f"accounted={comparable_executed} missing_cases={missing_pairs}",
                 flush=True,
             )
             failed = True
@@ -741,18 +772,21 @@ def finalize(
                 flush=True,
             )
             for record in performance["failures"]:
+                reference_name = (
+                    "equivalent_time_us" if "equivalent_baseline" in record
+                    else "corex_cudnn_median_us"
+                )
                 print(
                     "  FAIL "
                     f"op={record['operator']} case={record['case']} "
                     f"flagdnn_us={record['flagdnn_median_us']:.9g} "
-                    "corex_cudnn_us="
-                    f"{record['corex_cudnn_median_us']:.9g} "
+                    f"{reference_name}={record[reference_name]:.9g} "
                     f"speedup={record['speedup']:.9g}",
                     flush=True,
                 )
             if performance["case_count"] == 0:
                 print(
-                    "  FAIL no comparable FlagDNN/CoreX cuDNN benchmark "
+                    "  FAIL no validated native or equivalent benchmark "
                     "case was emitted",
                     flush=True,
                 )
@@ -774,6 +808,7 @@ def finalize(
             "comparable_executed": comparable_executed,
             "reference_skipped": benchmark_reference_skipped,
             "complete_provider_pairs": complete_pairs,
+            "equivalent_cases": equivalent_cases,
         },
         "record_errors": record_errors,
         "skip_record_errors": skip_record_errors,
@@ -795,4 +830,148 @@ def finalize(
             "corex_cudnn_skip_record_errors": skip_record_errors,
             "iluvatar_case_accounting_errors": accounting_errors,
         },
+    }
+
+
+def validate_benchmark_record(record: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    # v4 stores measured samples and a derived, unsampled reference.
+    expected = {
+        "schema_version",
+        "kind",
+        "provider",
+        "case",
+        "unit",
+        "median",
+        "p90",
+        "samples",
+        "equivalent_baseline",
+    }
+    if set(record) != expected:
+        raise ValueError("fields do not match Iluvatar benchmark schema v4")
+    if (
+        type(record["schema_version"]) is not int
+        or record["schema_version"] != 4
+        or record["kind"] != "steady_state"
+        or record["provider"] != "flagdnn"
+        or record["unit"] != "us"
+        or not isinstance(record["case"], str)
+        or not record["case"]
+    ):
+        raise ValueError(
+            "schema v4 requires a supported measured FlagDNN case"
+        )
+    case_operator = benchmark_case_operator(record["case"], ["batchnorm", "identity", "div"])
+    baseline = record["equivalent_baseline"]
+    identities = {
+        "provider": "nvidia_equivalent",
+        "platform": "nvidia",
+        "target_platform": "iluvatar",
+        "timing_profile": (
+            "batchnorm_training" if case_operator == "batchnorm" else "native"
+        ),
+    }
+    numeric = {
+        "reference_time_us",
+        "reference_peak",
+        "target_peak",
+        "min_relative_efficiency",
+        "equivalent_time_us",
+        "limit_us",
+        "relative_efficiency",
+    }
+    required = set(identities) | numeric | {"scale_metric", "passed"}
+    extensions = {"traffic_ratio", "reference_validation"}
+    if case_operator != "div":
+        required |= extensions
+    if (
+        not isinstance(baseline, dict)
+        or not required <= set(baseline) <= required | extensions
+        or any(baseline[key] != value for key, value in identities.items())
+        or not isinstance(baseline["scale_metric"], str)
+        or baseline["scale_metric"] not in {"vector_fp32", "hbm_copy", "hbm_triad", "hbm_write"}
+        or not isinstance(
+            baseline.get("reference_validation", "cpu_full"), str
+        )
+        or baseline.get("reference_validation", "cpu_full")
+        not in {"cpu_full", "cpu_sampled", "bit_exact", "sanity"}
+    ):
+        raise ValueError("invalid equivalent-baseline fields or identity")
+    if case_operator == "identity" and (
+        baseline["scale_metric"] != "hbm_copy"
+        or baseline["reference_validation"]
+        != (
+            "cpu_full"
+            if record["case"].startswith("identity_perf_")
+            else "bit_exact"
+        )
+        or baseline["traffic_ratio"]
+        != (8 if record["case"].startswith("identity_bool_") else 1)
+    ):
+        raise ValueError(
+            "identity requires its measured validation and logical-byte copy ratio"
+        )
+    def positive(value: Any) -> bool:
+        try:
+            return (
+                type(value) in (int, float)
+                and math.isfinite(value)
+                and value > 0
+            )
+        except OverflowError:
+            return False
+
+    if any(not positive(baseline[key]) for key in numeric) or not positive(
+        record["median"]
+    ):
+        raise ValueError(
+            "equivalent-baseline numbers must be finite and positive"
+        )
+    traffic_ratio = baseline.get("traffic_ratio", 1.0)
+    if not positive(traffic_ratio) or (
+        baseline["scale_metric"] == "vector_fp32" and traffic_ratio != 1
+    ):
+        raise ValueError(
+            "traffic_ratio must be finite and positive; "
+            "non-unit traffic is only supported by HBM metrics"
+        )
+    if baseline["min_relative_efficiency"] > 1:
+        raise ValueError("min_relative_efficiency must be in (0, 1]")
+    sample_count = 10 if case_operator == "batchnorm" else 20
+    if (
+        not isinstance(record["samples"], list)
+        or len(record["samples"]) != sample_count
+    ):
+        raise ValueError(
+            f"{identities['timing_profile']} timing profile requires "
+            f"{sample_count} measured samples"
+        )
+    try:
+        equivalent = (
+            baseline["reference_time_us"]
+            * baseline["reference_peak"]
+            / baseline["target_peak"]
+            * traffic_ratio
+        )
+        derived = {
+            "equivalent_time_us": equivalent,
+            "limit_us": equivalent / baseline["min_relative_efficiency"],
+            "relative_efficiency": equivalent / record["median"],
+        }
+    except OverflowError as error:
+        raise ValueError("equivalent-baseline formula overflowed") from error
+    for key, value in derived.items():
+        if not positive(value) or not math.isclose(
+            baseline[key], value, rel_tol=1.0e-12, abs_tol=0.0
+        ):
+            raise ValueError(
+                f"equivalent-baseline {key} does not match formula"
+            )
+    if type(baseline["passed"]) is not bool or baseline["passed"] != (
+        record["median"] <= baseline["limit_us"]
+    ):
+        raise ValueError(
+            "equivalent-baseline passed disagrees with measured limit"
+        )
+    return {
+        "timing": {key: record[key] for key in ("median", "p90", "samples")}
     }
