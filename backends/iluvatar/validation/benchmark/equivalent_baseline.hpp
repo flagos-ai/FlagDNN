@@ -37,6 +37,11 @@ struct NativeBaselineMetadata {
 [[nodiscard]] bool supports_equivalent_baseline(
     const BenchmarkCase& specification);
 
+// Equivalent measurements use the NVIDIA timing profile; native CoreX
+// comparisons keep the shared case configuration. lookup() validates the
+// selected configuration against the recorded profile before execution.
+[[nodiscard]] BenchmarkConfig equivalent_benchmark_config(Operation operation);
+
 class PerformanceBaseline {
  public:
   explicit PerformanceBaseline(const std::filesystem::path& path);

@@ -853,6 +853,11 @@ PerformanceBaseline::PerformanceBaseline(
   }
 }
 
+BenchmarkConfig equivalent_benchmark_config(Operation operation) {
+  return operation == Operation::kBatchnorm ? BenchmarkConfig{5, 10, 20}
+                                             : BenchmarkConfig{10, 20, 50};
+}
+
 EquivalentBaseline PerformanceBaseline::lookup(
     const BenchmarkCase& specification, std::string_view device_name,
     std::string_view architecture, const NativeBaselineMetadata* metadata) const {

@@ -59,7 +59,9 @@ passed = measured_us <= limit_us
 - **Ascend**：当前仅对 identity 的 FP8 E4M3/E5M2 用例启用 `hbm_copy` 等效策略，不支持 `--min-speedup`。其他 FP8 布局或拼接不能借用 identity 的参考耗时。
 - **MThreads**：按本平台策略为 muDNN 不支持且参考完整的用例启用等效路径；`--min-speedup` 门槛规则同 Hygon。90 条 ELU/softplus backward native 参考已补齐，平台运行及报告接入仍需单独完成，见下文。
 
-峰值采集、构建和复测命令见[性能基准工具说明](../tools/performance_baseline/README.md)；具体覆盖范围、峰值数值和测量来源以正式 JSON 为准。
+峰值和参考耗时已完成采集，独立 hipDNN 诊断探针 `tools/hipdnn_capability` 与采集工具 `tools/performance_baseline` 于 2026-10-19 从源码目录清理。正式构建、安装和算子测试不依赖这两个目录。测量摘要统一保存在正式 JSON 的 `measurement_summaries`，平台的 `measurement.summary` 使用 JSON Pointer 引用；原始样本、日志和源码快照保存在远程测量机的忽略目录 `build/performance-baseline/evidence/`，不随 Git 分发。
+
+历史采集器路径、命令及源码哈希仍作为测量来源记录保留，清理前的工具可从 Git 提交 `3520009cefbfb735751b6bb99b28f57a467aa441` 查看。摘要中原始采集时的 `build/` 路径属于历史记录，当前归档位置以平台 `measurement` 中的路径为准。此次清理只调整归档位置，各平台峰值、NVIDIA 参考耗时、缩放策略和 0.8 门槛均不变，也不修改各平台运行实现。
 
 ## 公共用例调整及跨平台影响（2026-10-15）
 
@@ -81,7 +83,7 @@ concatenate 删除 INT32、BOOL、FP8 E4M3/E5M2/E8M0 各 14 条；pow 删除 14 
 - MThreads：仅更新主机 `equivalent_baseline_contract.cpp`。原来“105 条都缺参考”的断言已过时：90 条激活反向参考已入库，15 条 INT32 POW 已移除。现在验证 84 条普通记录能按原元数据匹配，6 条 Real/Scaled 属性记录仍被现有输入域规则拒绝。报告适配器尚未接受新增 native 名称，不能把主机契约通过视为平台接入完成。
 - 公共批测契约：有效参考数由 3264 更新为 3354；按 Hygon 策略归类的参考数量增加 90，实际运行目录仍为 1941，策略和门槛不变。
 
-85 条历史失败记录保留在 `reference.unavailable_cases` 中，`status=excluded`、`catalog_status=removed_from_shared_cases`，实测失败类型存于 `measurement_status`。它们不是当前待补测任务；3354 条有效参考、平台峰值及 0.8 门槛不受目录调整影响。[测量摘要](../tools/performance_baseline/measurements/nvidia-supplement-20261015.json)和[工具说明](../tools/performance_baseline/README.md)保留原始补测事实与复现入口。
+85 条历史失败记录保留在 `reference.unavailable_cases` 中，`status=excluded`、`catalog_status=removed_from_shared_cases`，实测失败类型存于 `measurement_status`。它们不是当前待补测任务；3354 条有效参考、平台峰值及 0.8 门槛不受目录调整影响。原始补测事实保留在[正式基线](performance-baseline.json)的 `measurement_summaries.nvidia-supplement-20261015`，采集工具可从上述 Git 历史查看。
 
 NVIDIA 相关构建和仓库内 SDK 安装通过；公共批测契约、Thead/MThreads 报告契约、MThreads 主机基线契约通过。目录调整后定点 GPU 功能 15 条、性能 6 条通过，6 条性能的 0.8 门槛检查通过；90 条激活反向采集回归通过。未运行其他平台设备测试或全仓全量测试；主机验证不能替代目标平台设备验证。
 

@@ -128,6 +128,7 @@ def binary_contiguous_kernel(
     OP_KIND: tl.constexpr,
     ALPHA: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
+    STREAM_OUTPUT: tl.constexpr = False,
 ):
     program_id = tl.program_id(0).to(tl.int64)
     offsets = program_id * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
@@ -139,6 +140,7 @@ def binary_contiguous_kernel(
         out_ptr + offsets,
         result.to(out_ptr.dtype.element_ty),
         mask=mask,
+        cache_modifier=".cs" if STREAM_OUTPUT else "",
     )
 
 

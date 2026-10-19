@@ -1,6 +1,5 @@
 # Python hooks apply only to Triton kernels, codegen, backend compilers and tools.
-# Measured source snapshots are immutable evidence; preserve their SHA-256.
-exclude: '^(build[^/]*/|\.venv/|\.git/|tools/performance_baseline/measurements/[^/]+/collector-source\.py$)'
+exclude: '^(build[^/]*/|\.venv/|\.git/)'
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0

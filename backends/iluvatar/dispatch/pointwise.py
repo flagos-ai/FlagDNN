@@ -517,6 +517,20 @@ def _schema_binary_configuration(
         )
         if function_name == "activation_backward_contiguous_kernel":
             constants["MASK_TAIL"] = True
+    if function_name.endswith("_contiguous_kernel"):
+        # BI-V150 has 16 MiB L2. Stream stores when the combined working set
+        # exceeds it so outputs do not displace reusable input cache lines.
+        storage_bytes = {
+            "float32": 4,
+            "int32": 4,
+            "float16": 2,
+            "bfloat16": 2,
+            "boolean": 1,
+        }
+        working_set = elements * sum(
+            storage_bytes[t["data_type"]] for t in tensors
+        )
+        constants["STREAM_OUTPUT"] = working_set > 16 * 1024 * 1024
     signature = {
         "x_ptr": POINTER_TYPES[left["data_type"]],
         "y_ptr": POINTER_TYPES[right["data_type"]],

@@ -108,6 +108,7 @@ def activation_backward_contiguous_kernel(
     ELU_ALPHA: tl.constexpr = 1.0,
     SOFTPLUS_BETA: tl.constexpr = 1.0,
     MASK_TAIL: tl.constexpr = True,
+    STREAM_OUTPUT: tl.constexpr = False,
 ):
     program_id = tl.program_id(0).to(tl.int64)
     offsets = program_id * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
@@ -131,6 +132,7 @@ def activation_backward_contiguous_kernel(
         out_ptr + offsets,
         result.to(out_ptr.dtype.element_ty),
         mask=mask,
+        cache_modifier=".cs" if STREAM_OUTPUT else "",
     )
 
 

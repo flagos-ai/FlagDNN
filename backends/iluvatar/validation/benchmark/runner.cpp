@@ -513,10 +513,13 @@ const PerformanceBaseline &performance_baseline() {
 }
 
 void run_equivalent_case(
-    const BenchmarkCase &specification,
+    const BenchmarkCase &requested_specification,
     const std::function<std::unique_ptr<BenchmarkExecutable>()> &build,
     ivb::CudaStream &stream, const EquivalentOracle &oracle = {},
     const NativeBaselineMetadata *metadata = nullptr) {
+  auto specification = requested_specification;
+  specification.benchmark =
+      equivalent_benchmark_config(specification.operation);
   int device = 0;
   cudaDeviceProp properties{};
   ivb::check_cuda_runtime(cudaGetDevice(&device), "cudaGetDevice");

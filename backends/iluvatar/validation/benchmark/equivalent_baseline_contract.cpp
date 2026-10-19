@@ -42,7 +42,7 @@ int main(int argc, char **argv) {
       if (!spec.name.ends_with("_shared"))
         throw std::runtime_error("missing shared adapter suffix");
       spec.name.resize(spec.name.size() - 7);
-      spec.benchmark = {10, 20, 50};
+      spec.benchmark = b::equivalent_benchmark_config(spec.operation);
       (void)lookup(spec);
       ++spec.reduction_axis;
       rejects([&] { (void)lookup(spec); });
@@ -52,7 +52,7 @@ int main(int argc, char **argv) {
              FLAGDNN_POINTWISE_IDENTITY, "identity")) {
       if (spec.tensors.front().dimensions !=
           std::vector<std::int64_t>{1, 1, 1}) continue;
-      spec.benchmark = {10, 20, 50};
+      spec.benchmark = b::equivalent_benchmark_config(spec.operation);
       (void)lookup(spec);
       ++added_core;
     }
@@ -61,7 +61,10 @@ int main(int argc, char **argv) {
                                 b::slice_benchmark_cases}) {
       for (auto spec : factory()) {
         if (spec.tensors.front().data_type != FLAGDNN_DATA_BFLOAT16) continue;
-        spec.benchmark = {10, 20, 50};
+        // Shared layout timing is intentionally different from the newly
+        // measured native reference; reject it before selecting that profile.
+        rejects([&] { (void)lookup(spec); });
+        spec.benchmark = b::equivalent_benchmark_config(spec.operation);
         (void)lookup(spec);
         ++added_core;
         spec.tensors.back().strides.back() += 1;
