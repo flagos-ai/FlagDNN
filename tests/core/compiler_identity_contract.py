@@ -136,8 +136,9 @@ class DependencySnapshotContract(unittest.TestCase):
                 data = source.read(size)
                 if data and not changed:
                     changed = True
-                    time.sleep(0.01)
-                    self.path.write_bytes(b"after!")
+                    # A size change is observable even when this filesystem
+                    # reports mtime/ctime with only one-second precision.
+                    self.path.write_bytes(b"changed while reading")
                 return data
 
             wrapped.read.side_effect = read
@@ -146,7 +147,8 @@ class DependencySnapshotContract(unittest.TestCase):
         with mock.patch("builtins.open", side_effect=changing_open):
             with self.assertRaises(compiler._IdentitySnapshotChanged):
                 self.snapshot()
-        self.assert_content(self.snapshot(), b"after!")
+        self.assertTrue(changed)
+        self.assert_content(self.snapshot(), b"changed while reading")
 
     def test_provider_mutation_with_restored_mtime_is_rejected(self):
         previous = self.path.stat()

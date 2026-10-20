@@ -135,7 +135,11 @@ foreach(entry IN LISTS benchmark_first_level)
   endif()
 endforeach()
 
-file(GLOB_RECURSE nested_readmes "${SOURCE_ROOT}/*/README.md")
+file(GLOB_RECURSE nested_readmes RELATIVE "${SOURCE_ROOT}"
+  "${SOURCE_ROOT}/*/README.md")
+# Source layout rules must not inspect generated or copied build artifacts.
+list(FILTER nested_readmes EXCLUDE REGEX
+  "^(build|build-[^/]+|cmake-build-[^/]+)/")
 if(nested_readmes)
   message(FATAL_ERROR
     "Only the repository-root README.md is allowed: ${nested_readmes}")
