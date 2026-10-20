@@ -22,7 +22,7 @@ FILTER_REGISTERED_TESTS = False
 SPEEDUP_METRIC = "mudnn_median_us/flagdnn_median_us"
 EQUIVALENT_METRIC = "nvidia_equivalent_time_us/flagdnn_median_us"
 EQUIVALENT_CASE_PATTERN = re.compile(
-    r"^(?:(?:elu_backward|softplus_backward)_perf_"
+    r"^(?:(?:elu_backward|softplus_backward)_(?:(?:perf|attributes)_)?"
     r"|(?:relu_backward|leaky_relu_backward|swish_backward)_attributes_)"
     r"(?:fp32|fp16|bfloat16)_[0-9][a-z0-9_]*$"
 )

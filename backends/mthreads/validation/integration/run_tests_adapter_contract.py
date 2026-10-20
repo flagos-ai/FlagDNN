@@ -92,7 +92,9 @@ def check_equivalent_records(adapter: ModuleType) -> None:
         ("record", "schema_version", 1),
         ("record", "provider", "mudnn"),
         ("record", "case", "pow_int32_1x1x16"),
-        ("record", "case", "elu_backward_fp32_1x1x16"),
+        ("record", "case", "elu_backward_attributes_int32_1x1x65"),
+        ("record", "case", "sigmoid_backward_attributes_fp32_1x1x65"),
+        ("record", "case", "elu_backward_unknown_fp32_1x1x65"),
         ("record", "samples", [10.0] * 7),
         ("record", "samples", [float("nan")] * 20),
         ("record", "median", 9.0),
@@ -128,6 +130,10 @@ def check_equivalent_records(adapter: ModuleType) -> None:
         "leaky_relu_backward_attributes",
         "swish_backward_attributes",
         "softplus_backward_perf",
+        "elu_backward",
+        "softplus_backward",
+        "elu_backward_attributes",
+        "softplus_backward_attributes",
     ):
         valid = copy.deepcopy(record)
         valid["case"] = prefix + "_bfloat16_1x1x65"

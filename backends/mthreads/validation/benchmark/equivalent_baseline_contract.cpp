@@ -110,7 +110,9 @@ int main(int argc, char** argv) {
     for (auto [name, mode] :
          {std::pair{"relu_backward", FLAGDNN_POINTWISE_RELU_BWD},
           std::pair{"leaky_relu_backward", FLAGDNN_POINTWISE_RELU_BWD},
-          std::pair{"swish_backward", FLAGDNN_POINTWISE_SWISH_BWD}}) {
+          std::pair{"swish_backward", FLAGDNN_POINTWISE_SWISH_BWD},
+          std::pair{"elu_backward", FLAGDNN_POINTWISE_ELU_BWD},
+          std::pair{"softplus_backward", FLAGDNN_POINTWISE_SOFTPLUS_BWD}}) {
       test::PointwiseCaseDefinition definition;
       definition.operation_name = name;
       definition.mode = mode;
@@ -123,7 +125,7 @@ int main(int argc, char** argv) {
         if (value.name.find("_attributes_") != std::string::npos)
           cases.push_back(flagdnn::validation::mthreads::equivalent::as_benchmark(value));
     }
-    require(cases.size() == 99, "expected 90 core + 9 native attribute cases");
+    require(cases.size() == 105, "expected 90 core + 15 native attribute cases");
     for (const auto& spec : cases) {
       require(baseline_api::supports_equivalent_baseline(spec, "mthreads"),
               "catalog case outside scope: " + spec.name);
@@ -183,8 +185,8 @@ int main(int argc, char** argv) {
     rejects([&] { baseline_api::PerformanceBaseline bad(argv[1], "unconfigured"); },
             "unknown target");
     // Newly measured native activation cases preserve exact metadata.
-    // The six Real/Scaled attribute cases still require adapter support.
-    std::size_t native_matched = 0, attributes_pending = 0;
+    // Include the six Real/Scaled attribute cases in the admitted catalog.
+    std::size_t native_matched = 0, attributes_matched = 0;
     for (auto [name, mode] :
          {std::pair{"elu_backward", FLAGDNN_POINTWISE_ELU_BWD},
           std::pair{"softplus_backward", FLAGDNN_POINTWISE_SOFTPLUS_BWD}}) {
@@ -196,23 +198,19 @@ int main(int argc, char** argv) {
         require(document.at("reference").at("cases").as_object()
                     .contains(spec.name),
                 "native NVIDIA activation evidence missing: " + spec.name);
-        if (spec.name.find("_attributes_") != std::string::npos) {
-          rejects([&] { (void)baseline.lookup(spec, device, arch); },
-                  "unadmitted attribute domains " + spec.name);
-          ++attributes_pending;
-        } else {
-          const auto value = baseline.lookup(spec, device, arch);
-          near(value.reference_time_us,
-               document.at("reference").at("cases").at(spec.name)
-                   .at("time_us").as_double());
-          require(value.timing_profile == "native" &&
-                      value.reference_validation == "cpu_full",
-                  "native evidence contract differs: " + spec.name);
-          ++native_matched;
-        }
+        const auto baseline_value = baseline.lookup(spec, device, arch);
+        near(baseline_value.reference_time_us,
+             document.at("reference").at("cases").at(spec.name)
+                 .at("time_us").as_double());
+        require(baseline_value.timing_profile == "native" &&
+                    baseline_value.reference_validation == "cpu_full",
+                "native evidence contract differs: " + spec.name);
+        ++native_matched;
+        if (spec.name.find("_attributes_") != std::string::npos)
+          ++attributes_matched;
       }
     }
-    require(native_matched == 84 && attributes_pending == 6,
+    require(native_matched == 90 && attributes_matched == 6,
             "native activation evidence coverage changed");
 
     Fixture fixture;
@@ -280,8 +278,8 @@ int main(int argc, char** argv) {
              .min_relative_efficiency, 0.1);
     std::cout << "MThreads equivalent baseline contract PASS: "
               << cases.size() << " matched, " << native_matched
-              << " native metadata matched, " << attributes_pending
-              << " pending attribute domains rejected, 45 historical div fixtures compatible\n";
+              << " native metadata matched, " << attributes_matched
+              << " native attribute domains matched, 45 historical div fixtures compatible\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "MTHREADS_BASELINE_CONTRACT_FAILED: " << error.what() << '\n';

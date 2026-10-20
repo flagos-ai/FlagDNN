@@ -659,7 +659,9 @@ EquivalentBaseline PerformanceBaseline::lookup(
         specification.name.find("_attributes_") != std::string::npos &&
         (chosen.operation == "relu_backward" ||
          chosen.operation == "leaky_relu_backward" ||
-         chosen.operation == "swish_backward");
+         chosen.operation == "swish_backward" ||
+         chosen.operation == "elu_backward" ||
+         chosen.operation == "softplus_backward");
     if (native_attribute_probe) {
       // The NVIDIA gap collector uses tests/common/pointwise.cpp's native
       // catalog: dy is Real; x is Scaled (the real fixture times four).
