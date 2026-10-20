@@ -706,7 +706,8 @@ std::vector<PointwiseTestCase> make_binary_pointwise_cases(
   }
 
   if (definition.mode == FLAGDNN_POINTWISE_MOD) {
-    for (const flagdnnDataType_t data_type : data_types) {
+    // Signed MOD has a validated CPU/cuDNN oracle only for floating types.
+    for (const flagdnnDataType_t data_type : kFloatingDataTypes) {
       PointwiseTestCase test_case;
       test_case.name = definition.operation_name + "_" +
                        data_type_name(data_type) + "_1x1x6_signed";

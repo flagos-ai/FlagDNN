@@ -124,6 +124,18 @@ Hygon、Iluvatar 和 THead 的浮点逐元素回退保留；MThreads 保留浮�
 Ascend 保留原始字节 identity 等已验证路径。整数算术回退及依赖它的功能测试
 随本次 CPU API 删除一起移除。数值不匹配、非法参数和执行错误仍然失败。
 
+2026-10-20 补充清理：删除公共 `make_binary_pointwise_cases` 中遗漏的
+`mod_int32_1x1x6_signed` 补充用例。现有 CPU `mod` 接口使用
+`std::span<const float>` / `std::vector<float>`，独立 cuDNN 对照覆盖浮点类型，
+没有经过验证的全范围 INT32 余数实现；经 float 转换会丢失大于 2^24 的整数精度，
+不能作为该用例的 CPU 对照。`performance-baseline.json` 中该用例的历史验证
+结果也为 `validation_failed`（index=3，actual=1，expected=2）。
+
+该补充用例改为只从浮点类型生成，统一移除各平台共享清单中无合格对照的 INT32
+用例，避免仅在 Ascend 端过滤或继续报告 SKIP。保留 FP16/BF16/FP32 有符号
+余数用例及其 tensor UID；生产算子、CPU reference、性能 workload 和各平台
+实现无需同步修改。历史测量记录保留，便于追溯删除依据。
+
 ## 4. CMake 装配顺序
 
 根 `CMakeLists.txt` 的顺序固定为：
