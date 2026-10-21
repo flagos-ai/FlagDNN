@@ -680,11 +680,9 @@ std::vector<PointwiseTestCase> make_binary_pointwise_cases(
   }
 
   if (definition.mode == FLAGDNN_POINTWISE_SUB) {
+    // Scaled SUB has a validated CPU/cuDNN oracle only for floating types.
     for (const double alpha : {0.5, -2.0}) {
-      for (const flagdnnDataType_t data_type : data_types) {
-        if (data_type == FLAGDNN_DATA_INT32 && std::trunc(alpha) != alpha) {
-          continue;
-        }
+      for (const flagdnnDataType_t data_type : kFloatingDataTypes) {
         PointwiseTestCase test_case;
         test_case.name = definition.operation_name + "_" +
                          data_type_name(data_type) + "_2x4x8" +

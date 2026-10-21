@@ -12018,12 +12018,6 @@
           "reason": "NO_EXACT_CUDNN_PRIMITIVE",
           "detail": "no exact classic CoreX cuDNN primitive or sequence",
           "primitive_sequence": []
-        },
-        "mod_int32_1x1x6_signed": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
         }
       }
     },
@@ -19942,12 +19936,6 @@
           "primitive_sequence": [
             "cudnnOpTensor(ADD,alpha2=-alpha)"
           ]
-        },
-        "sub_int32_2x4x8_alpha_neg2": {
-          "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7 reference adapter does not support this storage dtype",
-          "primitive_sequence": []
         }
       }
     },

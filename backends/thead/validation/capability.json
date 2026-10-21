@@ -51373,8 +51373,7 @@
         "mod_fp32_2x4x8",
         "mod_fp32_2x4x8x16",
         "mod_fp32_2x7x16",
-        "mod_fp32_3x5x7",
-        "mod_int32_1x1x6_signed"
+        "mod_fp32_3x5x7"
       ],
       "default": {
         "constraints": null,
@@ -86593,8 +86592,7 @@
         "sub_fp32_2x4x8_alpha_neg2",
         "sub_fp32_2x4x8x16",
         "sub_fp32_2x7x16",
-        "sub_fp32_3x5x7",
-        "sub_int32_2x4x8_alpha_neg2"
+        "sub_fp32_3x5x7"
       ],
       "default": {
         "constraints": null,

@@ -136,6 +136,27 @@ Ascend 保留原始字节 identity 等已验证路径。整数算术回退及依
 余数用例及其 tensor UID；生产算子、CPU reference、性能 workload 和各平台
 实现无需同步修改。历史测量记录保留，便于追溯删除依据。
 
+2026-10-21 补充清理：`SUB` 的 alpha 补充循环还遗漏了
+`sub_int32_2x4x8_alpha_neg2`。该用例在 THEAD 上因 acDNN 的 INT32
+能力限制进入 CPU 对照，但 CPU pointwise 仅接受浮点输入，因此报
+`unsupported CPU pointwise fallback case`。历史 NVIDIA 基线也记录为
+`validation_failed`（index=0，actual=2147483647，expected=-2），没有合格的
+精确 INT32 cuDNN 对照，不能通过浮点转换补足。
+
+按上述共享测试范围规则，SUB 的 alpha 补充循环统一只生成 FP32/FP16/BF16
+用例，保留 alpha=0.5/-2.0 的六个浮点用例及其 tensor UID。公共生成器变更会
+使其他平台的共享功能集合同时移除这一无合格对照的用例；生产算子、CPU
+reference 和性能 workload 不变，无需修改其他平台算子实现。THEAD 与 Iluvatar
+的能力清单都同步移除该 SUB 用例和上一轮已清理的 MOD INT32 用例：两者均要求
+清单与公共工厂精确一致，保留旧条目会导致各自的 catalog contract 失败。
+Iluvatar 仅删除两项原本标为不支持的记录，其余资格、路径和平台代码保持不变。
+相比只在 THEAD 过滤或将错误改为 SKIP，这样能维持各平台统一的对照范围；
+移除的 INT32 用例不计为测试通过，也不表示生产 INT32 算子已获得数值验证。
+
+同期检查发现 THEAD 能力契约还查询了 2026-10-19 已从共享集合移除的四维交叉
+广播 MatMul 用例，导致 `unknown THead capability case`。该契约改为确认此
+无合格 cuDNN 对照的用例不在清单中，生产 MatMul 和保留的 MatMul 检查不变。
+
 ## 4. CMake 装配顺序
 
 根 `CMakeLists.txt` 的顺序固定为：

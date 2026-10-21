@@ -1027,14 +1027,10 @@ void run_catalog_contract(const std::string &catalog_path,
           std::vector<std::string>{"acdnnBackendExecute(MATMUL)"}) {
     throw std::runtime_error("MatMul capability slice mismatch");
   }
-  const CapabilityRecord &segmented_matmul = catalog.lookup(
-      "matmul", "matmul_fp32_2x1x17x30_by_3x30x23");
-  if (!executable(segmented_matmul) ||
-      segmented_matmul.path != ReferencePath::kBackendDescriptor ||
-      segmented_matmul.reference_plan != std::vector<std::string>{
-          "acdnnBackendExecute(MATMUL,batch-segments)"}) {
-    throw std::runtime_error("segmented batch MatMul contract mismatch");
-  }
+  // The shared cuDNN-qualified matrix excludes four-dimensional cross-broadcast.
+  require_rejected("unqualified cross-broadcast MatMul case", [&catalog] {
+    (void)catalog.lookup("matmul", "matmul_fp32_2x1x17x30_by_3x30x23");
+  });
 
   const std::array<std::tuple<std::string_view, std::string_view,
                               std::string_view>,
