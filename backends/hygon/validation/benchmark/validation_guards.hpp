@@ -196,6 +196,10 @@ inline std::vector<float> capture_output_poison(std::span<const float> expected,
   candidates = roundtrip(candidates);
   const auto rejected = [&](float actual, double reference) {
     const double value = actual;
+    // A finite value always fails runner.cpp's comparison with infinity.
+    // Keep the poison finite so beta-zero writers do not inherit a NaN.
+    if (std::isinf(reference))
+      return std::isfinite(value);
     const double absolute = std::abs(value - reference);
     const double relative =
         absolute / std::max({std::abs(value), std::abs(reference), 1.0e-30});
@@ -206,10 +210,15 @@ inline std::vector<float> capture_output_poison(std::span<const float> expected,
   std::vector<float> result(expected.size());
   for (std::size_t i = 0; i < expected.size(); ++i) {
     const double reference = expected[i];
-    if (!std::isfinite(reference))
+    if (std::isnan(reference))
       throw std::invalid_argument(
-          "capture poison requires a finite reference at element " +
+          "capture poison rejects a NaN reference at element " +
           std::to_string(i));
+    if (std::isinf(reference) && type != FLAGDNN_DATA_FLOAT32 &&
+        type != FLAGDNN_DATA_FLOAT16 && type != FLAGDNN_DATA_BFLOAT16)
+      throw std::invalid_argument(
+          "capture reference infinity is not preserved by the output codec "
+          "at element " + std::to_string(i));
     const auto acceptable = [&](float value) {
       return rejected(value, reference);
     };

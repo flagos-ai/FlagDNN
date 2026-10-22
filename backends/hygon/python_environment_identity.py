@@ -56,7 +56,8 @@ def _distribution_identity(
     result: list[dict[str, str]] = []
     for metadata_directory in _distribution_directories(package, module):
         distribution = importlib.metadata.Distribution.at(metadata_directory)
-        name = distribution.metadata.get("Name", package)
+        metadata = distribution.metadata
+        name = metadata["Name"] if "Name" in metadata else package
         value = {
             "name": name,
             "version": distribution.version,

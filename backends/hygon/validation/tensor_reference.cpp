@@ -280,14 +280,15 @@ structural_capability(const HipdnnTensorOperation &operation,
     return HipdnnCapability::invalid_adapter_contract(
         "hipDNN tensor input/output UIDs must differ");
   }
-  // FP16 -> FP32 has distinct descriptors with FP32 computation. BF16 -> FP32
-  // is a valid public operation but is explicitly rejected below: on the
-  // installed DTK stack, its CK source-datatype template does not compile.
+  // Mixed FP32 outputs are valid public reductions. BF16 and INT32 inputs
+  // still require the CPU/equivalent path on this hipDNN stack; classify that
+  // vendor limitation only after checking the adapter's structural contract.
   const bool reduction_fp32_output =
       is_reduction(operation.kind) &&
       output.data_type == FLAGDNN_DATA_FLOAT32 &&
       (input.data_type == FLAGDNN_DATA_FLOAT16 ||
-       input.data_type == FLAGDNN_DATA_BFLOAT16);
+       input.data_type == FLAGDNN_DATA_BFLOAT16 ||
+       input.data_type == FLAGDNN_DATA_INT32);
   if (input.data_type != output.data_type && !reduction_fp32_output) {
     return HipdnnCapability::invalid_adapter_contract(
         "hipDNN tensor data types must match or use a reduction FP32 output");
@@ -397,16 +398,6 @@ structural_capability(const HipdnnTensorOperation &operation,
     return HipdnnCapability::invalid_adapter_contract(
         "unknown hipDNN tensor operation kind");
   }
-  if (input.data_type == FLAGDNN_DATA_BFLOAT16) {
-    return HipdnnCapability::vendor_unsupported(
-        "current Hygon hipDNN ReduceTensor BF16 has no validated executable "
-        "primitive");
-  }
-  if (input.data_type != FLAGDNN_DATA_FLOAT32 &&
-      input.data_type != FLAGDNN_DATA_FLOAT16) {
-    return HipdnnCapability::vendor_unsupported(
-        "reduction is validated only for FP32/FP16");
-  }
   if (!metadata_fits_int(input, false) || !metadata_fits_int(output, true) ||
       !is_non_overlapping(input) || !is_non_overlapping(output)) {
     return HipdnnCapability::vendor_unsupported(
@@ -427,6 +418,16 @@ structural_capability(const HipdnnTensorOperation &operation,
   if (output.dimensions != expected) {
     return HipdnnCapability::invalid_adapter_contract(
         "reduction output shape does not match axis semantics");
+  }
+  if (input.data_type == FLAGDNN_DATA_BFLOAT16) {
+    return HipdnnCapability::vendor_unsupported(
+        "current Hygon hipDNN ReduceTensor BF16 has no validated executable "
+        "primitive");
+  }
+  if (input.data_type != FLAGDNN_DATA_FLOAT32 &&
+      input.data_type != FLAGDNN_DATA_FLOAT16) {
+    return HipdnnCapability::vendor_unsupported(
+        "reduction is validated only for FP32/FP16");
   }
   if (mixed_fp16_reduction(input, output)) {
     try {

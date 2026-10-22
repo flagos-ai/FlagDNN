@@ -7,6 +7,9 @@
 #include "common/pointwise.hpp"
 #include "common/reduction.hpp"
 #include "native.hpp"
+#include "equivalent_baseline.hpp"
+#include "matrix_reference.hpp"
+#include "tensor_io.hpp"
 #include "precision.hpp"
 #include "reference/cpu/matrix.hpp"
 #include "validation_guards.hpp"
@@ -39,18 +42,19 @@ bm::TensorSpec tensor(const TestTensor &value) {
   return {value.uid, value.data_type, value.dimensions, value.strides,
           value.binding_byte_offset};
 }
-struct NativeCase {
-  std::string name;
-  std::vector<bm::TensorSpec> inputs, outputs;
-};
 struct Catalog {
   std::vector<bm::BenchmarkCase> cases;
+  std::map<std::string, int> precisions;
   std::map<std::string,
            std::function<std::unique_ptr<TestExecutable>(flagdnn::Handle &)>>
       builders;
   template <class Case, class Build>
   void add(bm::BenchmarkCase specification, Case value, Build build) {
     specification.name = value.name;
+    if constexpr (requires { value.input_precision; }) {
+      precisions.emplace(value.name, value.input_precision);
+      specification.benchmark = {10, 20, 50};
+    }
     if constexpr (requires { value.absolute_tolerance; }) {
       specification.absolute_tolerance = value.absolute_tolerance;
       specification.relative_tolerance = value.relative_tolerance;
@@ -62,25 +66,7 @@ struct Catalog {
     });
     cases.push_back(std::move(specification));
   }
-  int run(int argc, char **argv, std::string_view operation, bool tf32) const {
-#ifdef FLAGDNN_HYGON_CATALOG_PROBE
-    // The catalog contract inspects unsupported TF32 shapes without launching.
-    tf32 = false;
-#endif
-    if (tf32) {
-      std::vector<NativeCase> skipped;
-      for (const auto &value : cases) {
-        const auto output_begin =
-            value.tensors.end() -
-            static_cast<std::ptrdiff_t>(value.output_count);
-        skipped.push_back({value.name,
-                           {value.tensors.begin(), output_begin},
-                           {output_begin, value.tensors.end()}});
-      }
-      return hygon::skip_cases(
-          argc, skipped, operation, true,
-          "Hygon implements IEEE dot products; TF32 is unsupported");
-    }
+  int run(int argc, char **argv, std::string_view operation) const {
     std::string marker(operation);
     std::transform(marker.begin(), marker.end(), marker.begin(),
                    [](unsigned char c) { return std::toupper(c); });
@@ -100,7 +86,31 @@ struct Catalog {
                         {spec.tensors.front().dimensions, spec.reduction_axis,
                          spec.reduction_mode}, inputs.at(0))};
               }}
-            : bm::NativeCpuOracle{});
+            : !precisions.empty()
+                ? bm::NativeCpuOracle{[&](const bm::BenchmarkCase& spec, const auto& inputs) {
+                    return bm::matrix_reference(spec, inputs, precisions.at(spec.name));
+                  }}
+                : bm::NativeCpuOracle{},
+        precisions.empty() ? bm::NativeMetadata{} : bm::NativeMetadata{
+            [&](const bm::BenchmarkCase& spec) {
+              bm::NativeBaselineMetadata m;
+              m.operation = operation;
+              m.input_precision = precisions.at(spec.name);
+              m.generate_inputs = [spec] {
+                namespace io = validation::hygon::tensor_io;
+                std::vector<std::vector<float>> values;
+                for (std::size_t j=0; j<bm::input_tensor_count(spec); ++j) {
+                  const auto& t=spec.tensors[j];
+                  std::size_t n=1; for(auto dim:t.dimensions) n*=dim;
+                  std::vector<float> v(n);
+                  for(std::size_t i=0;i<n;++i)
+                    v[i]=float(int((i*17+j*7)%61)-30)/19.0F;
+                  values.push_back(io::decode(io::encode(v,t.data_type),t.data_type,n));
+                }
+                return values;
+              };
+              return m;
+            }});
   }
 };
 } // namespace
@@ -242,8 +252,6 @@ int run_native_dtype_benchmark(int argc, char **argv,
     }
   } else
     throw std::invalid_argument("unknown dtype benchmark category");
-  return catalog.run(argc, argv, operation,
-                     category == "precision" &&
-                         validation::hygon::selected_input_precision() == 2);
+  return catalog.run(argc, argv, operation);
 }
 } // namespace flagdnn::testing

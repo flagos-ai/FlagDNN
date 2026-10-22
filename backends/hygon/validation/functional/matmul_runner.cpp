@@ -13,7 +13,7 @@ int run_matmul_functional_test(int argc, char **argv,
   return host::pw::run_suite(
       argc, argv, "matmul", "FLAGDNN_MATMUL_FUNCTIONAL",
       [&](const auto &handle, hv::Stream &stream, auto &matched, auto &executed,
-          auto &skipped) {
+          auto &) {
         const char *filter = std::getenv("FLAGDNN_MATMUL_CASE");
         for (const auto &c : cases) {
           if (c.input_precision != hv::selected_input_precision() ||
@@ -22,14 +22,6 @@ int run_matmul_functional_test(int argc, char **argv,
           if (filter && c.name.find(filter) == std::string::npos)
             continue;
           ++matched;
-          if (c.input_precision == 2) {
-            support::emit_skip(
-                "matmul", c.name,
-                "Hygon backend does not implement TF32 arithmetic",
-                support::matmul_reference_tensors(c));
-            ++skipped;
-            continue;
-          }
           validate_matmul_case(c);
           const std::vector<TestTensor> inputs{c.a, c.b};
           host::Values values;

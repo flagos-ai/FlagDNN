@@ -28,7 +28,7 @@ int main() {
     for (const auto operation :
          {"identity", "abs", "relu", "relu_backward", "elu", "elu_backward",
           "sigmoid", "sigmoid_backward", "swish", "swish_backward", "tanh",
-          "tanh_backward", "softplus", "softplus_backward"})
+          "tanh_backward", "softplus", "softplus_backward", "conv_bias_relu"})
       require(native_timing_mode(operation) == NativeTimingMode::kDirectBatch,
               "known capture-tail operation must use paired direct events");
     for (const auto operation :

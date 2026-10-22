@@ -5,9 +5,8 @@
 
 from __future__ import annotations
 
-from .common import require_ieee_precision
+from .common import require_input_precision
 from ..dispatch.nn_common import (
-    ALLOW_TF32,
     CONV_DGRAD_EXACT_COL2IM_TUNING,
     CONV_DGRAD_EXACT_GEMM_TUNING,
     CONV_DGRAD_TUNING,
@@ -99,7 +98,7 @@ def _validate_convolution(node: Mapping[str, Any]) -> dict[str, Any]:
 
     tensors = (image, weight, result)
     data_type = _same_dtype(tensors, FLOAT_TYPES, "convolution")
-    require_ieee_precision(p, data_type)
+    require_input_precision(p, data_type)
     if any(len(tensor["dimensions"]) != rank for tensor in tensors):
         raise ValueError(
             "convolution tensor ranks must equal spatial_rank + 2"
@@ -148,6 +147,7 @@ def _validate_convolution(node: Mapping[str, Any]) -> dict[str, Any]:
         )
     return {
         "data_type": data_type,
+        "input_precision": p.get("input_precision", 0),
         "spatial_rank": spatial_rank,
         "pre_padding": pre,
         "post_padding": post,
@@ -220,7 +220,7 @@ def _convolution_stage(node: Mapping[str, Any]) -> KernelStagePlan:
         "DIL_D": dil_d,
         "DIL_H": dil_h,
         "DIL_W": dil_w,
-        "INPUT_PRECISION": int(ALLOW_TF32),
+        "INPUT_PRECISION": int(d.get("input_precision", 0)),
     }
     for prefix, strides, axes in (
         ("X", image_strides, ("N", "C", "D", "H", "W")),
@@ -266,7 +266,7 @@ def _convolution_stage(node: Mapping[str, Any]) -> KernelStagePlan:
                 "BLOCK_OC": 32,
                 "BLOCK_K": 32,
                 "GROUP_M": 8,
-                "INPUT_PRECISION": int(ALLOW_TF32),
+                "INPUT_PRECISION": int(d.get("input_precision", 0)),
             }
             function = "conv1d_gemm_kernel"
             grid = GridSpec(
@@ -302,7 +302,7 @@ def _convolution_stage(node: Mapping[str, Any]) -> KernelStagePlan:
                 "BLOCK_K": 32,
                 "GROUP_M": 8,
                 "DTYPE_ID": DTYPE_IDS[str(d["data_type"])],
-                "INPUT_PRECISION": int(ALLOW_TF32),
+                "INPUT_PRECISION": int(d.get("input_precision", 0)),
                 "X_STRIDE_N": image_strides[0],
                 "X_STRIDE_C": image_strides[1],
                 "X_STRIDE_H": image_strides[3],
@@ -1911,6 +1911,10 @@ def _private_wgrad_plan(node: Mapping[str, Any]) -> NodePlan | None:
 
 def _convolution_plan(node: Mapping[str, Any]) -> NodePlan:
     operation = str(node["operation"])
+    # The generic ND kernels explicitly round TF32 operands. Optimized IEEE
+    # plans remain unchanged and must not silently consume unrounded inputs.
+    if node["derived"].get("input_precision", 0) == 2:
+        return NodePlan(operation, (_convolution_stage(node),))
     if operation in ("conv2d_fprop", "convolution_fprop"):
         private = _private_fprop_plan(node)
     elif operation == "convolution_dgrad":

@@ -57,14 +57,9 @@ std::unique_ptr<TestExecutable> build_layout_reference(const LayoutTestCase &) {
 int run_cudnn_pointwise_tests(int, char **,
                               std::span<const PointwiseTestCase> cases,
                               std::string_view, bool) {
-  // native_copy/boolean supplies identity or logical modes only. Mirror the
-  // dtype exclusions in NVIDIA pointwise_runner; the Python guard tracks it.
+  // NVIDIA pointwise_runner executes every case selected by its factories.
+  // The Python fingerprint guards this policy against future selection changes.
   for (const auto &value : cases) {
-    const auto type = value.inputs.front().data_type;
-    if ((type == FLAGDNN_DATA_INT32 &&
-         value.mode != FLAGDNN_POINTWISE_IDENTITY) ||
-        type == FLAGDNN_DATA_FP8_E8M0)
-      continue;
     auto tensors = value.inputs;
     tensors.push_back(value.output);
     catalog::record(value.name, std::move(tensors));

@@ -216,6 +216,7 @@ if(FLAGDNN_BUILD_TESTS)
   # Compile NVIDIA's native catalog selectors with a recording executor only.
   # This optional contract never links CUDA/cuDNN or changes production targets.
   add_library(flagdnn_hygon_catalog_probe OBJECT benchmark/native_dtype.cpp)
+  target_include_directories(flagdnn_hygon_catalog_probe PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}")
   target_compile_definitions(flagdnn_hygon_catalog_probe PRIVATE
     run_native_dtype_benchmark=run_hygon_dtype_catalog FLAGDNN_HYGON_CATALOG_PROBE=1)
   target_link_libraries(flagdnn_hygon_catalog_probe PRIVATE flagdnn_validation_hygon_cases)
@@ -567,6 +568,19 @@ if(FLAGDNN_BUILD_TESTS)
 endif()
 
 if(FLAGDNN_BUILD_BENCHMARKS)
+  find_package(Threads REQUIRED)
+  add_executable(flagdnn_benchmark_hygon_matrix_reference_contract
+    benchmark/matrix_reference_contract.cpp)
+  target_compile_features(flagdnn_benchmark_hygon_matrix_reference_contract
+    PRIVATE cxx_std_20)
+  target_link_libraries(flagdnn_benchmark_hygon_matrix_reference_contract PRIVATE
+    flagdnn_validation_cpu_reference Threads::Threads)
+  flagdnn_enable_warnings(flagdnn_benchmark_hygon_matrix_reference_contract)
+  add_test(NAME integration.hygon.matrix_cpu_reference
+    COMMAND flagdnn_benchmark_hygon_matrix_reference_contract)
+  set_tests_properties(integration.hygon.matrix_cpu_reference PROPERTIES
+    LABELS "integration;hygon;contract;cpu" TIMEOUT 120)
+
   add_executable(flagdnn_benchmark_hygon_timing_policy_contract
     benchmark/timing_policy_contract.cpp)
   target_compile_features(flagdnn_benchmark_hygon_timing_policy_contract
@@ -636,6 +650,8 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     benchmark/runner.cpp
     benchmark/native_runner.cpp
     benchmark/native_index.cpp
+    benchmark/native_extended.cpp
+    benchmark/native_attention.cpp
     benchmark/native_dtype.cpp
     benchmark/hipdnn_provider.cpp
     benchmark/pointwise.cpp
@@ -655,6 +671,7 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     flagdnn_validation_hygon_cases
     flagdnn_validation_hygon_platform
     flagdnn_validation_hygon_reference)
+  target_link_libraries(flagdnn_benchmark_hygon_adapter PRIVATE Threads::Threads)
   flagdnn_enable_warnings(flagdnn_benchmark_hygon_adapter)
 
   file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/benchmark/additional_operators.txt"
@@ -678,7 +695,7 @@ if(FLAGDNN_BUILD_BENCHMARKS)
     ENVIRONMENT
       "FLAGDNN_BACKEND_PATH=$<TARGET_FILE_DIR:flagdnn_backend_hygon>"
     LABELS hipdnn
-    TIMEOUT 1800
+    TIMEOUT 21600
     BUILD_RPATH "${_flagdnn_hipdnn_library_directory}")
 
   add_executable(flagdnn_benchmark_hygon_dtype "${PROJECT_SOURCE_DIR}/benchmark/dtype_main.cpp")

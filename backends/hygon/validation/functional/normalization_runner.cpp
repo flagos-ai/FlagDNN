@@ -4,6 +4,7 @@
 #include "hip_driver.hpp"
 #include "host_runner.hpp"
 #include "normalization_reference.hpp"
+#include "reference/cpu/normalization.hpp"
 #include "tensor_io.hpp"
 
 #include <flagdnn/flagdnn.hpp>
@@ -379,48 +380,35 @@ large_offset_inputs(const LayernormTestCase &test_case) {
 }
 
 std::vector<std::vector<float>>
+quantize_outputs(const std::vector<TestTensor> &specifications,
+                 std::vector<std::vector<float>> values) {
+  if (specifications.size() != values.size()) {
+    throw std::invalid_argument("normalization CPU oracle output arity is invalid");
+  }
+  for (std::size_t index = 0; index < values.size(); ++index) {
+    values[index] = quantize_logical_values(specifications[index], values[index]);
+  }
+  return values;
+}
+
+std::size_t batchnorm_spatial(const TestTensor &tensor) {
+  std::size_t spatial = 1;
+  for (std::size_t axis = 2; axis < tensor.dimensions.size(); ++axis) {
+    spatial *= static_cast<std::size_t>(tensor.dimensions[axis]);
+  }
+  return spatial;
+}
+
+std::vector<std::vector<float>>
 layernorm_cpu_outputs(const LayernormTestCase &test_case,
                       const std::vector<std::vector<float>> &logical) {
   if (logical.size() != 3) {
     throw std::invalid_argument("LayerNorm CPU oracle input arity is invalid");
   }
-  const std::vector<float> &x = logical[0];
-  const std::vector<float> &scale = logical[1];
-  const std::vector<float> &bias = logical[2];
-  const std::size_t normalized = scale.size();
-  const std::size_t rows = x.size() / normalized;
-  std::vector<float> y(x.size());
-  std::vector<float> mean(rows);
-  std::vector<float> inv_variance(rows);
-  for (std::size_t row = 0; row < rows; ++row) {
-    double sum = 0.0;
-    for (std::size_t column = 0; column < normalized; ++column) {
-      sum += static_cast<double>(x[row * normalized + column]);
-    }
-    const double row_mean = sum / static_cast<double>(normalized);
-    double m2 = 0.0;
-    for (std::size_t column = 0; column < normalized; ++column) {
-      const double centered =
-          static_cast<double>(x[row * normalized + column]) - row_mean;
-      m2 += centered * centered;
-    }
-    const double inverse =
-        1.0 /
-        std::sqrt(m2 / static_cast<double>(normalized) + test_case.epsilon);
-    mean[row] = static_cast<float>(row_mean);
-    inv_variance[row] = static_cast<float>(inverse);
-    for (std::size_t column = 0; column < normalized; ++column) {
-      y[row * normalized + column] = static_cast<float>(
-          (static_cast<double>(x[row * normalized + column]) - row_mean) *
-              inverse * static_cast<double>(scale[column]) +
-          static_cast<double>(bias[column]));
-    }
-  }
-  return {
-      quantize_logical_values(test_case.y, y),
-      quantize_logical_values(test_case.mean, mean),
-      quantize_logical_values(test_case.inv_variance, inv_variance),
-  };
+  return quantize_outputs(
+      outputs(test_case),
+      reference::cpu::evaluate_row_normalization(
+          false, logical[0], logical[1], logical[2], test_case.epsilon));
 }
 
 std::vector<std::vector<float>>
@@ -429,78 +417,11 @@ batchnorm_cpu_outputs(const BatchnormTestCase &test_case,
   if (logical.size() != 5 || test_case.x.dimensions.size() < 2) {
     throw std::invalid_argument("BatchNorm CPU oracle input arity is invalid");
   }
-  const std::vector<float> &x = logical[0];
-  const std::vector<float> &scale = logical[1];
-  const std::vector<float> &bias = logical[2];
-  const std::vector<float> &previous_mean = logical[3];
-  const std::vector<float> &previous_variance = logical[4];
-  const std::size_t batch = static_cast<std::size_t>(test_case.x.dimensions[0]);
-  const std::size_t channels =
-      static_cast<std::size_t>(test_case.x.dimensions[1]);
-  std::size_t spatial = 1;
-  for (std::size_t axis = 2; axis < test_case.x.dimensions.size(); ++axis) {
-    spatial *= static_cast<std::size_t>(test_case.x.dimensions[axis]);
-  }
-  const std::size_t count = batch * spatial;
-  if (count == 0 || scale.size() != channels || bias.size() != channels ||
-      previous_mean.size() != channels ||
-      previous_variance.size() != channels) {
-    throw std::invalid_argument("BatchNorm CPU oracle metadata is invalid");
-  }
-
-  std::vector<float> y(x.size());
-  std::vector<float> mean(channels);
-  std::vector<float> inv_variance(channels);
-  std::vector<float> next_mean(channels);
-  std::vector<float> next_variance(channels);
-  for (std::size_t channel = 0; channel < channels; ++channel) {
-    double sum = 0.0;
-    for (std::size_t n = 0; n < batch; ++n) {
-      for (std::size_t s = 0; s < spatial; ++s) {
-        sum += static_cast<double>(x[(n * channels + channel) * spatial + s]);
-      }
-    }
-    const double channel_mean = sum / static_cast<double>(count);
-    double m2 = 0.0;
-    for (std::size_t n = 0; n < batch; ++n) {
-      for (std::size_t s = 0; s < spatial; ++s) {
-        const std::size_t index = (n * channels + channel) * spatial + s;
-        const double centered = static_cast<double>(x[index]) - channel_mean;
-        m2 += centered * centered;
-      }
-    }
-    const double population_variance = m2 / static_cast<double>(count);
-    const double inverse =
-        1.0 / std::sqrt(population_variance + test_case.epsilon);
-    const double unbiased =
-        count > 1 ? m2 / static_cast<double>(count - 1) : population_variance;
-    mean[channel] = static_cast<float>(channel_mean);
-    inv_variance[channel] = static_cast<float>(inverse);
-    next_mean[channel] =
-        static_cast<float>(static_cast<double>(previous_mean[channel]) *
-                               (1.0 - test_case.momentum) +
-                           channel_mean * test_case.momentum);
-    next_variance[channel] =
-        static_cast<float>(static_cast<double>(previous_variance[channel]) *
-                               (1.0 - test_case.momentum) +
-                           unbiased * test_case.momentum);
-    for (std::size_t n = 0; n < batch; ++n) {
-      for (std::size_t s = 0; s < spatial; ++s) {
-        const std::size_t index = (n * channels + channel) * spatial + s;
-        y[index] = static_cast<float>(
-            (static_cast<double>(x[index]) - channel_mean) * inverse *
-                static_cast<double>(scale[channel]) +
-            static_cast<double>(bias[channel]));
-      }
-    }
-  }
-  return {
-      quantize_logical_values(test_case.y, y),
-      quantize_logical_values(test_case.mean, mean),
-      quantize_logical_values(test_case.inv_variance, inv_variance),
-      quantize_logical_values(test_case.next_running_mean, next_mean),
-      quantize_logical_values(test_case.next_running_variance, next_variance),
-  };
+  return quantize_outputs(
+      outputs(test_case),
+      reference::cpu::evaluate_batchnorm_training(
+          logical[0], batchnorm_spatial(test_case.x), logical[1], logical[2],
+          logical[3], logical[4], test_case.epsilon, test_case.momentum));
 }
 
 enum class BindingAddress { kStorageBase, kTensorEntrance };
@@ -817,35 +738,22 @@ cpu_outputs(const BatchnormTestCase &c,
 std::vector<std::vector<float>>
 cpu_outputs(const RmsnormTestCase &c,
             const std::vector<std::vector<float>> &v) {
-  const auto width = v[1].size(), rows = v[0].size() / width;
-  std::vector<float> y(v[0].size()), inverse(rows);
-  for (std::size_t r = 0; r < rows; ++r) {
-    double square = 0;
-    for (std::size_t j = 0; j < width; ++j) {
-      const double x = v[0][r * width + j];
-      square += x * x;
-    }
-    const double inv = 1 / std::sqrt(square / width + c.epsilon);
-    inverse[r] = static_cast<float>(inv);
-    for (std::size_t j = 0; j < width; ++j)
-      y[r * width + j] =
-          static_cast<float>(v[0][r * width + j] * inv * v[1][j] + v[2][j]);
+  if (v.size() != 3) {
+    throw std::invalid_argument("RMSNorm CPU oracle input arity is invalid");
   }
-  return {y, inverse};
+  auto result = reference::cpu::evaluate_row_normalization(
+      true, v[0], v[1], v[2], c.epsilon);
+  return {std::move(result[0]), std::move(result[2])};
 }
 std::vector<std::vector<float>>
 cpu_outputs(const BatchnormInferenceTestCase &c,
             const std::vector<std::vector<float>> &v) {
-  const auto channels = c.x.dimensions[1];
-  const auto spatial = v[0].size() / c.x.dimensions[0] / channels;
-  std::vector<float> y(v[0].size());
-  for (std::size_t i = 0; i < y.size(); ++i) {
-    const auto channel = (i / spatial) % channels;
-    y[i] = static_cast<float>((double(v[0][i]) - v[1][channel]) *
-                                  v[2][channel] * v[3][channel] +
-                              v[4][channel]);
+  if (v.size() != 5 || c.x.dimensions.size() < 2) {
+    throw std::invalid_argument(
+        "BatchNorm inference CPU oracle input arity is invalid");
   }
-  return {y};
+  return {reference::cpu::evaluate_batchnorm_inference(
+      v[0], batchnorm_spatial(c.x), v[1], v[2], v[3], v[4])};
 }
 
 enum class CaseResult { kExecuted, kSkipped };

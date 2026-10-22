@@ -15,17 +15,19 @@ enum class NativeTimingMode { kGraphBatch, kDirectBatch };
 // The installed DTK/hipDNN activation capture path truncates the launch grid
 // for non-block-aligned element counts. Direct execution writes the full
 // tensor. Select a paired policy before measuring, never as a response to an
-// arbitrary numerical failure. Apply it to all shapes/dtypes of these ops so
+// arbitrary numerical failure. The conv_bias_relu reference ends with the same
+// hipDNN activation primitive. Apply this policy to all shapes/dtypes so
 // a suite does not silently mix timing methods. Other backends are unaffected.
 constexpr NativeTimingMode native_timing_mode(std::string_view operation) {
-  constexpr std::array<std::string_view, 14> affected = {
+  constexpr std::array<std::string_view, 15> affected = {
       "identity", "abs",
       "relu",     "relu_backward",
       "elu",      "elu_backward",
       "sigmoid",  "sigmoid_backward",
       "swish",    "swish_backward",
       "tanh",     "tanh_backward",
-      "softplus", "softplus_backward"};
+      "softplus", "softplus_backward",
+      "conv_bias_relu"};
   for (const auto name : affected)
     if (operation == name)
       return NativeTimingMode::kDirectBatch;

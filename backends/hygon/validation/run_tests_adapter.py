@@ -25,7 +25,14 @@ EQUIVALENT_GENERAL_OPERATORS = frozenset(
     "neg sqrt rsqrt reciprocal ceil floor exp log erf sin cos tan "
     "leaky_relu leaky_relu_backward elu_backward gelu gelu_backward "
     "gelu_approx_tanh gelu_approx_tanh_backward "
-    "softplus softplus_backward".split()
+    "softplus softplus_backward batchnorm_inference layernorm rmsnorm "
+    "matmul conv_bias_relu".split()
+)
+EQUIVALENT_NATIVE_OPERATORS = frozenset(
+    "adalayernorm adalayernorm_backward batchnorm_backward instancenorm "
+    "instancenorm_backward layernorm_backward rmsnorm_backward bn_finalize "
+    "resample causal_conv1d matmul_fp8 moe_grouped_matmul sdpa sdpa_backward "
+    "sdpa_fp8 sdpa_fp8_backward".split()
 )
 EQUIVALENT_BFLOAT16_OPERATORS = frozenset(
     "abs add add_square elu max min mul relu relu_backward scale sigmoid "
@@ -34,15 +41,46 @@ EQUIVALENT_BFLOAT16_OPERATORS = frozenset(
 EQUIVALENT_OPERATORS = (
     EQUIVALENT_GENERAL_OPERATORS
     | EQUIVALENT_BFLOAT16_OPERATORS
-    | {"identity", "batchnorm", "reduction"}
+    | EQUIVALENT_NATIVE_OPERATORS
+    | {
+        "identity",
+        "batchnorm",
+        "reduction",
+        "conv_fprop",
+        "conv_dgrad",
+        "conv_wgrad",
+    }
 )
 EQUIVALENT_CASE_PATTERN = re.compile(
     # New scopes follow the measured supplement, not the complete dtype range
     # of an operator. In particular, native FP32/FP16 pointwise paths retain
     # their existing provider pairing and do not gain an unproven fallback.
     r"^(?=(?P<operator>"
-    + "|".join(sorted(EQUIVALENT_OPERATORS, key=lambda op: (-len(op), op)))
-    + r")_)(?:identity_(?:fp8_(?:e4m3|e5m2)|bfloat16|int32|bool)_"
+    + "|".join(
+        sorted(
+            EQUIVALENT_OPERATORS
+            | {"matmul_mxfp8"}
+            | {
+                f"conv{rank}d_{direction}"
+                for rank in (1, 2, 3)
+                for direction in ("fprop", "dgrad", "wgrad")
+            },
+            key=lambda op: (-len(op), op),
+        )
+    )
+    + r")_)(?:matmul_a(?:e4m3|e5m2)_b(?:e4m3|e5m2)_mode3_"
+    r"|sdpa(?:_fp8)?(?:_backward)?_(?:perf_)?"
+    r"(?:fp16|bfloat16|bf16|fp8_e4m3|fp8_e5m2|e4m3|e5m2)_[a-z0-9_]*"
+    r"|conv_bias_relu_perf_(?:fp32|fp16|bfloat16)_x"
+    r"|conv[123]d_(?:fprop|dgrad|wgrad)_(?:perf_)?"
+    r"(?:fp32|fp16|bfloat16)_[a-z0-9_]+|(?:"
+    + "|".join(
+        sorted(EQUIVALENT_NATIVE_OPERATORS, key=lambda op: (-len(op), op))
+    )
+    + r")_(?:(?<=resample_)[a-z_]+_)?"
+    r"(?:fp32|fp16|bfloat16|bf16|fp8_e4m3|fp8_e5m2|e4m3|e5m2)_(?:mode[0-2]_)?"
+    r"|matmul_(?:fp8|mxfp8)_a(?:e4m3|e5m2)_b(?:e4m3|e5m2)_mode[0-2]_"
+    r"|identity_(?:fp8_(?:e4m3|e5m2)|bfloat16|int32|bool)_"
     r"|identity_perf_bfloat16_|batchnorm_perf_(?:fp16|bfloat16)_"
     r"|reduction_(?:sum_(?:bfloat16|int32)|(?:sum|avg|mul)_fp16)_to_fp32_|(?:"
     + "|".join(
@@ -58,6 +96,14 @@ EQUIVALENT_CASE_PATTERN = re.compile(
 )
 EQUIVALENT_SCALE_METRICS = {
     "vector_fp32",
+    "tensor_fp32",
+    "tensor_tf32",
+    "tensor_fp16",
+    "tensor_bf16",
+    "tensor_fp8_e4m3",
+    "tensor_fp8_e5m2_e4m3",
+    "tensor_fp8_e4m3_e5m2",
+    "tensor_fp8_e5m2",
     "hbm_copy",
     "hbm_write",
     "hbm_triad",
@@ -159,6 +205,7 @@ def preflight_tests(suites: list[str] | tuple[str, ...]) -> set[str]:
         {
             "integration.hygon.div_performance_baseline",
             "integration.hygon.benchmark_validation_guards",
+            "integration.hygon.matrix_cpu_reference",
             "integration.hygon.benchmark_timing_policy",
         }
         if "benchmark" in suites
@@ -582,13 +629,19 @@ def validate_benchmark_record(
     case_operator = EQUIVALENT_CASE_PATTERN.fullmatch(record["case"]).group(
         "operator"
     )
+    if case_operator.startswith(("conv1d_", "conv2d_", "conv3d_")):
+        case_operator = "conv_" + case_operator.split("_", 1)[1]
+    if case_operator == "matmul_mxfp8":
+        case_operator = "matmul_fp8"
     baseline = record["equivalent_baseline"]
     identities = {
         "provider": "nvidia_equivalent",
         "platform": "nvidia",
         "target_platform": "hygon",
         "timing_profile": (
-            "batchnorm_training" if case_operator == "batchnorm" else "native"
+            "batchnorm_training"
+            if case_operator == "batchnorm"
+            else "attention" if case_operator.startswith("sdpa") else "native"
         ),
     }
     numeric = {
@@ -636,6 +689,9 @@ def validate_benchmark_record(
         )
     if case_operator in EQUIVALENT_BFLOAT16_OPERATORS | {
         "batchnorm",
+        "batchnorm_inference",
+        "layernorm",
+        "rmsnorm",
         "reduction",
     } and (
         baseline["reference_validation"] != "cpu_full"
@@ -666,7 +722,7 @@ def validate_benchmark_record(
         )
     traffic_ratio = baseline.get("traffic_ratio", 1.0)
     if not positive(traffic_ratio) or (
-        baseline["scale_metric"] == "vector_fp32" and traffic_ratio != 1
+        not baseline["scale_metric"].startswith("hbm_") and traffic_ratio != 1
     ):
         raise ValueError(
             "traffic_ratio must be finite and positive; "
@@ -674,7 +730,11 @@ def validate_benchmark_record(
         )
     if baseline["min_relative_efficiency"] > 1:
         raise ValueError("min_relative_efficiency must be in (0, 1]")
-    sample_count = 10 if case_operator == "batchnorm" else 20
+    sample_count = (
+        10
+        if case_operator == "batchnorm" or case_operator.startswith("sdpa")
+        else 20
+    )
     if (
         not isinstance(record["samples"], list)
         or len(record["samples"]) != sample_count
@@ -739,7 +799,8 @@ def validate_hygon_benchmark_pairs(
                 operator not in EQUIVALENT_OPERATORS
                 or actual != {"flagdnn"}
                 or match is None
-                or match.group("operator") != operator
+                or benchmark_case_operator(case, list(EQUIVALENT_OPERATORS))
+                != operator
                 or providers["flagdnn"].get("case") != case
             ):
                 errors.append(

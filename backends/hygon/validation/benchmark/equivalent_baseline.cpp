@@ -44,6 +44,7 @@ std::string_view dtype_name(flagdnnDataType_t type) {
     case FLAGDNN_DATA_INT32: return "int32";
     case FLAGDNN_DATA_FP8_E4M3: return "fp8_e4m3";
     case FLAGDNN_DATA_FP8_E5M2: return "fp8_e5m2";
+    case FLAGDNN_DATA_FP8_E8M0: return "fp8_e8m0";
     default: throw std::runtime_error("unsupported equivalent-baseline dtype");
   }
 }
@@ -57,6 +58,11 @@ bool same_vector(const Value& value,
   return true;
 }
 
+bool matrix_operation(Operation op) {
+  return op == Operation::kMatmul || op == Operation::kConvolutionFprop ||
+         op == Operation::kConvolutionDgrad || op == Operation::kConvolutionWgrad;
+}
+
 struct Policy {
   std::string_view operation;
   std::string_view metric;
@@ -64,10 +70,48 @@ struct Policy {
   std::size_t inputs = 1;
 };
 
+bool extended_operation(std::string_view operation) {
+  constexpr std::string_view names[] = {
+      "adalayernorm", "adalayernorm_backward", "batchnorm_backward",
+      "instancenorm", "instancenorm_backward", "layernorm_backward",
+      "rmsnorm_backward", "bn_finalize", "resample", "causal_conv1d",
+      "matmul_fp8", "moe_grouped_matmul", "matmul",
+      "sdpa", "sdpa_backward", "sdpa_fp8", "sdpa_fp8_backward"};
+  return std::find(std::begin(names), std::end(names), operation) !=
+         std::end(names);
+}
+
+std::string_view tensor_metric(const BenchmarkCase& spec) {
+  if (spec.tensors.size() < 2) return {};
+  const auto a = spec.tensors[0].data_type;
+  const auto b = spec.tensors[1].data_type;
+  if (a == FLAGDNN_DATA_FLOAT32 && b == a)
+    return spec.name.ends_with("_tf32") ? "tensor_tf32" : "tensor_fp32";
+  if (a == FLAGDNN_DATA_FLOAT16 && b == a) return "tensor_fp16";
+  if (a == FLAGDNN_DATA_BFLOAT16 && b == a) return "tensor_bf16";
+  if (a == FLAGDNN_DATA_FP8_E4M3 && b == a) return "tensor_fp8_e4m3";
+  if (a == FLAGDNN_DATA_FP8_E5M2 && b == a) return "tensor_fp8_e5m2";
+  if (a == FLAGDNN_DATA_FP8_E5M2 && b == FLAGDNN_DATA_FP8_E4M3)
+    return "tensor_fp8_e5m2_e4m3";
+  if (a == FLAGDNN_DATA_FP8_E4M3 && b == FLAGDNN_DATA_FP8_E5M2)
+    return "tensor_fp8_e4m3_e5m2";
+  return {};
+}
+
 Policy policy(const BenchmarkCase& spec) {
   switch (spec.operation) {
+    case Operation::kMatmul: return {"matmul", tensor_metric(spec), InputDomain::kReal, 2};
+    case Operation::kConvolutionFprop: return {"conv_fprop", tensor_metric(spec), InputDomain::kReal, 2};
+    case Operation::kConvolutionDgrad: return {"conv_dgrad", tensor_metric(spec), InputDomain::kReal, 2};
+    case Operation::kConvolutionWgrad: return {"conv_wgrad", tensor_metric(spec), InputDomain::kReal, 2};
     case Operation::kAdd: return {"add", "hbm_triad", InputDomain::kReal, 2};
     case Operation::kRelu: return {"relu", "hbm_copy"};
+    case Operation::kBatchnormInference:
+      return {"batchnorm_inference", "vector_fp32", InputDomain::kReal, 5};
+    case Operation::kLayernorm:
+      return {"layernorm", "vector_fp32", InputDomain::kReal, 3};
+    case Operation::kRmsnorm:
+      return {"rmsnorm", "vector_fp32", InputDomain::kReal, 3};
     case Operation::kBatchnorm:
       return {"batchnorm", "vector_fp32", InputDomain::kReal, 5};
     case Operation::kReduction: return {"reduction", "vector_fp32"};
@@ -75,10 +119,28 @@ Policy policy(const BenchmarkCase& spec) {
     case Operation::kTranspose: return {"transpose", "hbm_copy"};
     case Operation::kSlice: return {"slice", "hbm_copy"};
     case Operation::kGraph:
+      if (spec.name.starts_with("conv_bias_relu_"))
+        return {"conv_bias_relu", tensor_metric(spec), InputDomain::kReal, 3};
       if (spec.name.starts_with("add_square_"))
         return {"add_square", "vector_fp32", InputDomain::kReal, 2};
       if (!spec.graph.nodes.empty() || !spec.graph.intermediates.empty())
         return {};
+      if (spec.name.starts_with("matmul_ae"))
+        return {"matmul", tensor_metric(spec), InputDomain::kReal, 0};
+      for (std::string_view name : {"sdpa_fp8_backward", "sdpa_fp8", "sdpa_backward", "sdpa"})
+        if (spec.name.starts_with(std::string(name) + "_"))
+          return {name, tensor_metric(spec), InputDomain::kReal, 0};
+      if (spec.name.starts_with("matmul_mxfp8_"))
+        return {"matmul_fp8", tensor_metric(spec), InputDomain::kReal, 0};
+      for (std::string_view name : {"matmul_fp8", "moe_grouped_matmul"})
+        if (spec.name.starts_with(std::string(name) + "_"))
+          return {name, tensor_metric(spec), InputDomain::kReal, 0};
+      for (std::string_view name : {
+               "adalayernorm_backward", "adalayernorm", "batchnorm_backward",
+               "instancenorm_backward", "instancenorm", "layernorm_backward",
+               "rmsnorm_backward", "bn_finalize", "resample", "causal_conv1d"})
+        if (spec.name.starts_with(std::string(name) + "_"))
+          return {name, "vector_fp32", InputDomain::kReal, 0};
       if (spec.name.starts_with("concatenate_"))
         return {"concatenate", "hbm_copy"};
       if (spec.name.starts_with("gen_index_"))
@@ -374,6 +436,46 @@ void graph_attributes(const BenchmarkCase& spec, const Value& entry,
   flattened_descriptor(tensor, recorded);
 }
 
+// Validate the complete measured fused graph, including virtual dtype
+// rounding boundaries. Matching only the convolution shape is insufficient.
+void cbr_attributes(const BenchmarkCase& spec, const Value& entry) {
+  exact_keys(entry.at("attributes"), {});
+  const auto& nodes=entry.at("graph_nodes").as_array();
+  const auto& tensors=entry.at("intermediate_tensors").as_array();
+  require(nodes.size()==3 && spec.graph.nodes.size()==3 && tensors.size()==2 &&
+              spec.graph.intermediates.size()==2,"CBR topology differs");
+  for(std::size_t i=0;i<nodes.size();++i) {
+    const auto& n=spec.graph.nodes[i];const auto& r=nodes[i];
+    require(r.at("name").as_string()==n.name &&
+                r.at("operation_kind").as_int()==static_cast<int>(n.operation) &&
+                same_vector(r.at("input_uids"),n.input_uids) &&
+                r.at("output_uid").as_int()==n.output_uid,"CBR node wiring differs");
+    same_number(r,"pointwise_mode",n.pointwise_mode);same_number(r,"alpha",n.alpha);
+    const auto& a=n.pointwise_attributes;
+    same_number(r,"pointwise_flags",a.flags);
+    same_number(r,"relu_lower_clip",a.relu_lower_clip);
+    same_number(r,"relu_upper_clip",a.relu_upper_clip);
+    same_number(r,"relu_lower_clip_slope",a.relu_lower_clip_slope);
+    same_number(r,"swish_beta",a.swish_beta);same_number(r,"elu_alpha",a.elu_alpha);
+    same_number(r,"softplus_beta",a.softplus_beta);
+    const auto& c=n.convolution;
+    same_number(r,"convolution_spatial_rank",c.spatial_rank);
+    same_number(r,"convolution_groups",c.groups);
+    same_number(r,"convolution_mode",static_cast<int>(c.mode));
+    require(same_vector(r.at("convolution_pre_padding"),c.pre_padding) &&
+                same_vector(r.at("convolution_post_padding"),c.post_padding) &&
+                same_vector(r.at("convolution_stride"),c.stride) &&
+                same_vector(r.at("convolution_dilation"),c.dilation),"CBR geometry differs");
+  }
+  for(std::size_t i=0;i<tensors.size();++i) {
+    const auto& t=spec.graph.intermediates[i];const auto& r=tensors[i];
+    require(r.at("uid").as_int()==t.uid && r.at("dtype").as_string()==dtype_name(t.data_type) &&
+                same_vector(r.at("shape"),t.dimensions) && same_vector(r.at("strides"),t.strides) &&
+                r.at("binding_byte_offset").as_int()==0 && t.binding_byte_offset==0 &&
+                r.at("virtual").as_bool(),"CBR intermediate differs");
+  }
+}
+
 void supplemental_inputs(const BenchmarkCase& spec, const Value& entry,
                          const Value& measurement,
                          const std::vector<InputDomain>& domains) {
@@ -459,6 +561,7 @@ std::int64_t storage_bits(flagdnnDataType_t type) {
   switch (type) {
     case FLAGDNN_DATA_FP8_E4M3:
     case FLAGDNN_DATA_FP8_E5M2:
+    case FLAGDNN_DATA_FP8_E8M0:
     case FLAGDNN_DATA_BOOLEAN: return 8;
     case FLAGDNN_DATA_FLOAT16:
     case FLAGDNN_DATA_BFLOAT16: return 16;
@@ -472,7 +575,11 @@ std::int64_t storage_bits(flagdnnDataType_t type) {
 
 bool supports_equivalent_baseline(const BenchmarkCase& specification) {
   const auto chosen = policy(specification);
-  if (chosen.operation.empty()) return false;
+  if (chosen.operation.empty() || chosen.metric.empty()) return false;
+  if (specification.operation == Operation::kGraph &&
+      (chosen.operation == "matmul" || chosen.operation.starts_with("sdpa") ||
+       chosen.operation == "matmul_fp8" || chosen.operation == "moe_grouped_matmul"))
+    return true;  // Exact descriptor and attribute validation is mandatory in lookup.
   if (supplemental_pointwise(chosen.operation))
     return specification.name.starts_with(std::string(chosen.operation) +
                                           "_perf_bfloat16_") &&
@@ -606,16 +713,39 @@ EquivalentBaseline PerformanceBaseline::lookup(
     require(supports_equivalent_baseline(specification),
             "case is outside equivalent-baseline scope");
     const auto chosen = policy(specification);
-    require(specification.name.starts_with(std::string(chosen.operation) + "_"),
+    require(specification.name.starts_with(std::string(chosen.operation) + "_") ||
+                (matrix_operation(specification.operation) &&
+                 specification.name.starts_with("conv") && specification.name.find(
+                     std::string(chosen.operation.substr(5)) + "_") != std::string::npos) ||
+                (chosen.operation == "matmul_fp8" && specification.name.starts_with("matmul_mxfp8_")),
             "case name and operation differ");
+    const bool matrix = matrix_operation(specification.operation);
+    const bool explicit_tf32 = matrix && specification.name.ends_with("_tf32");
+    const bool explicit_ieee = matrix && specification.name.ends_with("_ieee");
+    const bool explicit_precision = explicit_tf32 || explicit_ieee;
+    if (explicit_precision)
+      require(metadata && metadata->operation == chosen.operation &&
+                  metadata->input_precision == (explicit_tf32 ? 2 : 1) && metadata->generate_inputs,
+              "matrix precision metadata or native input generator is missing");
     const bool batchnorm = chosen.operation == "batchnorm";
+    const bool extended = specification.operation == Operation::kGraph && extended_operation(chosen.operation);
+    const bool attention = chosen.operation.starts_with("sdpa");
+    require(!extended || (metadata && metadata->validate_attributes &&
+                           metadata->generate_inputs),
+            "extended native metadata or input generator is missing");
+    const bool inference = chosen.operation == "batchnorm_inference";
+    const bool layernorm = chosen.operation == "layernorm";
+    const bool rmsnorm = chosen.operation == "rmsnorm";
+    const bool normalization = batchnorm || inference || layernorm || rmsnorm;
     const bool reduction = chosen.operation == "reduction";
     const bool add_square = chosen.operation == "add_square";
+    const bool cbr = chosen.operation == "conv_bias_relu";
     const bool supplement = supplemental_case(specification, chosen);
-    require(specification.output_count == (batchnorm ? 5U : 1U),
+    require(specification.output_count == (extended ? metadata->output_count : batchnorm ? 5U : layernorm ? 3U : rmsnorm ? 2U : 1U),
             "output count differs from operation");
     const std::size_t input_count = input_tensor_count(specification);
-    require(chosen.operation == "concatenate" ? input_count >= 1
+    require(extended ? input_count == metadata->input_count
+                     : chosen.operation == "concatenate" ? input_count >= 1
                                               : input_count == chosen.inputs,
             "input count differs from operation");
     require(specification.input_domain == chosen.domain,
@@ -623,12 +753,13 @@ EquivalentBaseline PerformanceBaseline::lookup(
     std::vector<InputDomain> domains(input_count, chosen.domain);
     if (chosen.operation == "binary_select") domains[2] = InputDomain::kLogical;
     if (batchnorm) domains[4] = InputDomain::kPositive;
+    if (inference) domains[2] = InputDomain::kPositive;
     require(specification.input_domains.empty()
-                ? chosen.operation != "binary_select" && !batchnorm
+                ? chosen.operation != "binary_select" && !batchnorm && !inference
                 : specification.input_domains == domains,
             "per-input domains differ from the NVIDIA catalog");
-    require((specification.operation == Operation::kGraph && !add_square) == (metadata != nullptr),
-            "native metadata is required only for native index operations");
+    require((specification.operation == Operation::kGraph && !add_square && !cbr) == (metadata != nullptr && !matrix),
+            "native graph operations require explicit metadata");
 
     const auto& target = document_.at("platforms").at("hygon");
     require(target.at("device").as_string() == device_name,
@@ -637,7 +768,36 @@ EquivalentBaseline PerformanceBaseline::lookup(
             "Hygon architecture does not match the measured baseline");
 
     const auto& reference = document_.at("reference");
-    const auto& entry = reference.at("cases").at(specification.name);
+    // Hygon's default FP32 matrix/CBR kernels use IEEE inputs. The historical
+    // automatic-precision NVIDIA records may use TF32 and cannot be scaled
+    // with the measured IEEE FP32 peak. Keep those shared records intact.
+    const bool default_ieee =
+        ((matrix && !explicit_precision) || cbr) &&
+        chosen.metric == "tensor_fp32";
+    const auto& entry =
+        default_ieee
+            ? target.at("ieee_reference_cases").at(specification.name)
+            : reference.at("cases").at(specification.name);
+    if (default_ieee) {
+      const auto& precision = entry.at("precision_control");
+      exact_keys(precision, {"input_precision", "reference_input_precision",
+                            "NVIDIA_TF32_OVERRIDE"});
+      require(precision.at("input_precision").as_int() == 1 &&
+                  precision.at("reference_input_precision").as_int() == 1 &&
+                  precision.at("NVIDIA_TF32_OVERRIDE").as_string() == "0",
+              "default FP32 reference must be measured with TF32 disabled");
+      constexpr std::string_view measurement =
+          "nvidia-hygon-default-ieee-20261021";
+      require(entry.at("measurement_id").as_string() == measurement,
+              "default IEEE reference measurement differs");
+      const auto& evidence =
+          document_.at("measurement_summaries").at(measurement);
+      require(evidence.at("case_count").as_int() == 71 &&
+                  evidence.at("accepted_case_count").as_int() == 71 &&
+                  evidence.at("compute_precision").as_string() == "ieee_fp32" &&
+                  evidence.at("NVIDIA_TF32_OVERRIDE").as_string() == "0",
+              "default IEEE reference evidence is incomplete");
+    }
     require(entry.at("op").as_string() == chosen.operation,
             "reference operation differs");
     const bool pointwise = specification.operation == Operation::kPointwise ||
@@ -650,14 +810,40 @@ EquivalentBaseline PerformanceBaseline::lookup(
                                  : "bit_exact") &&
                       specification.absolute_tolerance == 0 &&
                       specification.relative_tolerance == 0
-                : validation == "cpu_full" ||
-                      (!pointwise && !supplement && validation == "sanity"),
+                : validation == "cpu_full" || (matrix && validation == "cpu_sampled") ||
+                      (!cbr && !matrix && !pointwise && !normalization && !supplement && validation == "sanity"),
             "reference validation is insufficient or unknown");
-    if (pointwise) {
+    if (matrix) {
+      const auto* attrs = optional(entry, "attributes");
+      const bool conv = specification.operation != Operation::kMatmul;
+      const std::size_t count = (conv ? 7 : 0) + (explicit_precision ? 3 : 0);
+      require(attrs ? attrs->as_object().size() == count : count == 0,
+              "matrix attribute count differs");
+      if (explicit_precision) {
+        require(attrs->at("input_precision").as_int() == (explicit_tf32 ? 2 : 1) &&
+                    attrs->at("reference_input_precision").as_int() == (explicit_tf32 ? 2 : 1) &&
+                    (explicit_tf32 ? attrs->at("reference_tf32_rounding").as_string() == "nearest_even"
+                                   : attrs->at("reference_tf32_rounding").is_null()),
+                "matrix precision differs");
+      }
+      if (conv) {
+        const auto& c=specification.convolution;
+        same_number(*attrs,"convolution_spatial_rank",c.spatial_rank);
+        same_number(*attrs,"convolution_groups",c.groups);
+        same_number(*attrs,"convolution_mode",static_cast<int>(c.mode));
+        require(same_vector(attrs->at("convolution_pre_padding"),c.pre_padding) &&
+                    same_vector(attrs->at("convolution_post_padding"),c.post_padding) &&
+                    same_vector(attrs->at("convolution_stride"),c.stride) &&
+                    same_vector(attrs->at("convolution_dilation"),c.dilation),
+                "convolution geometry differs");
+      }
+    } else if (pointwise) {
       pointwise_attributes(specification, entry, chosen);
+    } else if (cbr) {
+      cbr_attributes(specification, entry);
     } else if (add_square) {
       graph_attributes(specification, entry, chosen);
-    } else if (batchnorm) {
+    } else if (normalization) {
       exact_keys(entry.at("attributes"), {"epsilon", "momentum"});
       same_number(entry.at("attributes"), "epsilon",
                   specification.normalization.epsilon);
@@ -679,12 +865,16 @@ EquivalentBaseline PerformanceBaseline::lookup(
     } else if (metadata) {
       require(metadata->operation == chosen.operation,
               "native operation differs from reference");
+      if (extended) {
+        metadata->validate_attributes(entry.at("attributes"));
+      } else {
       exact_keys(entry.at("attributes"), {"axis"});
       require(entry.at("attributes").at("axis").as_int() == metadata->axis,
               "native axis differs from reference");
       const auto rank = static_cast<std::int64_t>(specification.tensors.back().dimensions.size());
       require(rank > 0 && metadata->axis >= -rank && metadata->axis < rank,
               "invalid native axis");
+      }
     } else {
       layout_attributes(specification, entry);
     }
@@ -734,7 +924,7 @@ EquivalentBaseline PerformanceBaseline::lookup(
                   static_cast<std::uint64_t>(expected_offset) ==
                       tensor.binding_byte_offset,
               label + " binding offset differs");
-      if (batchnorm && (i == 0 || i == 5)) {
+      if ((batchnorm || inference) && (i == 0 || i == 5)) {
         const auto& shape = tensor.dimensions;
         // Validate every positive product before computing either layout.
         // Even adversarial matching source/target metadata must fail closed.
@@ -744,8 +934,11 @@ EquivalentBaseline PerformanceBaseline::lookup(
                     same_vector(expected.at("reference_strides"),
                                 {shape[1] * shape[2] * shape[3], 1,
                                  shape[3] * shape[1], shape[1]}) &&
-                    !expected.at("reference_layout_conversion_timed").as_bool(),
-                label + " batchnorm NCHW-to-NHWC reference layout differs");
+                    (batchnorm
+                         ? !expected.at("reference_layout_conversion_timed").as_bool()
+                         : (!optional(expected, "reference_layout_conversion_timed") ||
+                            !expected.at("reference_layout_conversion_timed").as_bool())),
+                label + " normalization NCHW-to-NHWC reference layout differs");
       } else if (const auto* strides = optional(expected, "reference_strides")) {
         require(same_vector(*strides, tensor.strides),
                 label + " converted reference strides differ");
@@ -799,6 +992,13 @@ EquivalentBaseline PerformanceBaseline::lookup(
     const auto& scaling = target.at("scaling").at("case_policies")
                              .at(chosen.operation);
     result.scale_metric = scaling.at("scale_metric").as_string();
+    if (result.scale_metric == "tensor_by_input_dtypes" ||
+        result.scale_metric == "tensor_by_precision_and_input_dtypes") {
+      const std::string key = std::string(dtype_name(specification.tensors[0].data_type)) +
+                              "/" + std::string(dtype_name(specification.tensors[1].data_type));
+      result.scale_metric = explicit_tf32 ? scaling.at("tf32_metric").as_string()
+          : scaling.at("input_dtype_metrics").at(key).as_string();
+    }
     require(result.scale_metric == chosen.metric,
             "Hygon scaling metric differs from the operation policy");
     const bool bandwidth = result.scale_metric.starts_with("hbm_");
@@ -810,7 +1010,7 @@ EquivalentBaseline PerformanceBaseline::lookup(
     require(bandwidth || result.traffic_ratio == 1,
             "storage conversion is unsupported for a compute proxy");
     result.timing_profile = entry.at("timing_profile").as_string();
-    require(result.timing_profile == (batchnorm ? "batchnorm_training" : "native"),
+    require(result.timing_profile == (batchnorm ? "batchnorm_training" : attention ? "attention" : "native"),
         "equivalent baseline timing profile differs");
     const auto& measurement = reference.at("measurement");
     require(measurement.at("timing_method").as_string() ==
@@ -821,8 +1021,8 @@ EquivalentBaseline PerformanceBaseline::lookup(
     const auto& timing =
         measurement.at("timing_profiles").at(result.timing_profile);
     const auto& config = specification.benchmark;
-    require(config.warmup_iterations == (batchnorm ? 5 : 10) && config.sample_count == (batchnorm ? 10 : 20) &&
-                  config.iterations_per_sample == (batchnorm ? 20 : 50),
+    require(config.warmup_iterations == (batchnorm || attention ? 5 : 10) && config.sample_count == (batchnorm || attention ? 10 : 20) &&
+                  config.iterations_per_sample == (batchnorm || attention ? 20 : 50),
             "equivalent baseline requires the recorded timing configuration");
     require(config.warmup_iterations >= 0 && config.sample_count > 0 &&
                 config.iterations_per_sample > 0,

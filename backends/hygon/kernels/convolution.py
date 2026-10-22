@@ -15,6 +15,16 @@ import triton.language as tl
 
 
 @triton.jit
+def _tf32_rne(value):
+    bits = value.to(tl.uint32, bitcast=True)
+    rounded = ((bits + 0xFFF + ((bits >> 13) & 1)) & 0xFFFFE000).to(
+        tl.float32, bitcast=True
+    )
+    # Preserve infinities and NaNs; round finite operands to ten fraction bits.
+    return tl.where((bits & 0x7F800000) == 0x7F800000, value, rounded)
+
+
+@triton.jit
 def conv1d_gemm_kernel(
     x_ptr,
     w_ptr,
@@ -47,14 +57,15 @@ def conv1d_gemm_kernel(
     GROUP_M: tl.constexpr,
     INPUT_PRECISION: tl.constexpr,
 ):
-    tile = tl.program_id(0)
+    # Strided tensor offsets may exceed int32; widen before multiplication.
+    tile = tl.program_id(0).to(tl.int64)
     group = tl.program_id(1).to(tl.int64)
     tiles_oc = tl.cdiv(COUT_PER_GROUP, BLOCK_OC)
     tile_m = tile // tiles_oc
     tile_oc = tile % tiles_oc
     rows = tile_m * BLOCK_M + tl.arange(0, BLOCK_M)
     output_channels = tile_oc * BLOCK_OC + tl.arange(0, BLOCK_OC)
-    reduction_base = tl.arange(0, BLOCK_K)
+    reduction_base = tl.arange(0, BLOCK_K).to(tl.int64)
     batch = rows // OL
     output_l = rows % OL
     accumulator = tl.zeros((BLOCK_M, BLOCK_OC), dtype=tl.float32)
@@ -93,6 +104,9 @@ def conv1d_gemm_kernel(
             & (reduction[None, :] < reduction_extent),
             other=0.0,
         )
+        if INPUT_PRECISION == 2:
+            input_values = _tf32_rne(input_values)
+            weights = _tf32_rne(weights)
         accumulator += tl.dot(
             input_values, tl.trans(weights), input_precision="ieee"
         )
@@ -161,7 +175,7 @@ def conv2d_spatial_nchw_kernel(
     Y_STRIDE_H: tl.constexpr,
     Y_STRIDE_W: tl.constexpr,
 ):
-    tile = tl.program_id(0)
+    tile = tl.program_id(0).to(tl.int64)
     batch_group = tl.program_id(1).to(tl.int64)
     batch = batch_group // GROUPS
     group = batch_group % GROUPS
@@ -172,7 +186,7 @@ def conv2d_spatial_nchw_kernel(
     output_channels = tile_oc * BLOCK_OC + tl.arange(0, BLOCK_OC)
     output_h = output_hw // OW
     output_w = output_hw % OW
-    reduction_base = tl.arange(0, BLOCK_K)
+    reduction_base = tl.arange(0, BLOCK_K).to(tl.int64)
     reduction_extent: tl.constexpr = CIN_PER_GROUP * KH * KW
     accumulator = tl.zeros((BLOCK_HW, BLOCK_OC), dtype=tl.float32)
 
@@ -212,6 +226,9 @@ def conv2d_spatial_nchw_kernel(
             & (reduction[None, :] < reduction_extent),
             other=0.0,
         )
+        if INPUT_PRECISION == 2:
+            input_values = _tf32_rne(input_values)
+            weights = _tf32_rne(weights)
         accumulator += tl.dot(
             input_values, tl.trans(weights), input_precision="ieee"
         )
@@ -286,7 +303,7 @@ def conv3d_spatial_ncdhw_m_kernel(
     Y_STRIDE_W: tl.constexpr,
     INPUT_PRECISION: tl.constexpr,
 ):
-    tile = tl.program_id(0)
+    tile = tl.program_id(0).to(tl.int64)
     group = tl.program_id(1).to(tl.int64)
     tiles_oc = tl.cdiv(COUT_PER_GROUP, BLOCK_OC)
     tile_m = tile // tiles_oc
@@ -300,7 +317,7 @@ def conv3d_spatial_ncdhw_m_kernel(
     output_hw = spatial % (OH * OW)
     output_h = output_hw // OW
     output_w = output_hw % OW
-    reduction_base = tl.arange(0, BLOCK_K)
+    reduction_base = tl.arange(0, BLOCK_K).to(tl.int64)
     kernel_volume: tl.constexpr = KD * KH * KW
     reduction_extent: tl.constexpr = CIN_PER_GROUP * kernel_volume
     accumulator = tl.zeros((BLOCK_M, BLOCK_OC), dtype=tl.float32)
@@ -352,6 +369,9 @@ def conv3d_spatial_ncdhw_m_kernel(
             & (reduction[None, :] < reduction_extent),
             other=0.0,
         )
+        if INPUT_PRECISION == 2:
+            input_values = _tf32_rne(input_values)
+            weights = _tf32_rne(weights)
         accumulator += tl.dot(
             input_values, tl.trans(weights), input_precision="ieee"
         )
@@ -423,7 +443,7 @@ def conv_dgrad_nd_kernel(
     BLOCK_K: tl.constexpr,
     GROUP_M: tl.constexpr,
 ):
-    tile = tl.program_id(0)
+    tile = tl.program_id(0).to(tl.int64)
     group = tl.program_id(1).to(tl.int64)
     tiles_ci = tl.cdiv(CIN_PER_GROUP, BLOCK_CI)
     tile_m = tile // tiles_ci
@@ -439,7 +459,7 @@ def conv_dgrad_nd_kernel(
     input_w = input_hw % XW
     kernel_volume: tl.constexpr = KD * KH * KW
     reduction_extent: tl.constexpr = COUT_PER_GROUP * kernel_volume
-    reduction_base = tl.arange(0, BLOCK_K)
+    reduction_base = tl.arange(0, BLOCK_K).to(tl.int64)
     accumulator = tl.zeros((BLOCK_M, BLOCK_CI), dtype=tl.float32)
 
     for start in range(0, reduction_extent, BLOCK_K):
@@ -493,6 +513,9 @@ def conv_dgrad_nd_kernel(
             & (input_channels[None, :] < CIN_PER_GROUP),
             other=0.0,
         )
+        if INPUT_PRECISION == 2:
+            losses = _tf32_rne(losses)
+            weights = _tf32_rne(weights)
         accumulator += tl.dot(losses, weights, input_precision="ieee")
 
     tl.store(
@@ -554,7 +577,7 @@ def conv_wgrad_nd_kernel(
     BLOCK_CI: tl.constexpr,
     BLOCK_M: tl.constexpr,
 ):
-    tile = tl.program_id(0)
+    tile = tl.program_id(0).to(tl.int64)
     filter_spatial = tl.program_id(1).to(tl.int64)
     group = tl.program_id(2).to(tl.int64)
     tiles_ci = tl.cdiv(CIN_PER_GROUP, BLOCK_CI)
@@ -573,7 +596,7 @@ def conv_wgrad_nd_kernel(
     accumulator = tl.zeros((BLOCK_OC, BLOCK_CI), dtype=tl.float32)
 
     for start in range(0, M, BLOCK_M):
-        rows = start + tl.arange(0, BLOCK_M)
+        rows = start + tl.arange(0, BLOCK_M).to(tl.int64)
         batch = rows // loss_volume
         spatial = rows % loss_volume
         output_d = spatial // (OH * OW)
@@ -614,6 +637,9 @@ def conv_wgrad_nd_kernel(
             & (input_channels[None, :] < CIN_PER_GROUP),
             other=0.0,
         )
+        if INPUT_PRECISION == 2:
+            losses = _tf32_rne(losses)
+            inputs = _tf32_rne(inputs)
         accumulator += tl.dot(losses, inputs, input_precision="ieee")
 
     tl.store(

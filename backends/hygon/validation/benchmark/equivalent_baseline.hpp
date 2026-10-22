@@ -7,6 +7,7 @@
 #include "runtime/json.hpp"
 
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <string_view>
 
@@ -30,6 +31,14 @@ struct EquivalentBaseline {
 struct NativeBaselineMetadata {
   std::string operation;
   std::int64_t axis = 0;
+  int input_precision = 0;
+  std::vector<std::pair<double,double>> output_tolerances = {};
+  // Extended native catalogs retain their own attributes and deterministic
+  // input generators. Both are checked before any timing is accepted.
+  std::size_t input_count = 0;
+  std::size_t output_count = 1;
+  std::function<void(const native::json::Value&)> validate_attributes = {};
+  std::function<std::vector<std::vector<float>>()> generate_inputs = {};
 };
 
 // Scope only: missing, malformed, or mismatched reference evidence must fail

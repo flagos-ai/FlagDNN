@@ -320,6 +320,8 @@ enum class Writer { kEmpty, kPartial, kFull };
 bool numerical_mismatch(float actual, float expected, double atol,
                         double rtol) {
   const double left = actual, right = expected;
+  if (left == right)
+    return false;
   const double absolute = std::abs(left - right);
   const double relative =
       absolute / std::max({std::abs(left), std::abs(right), 1.0e-30});
@@ -337,7 +339,7 @@ void poison_contract(flagdnnDataType_t dtype, std::vector<float> expected,
             "poison must remain finite after dtype conversion");
     require(numerical_mismatch(decoded[i], expected[i], atol, rtol),
             "encoded poison can pass the production accuracy rule");
-    require(std::isfinite(expected[i] + 0.0F * decoded[i]),
+    require(expected[i] + 0.0F * decoded[i] == expected[i],
             "finite poison contaminated a beta-zero writer");
   }
   if (dtype == FLAGDNN_DATA_BOOLEAN) {
@@ -454,16 +456,32 @@ void finite_poison_contract() {
         },
         "invalid relative tolerance was accepted");
   }
-  for (float invalid : {std::numeric_limits<float>::infinity(),
-                        -std::numeric_limits<float>::infinity(),
-                        std::numeric_limits<float>::quiet_NaN()}) {
+  for (float invalid : {std::numeric_limits<float>::quiet_NaN()}) {
     rejects(
         [&] {
           (void)bench::capture_output_poison(std::vector<float>{invalid},
                                              FLAGDNN_DATA_FLOAT32, 0, 0);
         },
-        "nonfinite reference was accepted");
+        "NaN reference was accepted");
   }
+  const float infinity = std::numeric_limits<float>::infinity();
+  for (auto dtype :
+       {FLAGDNN_DATA_FLOAT32, FLAGDNN_DATA_FLOAT16, FLAGDNN_DATA_BFLOAT16}) {
+    poison_contract(dtype, {infinity, -infinity}, 0.001, 0.01);
+    require(!numerical_mismatch(infinity, infinity, 0, 0) &&
+                !numerical_mismatch(-infinity, -infinity, 0, 0) &&
+                numerical_mismatch(infinity, -infinity, 0, 0),
+            "infinity comparison does not distinguish its sign");
+  }
+  for (auto dtype : {FLAGDNN_DATA_BOOLEAN, FLAGDNN_DATA_INT32,
+                     FLAGDNN_DATA_FP8_E4M3, FLAGDNN_DATA_FP8_E5M2,
+                     FLAGDNN_DATA_FP8_E8M0})
+    rejects(
+        [&] {
+          (void)bench::capture_output_poison(
+              std::vector<float>{infinity}, dtype, 0, 0);
+        },
+        "reference infinity not preserved by the codec was accepted");
   rejects(
       [&] {
         (void)bench::capture_output_poison(
@@ -517,8 +535,13 @@ void replay_contract(flagdnnDataType_t dtype, std::vector<float> expected,
                                          : 0;
           for (int invocation = 0; invocation < 50; ++invocation)
             for (std::size_t i = 0; i < writes; ++i)
+              // Pooling kernels overwrite infinite outputs directly.
+              // Retain the beta-zero adversarial writer for finite outputs.
               physical[io::logical_offset(i, output)] =
-                  expected[i] + 0.0F * physical[io::logical_offset(i, output)];
+                  std::isinf(expected[i])
+                      ? expected[i]
+                      : expected[i] +
+                            0.0F * physical[io::logical_offset(i, output)];
           bytes = io::encode(physical, dtype);
         },
         [&] {
@@ -574,6 +597,9 @@ int main() {
                          FLAGDNN_DATA_BFLOAT16}) {
         replay_contract(dtype, {-97, 0, 1, -2, 0.75F, -97}, writer);
         replay_contract(dtype, std::vector<float>(6, -97), writer);
+        const float infinity = std::numeric_limits<float>::infinity();
+        replay_contract(dtype, {infinity, -infinity, 0, 1, -1, -infinity},
+                        writer);
       }
       replay_contract(FLAGDNN_DATA_INT32,
                       {-1073741824, 0, 1073741824, 65535, -97, 2}, writer);
@@ -593,7 +619,8 @@ int main() {
     std::cout << "PASS: performance-independent execution status; unmatched "
                  "native filters; fresh captured replay rejects "
                  "empty/partial writes across FP32/FP16/BF16/FP8/INT32/BOOL; "
-                 "finite dtype-aware poison, beta-zero writers and tolerance "
+                 "finite dtype-aware poison for finite/infinite references, "
+                 "beta-zero writers and tolerance "
                  "boundaries; FP8 identity original-byte checks and encoded "
                  "padding; "
                  "BF16/INT32/BOOL bit-exact noncompact identity and input "

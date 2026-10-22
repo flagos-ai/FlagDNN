@@ -3208,8 +3208,18 @@ def _check_explicit_precision(compiler_nn, compiler_tensor):
                 lambda node=node: compiler_nn._validate_convolution(node)
             )
         for check in checks:
-            if type(precision) is int and precision in (0, 1):
+            if type(precision) is int and precision in (0, 1, 2):
                 check()
+                assert matmul().constants["USE_TF32"] == (precision == 2)
+                for node in nodes:
+                    derived = compiler_nn._validate_convolution(node)
+                    assert derived["input_precision"] == precision
+                    if precision == 2:
+                        plan = compiler_nn._convolution_plan(
+                            {**node, "derived": derived}
+                        )
+                        assert len(plan.stages) == 1
+                        assert plan.stages[0].constants["INPUT_PRECISION"] == 2
             else:
                 try:
                     check()
@@ -3323,9 +3333,10 @@ def _check_extended_operator_contracts(source_root: Path) -> None:
         (resample, "resample.py"),
         (causal, "causal_convolution.py"),
     ]:
-        tree = ast.parse(
-            (source_root / "kernels/common" / filename).read_text()
+        directory = (
+            "backends/hygon/kernels" if config is causal else "kernels/common"
         )
+        tree = ast.parse((source_root / directory / filename).read_text())
         definition = next(
             n
             for n in tree.body

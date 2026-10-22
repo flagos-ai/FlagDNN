@@ -23,6 +23,8 @@ int run_hygon_benchmark_suite(int argc, char **argv,
 } // namespace flagdnn::benchmarking
 
 namespace flagdnn::testing {
+int run_native_extended_benchmark(int argc, char **argv,
+                                  std::string_view operation);
 int run_native_index_benchmark(int argc, char **argv,
                                std::string_view operation);
 } // namespace flagdnn::testing

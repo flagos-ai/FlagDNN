@@ -54,7 +54,7 @@ std::string replace_after(std::string source, std::string_view anchor,
   const auto begin = source.find(anchor);
   require(begin != std::string::npos, "missing fixture anchor");
   const auto pos = source.find(needle, begin);
-  require(pos != std::string::npos, "missing fixture value");
+  require(pos != std::string::npos, "missing fixture value after " + std::string(anchor) + ": " + std::string(needle));
   source.replace(pos, needle.size(), replacement);
   return source;
 }
@@ -227,6 +227,14 @@ std::vector<CatalogCase> full_catalog() {
     if (spec.tensors.front().data_type != FLAGDNN_DATA_FLOAT32)
       result.push_back({std::move(spec), std::nullopt});
 
+  for (const auto& cases : {bench::batchnorm_inference_benchmark_cases(),
+                            bench::layernorm_benchmark_cases(),
+                            bench::rmsnorm_benchmark_cases()})
+    for (auto spec : cases) {
+      spec.benchmark = {10, 20, 50};
+      result.push_back({std::move(spec), std::nullopt});
+    }
+
   namespace testing = flagdnn::testing;
   testing::PointwiseCaseDefinition identity;
   identity.operation_name = "identity";
@@ -361,8 +369,8 @@ int main(int argc, char** argv) {
     const auto& target = document.at("platforms").at("hygon");
     const auto& reference = document.at("reference");
     const auto& policies = target.at("scaling").at("case_policies");
-    require(policies.as_object().size() == 59,
-            "expected 59 Hygon-specific scaling policies");
+    require(policies.as_object().size() == 83,
+            "expected 83 Hygon-specific scaling policies");
     for (const auto& [name, entry] : reference.at("cases").as_object())
       require(entry.at("scale_metric").is_null(),
               "shared reference metric must remain unknown: " + name);
@@ -393,7 +401,7 @@ int main(int argc, char** argv) {
     }
 
     const auto catalog = full_catalog();
-    require(catalog.size() == 1953,
+    require(catalog.size() == 2061,
             "expected 1941 historical + 1 scalar identity + 11 reduction cases");
     std::set<std::string> operations;
     std::set<std::string> names;
@@ -443,7 +451,7 @@ int main(int argc, char** argv) {
       rejects([&] { (void)baseline.lookup(unknown, device, architecture, metadata); },
               "unknown reference " + spec.name);
     }
-    require(operations.size() == 59, "not all 59 operations were validated");
+    require(operations.size() == 62, "not all 62 operations were validated");
     std::set<std::string> reference_supplement;
     for (const auto& [name, entry] : reference.at("cases").as_object())
       if (entry.as_object().contains("measurement_id") &&
@@ -922,12 +930,71 @@ int main(int argc, char** argv) {
       rejects([&] { (void)arithmetic.limit_us(); }, "invalid traffic ratio");
     }
     arithmetic.traffic_ratio = 1;
+    // The default FP32 catalogs must use measured IEEE variants, including
+    // convolution-bias-ReLU. Missing variants cannot fall back to auto/TF32.
+    std::size_t ieee_count = 0;
+    for (const auto make : {bench::matmul_benchmark_cases,
+                           bench::conv_fprop_benchmark_cases,
+                           bench::conv_dgrad_benchmark_cases,
+                           bench::conv_wgrad_benchmark_cases,
+                           bench::conv_bias_relu_benchmark_cases}) {
+      for (auto spec : make()) {
+        if (spec.tensors.at(0).data_type != FLAGDNN_DATA_FLOAT32) continue;
+        spec.benchmark = {10, 20, 50};
+        const auto actual = baseline.lookup(spec, device, architecture);
+        const auto& expected = target.at("ieee_reference_cases").at(spec.name);
+        require(actual.scale_metric == "tensor_fp32",
+                "default IEEE case selected a non-IEEE peak");
+        near(actual.reference_time_us, expected.at("time_us").as_double());
+        require(actual.reference_validation == expected.at("validation").as_string(),
+                "default IEEE validation provenance differs");
+        ++ieee_count;
+      }
+    }
+    require(ieee_count == 71, "default IEEE catalog coverage differs");
+    auto ieee_spec = bench::matmul_benchmark_cases().front();
+    require(ieee_spec.tensors.front().data_type == FLAGDNN_DATA_FLOAT32,
+            "IEEE mutation fixture must be FP32");
+    ieee_spec.benchmark = {10, 20, 50};
+    const auto invalid_ieee = [&](std::string_view needle,
+                                  std::string_view replacement,
+                                  std::string_view label) {
+      fixture.write(replace_after(raw, "\"ieee_reference_cases\"",
+                                  needle, replacement));
+      rejects([&] {
+        const bench::PerformanceBaseline invalid(fixture.path);
+        (void)invalid.lookup(ieee_spec, device, architecture);
+      }, label);
+    };
+    invalid_ieee("\"NVIDIA_TF32_OVERRIDE\": \"0\"",
+                 "\"NVIDIA_TF32_OVERRIDE\": \"1\"",
+                 "default IEEE TF32 override");
+    invalid_ieee("\"reference_input_precision\": 1",
+                 "\"reference_input_precision\": 2",
+                 "default IEEE reference precision");
+    invalid_ieee("\"input_precision\": 1",
+                 "\"input_precision\": 0",
+                 "default IEEE target precision");
+    invalid_ieee("\"nvidia-hygon-default-ieee-20261021\"",
+                 "\"unknown-measurement\"",
+                 "default IEEE measurement identity");
+    invalid_ieee("\"" + ieee_spec.name + "\"",
+                 "\"missing-ieee-case\"",
+                 "missing IEEE reference without automatic-precision fallback");
+    auto bad_ieee_shape = ieee_spec;
+    ++bad_ieee_shape.tensors.front().dimensions.back();
+    rejects([&] {
+      (void)baseline.lookup(bad_ieee_shape, device, architecture);
+    }, "IEEE variant tensor metadata");
+    std::cout << "default IEEE reference contracts: " << ieee_count
+              << " catalog cases and 6 rejection checks passed\n";
+
     arithmetic.reference_time_us = std::numeric_limits<double>::max();
     rejects([&] { (void)arithmetic.limit_us(); }, "overflow");
     arithmetic.reference_time_us = std::numeric_limits<double>::quiet_NaN();
     rejects([&] { (void)arithmetic.limit_us(); }, "nonfinite arithmetic");
     std::cout << "PASS: " << catalog.size()
-              << " baseline cases across 59 operations, formula, traffic, "
+              << " baseline cases across 62 operations, formula, traffic, "
                  "provenance, "
                  "platform isolation, mismatch and invalid-data contracts\n";
     return 0;

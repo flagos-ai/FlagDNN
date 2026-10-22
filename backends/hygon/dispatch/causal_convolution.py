@@ -20,8 +20,6 @@ def _causal_conv1d_kernel_configuration(parameters, tensors):
     precision = _require_integer(
         parameters, "input_precision", minimum=0, maximum=2
     )
-    if precision == 2:
-        raise ValueError("Hygon causal convolution does not support TF32")
     dilation = _require_integer(parameters, "dilation")
     if len(tensors) != (4 if bias else 3):
         raise ValueError("causal_conv1d tensor count is inconsistent")
@@ -64,6 +62,7 @@ def _causal_conv1d_kernel_configuration(parameters, tensors):
     ):
         raise ValueError("causal_conv1d sizes are inconsistent or too large")
     constants = {
+        "INPUT_PRECISION": precision,
         "ELEMENTS": elements,
         "CHANNELS": channels,
         "LENGTH": length,

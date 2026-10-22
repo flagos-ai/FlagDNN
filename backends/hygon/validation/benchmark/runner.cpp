@@ -7,6 +7,7 @@
 #include "benchmark_phase.hpp"
 #include "common/flagdnn_provider.hpp"
 #include "equivalent_baseline.hpp"
+#include "matrix_reference.hpp"
 #include "hip_driver.hpp"
 #include "hip_graph.hpp"
 #include "hipdnn_provider.hpp"
@@ -386,24 +387,32 @@ Accuracy compare_outputs(std::span<const float> actual,
                          const BenchmarkCase &specification,
                          std::size_t output_index,
                          std::string_view actual_provider,
-                         std::string_view reference_provider) {
+                         std::string_view reference_provider,
+                         std::span<const std::pair<double,double>> limits = {}) {
   if (actual.size() != reference.size()) {
     throw std::runtime_error(std::string(actual_provider) + " and " +
                              std::string(reference_provider) +
                              " output sizes do not match");
   }
   Accuracy result;
+  const bool exact_index = specification.name.starts_with("resample_") &&
+                           output_index != 0;
+  const double atol = exact_index ? 0.0 : limits.empty() ? specification.absolute_tolerance : limits[output_index].first;
+  const double rtol = exact_index ? 0.0 : limits.empty() ? specification.relative_tolerance : limits[output_index].second;
   for (std::size_t index = 0; index < actual.size(); ++index) {
     const double left = actual[index];
     const double right = reference[index];
+    // Empty max-pooling windows produce -inf on both paths. Accept exact
+    // equality before subtraction; opposite infinities and NaNs still fail.
+    if (left == right)
+      continue;
     const double absolute = std::abs(left - right);
     const double relative =
         absolute / std::max({std::abs(left), std::abs(right), 1.0e-30});
     result.maximum_absolute = std::max(result.maximum_absolute, absolute);
     result.maximum_relative = std::max(result.maximum_relative, relative);
     if (!std::isfinite(absolute) ||
-        (absolute > specification.absolute_tolerance &&
-         relative > specification.relative_tolerance)) {
+        (absolute > atol && relative > rtol)) {
       if (result.mismatch.has_value()) {
         continue;
       }
@@ -412,8 +421,8 @@ Accuracy compare_outputs(std::span<const float> actual,
               << " differs at element " << index << ": " << actual_provider
               << '=' << left << ", " << reference_provider << '=' << right
               << ", abs=" << absolute << ", rel=" << relative
-              << ", atol=" << specification.absolute_tolerance
-              << ", rtol=" << specification.relative_tolerance;
+              << ", atol=" << atol
+              << ", rtol=" << rtol;
       result.mismatch = message.str();
     }
   }
@@ -442,7 +451,8 @@ Accuracy verify_captured_outputs(
     const std::vector<std::vector<float>> &oracle_outputs,
     const BenchmarkCase &specification, const Batch &batch, hv::Stream &stream,
     BenchmarkProviderKind provider, std::string_view display_provider,
-    std::string_view display_oracle, bool encoded_padding = false) {
+    std::string_view display_oracle, bool encoded_padding = false,
+    std::span<const std::pair<double,double>> limits = {}) {
   return run_benchmark_phase(provider, BenchmarkPhase::kFreshValidation, [&] {
     return validate_fresh_capture(
         [&] {
@@ -466,7 +476,7 @@ Accuracy verify_captured_outputs(
                                             BenchmarkPhase::kFreshValidation,
                                             display_provider, encoded_padding),
                                 oracle_outputs.at(index), specification, index,
-                                display_provider, display_oracle));
+                                display_provider, display_oracle, limits));
           }
           require_accuracy(accuracy);
           return accuracy;
@@ -621,6 +631,11 @@ CaseResult run_equivalent_case(
   const auto metadata = native_metadata
       ? std::optional<NativeBaselineMetadata>(native_metadata(specification))
       : std::nullopt;
+  const std::span<const std::pair<double,double>> limits = metadata
+      ? std::span<const std::pair<double,double>>(metadata->output_tolerances)
+      : std::span<const std::pair<double,double>>{};
+  if (!limits.empty() && limits.size() != specification.output_count)
+    throw std::runtime_error("native output tolerance count differs");
   const EquivalentBaseline baseline = performance_baseline().lookup(
       specification, properties.name, properties.gcnArchName,
       metadata ? &*metadata : nullptr);
@@ -637,7 +652,15 @@ CaseResult run_equivalent_case(
       fp8_identity
           ? std::vector<std::vector<float>>{fp8_identity_fixture(
                 logical_element_count(specification.tensors.front()))}
-          : make_logical_inputs(specification);
+          : metadata && metadata->generate_inputs
+                ? metadata->generate_inputs()
+                : make_logical_inputs(specification);
+  if (logical_inputs.size() != input_tensor_count(specification))
+    throw std::runtime_error("native input count differs from descriptors");
+  // Native generators return values rounded to their storage dtype.
+  for (std::size_t i = 0; i < logical_inputs.size(); ++i)
+    if (logical_inputs[i].size() != logical_element_count(specification.tensors[i]))
+      throw std::runtime_error("native input size differs from descriptor");
   // Retain the original encoded input as the byte oracle. Do not derive it
   // from a post-execution decode, which could hide input corruption or lost
   // representation bits. Only the old FP8 records use the six-value fixture;
@@ -655,7 +678,11 @@ CaseResult run_equivalent_case(
   const auto oracle_outputs =
       native_oracle
           ? native_oracle(specification, logical_inputs)
-          : reference::cpu::evaluate_benchmark(
+          : matrix_operation(specification.operation)
+              ? matrix_reference(specification, logical_inputs)
+              : specification.name.starts_with("conv_bias_relu_")
+                ? cbr_reference(specification, logical_inputs)
+                : reference::cpu::evaluate_benchmark(
                 specification, logical_inputs,
                 [](std::span<const float> values, flagdnnDataType_t dtype) {
                   return io::decode(io::encode(values, dtype), dtype,
@@ -712,7 +739,7 @@ CaseResult run_equivalent_case(
                                       BenchmarkProviderKind::kFlagdnn, phase,
                                       display, bit_exact_identity),
                           oracle_outputs.at(index), specification, index,
-                          display, "CPU reference"));
+                          display, "CPU reference", limits));
     }
     require_accuracy(accuracy);
     validate_inputs(phase);
@@ -761,7 +788,7 @@ CaseResult run_equivalent_case(
                  verify_captured_outputs(
                      buffers, oracle_outputs, specification, *batch, stream,
                      BenchmarkProviderKind::kFlagdnn, "FlagDNN fresh-capture",
-                     "CPU reference", bit_exact_identity));
+                     "CPU reference", bit_exact_identity, limits));
   validate_identity_bytes(BenchmarkPhase::kFreshValidation);
   validate_inputs(BenchmarkPhase::kFreshValidation);
   std::cout << "[postcheck] case=" << specification.name << " cpu_full=true"
@@ -822,6 +849,8 @@ run_case(const BenchmarkCase &specification, HipdnnProvider &hipdnn_provider,
     emit_skip(hipdnn_provider, specification, reason, diagnostics);
     return CaseResult::kSkipped;
   };
+  if (native_metadata && native_metadata(specification).input_precision == 2)
+    return unavailable("hipDNN does not expose explicit TF32 input semantics");
   const ProviderCapability capability =
       hipdnn_provider.capability(specification);
   if (!capability.supported) {
@@ -970,15 +999,15 @@ run_case(const BenchmarkCase &specification, HipdnnProvider &hipdnn_provider,
                         BenchmarkPhase::kProbe);
       if (!candidate_capability.supported) {
         if (fp32_correctness_oracle && rejected_numerical_candidate) {
-          emit_skip(
-              hipdnn_provider, specification,
+          // No accurate native FP16 timing reference remains. Use the exact
+          // measured NVIDIA baseline and the independent public CPU oracle.
+          // Keep the same case, tolerance and fresh-capture validation.
+          return unavailable(
               "provider=hipdnn phase=probe "
               "status=HIPDNN_PERFORMANCE_ACCURACY_EXHAUSTED all executable "
               "FP16 performance candidates failed the source-FP16-quantized "
               "FP32 hipDNN correctness oracle: " +
-                  candidate_capability.reason,
-              diagnostics);
-          return CaseResult::kSkipped;
+                  candidate_capability.reason);
         }
         throw std::runtime_error(
             "hipDNN performance candidates became unavailable after the "
@@ -1275,7 +1304,15 @@ int run_hygon_benchmark_suite(int argc, char **argv,
 
 int run_benchmark_suite(int argc, char** argv,
     std::span<const BenchmarkCase> cases, std::string_view suite_name) {
-  const auto selected = aligned_benchmark_cases(cases);
+  auto selected = aligned_benchmark_cases(cases);
+  // The independently validated NVIDIA normalization records use the native
+  // 10/20/50 profile. Match it here without changing other backend catalogs.
+  for (auto& spec : selected)
+    if (spec.operation == Operation::kLayernorm ||
+        spec.operation == Operation::kRmsnorm ||
+        spec.operation == Operation::kBatchnormInference ||
+        matrix_operation(spec.operation) || spec.name.starts_with("conv_bias_relu_"))
+      spec.benchmark = {10, 20, 50};
   return run_hygon_benchmark_suite(argc, argv, selected, suite_name);
 }
 

@@ -221,8 +221,8 @@
         "provider": {"const": "nvidia_equivalent"},
         "platform": {"const": "nvidia"},
         "target_platform": {"enum": ["hygon", "mthreads", "thead"]},
-        "scale_metric": {"enum": ["vector_fp32", "hbm_copy", "hbm_write", "hbm_triad"]},
-        "timing_profile": {"enum": ["native", "batchnorm_training"]},
+        "scale_metric": {"enum": ["vector_fp32", "tensor_fp16", "tensor_bf16", "tensor_fp8_e4m3", "tensor_fp8_e5m2_e4m3", "tensor_fp8_e4m3_e5m2", "tensor_fp8_e5m2", "hbm_copy", "hbm_write", "hbm_triad", "tensor_fp32", "tensor_tf32"]},
+        "timing_profile": {"enum": ["native", "batchnorm_training", "attention"]},
         "traffic_ratio": {"type": "number", "exclusiveMinimum": 0, "default": 1},
         "reference_validation": {
           "enum": ["cpu_full", "cpu_sampled", "bit_exact", "sanity"],
@@ -257,7 +257,7 @@
         "provider": {"const": "flagdnn"},
         "case": {
           "type": "string",
-          "pattern": "^(?:(?:relu_backward|swish_backward)_attributes_(?:fp32|fp16|bfloat16)_|identity_(?:fp8_(?:e4m3|e5m2)|bfloat16|int32|bool)_|identity_perf_bfloat16_|batchnorm_perf_(?:fp16|bfloat16)_|reduction_(?:sum_(?:bfloat16|int32)|(?:sum|avg|mul)_fp16)_to_fp32_|(?:abs|add|add_square|elu|max|min|mul|relu|relu_backward|scale|sigmoid|sigmoid_backward|sub|swish|swish_backward|tanh|tanh_backward)_perf_bfloat16_|(?:reshape|transpose|slice|concatenate|gen_index|div|pow|mod|cmp_eq|cmp_neq|cmp_gt|cmp_ge|cmp_lt|cmp_le|logical_and|logical_or|logical_not|binary_select|neg|sqrt|rsqrt|reciprocal|ceil|floor|exp|log|erf|sin|cos|tan|leaky_relu|leaky_relu_backward|elu_backward|gelu|gelu_backward|gelu_approx_tanh|gelu_approx_tanh_backward|softplus|softplus_backward)_(?:(?:perf|attributes)_)?(?:fp32|fp16|bfloat16|bf16|bool|int32)_(?:case[0-9]+_)?)[0-9][a-z0-9_-]*$"
+          "pattern": "^(?:matmul_a(?:e4m3|e5m2)_b(?:e4m3|e5m2)_mode3_|sdpa(?:_fp8)?(?:_backward)?_(?:perf_)?(?:fp16|bfloat16|bf16|fp8_e4m3|fp8_e5m2|e4m3|e5m2)_[a-z0-9_]*|conv_bias_relu_perf_(?:fp32|fp16|bfloat16)_x|conv[123]d_(?:fprop|dgrad|wgrad)_(?:perf_)?(?:fp32|fp16|bfloat16)_[a-z0-9_]+|matmul_(?:perf_)?(?:fp32|fp16|bfloat16)_|matmul_(?:fp8|mxfp8)_a(?:e4m3|e5m2)_b(?:e4m3|e5m2)_mode[0-2]_|moe_grouped_matmul_(?:fp16|bfloat16|bf16|e4m3|e5m2)_mode[0-2]_|(?:adalayernorm|adalayernorm_backward|batchnorm_backward|instancenorm|instancenorm_backward|layernorm_backward|rmsnorm_backward|bn_finalize|causal_conv1d)_(?:fp32|fp16|bfloat16|bf16)_|resample_[a-z_]+_(?:fp32|fp16|bfloat16|bf16)_|(?:batchnorm_inference|layernorm|rmsnorm)_perf_(?:fp32|fp16|bfloat16)_|(?:relu_backward|swish_backward)_attributes_(?:fp32|fp16|bfloat16)_|identity_(?:fp8_(?:e4m3|e5m2)|bfloat16|int32|bool)_|identity_perf_bfloat16_|batchnorm_perf_(?:fp16|bfloat16)_|reduction_(?:sum_(?:bfloat16|int32)|(?:sum|avg|mul)_fp16)_to_fp32_|(?:abs|add|add_square|elu|max|min|mul|relu|relu_backward|scale|sigmoid|sigmoid_backward|sub|swish|swish_backward|tanh|tanh_backward)_perf_bfloat16_|(?:reshape|transpose|slice|concatenate|gen_index|div|pow|mod|cmp_eq|cmp_neq|cmp_gt|cmp_ge|cmp_lt|cmp_le|logical_and|logical_or|logical_not|binary_select|neg|sqrt|rsqrt|reciprocal|ceil|floor|exp|log|erf|sin|cos|tan|leaky_relu|leaky_relu_backward|elu_backward|gelu|gelu_backward|gelu_approx_tanh|gelu_approx_tanh_backward|softplus|softplus_backward)_(?:(?:perf|attributes)_)?(?:fp32|fp16|bfloat16|bf16|bool|int32)_(?:case[0-9]+_)?)[0-9][a-z0-9_-]*$"
         },
         "unit": {"const": "us"},
         "median": {"type": "number", "exclusiveMinimum": 0},
@@ -374,19 +374,14 @@
           "traffic_ratio": {"const": 1}
         }}}}
       }, {
-        "if": {"properties": {"case": {"pattern": "^batchnorm_"}}},
+        "if": {"properties": {"case": {"pattern": "^batchnorm_perf_"}}},
         "then": {"properties": {
           "samples": {"minItems": 10, "maxItems": 10},
           "equivalent_baseline": {"properties": {
             "timing_profile": {"const": "batchnorm_training"}
           }}
         }},
-        "else": {"properties": {
-          "samples": {"minItems": 20, "maxItems": 20},
-          "equivalent_baseline": {"properties": {
-            "timing_profile": {"const": "native"}
-          }}
-        }}
+        "else": {"if": {"properties": {"case": {"pattern": "^sdpa_"}}}, "then": {"properties": {"samples": {"minItems": 10, "maxItems": 10}, "equivalent_baseline": {"properties": {"timing_profile": {"const": "attention"}}}}}, "else": {"properties": {"samples": {"minItems": 20, "maxItems": 20}, "equivalent_baseline": {"properties": {"timing_profile": {"const": "native"}}}}}}
       }]
     },
     "v3": {

@@ -2586,10 +2586,10 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
     cases = reference["cases"]
     require(
         reference["platform"] == "nvidia"
-        and len(cases) == reference["coverage"]["case_count"] == 3448
+        and len(cases) == reference["coverage"]["case_count"] == 3634
         and len({case["op"] for case in cases.values()})
         == reference["coverage"]["operator_count"]
-        == 82,
+        == 83,
         "shared NVIDIA reference coverage changed during policy isolation",
     )
     require(
@@ -2602,7 +2602,35 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
         "a target-specific scaling policy leaked into shared NVIDIA data",
     )
     expected_groups = {
+        "tensor_by_precision_and_input_dtypes": {
+            "matmul",
+            "conv_fprop",
+            "conv_dgrad",
+            "conv_wgrad",
+            "conv_bias_relu",
+        },
+        "tensor_by_input_dtypes": {
+            "matmul_fp8",
+            "moe_grouped_matmul",
+            "sdpa",
+            "sdpa_backward",
+            "sdpa_fp8",
+            "sdpa_fp8_backward",
+        },
         "vector_fp32": {
+            "batchnorm_inference",
+            "layernorm",
+            "rmsnorm",
+            "adalayernorm",
+            "adalayernorm_backward",
+            "batchnorm_backward",
+            "instancenorm",
+            "instancenorm_backward",
+            "layernorm_backward",
+            "rmsnorm_backward",
+            "bn_finalize",
+            "resample",
+            "causal_conv1d",
             "add_square",
             "elu",
             "sigmoid",
@@ -2676,7 +2704,7 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
     platforms = catalog["platforms"]
     policies = platforms["hygon"]["scaling"]["case_policies"]
     require(
-        len(policies) == 59
+        len(policies) == 83
         and set(policies) == hygon.EQUIVALENT_OPERATORS
         and {op: policy["scale_metric"] for op, policy in policies.items()}
         == expected_metrics,
@@ -2689,7 +2717,9 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
             if case["op"] in policies
         )
         == {
-            "vector_fp32": 1189,
+            "vector_fp32": 1787,
+            "tensor_by_input_dtypes": 481,
+            "tensor_by_precision_and_input_dtypes": 397,
             "hbm_copy": 461,
             "hbm_triad": 480,
             "hbm_write": 28,
@@ -2797,7 +2827,37 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
             op: policy["scale_metric"]
             for op, policy in iluvatar_policies.items()
         }
-        == expected_metrics
+        == {
+            op: metric
+            for op, metric in expected_metrics.items()
+            if op
+            not in {
+                "batchnorm_inference",
+                "layernorm",
+                "rmsnorm",
+                "adalayernorm",
+                "adalayernorm_backward",
+                "batchnorm_backward",
+                "instancenorm",
+                "instancenorm_backward",
+                "layernorm_backward",
+                "rmsnorm_backward",
+                "bn_finalize",
+                "resample",
+                "causal_conv1d",
+                "matmul_fp8",
+                "moe_grouped_matmul",
+                "matmul",
+                "conv_fprop",
+                "conv_dgrad",
+                "conv_wgrad",
+                "conv_bias_relu",
+                "sdpa",
+                "sdpa_backward",
+                "sdpa_fp8",
+                "sdpa_fp8_backward",
+            }
+        }
         and all(
             policy != policies[op]
             and policy.get("reason")
@@ -2855,7 +2915,7 @@ def check_general_equivalent_performance(runner, hygon) -> None:
             "median": median,
             "p90": median,
             "samples": [median]
-            * (10 if case.startswith("batchnorm_") else 20),
+            * (10 if case.startswith(("batchnorm_perf_", "sdpa_")) else 20),
             "equivalent_baseline": {
                 "provider": "nvidia_equivalent",
                 "platform": "nvidia",
@@ -2863,8 +2923,8 @@ def check_general_equivalent_performance(runner, hygon) -> None:
                 "scale_metric": metric,
                 "timing_profile": (
                     "batchnorm_training"
-                    if case.startswith("batchnorm_")
-                    else "native"
+                    if case.startswith("batchnorm_perf_")
+                    else "attention" if case.startswith("sdpa_") else "native"
                 ),
                 "reference_time_us": 2.0,
                 "reference_peak": 4.0,
@@ -2915,6 +2975,11 @@ def check_general_equivalent_performance(runner, hygon) -> None:
             outside_hygon_followup += outside_followup
             require(
                 outside_followup
+                or case == "sdpa_backward_fp16_broadcast_dbias"
+                or (
+                    operator == "matmul"
+                    and reference["tensors"][0]["dtype"].startswith("fp8_")
+                )
                 or (
                     operator in {"relu_backward", "swish_backward"}
                     and case.startswith(operator + "_attributes_")
@@ -2933,9 +2998,23 @@ def check_general_equivalent_performance(runner, hygon) -> None:
         activation_native_references += (
             reference.get("measurement_id") == "nvidia-supplement-20261015"
         )
+        policy = policies[operator]
+        metric = policy["scale_metric"]
+        if metric in {
+            "tensor_by_input_dtypes",
+            "tensor_by_precision_and_input_dtypes",
+        }:
+            operands = reference["tensors"][:2]
+            metric = (
+                policy["tf32_metric"]
+                if case.endswith("_tf32")
+                else policy["input_dtype_metrics"][
+                    "/".join(t["dtype"] for t in operands)
+                ]
+            )
         record = measured(
             case,
-            metric=policies[operator]["scale_metric"],
+            metric=metric,
             validation=reference["validation"],
             traffic=8.0 if case.startswith("identity_bool_") else 1.0,
         )
@@ -2949,15 +3028,15 @@ def check_general_equivalent_performance(runner, hygon) -> None:
             f"reference case is excluded by generalized v4 identity: {case}",
         )
     require(
-        len(seen) == 59
+        len(seen) == 83
         and seen == hygon.EQUIVALENT_OPERATORS
-        and accepted_references == 2114
+        and accepted_references == 3589
         and supplemental_references == 371
         and activation_native_references == 90
         and iluvatar_followup_references == 94
         and outside_hygon_followup == 38,
         (
-            "equivalent validation must cover 2114 references across 59 ops, "
+            "equivalent validation must cover 3589 references across 83 ops, "
             "including 371 historical, 90 activation and 56 new in-scope "
             "records; another 38 new records retain native Hygon scope"
         ),
@@ -3034,7 +3113,9 @@ def check_general_equivalent_performance(runner, hygon) -> None:
     ):
         valid = measured(case)
         expected_profile = (
-            "batchnorm_training" if case.startswith("batchnorm_") else "native"
+            "batchnorm_training"
+            if case.startswith("batchnorm_perf_")
+            else "native"
         )
         for profile in (
             "attention",
@@ -4734,6 +4815,7 @@ def main() -> int:
         "integration.hygon.tensor_reference_contract",
         "integration.hygon.div_performance_baseline",
         "integration.hygon.benchmark_validation_guards",
+        "integration.hygon.matrix_cpu_reference",
         "integration.hygon.benchmark_timing_policy",
     ):
         require(
@@ -4741,8 +4823,8 @@ def main() -> int:
             f"Hygon preflight omits {required_contract}",
         )
     require(
-        len(hygon_preflight) == 34,
-        "Hygon preflight required-test count is not 34",
+        len(hygon_preflight) == 35,
+        "Hygon preflight required-test count is not 35",
     )
     functional_preflight = runner.required_preflight_tests(
         "hygon", ["functional"]
@@ -4751,6 +4833,8 @@ def main() -> int:
         "benchmark.catalog_contract" not in functional_preflight
         and "benchmark.catalog_dependency_boundary" not in functional_preflight
         and "integration.hygon.benchmark_validation_guards"
+        not in functional_preflight
+        and "integration.hygon.matrix_cpu_reference"
         not in functional_preflight
         and "integration.hygon.benchmark_timing_policy"
         not in functional_preflight,

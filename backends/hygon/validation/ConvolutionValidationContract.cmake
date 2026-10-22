@@ -60,11 +60,15 @@ _require_contains(
 _require_contains(
   "${_runner}"
   "HIPDNN_PERFORMANCE_ACCURACY_EXHAUSTED"
-  "FP16 numerical candidate exhaustion must remain a structured SKIP")
+  "FP16 numerical candidate exhaustion must retain its diagnosed cause")
 _require_contains(
   "${_runner}"
   "if(fp32_correctness_oracle&&rejected_numerical_candidate)"
-  "Only numerically exhausted FP16-upcast cases may be skipped")
+  "Only numerically exhausted FP16-upcast cases may use this fallback")
+_require_contains(
+  "${_runner}"
+  "returnunavailable(\"provider=hipdnnphase=probe\"\"status=HIPDNN_PERFORMANCE_ACCURACY_EXHAUSTED"
+  "FP16 numerical exhaustion must try the exact equivalent baseline before skipping")
 _require_contains(
   "${_runner}"
   "sameprimitivecorrectnessoraclesucceeded"

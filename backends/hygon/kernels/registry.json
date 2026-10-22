@@ -177,6 +177,30 @@
         "warmup": 5,
         "repetitions": 10
       }
+    },
+    {
+      "operation": "matmul",
+      "provider": "hygon_triton",
+      "source": "matmul.py",
+      "functions": [
+        "matmul_strided_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "matmul",
+        "key": "m",
+        "strategy": "matmul",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
+      "operation": "causal_conv1d",
+      "provider": "hygon_triton",
+      "source": "causal_convolution.py",
+      "functions": [
+        "causal_conv1d_kernel"
+      ]
     }
   ]
 }

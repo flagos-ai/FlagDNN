@@ -8,7 +8,10 @@
 #include "convolution_reference.hpp"
 #include "hip_driver.hpp"
 #include "host_runner.hpp"
+#include "benchmark/common/case.hpp"
+#include "reference/cpu/benchmark.hpp"
 #include "reference/cpu/matrix.hpp"
+#include "reference/cpu/pointwise.hpp"
 #include "tensor_io.hpp"
 
 #include <flagdnn/flagdnn.hpp>
@@ -396,15 +399,22 @@ run_host_convolution(const Case &c,
           // node.
           result = io::decode(io::encode(result, output.data_type),
                               output.data_type, result.size());
-          for (std::size_t i = 0; i < result.size(); ++i)
-            result[i] +=
-                semantic[3][(i / (result.size() / output.dimensions[0] /
-                                  output.dimensions[1])) %
-                            output.dimensions[1]];
+          result = reference::cpu::evaluate_binary_pointwise_with_alpha(
+              FLAGDNN_POINTWISE_ADD, result, output.dimensions, semantic[3],
+              c.bias.dimensions, output.dimensions, 1.0);
           result = io::decode(io::encode(result, output.data_type),
                               output.data_type, result.size());
-          for (auto &x : result)
-            x = std::max(x, 0.0F);
+          benchmarking::BenchmarkCase activation;
+          activation.operation = benchmarking::Operation::kRelu;
+          activation.tensors = {
+              {1, output.data_type, output.dimensions, output.strides, 0},
+              {2, output.data_type, output.dimensions, output.strides, 0}};
+          result = reference::cpu::evaluate_benchmark(
+              activation, {result},
+              [](std::span<const float> values, flagdnnDataType_t dtype) {
+                return io::decode(io::encode(values, dtype), dtype,
+                                  values.size());
+              }).at(0);
         }
         return host::Values{result};
       },
@@ -421,12 +431,8 @@ CaseResult run_case(const Case &test_case,
   const std::vector<hv::ReferenceTensor> references =
       reference_tensors(tensors);
   if constexpr (requires { test_case.input_precision; }) {
-    if (test_case.input_precision == 2) {
-      emit_skip(operation_name(test_case), test_case.name,
-                "Hygon implements IEEE dot products; TF32 is unsupported",
-                references);
-      return CaseResult::kSkipped;
-    }
+    if (test_case.input_precision == 2)
+      return run_host_convolution(test_case, get_handle, stream);
   }
   const hv::HipdnnConvolutionOperation operation =
       reference_operation(test_case);

@@ -56,6 +56,45 @@ def main(source_root: Path, build_dir: Path) -> None:
         "returnrun_index_functional_test(argc,argv,"
         "make_index_cases(operation),true);",
     )
+    # Native timing now consumes the same catalogs with a Hygon builder,
+    # CPU oracle and measured equivalent baseline. Normalize only these
+    # intentional entry-point differences, retaining the NVIDIA catalog guard.
+    native_hg = native_hg.replace(
+        "returnrun_native_extended_benchmark(argc,argv,operation);",
+        "returnrun_extended_normalization_functional_test(argc,argv,"
+        "make_extended_normalization_cases(std::string(operation)),true);",
+    )
+    routed = (
+        'if(operation=="bn_finalize")returnrun_statistics_functional_test('
+        "argc,argv,make_bn_finalize_cases(),true);"
+        'if(operation=="resample")returnrun_resample_functional_test('
+        "argc,argv,make_resample_cases(),true);"
+        'if(operation=="causal_conv1d")'
+        "returnrun_causal_convolution_functional_test("
+        "argc,argv,make_causal_convolution_cases(),true);"
+        'if(operation=="matmul_fp8")returnrun_fp8_matmul_functional_test('
+        "argc,argv,make_fp8_matmul_cases(),true);"
+        'if(operation=="moe_grouped_matmul")'
+        "returnrun_moe_matmul_functional_test("
+        "argc,argv,make_moe_matmul_cases(),true);"
+    )
+    native_hg = native_hg.replace(
+        'if(operation=="concatenate"||operation=="gen_index")',
+        routed + 'if(operation=="concatenate"||operation=="gen_index")',
+        1,
+    )
+    extended = cpp_tokens(
+        (hygon / "benchmark/native_extended.cpp").read_text()
+    )
+    for factory in (
+        "make_bn_finalize_cases()",
+        "make_resample_cases()",
+        "make_causal_convolution_cases()",
+        "make_fp8_matmul_cases()",
+        "make_moe_matmul_cases()",
+        "make_extended_normalization_cases(std::string(operation))",
+    ):
+        assert factory in extended, f"Hygon native catalog changed: {factory}"
     assert (
         native_nv == native_hg
     ), "NVIDIA extended benchmark generators changed"

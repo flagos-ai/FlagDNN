@@ -50,17 +50,22 @@ void require_vendor(const hv::HipdnnTensorOperation &operation,
 }
 
 void contract() {
-  int fp32 = 0, fp16 = 0, bf16 = 0, middle = 0, views = 0;
+  int fp32 = 0, fp16 = 0, bf16 = 0, int32 = 0, middle = 0, views = 0;
   for (const auto &value : flagdnn::testing::make_reduction_cases()) {
     if (value.name.find("_to_fp32_") == std::string::npos ||
         value.output.data_type != FLAGDNN_DATA_FLOAT32)
       continue;
     const auto type = value.input.data_type;
-    if (type == FLAGDNN_DATA_BFLOAT16) {
-      if (value.input.dimensions.size() != 2 ||
+    // Cover the full original fp32_output benchmark catalog, including
+    // integer inputs whose legal conversion requires the CPU/equivalent path.
+    if (type == FLAGDNN_DATA_BFLOAT16 || type == FLAGDNN_DATA_INT32) {
+      if ((value.input.dimensions.size() != 2 &&
+           value.axis != static_cast<std::int32_t>(
+                             value.input.dimensions.size() - 1)) ||
           value.mode != FLAGDNN_REDUCTION_ADD)
         continue;
-      ++bf16;
+      if (type == FLAGDNN_DATA_BFLOAT16) ++bf16;
+      else ++int32;
     } else if (type != FLAGDNN_DATA_FLOAT16 && type != FLAGDNN_DATA_FLOAT32)
       continue;
     const auto operation = hv::make_hipdnn_reduction_operation(
@@ -70,10 +75,6 @@ void contract() {
     require(tensors[0].binding_byte_offset == 16 &&
                 tensors[1].binding_byte_offset == 32,
             "shared mixed-output catalog offsets changed");
-    if (type == FLAGDNN_DATA_BFLOAT16) {
-      require_vendor(operation, tensors, "no validated executable primitive");
-      continue;
-    }
     auto wrong_axis = operation;
     wrong_axis.reduction_axis =
         static_cast<std::int32_t>(value.input.dimensions.size());
@@ -94,6 +95,17 @@ void contract() {
     changed[0].data_type = FLAGDNN_DATA_FLOAT32;
     changed[1].data_type = FLAGDNN_DATA_FLOAT16;
     require_invalid(operation, changed, value.name + " narrowing dtype pair");
+    if (type == FLAGDNN_DATA_BFLOAT16 || type == FLAGDNN_DATA_INT32) {
+      require_vendor(operation, tensors,
+                     type == FLAGDNN_DATA_BFLOAT16
+                         ? "no validated executable primitive"
+                         : "reduction is validated only for FP32/FP16");
+      bool rejected = false;
+      try { (void)hv::hipdnn_reduction_descriptors(operation, tensors); }
+      catch (const std::invalid_argument &) { rejected = true; }
+      require(rejected, "unsupported dtype descriptor query must reject");
+      continue;
+    }
     const auto rank = value.input.dimensions.size();
     if (type == FLAGDNN_DATA_FLOAT16 && rank > 2 && value.axis != 0 &&
         value.axis != static_cast<std::int32_t>(rank - 1)) {
@@ -157,8 +169,9 @@ void contract() {
       require_vendor(operation, changed, "dense");
     }
   }
-  require(fp16 == 30 && fp32 == 36 && bf16 == 14 && middle == 6 && views == 9,
-          "expected FP16 21 native+9 views, FP32 36, BF16 14/middle 6 rejected");
+  require(fp16 == 30 && fp32 == 36 && bf16 == 16 && int32 == 9 &&
+              middle == 6 && views == 9,
+          "expected 97 cases: FP16 30 native/6 middle, FP32 36, BF16 16, INT32 9");
   const auto operation =
       hv::make_hipdnn_reduction_operation(FLAGDNN_REDUCTION_ADD, 1, false);
   Tensors same_bf16 = {
@@ -183,7 +196,7 @@ void contract() {
                           {1048576, 1}, 32}};
   require_vendor(large_axis, large, "do not fit");
   std::cout << "Hygon reduction metadata contract PASS: fp16=30 (views=9) "
-               "fp32=36 bf16_rejected=14 middle_rejected=6; "
+               "fp32=36 bf16_rejected=16 int32_rejected=9 middle_rejected=6; "
                "alignment/shape/axis/stride/storage/overflow guards checked\n";
 }
 } // namespace

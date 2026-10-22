@@ -107,7 +107,7 @@ def _canonical(value: Any) -> bytes:
     ).encode("utf-8")
 
 
-def require_ieee_precision(
+def require_input_precision(
     parameters: Mapping[str, Any], data_type: str
 ) -> None:
     """Validate explicit public precision requests before selecting kernels."""
@@ -116,7 +116,3 @@ def require_ieee_precision(
         raise ValueError("input_precision must be 0, 1 or 2")
     if value and data_type != "float32":
         raise ValueError("explicit IEEE/TF32 precision requires FP32 storage")
-    if value == 2:
-        raise ValueError(
-            "Hygon supports IEEE dot products; TF32 is unsupported"
-        )

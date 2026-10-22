@@ -256,8 +256,8 @@ int run_suite(int argc, char **argv, std::span<const Case> cases,
     if (benchmark)
       return hygon::skip_cases(
           argc, std::vector<Case>(cases.begin(), cases.end()), operation, true,
-          "functional CPU reference available; no equivalent hipDNN benchmark "
-          "reference");
+          "no native or equivalent performance adapter for this catalog; "
+          "CPU reference is correctness-only");
   } else if (benchmark) {
     throw std::logic_error(
         "CPU reference cannot be used for performance comparison");
@@ -268,7 +268,7 @@ int run_suite(int argc, char **argv, std::span<const Case> cases,
   return pw::run_suite(
       argc, argv, operation, "FLAGDNN_" + marker + "_FUNCTIONAL",
       [&](const auto &handle, hv::Stream &stream, auto &matched, auto &executed,
-          auto &skipped) {
+          auto &) {
         const char *filter = std::getenv("FLAGDNN_HYGON_CASE");
         if (!filter) {
           std::string family = marker;
@@ -295,22 +295,6 @@ int run_suite(int argc, char **argv, std::span<const Case> cases,
           if (filter && test_case.name.find(filter) == std::string::npos)
             continue;
           ++matched;
-          if constexpr (requires { test_case.precision; }) {
-            if (test_case.precision == 2) {
-              pw::emit_skip(operation, test_case.name,
-                            "Hygon does not implement TF32 input precision",
-                            [&] {
-                              std::vector<hv::ReferenceTensor> tensors;
-                              for (const auto &t : test_case.inputs)
-                                tensors.push_back(hv::as_reference_tensor(t));
-                              for (const auto &t : test_case.outputs)
-                                tensors.push_back(hv::as_reference_tensor(t));
-                              return tensors;
-                            }());
-              ++skipped;
-              continue;
-            }
-          }
           run(test_case, handle, stream);
           ++executed;
         }

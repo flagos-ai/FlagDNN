@@ -25,7 +25,7 @@ arguments when it renders the libtriton_jit ABI.
 
 from __future__ import annotations
 
-from .common import require_ieee_precision
+from .common import require_input_precision
 
 import math
 from dataclasses import dataclass
@@ -976,7 +976,7 @@ def _matmul_configuration(
     data_types = [tensor["data_type"] for tensor in tensors]
     if len(set(data_types)) != 1 or data_types[0] not in FLOAT_TYPES:
         raise ValueError("matmul tensors must use one matching floating type")
-    require_ieee_precision(dict(parameters), data_types[0])
+    require_input_precision(dict(parameters), data_types[0])
     if any(
         not 2 <= len(tensor["dimensions"]) <= MAX_RANK for tensor in tensors
     ):
@@ -1042,8 +1042,8 @@ def _matmul_configuration(
         "C_STRIDE_M": output["strides"][-2],
         "C_STRIDE_N": output["strides"][-1],
         "INPUT_IS_FLOAT32": data_types[0] == "float32",
-        # Hygon must not inherit CUDA TF32 semantics.
-        "USE_TF32": False,
+        # Explicit TF32 uses software RNE operands and IEEE FP32 accumulation.
+        "USE_TF32": parameters.get("input_precision", 0) == 2,
         "BLOCK_M": block_m,
         "BLOCK_N": block_n,
         "BLOCK_K": block_k,
