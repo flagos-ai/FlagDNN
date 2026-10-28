@@ -209,6 +209,20 @@ def _jit_runtime_signature(
     result = dict(runtime_signature)
     for name, argument in zip(runtime_names, visible_arguments, strict=True):
         kind = argument.get("kind")
+        if kind == "scalar_i32":
+            # Scalars in the artifact ABI are fixed by the validated Graph,
+            # rather than supplied by execution-time bindings.  Preserve their
+            # proven divisibility so masked pointwise loads/stores can vectorize.
+            value = argument.get("value")
+            if (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and value % 16 == 0
+            ):
+                if result[name] != "i32":
+                    raise ValueError("JIT int32 argument is not a plain scalar")
+                result[name] = "i32:16"
+            continue
         if kind not in {"tensor", "workspace_tensor"}:
             continue
         token = result[name]

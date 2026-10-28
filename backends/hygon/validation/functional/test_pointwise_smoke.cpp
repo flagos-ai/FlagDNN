@@ -4,12 +4,14 @@
 
 #include "hip_driver.hpp"
 #include "pointwise_reference.hpp"
+#include "reference/cpu/pointwise.hpp"
 #include "tensor_io.hpp"
 
 #include <unistd.h>
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -146,8 +148,34 @@ std::array<std::vector<float>, 2> make_inputs(std::string_view operation) {
       result[0][index] = real;
       result[1][index] = std::abs(real) + 0.5F;
     } else if (operation == "pow") {
-      result[0][index] = std::abs(real) + 0.5F;
-      result[1][index] = static_cast<float>((index % 8) + 1) / 8.0F;
+      if (index < 256) {
+        result[0][index] = std::abs(real) + 0.5F;
+        result[1][index] = static_cast<float>((index % 8) + 1) / 8.0F;
+      } else if (index < 512) {
+        result[0][index] =
+            1.0F + static_cast<float>(static_cast<int>(index) - 384) * 0x1p-23F;
+        result[1][index] = index % 2 == 0 ? 50000.0F : -50000.0F;
+      } else {
+        const std::array<float, 16> values = {
+            0.0F,
+            -0.0F,
+            1.0F,
+            -1.0F,
+            2.0F,
+            -2.0F,
+            0.5F,
+            -0.5F,
+            std::numeric_limits<float>::infinity(),
+            -std::numeric_limits<float>::infinity(),
+            std::numeric_limits<float>::quiet_NaN(),
+            std::numeric_limits<float>::min(),
+            std::numeric_limits<float>::denorm_min(),
+            std::numeric_limits<float>::max(),
+            0x1p24F,
+            -0x1p24F};
+        result[0][index] = values[(index / values.size()) % values.size()];
+        result[1][index] = values[index % values.size()];
+      }
     } else if (operation == "mod") {
       result[0][index] = kModuloLeft[index % kModuloLeft.size()];
       result[1][index] = kModuloRight[index % kModuloRight.size()];
@@ -241,6 +269,9 @@ void run_case(const SmokeCase &test_case, const char *compiler_executable,
   const std::string data_type_name =
       data_type == FLAGDNN_DATA_FLOAT16 ? "fp16" : "fp32";
   TemporaryCache cache(std::string(test_case.name) + "_" + data_type_name);
+  // Fixed 256-element POW tiles exercise both the positive-finite path and
+  // OCML fallback in the same execution. Other smoke cases cover autotuning.
+  const bool autotune = test_case.name != "pow";
   flagdnn::Handle handle("hygon", 0);
   handle.set_compiler(compiler_executable, compiler_entry,
                       cache.path().string());
@@ -252,7 +283,7 @@ void run_case(const SmokeCase &test_case, const char *compiler_executable,
       .set_io_data_type(frontend_data_type)
       .set_intermediate_data_type(fe::DataType_t::FLOAT)
       .set_compute_data_type(fe::DataType_t::FLOAT)
-      .set_autotune(true);
+      .set_autotune(autotune);
   const auto left =
       graph.tensor(fe::graph::Tensor_attributes()
                        .set_name("left")
@@ -330,13 +361,45 @@ void run_case(const SmokeCase &test_case, const char *compiler_executable,
   }
   compare_minmax_with_hipdnn(test_case, output_host, data_type, left_buffer,
                              right_buffer, stream);
+  if (test_case.name == "pow") {
+    const auto left_values =
+        io::decode(encoded_inputs[0], data_type, kElementCount);
+    const auto right_values =
+        io::decode(encoded_inputs[1], data_type, kElementCount);
+    const auto expected = flagdnn::reference::cpu::evaluate_binary_pointwise(
+        FLAGDNN_POINTWISE_POW, left_values, kDimensions, right_values,
+        kDimensions, kDimensions);
+    const auto actual = io::decode(output_host, data_type, kElementCount);
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+      bool equal = false;
+      if (std::isnan(expected[index])) {
+        equal = std::isnan(actual[index]);
+      } else if (expected[index] == 0.0F || std::isinf(expected[index])) {
+        equal = actual[index] == expected[index] &&
+                std::signbit(actual[index]) == std::signbit(expected[index]);
+      } else if (std::isfinite(actual[index])) {
+        const auto actual_bits = std::bit_cast<std::uint32_t>(actual[index]);
+        const auto expected_bits =
+            std::bit_cast<std::uint32_t>(expected[index]);
+        const auto distance = actual_bits > expected_bits
+                                  ? actual_bits - expected_bits
+                                  : expected_bits - actual_bits;
+        equal = distance <= 2;
+      }
+      if (!equal) {
+        throw std::runtime_error(
+            "POW differs from validated CPU reference at index " +
+            std::to_string(index));
+      }
+    }
+  }
 
   const CacheInventory inventory = inspect_cache(cache.path());
   if (inventory.manifests != 1 || inventory.generated_sources != 1 ||
-      inventory.selections != 1) {
+      inventory.selections != (autotune ? 1U : 0U)) {
     throw std::runtime_error(
         std::string(test_case.name) +
-        " did not produce exactly one manifest/source/autotune selection");
+        " produced an unexpected manifest/source/autotune inventory");
   }
   std::cout << "PASS production_chain_smoke op=" << test_case.name
             << " dtype=" << data_type_name << " workspace=" << workspace_bytes
@@ -344,6 +407,7 @@ void run_case(const SmokeCase &test_case, const char *compiler_executable,
             << " generated_sources=" << inventory.generated_sources
             << " selections=" << inventory.selections << " numeric_reference="
             << ((test_case.name == "min" || test_case.name == "max") ? "hipdnn"
+                : test_case.name == "pow"                            ? "cpu"
                                                                      : "none")
             << '\n';
 }

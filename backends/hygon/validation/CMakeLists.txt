@@ -444,7 +444,8 @@ if(FLAGDNN_BUILD_TESTS)
     target_link_libraries(flagdnn_test_hygon_pointwise_smoke PRIVATE
       FlagDNN::flagdnn
       flagdnn_validation_hygon_platform
-      flagdnn_validation_hygon_reference)
+      flagdnn_validation_hygon_reference
+      flagdnn_validation_cpu_reference)
     add_dependencies(flagdnn_test_hygon_pointwise_smoke
       flagdnn_backend_hygon)
     flagdnn_enable_warnings(flagdnn_test_hygon_pointwise_smoke)

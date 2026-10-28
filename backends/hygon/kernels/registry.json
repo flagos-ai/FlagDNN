@@ -27,6 +27,23 @@
       }
     },
     {
+      "operation": "pow",
+      "provider": "hygon_triton",
+      "source": "binary_pow.py",
+      "functions": [
+        "binary_contiguous_kernel",
+        "binary_strided_kernel"
+      ],
+      "tuning": {
+        "source": "common.yaml",
+        "table": "binary",
+        "key": "n_elements",
+        "strategy": "align32",
+        "warmup": 5,
+        "repetitions": 10
+      }
+    },
+    {
       "operation": "identity",
       "provider": "hygon_triton",
       "source": "unary.py",

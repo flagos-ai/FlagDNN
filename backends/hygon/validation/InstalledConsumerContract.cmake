@@ -210,6 +210,7 @@ foreach(required IN ITEMS
     "${installed_compiler}"
     "${installed_provider}"
     "${sdk}/share/flagdnn/backends/hygon/kernels/binary_minmax.py"
+    "${sdk}/share/flagdnn/backends/hygon/kernels/binary_pow.py"
     "${installed_environment}"
     "${installed_plugin}"
     "${installed_jit}"

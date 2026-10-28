@@ -289,6 +289,16 @@ elif mutation == "fixed_stage_in_autotune_graph":
     del fixed["variants"]
     del fixed["tuning"]
     fixed.update(selected)
+elif mutation == "scalar_divisibility":
+    tokens = signature_tokens()
+    tokens[3] = "i32:16"
+    write_signature(tokens)
+elif mutation == "scalar_hint_kind":
+    tokens = signature_tokens()
+    tokens[3] = "i32:1"
+    write_signature(tokens)
+elif mutation == "without_scalar_divisibility":
+    entry["full_signature"] = entry["full_signature"].replace("i32:16", "i32")
 elif mutation == "without_pointer_range":
     for current_stage in manifest["program"]["stages"]:
         for current_entry in current_stage.get("variants", [current_stage]):
@@ -321,7 +331,7 @@ elif mutation == "n_elements":
     changed = False
     for argument in entry["argument_abi"]:
         if argument["kind"] == "scalar_i32":
-            argument["value"] += 1
+            argument["value"] += 16
             changed = True
             break
     if not changed:
@@ -479,6 +489,8 @@ void test_manifest_rejection_contracts(const char *compiler_executable,
   run("kernel_function", "kernel function is not allowed", false, false);
   run("stride", "DIM/STRIDE constants do not match request Graph IR", false,
       true);
+  run("scalar_divisibility", "int32 divisibility hint is invalid", false, true);
+  run("scalar_hint_kind", "int32 argument signature is invalid", false, false);
   run("block_size", "BLOCK_SIZE does not match compiler tuning contract", false,
       false);
   run("grid", "launch grid does not match request Graph IR", false, false);
@@ -514,6 +526,7 @@ void test_manifest_rejection_contracts(const char *compiler_executable,
     require_workspace_contract(executable);
   };
   run_positive("without_pointer_range", false);
+  run_positive("without_scalar_divisibility", false);
   run_positive("fixed_stage_in_autotune_graph", true);
   (void)unsetenv("FLAGDNN_VALIDATION_MANIFEST_MUTATION");
   (void)unsetenv("FLAGDNN_VALIDATION_REAL_COMPILER");

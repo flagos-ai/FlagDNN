@@ -557,7 +557,8 @@ std::vector<std::string_view>
 runtime_signature_tokens(std::string_view full_signature) {
   std::vector<std::string_view> result;
   for (const std::string_view token : full_signature_tokens(full_signature)) {
-    if (token.starts_with('*') || token == "i32" || token == "fp32") {
+    if (token.starts_with('*') || token == "i32" || token.starts_with("i32:") ||
+        token == "fp32") {
       result.push_back(token);
     }
   }
@@ -1172,8 +1173,13 @@ void validate_argument_abi(const HygonKernelArtifact &kernel,
     const ArgumentSpec &argument = kernel.arguments[index];
     const std::string_view signature_token = signature_tokens[index];
     if (argument.kind == ArgumentKind::kScalarI32) {
-      if (signature_token != "i32") {
+      if (signature_token != "i32" && signature_token != "i32:16") {
         invalid_artifact("libtriton_jit int32 argument signature is invalid");
+      }
+      // Older artifacts may omit the optional hint. A present hint must be
+      // justified by the immutable scalar value before the kernel is compiled.
+      if (signature_token == "i32:16" && argument.scalar_i32 % 16 != 0) {
+        invalid_artifact("libtriton_jit int32 divisibility hint is invalid");
       }
       continue;
     }

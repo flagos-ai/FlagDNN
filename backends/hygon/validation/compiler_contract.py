@@ -90,6 +90,33 @@ def _load_modules(
     return compiler, compiler_nn, compiler_tensor, select_kernel_candidate
 
 
+def _check_scalar_divisibility_specialization() -> None:
+    function = type("FakeKernel", (), {"arg_names": ("n_elements",)})()
+    cases = (
+        (0, "i32:16"),
+        (16, "i32:16"),
+        (1024, "i32:16"),
+        (2096640, "i32:16"),
+        (-16, "i32:16"),
+        (-(2**31), "i32:16"),
+        (1, "i32"),
+        (17, "i32"),
+        (2096641, "i32"),
+        (2**31 - 1, "i32"),
+    )
+    for value, expected in cases:
+        abi = [
+            {"kind": "scalar_i32", "name": "n_elements", "value": value},
+            {"kind": "global_scratch_pointer"},
+            {"kind": "profile_scratch_pointer"},
+        ]
+        signature = codegen_abi._jit_runtime_signature(
+            function, {"n_elements": "i32"}, abi
+        )
+        assert signature == {"n_elements": expected}
+        assert codegen_abi._jit_full_signature(function, signature, {}) == expected
+
+
 def _check_pointer_range_specialization(compiler: ModuleType) -> None:
     assert not codegen_abi._triton_supports_pointer_range("3.1.0")
     assert not codegen_abi._triton_supports_pointer_range("3.2.0")
@@ -2672,18 +2699,52 @@ def _check_pointwise_kernel_ownership(
         == "binary.py"
     )
 
-    for operation in ("min", "max"):
+    for operation, source_name in (
+        ("min", "binary_minmax.py"),
+        ("max", "binary_minmax.py"),
+        ("pow", "binary_pow.py"),
+    ):
         candidate = select_kernel_candidate("hygon", operation)
         assert candidate.ownership == "platform"
         assert candidate.provider == "hygon_triton"
         assert candidate.source_layout == "platform"
-        assert candidate.source == "binary_minmax.py"
-        source = resolve_kernel_source(
-            codegen_io._compiler_entry_path(), candidate
-        )
-        assert source.name == "binary_minmax.py"
+        assert candidate.source == source_name
+        source = resolve_kernel_source(codegen_io._compiler_entry_path(), candidate)
+        assert source.name == source_name
         assert source.parent.name == "kernels"
         assert source.parent.parent.name == "hygon"
+
+    # Streaming address hints require both dense traversal and the exact
+    # alignment promised by the graph. Reject layouts where that proof fails.
+    from backends.hygon.codegen.pointwise import _specialize_streaming_memory_source
+
+    binary_source = resolve_kernel_source(
+        codegen_io._compiler_entry_path(), add
+    ).read_text()
+    tensors = [_tensor(uid, "bfloat16", [1398102]) for uid in (1, 2, 3)]
+    streaming = _specialize_streaming_memory_source(
+        binary_source, {"operation": "sub", "tensors": tensors}
+    )
+    assert "_hygon_streaming_pointer" in streaming
+    assert 'cache_modifier=".cg"' in streaming
+    assert 'cache_modifier=".cs"' in streaming
+    for excluded in ("small", "weak_alignment", "strided", "broadcast"):
+        unsafe = copy.deepcopy(tensors)
+        if excluded == "small":
+            unsafe = [_tensor(uid, "bfloat16", [1398101]) for uid in (1, 2, 3)]
+        elif excluded == "weak_alignment":
+            unsafe[0]["alignment"] = 8
+        elif excluded == "strided":
+            for tensor in unsafe:
+                tensor["strides"] = [2]
+        else:
+            unsafe[0]["dimensions"] = [1]
+        assert (
+            _specialize_streaming_memory_source(
+                binary_source, {"operation": "sub", "tensors": unsafe}
+            )
+            == binary_source
+        )
 
     identity = select_kernel_candidate("hygon", "identity")
     assert identity.ownership == "platform"
@@ -2697,6 +2758,7 @@ def _check_pointwise_kernel_ownership(
         "add": (1, "common", "common_triton", "binary.py"),
         "min": (20, "platform", "hygon_triton", "binary_minmax.py"),
         "max": (21, "platform", "hygon_triton", "binary_minmax.py"),
+        "pow": (23, "platform", "hygon_triton", "binary_pow.py"),
     }
     with tempfile.TemporaryDirectory(
         prefix="flagdnn-hygon-pointwise-contract-"
@@ -3370,6 +3432,7 @@ def main(argv: list[str]) -> int:
     _check_explicit_precision(compiler_nn, compiler_tensor)
     _check_module_boundaries(source_root, compiler)
     _check_pointer_range_specialization(compiler)
+    _check_scalar_divisibility_specialization()
     _check_hcu_llvm_compatibility()
     _check_fp8_layout(compiler_tensor)
     _check_attention_planner_contracts(
