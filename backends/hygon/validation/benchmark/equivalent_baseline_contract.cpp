@@ -692,6 +692,31 @@ int main(int argc, char** argv) {
             "architecture");
 
     Fixture fixture;
+    const auto original_device_baseline =
+        baseline.lookup(first, device, architecture);
+    for (std::string_view recorded_name : {"BW", "BW200, UBB BW1000"}) {
+      fixture.write(replace_after(
+          raw, "\"hygon\"", "\"device\": \"" + device + "\"",
+          "\"device\": \"" + std::string(recorded_name) + "\""));
+      const bench::PerformanceBaseline aliased(fixture.path);
+      for (std::string_view runtime_name : {"BW", "BW200, UBB BW1000"}) {
+        const auto value = aliased.lookup(first, runtime_name, architecture);
+        near(value.target_peak, original_device_baseline.target_peak);
+        near(value.equivalent_time_us(),
+             original_device_baseline.equivalent_time_us());
+        near(value.limit_us(), original_device_baseline.limit_us());
+        rejects([&] {
+          (void)aliased.lookup(first, runtime_name, architecture + "_other");
+        }, "device alias with mismatched architecture");
+      }
+      for (std::string_view unknown_name :
+           {"", "BW_other", "BW200", "UBB BW1000",
+            "BW200, UBB BW1000_other", "K100"}) {
+        rejects([&] {
+          (void)aliased.lookup(first, unknown_name, architecture);
+        }, "unconfirmed device alias");
+      }
+    }
     const auto bad_json = [&](const std::string& content,
                               std::string_view label) {
       fixture.write(content);

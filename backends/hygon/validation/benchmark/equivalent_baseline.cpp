@@ -19,6 +19,12 @@ void require(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
 }
 
+std::string_view canonical_device_name(std::string_view name) {
+  // These exact names identify the same confirmed BW hardware and performance
+  // configuration. Architecture is checked independently during lookup.
+  return name == "BW200, UBB BW1000" ? "BW" : name;
+}
+
 double positive(double value, std::string_view name) {
   require(std::isfinite(value) && value > 0.0,
           std::string(name) + " must be finite and positive");
@@ -762,7 +768,8 @@ EquivalentBaseline PerformanceBaseline::lookup(
             "native graph operations require explicit metadata");
 
     const auto& target = document_.at("platforms").at("hygon");
-    require(target.at("device").as_string() == device_name,
+    require(canonical_device_name(target.at("device").as_string()) ==
+                canonical_device_name(device_name),
             "Hygon device does not match the measured baseline");
     require(target.at("architecture").as_string() == architecture,
             "Hygon architecture does not match the measured baseline");

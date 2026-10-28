@@ -56,6 +56,7 @@ passed = measured_us <= limit_us
 默认批测中，执行及正确性通过与性能达标分别记录：低于基线仍保留 `equivalent_baseline.passed=false`，不会仅因性能不足将测试判为失败。
 
 - **Hygon**：按本平台 `case_policies` 启用等效路径。显式传入 `--min-speedup` 才启用性能失败门槛，等效用例要求 `max(0.8, --min-speedup)`；原生用例按原生加速比判定。
+  已确认型号及性能配置相同的 `BW` 与 `BW200, UBB BW1000` 按同一设备的名称别名处理，基线和运行时可使用其中任一完整名称。架构仍须与基线完全一致；其他名称保留精确匹配，不按前缀或子串放宽。此兼容仅作用于 Hygon 基线校验，不修改实测峰值、NVIDIA 参考耗时或性能门槛。
 - **Ascend**：当前仅对 identity 的 FP8 E4M3/E5M2 用例启用 `hbm_copy` 等效策略，不支持 `--min-speedup`。其他 FP8 布局或拼接不能借用 identity 的参考耗时。
 - **MThreads**：按本平台策略为 muDNN 不支持且参考完整的用例启用等效路径；`--min-speedup` 门槛规则同 Hygon。90 条 ELU/softplus backward native 参考已补齐，平台运行及报告接入仍需单独完成，见下文。
 
