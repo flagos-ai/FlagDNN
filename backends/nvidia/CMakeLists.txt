@@ -32,18 +32,29 @@ if(NOT FLAGDNN_CODEGEN_PYTHON)
     "libtriton_jit execution requires FLAGDNN_CODEGEN_PYTHON")
 endif()
 
-execute_process(
-  COMMAND "${FLAGDNN_CODEGEN_PYTHON}" -c
-    "import torch, triton, yaml"
-  RESULT_VARIABLE _flagdnn_nvidia_python_dependencies_result
-  ERROR_VARIABLE _flagdnn_nvidia_python_dependencies_error)
-if(NOT _flagdnn_nvidia_python_dependencies_result EQUAL 0)
-  string(STRIP "${_flagdnn_nvidia_python_dependencies_error}"
-    _flagdnn_nvidia_python_dependencies_error)
-  message(FATAL_ERROR
-    "FLAGDNN_CODEGEN_PYTHON must provide Torch, Triton, and PyYAML for "
-    "the NVIDIA libtriton_jit engine: "
-    "${_flagdnn_nvidia_python_dependencies_error}")
+# Distribution packages build against a vendored libtorch and ship the
+# Python side (Torch, Triton) separately, so the build host has no importable
+# torch/triton. FLAGDNN_LIBTRITON_JIT_ENVIRONMENT supplies the
+# "<python>|<triton>|<torch>" identity string that is otherwise probed from
+# FLAGDNN_CODEGEN_PYTHON, and skips the import checks.
+set(FLAGDNN_LIBTRITON_JIT_ENVIRONMENT ""
+    CACHE STRING
+    "python|triton|torch versions of the runtime JIT environment; skips probing FLAGDNN_CODEGEN_PYTHON")
+
+if(NOT FLAGDNN_LIBTRITON_JIT_ENVIRONMENT)
+  execute_process(
+    COMMAND "${FLAGDNN_CODEGEN_PYTHON}" -c
+      "import torch, triton, yaml"
+    RESULT_VARIABLE _flagdnn_nvidia_python_dependencies_result
+    ERROR_VARIABLE _flagdnn_nvidia_python_dependencies_error)
+  if(NOT _flagdnn_nvidia_python_dependencies_result EQUAL 0)
+    string(STRIP "${_flagdnn_nvidia_python_dependencies_error}"
+      _flagdnn_nvidia_python_dependencies_error)
+    message(FATAL_ERROR
+      "FLAGDNN_CODEGEN_PYTHON must provide Torch, Triton, and PyYAML for "
+      "the NVIDIA libtriton_jit engine: "
+      "${_flagdnn_nvidia_python_dependencies_error}")
+  endif()
 endif()
 
 if(NOT DEFINED TritonJIT_DIR OR TritonJIT_DIR STREQUAL "")
@@ -104,6 +115,7 @@ if(NOT DEFINED Torch_DIR OR Torch_DIR STREQUAL "")
 endif()
 
 set(Python_EXECUTABLE "${FLAGDNN_CODEGEN_PYTHON}")
+find_package(Python REQUIRED COMPONENTS Interpreter Development)
 find_package(TritonJIT 0.1.0 CONFIG REQUIRED)
 if(TARGET TritonJIT::triton_jit)
   set(_flagdnn_triton_jit_target TritonJIT::triton_jit)
@@ -152,16 +164,20 @@ if(NOT _flagdnn_triton_jit_library)
 endif()
 file(SHA256 "${_flagdnn_triton_jit_library}"
   _flagdnn_triton_jit_library_sha256)
-execute_process(
-  COMMAND "${FLAGDNN_CODEGEN_PYTHON}" -c
-    "import platform, triton, torch; print('|'.join((platform.python_version(), triton.__version__, torch.__version__)))"
-  RESULT_VARIABLE _flagdnn_jit_environment_result
-  OUTPUT_VARIABLE _flagdnn_jit_environment
-  OUTPUT_STRIP_TRAILING_WHITESPACE)
-if(NOT _flagdnn_jit_environment_result EQUAL 0 OR
-   _flagdnn_jit_environment STREQUAL "")
-  message(FATAL_ERROR
-    "Cannot identify the Python/Triton/Torch environment for libtriton_jit")
+if(FLAGDNN_LIBTRITON_JIT_ENVIRONMENT)
+  set(_flagdnn_jit_environment "${FLAGDNN_LIBTRITON_JIT_ENVIRONMENT}")
+else()
+  execute_process(
+    COMMAND "${FLAGDNN_CODEGEN_PYTHON}" -c
+      "import platform, triton, torch; print('|'.join((platform.python_version(), triton.__version__, torch.__version__)))"
+    RESULT_VARIABLE _flagdnn_jit_environment_result
+    OUTPUT_VARIABLE _flagdnn_jit_environment
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _flagdnn_jit_environment_result EQUAL 0 OR
+     _flagdnn_jit_environment STREQUAL "")
+    message(FATAL_ERROR
+      "Cannot identify the Python/Triton/Torch environment for libtriton_jit")
+  endif()
 endif()
 string(SHA256 _flagdnn_jit_environment_sha256
   "${_flagdnn_jit_environment}")
