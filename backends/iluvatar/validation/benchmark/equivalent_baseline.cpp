@@ -19,6 +19,12 @@ void require(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
 }
 
+std::string_view canonical_device_name(std::string_view name) {
+  // These exact BI-V150 names have been confirmed performance-equivalent.
+  // Architecture is checked independently during lookup.
+  return name == "Iluvatar BI-V150 OAM" ? "Iluvatar BI-V150" : name;
+}
+
 double positive(double value, std::string_view name) {
   require(std::isfinite(value) && value > 0.0,
           std::string(name) + " must be finite and positive");
@@ -889,7 +895,8 @@ EquivalentBaseline PerformanceBaseline::lookup(
             "native metadata is required only for native index operations");
 
     const auto& target = document_.at("platforms").at("iluvatar");
-    require(target.at("device").as_string() == device_name,
+    require(canonical_device_name(target.at("device").as_string()) ==
+                canonical_device_name(device_name),
             "Iluvatar device does not match the measured baseline");
     require(target.at("architecture").as_string() == architecture,
             "Iluvatar architecture does not match the measured baseline");

@@ -25,6 +25,11 @@ int main(int argc, char **argv) {
     };
     for (const auto &spec : cases) {
       const auto result = lookup(spec);
+      const auto alias = baseline.lookup(spec, "Iluvatar BI-V150 OAM", "corex_71");
+      if (alias.scale_metric != result.scale_metric ||
+          alias.equivalent_time_us() != result.equivalent_time_us() ||
+          alias.limit_us() != result.limit_us())
+        throw std::runtime_error("device alias changed the performance baseline");
       const double expected = result.reference_time_us * result.reference_peak /
                               result.target_peak;
       if (result.equivalent_time_us() != expected ||
@@ -75,8 +80,12 @@ int main(int argc, char **argv) {
       throw std::runtime_error("incomplete supplemented core catalog");
 
     const auto original = cases.front();
-    rejects([&] { (void)baseline.lookup(original, "different device", "corex_71"); });
-    rejects([&] { (void)baseline.lookup(original, "Iluvatar BI-V150", "corex_80"); });
+    for (const auto name : {"different device", "Iluvatar BI-V100",
+                            "Iluvatar BI-V150X", "Iluvatar BI-V150 OAM extra",
+                            "Iluvatar BI-V150 OAM ", "iluvatar bi-v150 oam", ""})
+      rejects([&] { (void)baseline.lookup(original, name, "corex_71"); });
+    for (const auto name : {"Iluvatar BI-V150", "Iluvatar BI-V150 OAM"})
+      rejects([&] { (void)baseline.lookup(original, name, "corex_80"); });
     auto altered = original;
     altered.tensors[0].dimensions.back() += 1;
     rejects([&] { lookup(altered); });
