@@ -2586,7 +2586,7 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
     cases = reference["cases"]
     require(
         reference["platform"] == "nvidia"
-        and len(cases) == reference["coverage"]["case_count"] == 3634
+        and len(cases) == reference["coverage"]["case_count"] == 3642
         and len({case["op"] for case in cases.values()})
         == reference["coverage"]["operator_count"]
         == 83,
@@ -2720,13 +2720,12 @@ def check_performance_baseline_policy_isolation(runner, hygon) -> None:
             "vector_fp32": 1787,
             "tensor_by_input_dtypes": 481,
             "tensor_by_precision_and_input_dtypes": 397,
-            "hbm_copy": 461,
+            "hbm_copy": 469,
             "hbm_triad": 480,
             "hbm_write": 28,
         },
-        # Policy reference coverage is 2158 after 94 additional measurements.
-        # Hygon's equivalent catalog contains 1953 cases, including the
-        # restored scalar BF16 identity and 11 native-aligned reductions.
+        # Shared policy coverage includes the eight new Slice measurements;
+        # target runtime case selection remains independently constrained.
         "Hygon-owned policy reference coverage changed during isolation",
     )
     ascend = platforms["ascend"]
@@ -2950,6 +2949,7 @@ def check_general_equivalent_performance(runner, hygon) -> None:
     activation_native_references = 0
     iluvatar_followup_references = 0
     outside_hygon_followup = 0
+    slice_supplement_references = 0
     for case, reference in catalog["reference"]["cases"].items():
         operator = reference["op"]
         if operator not in hygon.EQUIVALENT_OPERATORS:
@@ -2958,6 +2958,9 @@ def check_general_equivalent_performance(runner, hygon) -> None:
             reference.get("measurement_id") == "nvidia-iluvatar-20261019"
         )
         iluvatar_followup_references += followup
+        slice_supplement_references += (
+            reference.get("measurement_id") == "nvidia-slice-20261103"
+        )
         if hygon.EQUIVALENT_CASE_PATTERN.fullmatch(case) is None:
             # Native FP32/FP16 scalar identity and FP32 mixed-output
             # reductions retain their existing Hygon provider pairing.
@@ -3030,14 +3033,15 @@ def check_general_equivalent_performance(runner, hygon) -> None:
     require(
         len(seen) == 83
         and seen == hygon.EQUIVALENT_OPERATORS
-        and accepted_references == 3589
+        and accepted_references == 3597
         and supplemental_references == 371
         and activation_native_references == 90
         and iluvatar_followup_references == 94
+        and slice_supplement_references == 8
         and outside_hygon_followup == 38,
         (
-            "equivalent validation must cover 3589 references across 83 ops, "
-            "including 371 historical, 90 activation and 56 new in-scope "
+            "equivalent validation must cover 3597 references across 83 ops, "
+            "including 371 historical, 90 activation, 8 Slice and 56 in-scope "
             "records; another 38 new records retain native Hygon scope"
         ),
     )

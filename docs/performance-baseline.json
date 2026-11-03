@@ -1872,6 +1872,25 @@
             "scope": "Domains used in this supplement; auxiliary input formulas are also stored per case."
           },
           "scope": "Exact retained cases; three full CPU validation phases, unchanged inputs and protected padding. Shared removals preserve retained tensor UIDs."
+        },
+        "nvidia-slice-20261103": {
+          "measured_on": "2026-11-03",
+          "source_revision": "b7cb2816b0faa51b4a9ed7b664621699a418adc2",
+          "manifest": "docs/performance-baseline.json#/measurement_summaries/nvidia-slice-20261103",
+          "case_count": 8,
+          "validation_counts": {
+            "cpu_full": 8
+          },
+          "input_domains": {
+            "source": "benchmark/common/case.hpp::InputDomain",
+            "index": "index is zero-based logical element index; tensor_index is zero-based input index",
+            "real_value": "float(int((index * 17 + tensor_index * 11) % 41) - 20) / float(13 + tensor_index)",
+            "0": "real_value (kReal)",
+            "1": "abs(real_value) + 0.5F (kPositive)",
+            "quantization": "Generate in FP32, scatter by logical strides, then encode to each tensor dtype before the CPU oracle.",
+            "scope": "Domains used in this supplement; auxiliary input formulas are also stored per case."
+          },
+          "scope": "Eight exact FP32/FP16 core Slice cases; full CPU validation in three phases, unchanged inputs, original output strides and protected padding."
         }
       }
     },
@@ -1881,7 +1900,7 @@
       "reason": "NVIDIA bottleneck counters unavailable; repeated-buffer cases may be limited by cache, scheduling or operation-specific throughput."
     },
     "coverage": {
-      "case_count": 3634,
+      "case_count": 3642,
       "operator_count": 83,
       "case_counts": {
         "abs": 15,
@@ -1955,7 +1974,7 @@
         "sigmoid": 15,
         "sigmoid_backward": 15,
         "sin": 45,
-        "slice": 40,
+        "slice": 48,
         "softplus": 45,
         "softplus_backward": 90,
         "sqrt": 45,
@@ -1969,7 +1988,7 @@
         "conv_bias_relu": 36
       },
       "validation_counts": {
-        "cpu_full": 2076,
+        "cpu_full": 2084,
         "cpu_sampled": 289,
         "sanity": 1209,
         "bit_exact": 60
@@ -5634,7 +5653,15 @@
       "conv2d_fprop_fp32_ieee_direct_tail_1x2x1x33_by_1x2x1x3_ieee": {"op": "conv_fprop", "tensors": [{"uid": 61108, "role": "input", "semantic_role": "input_0", "dtype": "fp32", "shape": [1, 2, 1, 33], "strides": [66, 33, 33, 1], "native_strides": [66, 33, 33, 1], "reference_strides": [66, 33, 33, 1], "reference_shape": [1, 2, 1, 33], "reference_layout_conversion_timed": false, "reference_layout_conversion": false, "binding_byte_offset": 0, "storage_bytes": 264, "reference_storage_bytes": 264, "logical_elements": 66, "boolean_encoding": null, "virtual": false}, {"uid": 61109, "role": "input", "semantic_role": "input_1", "dtype": "fp32", "shape": [1, 2, 1, 3], "strides": [6, 3, 3, 1], "native_strides": [6, 3, 3, 1], "reference_strides": [6, 3, 3, 1], "reference_shape": [1, 2, 1, 3], "reference_layout_conversion_timed": false, "reference_layout_conversion": false, "binding_byte_offset": 0, "storage_bytes": 24, "reference_storage_bytes": 24, "logical_elements": 6, "boolean_encoding": null, "virtual": false}, {"uid": 61110, "role": "output", "semantic_role": "output_0", "dtype": "fp32", "shape": [1, 1, 1, 31], "strides": [31, 31, 31, 1], "native_strides": [31, 31, 31, 1], "reference_strides": [31, 31, 31, 1], "reference_shape": [1, 1, 1, 31], "reference_layout_conversion_timed": false, "reference_layout_conversion": false, "binding_byte_offset": 0, "storage_bytes": 124, "reference_storage_bytes": 124, "logical_elements": 31, "boolean_encoding": null, "virtual": false}], "attributes": {"convolution_spatial_rank": 2, "convolution_groups": 1, "convolution_mode": 0, "convolution_pre_padding": [0, 0], "convolution_post_padding": [0, 0], "convolution_stride": [1, 1], "convolution_dilation": [1, 1], "input_precision": 1, "reference_input_precision": 1, "reference_tf32_rounding": null}, "time_us": 2.36159995198, "scale_metric": null, "timing_profile": "native", "validation": "cpu_sampled", "measurement_id": "nvidia-hygon-ieee-20261021", "input_domain": 0, "input_domains": [0, 0], "output_count": 1},
       "conv2d_wgrad_fp32_nchw_symmetric_2x8x16x16_by_16x8x3x3_ieee": {"op": "conv_wgrad", "tensors": [{"uid": 63002, "role": "input", "semantic_role": "input_0", "dtype": "fp32", "shape": [2, 16, 16, 16], "strides": [4096, 256, 16, 1], "native_strides": [4096, 256, 16, 1], "reference_strides": [4096, 256, 16, 1], "reference_shape": [2, 16, 16, 16], "reference_layout_conversion_timed": false, "reference_layout_conversion": false, "binding_byte_offset": 0, "storage_bytes": 32768, "reference_storage_bytes": 32768, "logical_elements": 8192, "boolean_encoding": null, "virtual": false}, {"uid": 63000, "role": "input", "semantic_role": "input_1", "dtype": "fp32", "shape": [2, 8, 16, 16], "strides": [2048, 256, 16, 1], "native_strides": [2048, 256, 16, 1], "reference_strides": [2048, 256, 16, 1], "reference_shape": [2, 8, 16, 16], "reference_layout_conversion_timed": false, "reference_layout_conversion": false, "binding_byte_offset": 0, "storage_bytes": 16384, "reference_storage_bytes": 16384, "logical_elements": 4096, "boolean_encoding": null, "virtual": false}, {"uid": 63001, "role": "output", "semantic_role": "output_0", "dtype": "fp32", "shape": [16, 8, 3, 3], "strides": [72, 9, 3, 1], "native_strides": [72, 9, 3, 1], "reference_strides": [72, 9, 3, 1], "reference_shape": [16, 8, 3, 3], "reference_layout_conversion_timed": false, "reference_layout_conversion": false, "binding_byte_offset": 0, "storage_bytes": 4608, "reference_storage_bytes": 4608, "logical_elements": 1152, "boolean_encoding": null, "virtual": false}], "attributes": {"convolution_spatial_rank": 2, "convolution_groups": 1, "convolution_mode": 0, "convolution_pre_padding": [1, 1], "convolution_post_padding": [1, 1], "convolution_stride": [1, 1], "convolution_dilation": [1, 1], "input_precision": 1, "reference_input_precision": 1, "reference_tf32_rounding": null}, "time_us": 4.19328004122, "scale_metric": null, "timing_profile": "native", "validation": "cpu_sampled", "measurement_id": "nvidia-hygon-ieee-20261021", "input_domain": 0, "input_domains": [0, 0], "output_count": 1},
       "conv3d_wgrad_fp32_ncdhw_asymmetric_1x2x6x7x8_by_3x2x2x3x3_ieee": {"op": "conv_wgrad", "tensors": [{"uid": 63065, "role": "input", "semantic_role": "input_0", "dtype": "fp32", "shape": [1, 3, 6, 6, 9], "strides": [972, 324, 54, 9, 1], "native_strides": [972, 324, 54, 9, 1], "reference_strides": [972, 324, 54, 9, 1], "reference_shape": [1, 3, 6, 6, 9], "reference_layout_conversion_timed": false, "reference_layout_conversion": false, "binding_byte_offset": 0, "storage_bytes": 3888, "reference_storage_bytes": 3888, "logical_elements": 972, "boolean_encoding": null, "virtual": false}, {"uid": 63063, "role": "input", "semantic_role": "input_1", "dtype": "fp32", "shape": [1, 2, 6, 7, 8], "strides": [672, 336, 56, 8, 1], "native_strides": [672, 336, 56, 8, 1], "reference_strides": [672, 336, 56, 8, 1], "reference_shape": [1, 2, 6, 7, 8], "reference_layout_conversion_timed": false, "reference_layout_conversion": false, "binding_byte_offset": 0, "storage_bytes": 2688, "reference_storage_bytes": 2688, "logical_elements": 672, "boolean_encoding": null, "virtual": false}, {"uid": 63064, "role": "output", "semantic_role": "output_0", "dtype": "fp32", "shape": [3, 2, 2, 3, 3], "strides": [36, 18, 9, 3, 1], "native_strides": [36, 18, 9, 3, 1], "reference_strides": [36, 18, 9, 3, 1], "reference_shape": [3, 2, 2, 3, 3], "reference_layout_conversion_timed": false, "reference_layout_conversion": false, "binding_byte_offset": 0, "storage_bytes": 432, "reference_storage_bytes": 432, "logical_elements": 108, "boolean_encoding": null, "virtual": false}], "attributes": {"convolution_spatial_rank": 3, "convolution_groups": 1, "convolution_mode": 0, "convolution_pre_padding": [1, 0, 1], "convolution_post_padding": [0, 1, 2], "convolution_stride": [1, 1, 1], "convolution_dilation": [1, 1, 1], "input_precision": 1, "reference_input_precision": 1, "reference_tf32_rounding": null}, "time_us": 5.10847985744, "scale_metric": null, "timing_profile": "native", "validation": "cpu_sampled", "measurement_id": "nvidia-hygon-ieee-20261021", "input_domain": 0, "input_domains": [0, 0], "output_count": 1},
-      "conv3d_wgrad_fp32_ndhwc_pointwise_2x4x4x5x6_by_8x4x1x1x1_ieee": {"op": "conv_wgrad", "tensors": [{"uid": 63101, "role": "input", "semantic_role": "input_0", "dtype": "fp32", "shape": [2, 8, 4, 5, 6], "strides": [960, 1, 240, 48, 8], "native_strides": [960, 1, 240, 48, 8], "reference_strides": [960, 1, 240, 48, 8], "reference_shape": [2, 8, 4, 5, 6], "reference_layout_conversion_timed": false, "reference_layout_conversion": false, "binding_byte_offset": 0, "storage_bytes": 7680, "reference_storage_bytes": 7680, "logical_elements": 1920, "boolean_encoding": null, "virtual": false}, {"uid": 63099, "role": "input", "semantic_role": "input_1", "dtype": "fp32", "shape": [2, 4, 4, 5, 6], "strides": [480, 1, 120, 24, 4], "native_strides": [480, 1, 120, 24, 4], "reference_strides": [480, 1, 120, 24, 4], "reference_shape": [2, 4, 4, 5, 6], "reference_layout_conversion_timed": false, "reference_layout_conversion": false, "binding_byte_offset": 0, "storage_bytes": 3840, "reference_storage_bytes": 3840, "logical_elements": 960, "boolean_encoding": null, "virtual": false}, {"uid": 63100, "role": "output", "semantic_role": "output_0", "dtype": "fp32", "shape": [8, 4, 1, 1, 1], "strides": [4, 1, 4, 4, 4], "native_strides": [4, 1, 4, 4, 4], "reference_strides": [4, 1, 4, 4, 4], "reference_shape": [8, 4, 1, 1, 1], "reference_layout_conversion_timed": false, "reference_layout_conversion": false, "binding_byte_offset": 0, "storage_bytes": 128, "reference_storage_bytes": 128, "logical_elements": 32, "boolean_encoding": null, "virtual": false}], "attributes": {"convolution_spatial_rank": 3, "convolution_groups": 1, "convolution_mode": 0, "convolution_pre_padding": [0, 0, 0], "convolution_post_padding": [0, 0, 0], "convolution_stride": [1, 1, 1], "convolution_dilation": [1, 1, 1], "input_precision": 1, "reference_input_precision": 1, "reference_tf32_rounding": null}, "time_us": 6.61567986012, "scale_metric": null, "timing_profile": "native", "validation": "cpu_sampled", "measurement_id": "nvidia-hygon-ieee-20261021", "input_domain": 0, "input_domains": [0, 0], "output_count": 1}
+      "conv3d_wgrad_fp32_ndhwc_pointwise_2x4x4x5x6_by_8x4x1x1x1_ieee": {"op": "conv_wgrad", "tensors": [{"uid": 63101, "role": "input", "semantic_role": "input_0", "dtype": "fp32", "shape": [2, 8, 4, 5, 6], "strides": [960, 1, 240, 48, 8], "native_strides": [960, 1, 240, 48, 8], "reference_strides": [960, 1, 240, 48, 8], "reference_shape": [2, 8, 4, 5, 6], "reference_layout_conversion_timed": false, "reference_layout_conversion": false, "binding_byte_offset": 0, "storage_bytes": 7680, "reference_storage_bytes": 7680, "logical_elements": 1920, "boolean_encoding": null, "virtual": false}, {"uid": 63099, "role": "input", "semantic_role": "input_1", "dtype": "fp32", "shape": [2, 4, 4, 5, 6], "strides": [480, 1, 120, 24, 4], "native_strides": [480, 1, 120, 24, 4], "reference_strides": [480, 1, 120, 24, 4], "reference_shape": [2, 4, 4, 5, 6], "reference_layout_conversion_timed": false, "reference_layout_conversion": false, "binding_byte_offset": 0, "storage_bytes": 3840, "reference_storage_bytes": 3840, "logical_elements": 960, "boolean_encoding": null, "virtual": false}, {"uid": 63100, "role": "output", "semantic_role": "output_0", "dtype": "fp32", "shape": [8, 4, 1, 1, 1], "strides": [4, 1, 4, 4, 4], "native_strides": [4, 1, 4, 4, 4], "reference_strides": [4, 1, 4, 4, 4], "reference_shape": [8, 4, 1, 1, 1], "reference_layout_conversion_timed": false, "reference_layout_conversion": false, "binding_byte_offset": 0, "storage_bytes": 128, "reference_storage_bytes": 128, "logical_elements": 32, "boolean_encoding": null, "virtual": false}], "attributes": {"convolution_spatial_rank": 3, "convolution_groups": 1, "convolution_mode": 0, "convolution_pre_padding": [0, 0, 0], "convolution_post_padding": [0, 0, 0], "convolution_stride": [1, 1, 1], "convolution_dilation": [1, 1, 1], "input_precision": 1, "reference_input_precision": 1, "reference_tf32_rounding": null}, "time_us": 6.61567986012, "scale_metric": null, "timing_profile": "native", "validation": "cpu_sampled", "measurement_id": "nvidia-hygon-ieee-20261021", "input_domain": 0, "input_domains": [0, 0], "output_count": 1},
+      "slice_perf_fp32_case0_8x16x32": {"op": "slice", "tensors": [{"uid": 58000, "role": "input", "semantic_role": "input_0", "dtype": "fp32", "shape": [8, 16, 32], "strides": [512, 32, 1], "binding_byte_offset": 0}, {"uid": 58001, "role": "output", "semantic_role": "output_0", "dtype": "fp32", "shape": [8, 6, 32], "strides": [512, 64, 1], "binding_byte_offset": 0}], "time_us": 4.22847986221, "scale_metric": null, "timing_profile": "native", "validation": "cpu_full", "measurement_id": "nvidia-slice-20261103", "attributes": {"permutation": [], "slices": [[0, 8], [2, 14], [0, 32]], "slice_strides": [1, 2, 1]}, "input_domain": 0, "input_domains": [0], "output_count": 1, "input_generation": {"source": "backends/nvidia/validation/benchmark/runner.cpp::make_input", "domain_definitions": "measurement.supplemental_runs.nvidia-slice-20261103.input_domains"}},
+      "slice_perf_fp16_case0_8x16x32": {"op": "slice", "tensors": [{"uid": 58002, "role": "input", "semantic_role": "input_0", "dtype": "fp16", "shape": [8, 16, 32], "strides": [512, 32, 1], "binding_byte_offset": 0}, {"uid": 58003, "role": "output", "semantic_role": "output_0", "dtype": "fp16", "shape": [8, 6, 32], "strides": [512, 64, 1], "binding_byte_offset": 0}], "time_us": 4.23552006483, "scale_metric": null, "timing_profile": "native", "validation": "cpu_full", "measurement_id": "nvidia-slice-20261103", "attributes": {"permutation": [], "slices": [[0, 8], [2, 14], [0, 32]], "slice_strides": [1, 2, 1]}, "input_domain": 0, "input_domains": [0], "output_count": 1, "input_generation": {"source": "backends/nvidia/validation/benchmark/runner.cpp::make_input", "domain_definitions": "measurement.supplemental_runs.nvidia-slice-20261103.input_domains"}},
+      "slice_perf_fp32_case1_16x64x128": {"op": "slice", "tensors": [{"uid": 58006, "role": "input", "semantic_role": "input_0", "dtype": "fp32", "shape": [16, 64, 128], "strides": [8192, 128, 1], "binding_byte_offset": 0}, {"uid": 58007, "role": "output", "semantic_role": "output_0", "dtype": "fp32", "shape": [14, 32, 28], "strides": [8192, 256, 4], "binding_byte_offset": 0}], "time_us": 4.46399986744, "scale_metric": null, "timing_profile": "native", "validation": "cpu_full", "measurement_id": "nvidia-slice-20261103", "attributes": {"permutation": [], "slices": [[1, 15], [0, 64], [8, 120]], "slice_strides": [1, 2, 4]}, "input_domain": 0, "input_domains": [0], "output_count": 1, "input_generation": {"source": "backends/nvidia/validation/benchmark/runner.cpp::make_input", "domain_definitions": "measurement.supplemental_runs.nvidia-slice-20261103.input_domains"}},
+      "slice_perf_fp16_case1_16x64x128": {"op": "slice", "tensors": [{"uid": 58008, "role": "input", "semantic_role": "input_0", "dtype": "fp16", "shape": [16, 64, 128], "strides": [8192, 128, 1], "binding_byte_offset": 0}, {"uid": 58009, "role": "output", "semantic_role": "output_0", "dtype": "fp16", "shape": [14, 32, 28], "strides": [8192, 256, 4], "binding_byte_offset": 0}], "time_us": 4.44223999977, "scale_metric": null, "timing_profile": "native", "validation": "cpu_full", "measurement_id": "nvidia-slice-20261103", "attributes": {"permutation": [], "slices": [[1, 15], [0, 64], [8, 120]], "slice_strides": [1, 2, 4]}, "input_domain": 0, "input_domains": [0], "output_count": 1, "input_generation": {"source": "backends/nvidia/validation/benchmark/runner.cpp::make_input", "domain_definitions": "measurement.supplemental_runs.nvidia-slice-20261103.input_domains"}},
+      "slice_perf_fp32_case2_32x128x256": {"op": "slice", "tensors": [{"uid": 58012, "role": "input", "semantic_role": "input_0", "dtype": "fp32", "shape": [32, 128, 256], "strides": [32768, 256, 1], "binding_byte_offset": 0}, {"uid": 58013, "role": "output", "semantic_role": "output_0", "dtype": "fp32", "shape": [32, 40, 112], "strides": [32768, 768, 2], "binding_byte_offset": 0}], "time_us": 12.5215995312, "scale_metric": null, "timing_profile": "native", "validation": "cpu_full", "measurement_id": "nvidia-slice-20261103", "attributes": {"permutation": [], "slices": [[0, 32], [4, 124], [16, 240]], "slice_strides": [1, 3, 2]}, "input_domain": 0, "input_domains": [0], "output_count": 1, "input_generation": {"source": "backends/nvidia/validation/benchmark/runner.cpp::make_input", "domain_definitions": "measurement.supplemental_runs.nvidia-slice-20261103.input_domains"}},
+      "slice_perf_fp16_case2_32x128x256": {"op": "slice", "tensors": [{"uid": 58014, "role": "input", "semantic_role": "input_0", "dtype": "fp16", "shape": [32, 128, 256], "strides": [32768, 256, 1], "binding_byte_offset": 0}, {"uid": 58015, "role": "output", "semantic_role": "output_0", "dtype": "fp16", "shape": [32, 40, 112], "strides": [32768, 768, 2], "binding_byte_offset": 0}], "time_us": 11.8560004234, "scale_metric": null, "timing_profile": "native", "validation": "cpu_full", "measurement_id": "nvidia-slice-20261103", "attributes": {"permutation": [], "slices": [[0, 32], [4, 124], [16, 240]], "slice_strides": [1, 3, 2]}, "input_domain": 0, "input_domains": [0], "output_count": 1, "input_generation": {"source": "backends/nvidia/validation/benchmark/runner.cpp::make_input", "domain_definitions": "measurement.supplemental_runs.nvidia-slice-20261103.input_domains"}},
+      "slice_perf_fp32_case3_4x64x128x32": {"op": "slice", "tensors": [{"uid": 58018, "role": "input", "semantic_role": "input_0", "dtype": "fp32", "shape": [4, 64, 128, 32], "strides": [262144, 4096, 32, 1], "binding_byte_offset": 0}, {"uid": 58019, "role": "output", "semantic_role": "output_0", "dtype": "fp32", "shape": [4, 24, 128, 12], "strides": [262144, 8192, 32, 2], "binding_byte_offset": 0}], "time_us": 13.3427202702, "scale_metric": null, "timing_profile": "native", "validation": "cpu_full", "measurement_id": "nvidia-slice-20261103", "attributes": {"permutation": [], "slices": [[0, 4], [8, 56], [0, 128], [4, 28]], "slice_strides": [1, 2, 1, 2]}, "input_domain": 0, "input_domains": [0], "output_count": 1, "input_generation": {"source": "backends/nvidia/validation/benchmark/runner.cpp::make_input", "domain_definitions": "measurement.supplemental_runs.nvidia-slice-20261103.input_domains"}},
+      "slice_perf_fp16_case3_4x64x128x32": {"op": "slice", "tensors": [{"uid": 58020, "role": "input", "semantic_role": "input_0", "dtype": "fp16", "shape": [4, 64, 128, 32], "strides": [262144, 4096, 32, 1], "binding_byte_offset": 0}, {"uid": 58021, "role": "output", "semantic_role": "output_0", "dtype": "fp16", "shape": [4, 24, 128, 12], "strides": [262144, 8192, 32, 2], "binding_byte_offset": 0}], "time_us": 12.1222400665, "scale_metric": null, "timing_profile": "native", "validation": "cpu_full", "measurement_id": "nvidia-slice-20261103", "attributes": {"permutation": [], "slices": [[0, 4], [8, 56], [0, 128], [4, 28]], "slice_strides": [1, 2, 1, 2]}, "input_domain": 0, "input_domains": [0], "output_count": 1, "input_generation": {"source": "backends/nvidia/validation/benchmark/runner.cpp::make_input", "domain_definitions": "measurement.supplemental_runs.nvidia-slice-20261103.input_domains"}}
     },
     "unavailable_cases": {
       "concatenate_int32_1_axis0": {"op": "concatenate", "status": "excluded", "reason": "cudnnTransformTensor(original concatenate dtype) failed: CUDNN_STATUS_NOT_SUPPORTED; original-dtype graph concatenate also has no supported engine", "stage": "input_preparation", "measurement_id": "nvidia-supplement-20261015", "measurement_status": "execution_failed", "catalog_status": "removed_from_shared_cases", "catalog_policy": "docs/equivalent-performance-baseline.md"},
@@ -10880,6 +10907,77 @@
       "timing_profile": "native",
       "scope": "71 exact default FP32 Hygon matrix/convolution/CBR cases; TF32 disabled. Original shared automatic-precision records preserved. 1D Wgrad uses original rank-3 descriptors and engine0, with all30720outputs validated against publicCPU before/after/fresh replay.",
       "reference_cases_path": "platforms.hygon.ieee_reference_cases"
+    },
+    "nvidia-slice-20261103": {
+      "schema_version": 1,
+      "measurement_id": "nvidia-slice-20261103",
+      "measured_on": "2026-11-03",
+      "source_revision": "b7cb2816b0faa51b4a9ed7b664621699a418adc2",
+      "source_state": "Clean tracked sources at collection; collector restored from 3520009cefbfb735751b6bb99b28f57a467aa441 with include paths relocated into the ignored evidence directory.",
+      "device": "name, uuid, driver_version, memory.total [MiB], power.limit [W]\nNVIDIA H100 80GB HBM3, GPU-76b5aa92-c226-23f4-b17a-6ed32a0dab15, 535.183.06, 81559 MiB, 700.00 W\n",
+      "software": {
+        "cuda_driver_api": 12090,
+        "cuda_runtime_api": 12090,
+        "cudnn_runtime": 92400
+      },
+      "counts": {
+        "requested": 8,
+        "passed": 8,
+        "added_references": 8
+      },
+      "validation": {
+        "scope": "cpu_full",
+        "phases": [
+          "before_timing",
+          "after_timing",
+          "after_reset_graph_replay"
+        ],
+        "input_integrity": true,
+        "output_padding_and_guards": true,
+        "complete_write": true
+      },
+      "timing": {
+        "method": "cuda_events_over_cuda_graph",
+        "warmup_iterations": 10,
+        "sample_count": 20,
+        "iterations_per_sample": 50,
+        "graph_warmup_replays": 1,
+        "statistic": "nearest_rank_p50"
+      },
+      "added_case_counts": {
+        "slice": 8
+      },
+      "local_evidence_directory": "build/nvidia/slice-baseline-20261103",
+      "raw_evidence": {
+        "samples.jsonl": "e73cdb449ef81de9eb3b487cb72fd451b02e290697e1f0df385ab7adb52c2db1",
+        "measurement.log": "63f897e407e5279b24ad359ffcd3078d779a87291b40bcbd06480abb128a9763",
+        "requested.txt": "8b3d6de77739e29a7b9ed0fc943b79a6544000fad22c8d500fe434282fb1be85",
+        "device.txt": "79ef2da9b16d1e3045c6895294ce01cec8e1f9680f11d3be405d0f5121de32ef",
+        "command.json": "a7d74c94516d02a47a6a8bd07edc7e84b78114ff5c2191c350852fd197733fd1",
+        "build_collector.sh": "f6102bc207dba7c1cd25c2bfda966a4fadcb9200445af72281483cd98584a3ee",
+        "import_results.py": "a97e477a444c39ff0696855c5c0da852299adf3d2488e8ef454f24942f3f0bcf",
+        "preserve_format.py": "8ed5567c7a780abdc8fc87fac134a8809c4702e8c9a6dcd0bbbd0d51e29e16e2"
+      },
+      "collector_binary_sha256": "35e806119ed400a930f36f36446ce646370d756602bfb028d4b3678d7de0135d",
+      "source_sha256": {
+        "benchmark/common/slice_cases.cpp": "5ccd1c25480a07999d6b76097d400fd23447da3bb4c7aa5c7cc59d9799a99c19",
+        "benchmark/common/case.hpp": "2e1d96ae8aa5c270b8491381ae33f6cfe1f8d2cad62501451ab872a77bc5dcc2",
+        "benchmark/test_slice.cpp": "0d1d999261129dd7cf1a878ae2595190a8d8d80e42066f3920b3b75fc7c6b379",
+        "backends/nvidia/validation/benchmark/runner.cpp": "069f6f837d4f1ba40f7ecdab808b3fc69c40d29dc8930dd2e82f50cffac9c679",
+        "backends/nvidia/validation/benchmark/slice.cpp": "d9651e6b79547fe0a5007163c4a6ad4c56842e92de9252e16c4b9c41c179cad7",
+        "backends/nvidia/validation/benchmark/layout_reference.hpp": "3e3b6e2553a5f32c1447cc754a19b3175eff2603f15814a51235a469f519e5eb",
+        "backends/nvidia/validation/benchmark/cudnn_provider.cpp": "c6713632d6958eee80a1fd9de2da9334e530a8456d8be141bc0d21ddf7d06e55",
+        "backends/nvidia/validation/benchmark/cases.hpp": "52d9f4da3c4f413cf7875ac55eedcf6e9f374361460de213814d415a3b836c1a",
+        "reference/cpu/benchmark.cpp": "e89ac7c06f9b4e2f413e1287258d483f7bf27211491c2bf47e215e2944bab090",
+        "reference/cpu/layout.cpp": "eb5a1b4537c7245afe38ca6833df3d15c244c195a423bc081358238b8be70f14",
+        "collector/benchmark_nvidia_core_catalog.hpp": "51fec9f74dbc756add96d133c1909f0eafdf4f547c85309633f7b2aa95742808",
+        "collector/benchmark_nvidia_core_validation.hpp": "b6bc2baf336e99f61d4b7aacf5bb476d291e4891ea2333167554ed9dda14fbc3",
+        "collector/benchmark_nvidia_sampled_reference.hpp": "a40813c8a4af15ea7cf76ceccae3b925cd3dc3424a83da8afafdf6194bec65cb",
+        "collector/check_benchmark_nvidia_core_validation.cpp": "35d5addca1bd1686454376a64334159228f311e30b6bb41720a84197a328a3e7",
+        "collector/check_benchmark_nvidia_sampled_reference.cpp": "133532e58f45edd6cd68613925a035a430bf49ada3f0e781a547adf3777b47ab",
+        "collector/benchmark_nvidia_cudnn.cpp": "9615e4fd672fc8a7f15abbfced822b2347d7f981a33fcb8928021c67c569fd14"
+      },
+      "scope": "Adds eight shared reference records. Historical timings, device peaks, scaling policies and thresholds are unchanged."
     }
   }
 }

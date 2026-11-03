@@ -487,10 +487,20 @@ void supplemental_inputs(const BenchmarkCase& spec, const Value& entry,
                          const std::vector<InputDomain>& domains) {
   const auto id = entry.at("measurement_id").as_string();
   const bool historical = id == "nvidia-missing-20261012";
-  require(historical || id == "nvidia-iluvatar-20261019",
+  const bool slice_supplement = id == "nvidia-slice-20261103";
+  require(historical || id == "nvidia-iluvatar-20261019" || slice_supplement,
           "supplemental measurement identity differs");
+  if (slice_supplement) {
+    require(spec.operation == Operation::kSlice &&
+                (spec.tensors.front().data_type == FLAGDNN_DATA_FLOAT32 ||
+                 spec.tensors.front().data_type == FLAGDNN_DATA_FLOAT16) &&
+                entry.at("validation").as_string() == "cpu_full" &&
+                entry.at("timing_profile").as_string() == "native",
+            "Slice supplement scope differs");
+  }
   const auto& run = measurement.at("supplemental_runs").at(id);
-  require(run.at("case_count").as_int() == (historical ? 371 : 94) &&
+  require(run.at("case_count").as_int() ==
+                  (historical ? 371 : slice_supplement ? 8 : 94) &&
               !run.at("source_revision").as_string().empty() &&
               !run.at("manifest").as_string().empty(),
           "supplemental provenance is incomplete");
