@@ -347,20 +347,10 @@ _flagdnn_validation_object_id("${_flagdnn_validation_runtime}"
   "${_flagdnn_validation_runtime_sha256}"
   _flagdnn_validation_runtime_build_id)
 
-set(_flagdnn_validation_install_info
-  "${_flagdnn_validation_arch_root}/ascend_toolkit_install.info")
-if(NOT EXISTS "${_flagdnn_validation_install_info}")
-  message(FATAL_ERROR "Ascend validation cannot find CANN install metadata")
-endif()
-file(STRINGS "${_flagdnn_validation_install_info}"
-  _flagdnn_validation_version_line REGEX "^version=")
-list(LENGTH _flagdnn_validation_version_line
-  _flagdnn_validation_version_count)
-if(NOT _flagdnn_validation_version_count EQUAL 1)
-  message(FATAL_ERROR "CANN install metadata has no unique version entry")
-endif()
-string(REGEX REPLACE "^version=" "" _flagdnn_validation_cann_version
-  "${_flagdnn_validation_version_line}")
+# Validation is configured in a sibling directory of the production backend.
+# Reuse its resolver so both paths validate the same CANN installation formats.
+flagdnn_ascend_prepare_triton_jit("${CANN_ROOT}")
+set(_flagdnn_validation_cann_version "${FLAGDNN_ASCEND_CANN_VERSION}")
 
 if(NOT TARGET flagdnn_validation_cpu_reference)
   add_subdirectory("${PROJECT_SOURCE_DIR}/reference/cpu"

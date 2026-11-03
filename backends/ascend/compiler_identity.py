@@ -409,10 +409,15 @@ def _configured_external_files() -> dict[str, dict[str, Any]]:
             architecture_names.extend(["aarch64-linux", "arm64-linux"])
         elif architecture in {"x86_64", "amd64"}:
             architecture_names.extend(["x86_64-linux"])
+        install_info_names = (
+            "ascend_toolkit_install.info",
+            "ascend_all_cann_install.info",
+        )
         candidates: dict[str, list[Path]] = {
             "cann_package_info": [
-                ascend_home / name / "ascend_toolkit_install.info"
+                ascend_home / name / filename
                 for name in architecture_names
+                for filename in install_info_names
             ],
             "libascendcl": [
                 ascend_home / name / "lib64" / "libascendcl.so"
@@ -423,8 +428,8 @@ def _configured_external_files() -> dict[str, dict[str, Any]]:
                 for name in architecture_names
             ],
         }
-        candidates["cann_package_info"].append(
-            ascend_home / "ascend_toolkit_install.info"
+        candidates["cann_package_info"].extend(
+            ascend_home / filename for filename in install_info_names
         )
         candidates["libascendcl"].append(ascend_home / "lib64/libascendcl.so")
         candidates["libruntime"].append(ascend_home / "lib64/libruntime.so")

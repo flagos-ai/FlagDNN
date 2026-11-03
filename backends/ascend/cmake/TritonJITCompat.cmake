@@ -51,7 +51,9 @@ function(flagdnn_ascend_prepare_triton_jit CANN_ROOT_PATH)
   set(install_info_candidates)
   foreach(candidate IN ITEMS
       "${CANN_ROOT_PATH}/${ascend_arch_directory}/ascend_toolkit_install.info"
-      "${canonical_cann_root}/${ascend_arch_directory}/ascend_toolkit_install.info")
+      "${canonical_cann_root}/${ascend_arch_directory}/ascend_toolkit_install.info"
+      "${CANN_ROOT_PATH}/${ascend_arch_directory}/ascend_all_cann_install.info"
+      "${canonical_cann_root}/${ascend_arch_directory}/ascend_all_cann_install.info")
     if(EXISTS "${candidate}")
       file(REAL_PATH "${candidate}" canonical_candidate)
       list(APPEND install_info_candidates "${canonical_candidate}")
@@ -61,14 +63,13 @@ function(flagdnn_ascend_prepare_triton_jit CANN_ROOT_PATH)
   list(LENGTH install_info_candidates install_info_count)
   if(install_info_count EQUAL 0)
     message(FATAL_ERROR
-      "No ${ascend_arch_directory}/ascend_toolkit_install.info found below "
-      "CANN_ROOT=${CANN_ROOT_PATH}")
+      "No ascend_toolkit_install.info or ascend_all_cann_install.info found "
+      "below CANN_ROOT=${CANN_ROOT_PATH} (expected ${ascend_arch_directory})")
   endif()
 
   set(cann_version "")
   set(cann_inner_version "")
   set(cann_package_arch "")
-  set(cann_package_name "")
   foreach(install_info IN LISTS install_info_candidates)
     file(STRINGS "${install_info}" install_info_lines)
     foreach(key IN ITEMS package_name version innerversion arch)
@@ -91,24 +92,24 @@ function(flagdnn_ascend_prepare_triton_jit CANN_ROOT_PATH)
         set(candidate_arch "${value}")
       endif()
     endforeach()
+    # Toolkit and combined CANN installers use distinct package names.
+    if(NOT candidate_package_name STREQUAL "Ascend-cann-toolkit" AND
+       NOT candidate_package_name STREQUAL "Ascend-cann")
+      message(FATAL_ERROR
+        "${install_info} has unexpected package_name=${candidate_package_name}")
+    endif()
     if(cann_version AND
        (NOT cann_version STREQUAL candidate_version OR
         NOT cann_inner_version STREQUAL candidate_inner_version OR
-        NOT cann_package_arch STREQUAL candidate_arch OR
-        NOT cann_package_name STREQUAL candidate_package_name))
+        NOT cann_package_arch STREQUAL candidate_arch))
       message(FATAL_ERROR
         "CANN install metadata candidates disagree under ${CANN_ROOT_PATH}")
     endif()
     set(cann_version "${candidate_version}")
     set(cann_inner_version "${candidate_inner_version}")
     set(cann_package_arch "${candidate_arch}")
-    set(cann_package_name "${candidate_package_name}")
   endforeach()
 
-  if(NOT cann_package_name STREQUAL "Ascend-cann-toolkit")
-    message(FATAL_ERROR
-      "CANN install metadata has unexpected package_name=${cann_package_name}")
-  endif()
   if(cann_version VERSION_LESS "9.0" OR
      NOT cann_version VERSION_LESS "10.0")
     message(FATAL_ERROR
