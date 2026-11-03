@@ -26,8 +26,7 @@ class AcdnnRawCopySegment final : public AcdnnGraphReference {
                       flagdnn::testing::TestTensor output,
                       std::size_t input_base = 0)
       : input_uid_(input.uid), input_base_(input_base) {
-    if (!requires_raw_copy(input.data_type) ||
-        output.data_type != input.data_type ||
+    if (output.data_type != input.data_type ||
         input.dimensions != output.dimensions || input.uid == output.uid)
       throw std::invalid_argument("acDNN raw copy tensor mismatch");
     const auto width = element_size(input.data_type);
@@ -82,8 +81,9 @@ class AcdnnRawCopySegment final : public AcdnnGraphReference {
   std::int64_t input_uid_;
   std::size_t input_base_;
 };
-// SDK 1400 INT8 identity requires matching packed descriptors. Map the
-// copy into maximal contiguous byte spans; each span uses that SDK primitive.
+// General layout copies use matching packed descriptors to satisfy SDK
+// 1400 INT8 mapping restrictions. Slice with matching strided views uses
+// a single AcdnnRawCopySegment below instead of these contiguous spans.
 class AcdnnRawCopy final : public flagdnn::testing::TestExecutable {
  public:
   AcdnnRawCopy(const flagdnn::testing::TestTensor& input,
@@ -186,6 +186,15 @@ make_acdnn_raw_layout_reference(const flagdnn::testing::LayoutTestCase& test) {
       input.strides[i] *=
           test.slice_strides.empty() ? 1 : test.slice_strides[i];
     }
+  }
+  if (test.operation == LayoutOperation::kSlice) {
+    // Slice preserves payload bits, including FP16/BF16 NaNs. Map the
+    // selected elements to one strided INT8 identity instead of launching
+    // a packed copy for every element. Both sides keep the same layout.
+    if (input.strides != output.strides)
+      throw std::invalid_argument(
+          "acDNN batched raw Slice requires matching input/output strides");
+    return std::make_unique<AcdnnRawCopySegment>(input, output, base);
   }
   return std::make_unique<AcdnnRawCopy>(input, output, base);
 }

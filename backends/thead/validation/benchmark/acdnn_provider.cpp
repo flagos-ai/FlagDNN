@@ -634,8 +634,11 @@ CapabilityRecord layout_capability(std::string_view operation,
   const bool converted_bfloat16_transpose =
       test_case.input.data_type == FLAGDNN_DATA_BFLOAT16 &&
       transpose;
-  const bool backend = test_case.input.data_type != FLAGDNN_DATA_FLOAT32 &&
-                       !transpose;
+  // Slice uses one strided identity mapping, including FP32. A transform
+  // per selected element measures launch overhead rather than Slice work.
+  const bool backend = operation == "slice" ||
+                       (test_case.input.data_type != FLAGDNN_DATA_FLOAT32 &&
+                        !transpose);
   result.path = (backend || converted_bfloat16_transpose)
                     ? ReferencePath::kBackendDescriptor
                     : ReferencePath::kStablePrimitive;

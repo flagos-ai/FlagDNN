@@ -186,8 +186,9 @@ int run_layout_functional_test(int argc, char **argv,
       production_outputs.push_back(
           functional::make_output_buffer(test_case.output, stream.get()));
       TestTensor reference_output = test_case.output;
-      reference_output.strides =
-          contiguous_strides(reference_output.dimensions);
+      if (test_case.operation != LayoutOperation::kSlice)
+        reference_output.strides =
+            contiguous_strides(reference_output.dimensions);
       std::vector<functional::BoundTensor> reference_outputs;
       reference_outputs.push_back(
           functional::make_output_buffer(reference_output, stream.get()));

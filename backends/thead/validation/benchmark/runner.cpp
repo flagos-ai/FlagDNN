@@ -869,14 +869,13 @@ void run_case(const BenchmarkCase &specification,
       flagdnn_provider.build(specification);
   std::unique_ptr<BenchmarkExecutable> reference =
       acdnn_provider.build(specification);
-  const bool is_layout =
+  const bool dense_reference_output =
       specification.operation == Operation::kReshape ||
-      specification.operation == Operation::kTranspose ||
-      specification.operation == Operation::kSlice;
+      specification.operation == Operation::kTranspose;
   PreparedBuffers production_buffers =
       prepare_buffers(specification, stream);
   PreparedBuffers reference_buffers =
-      prepare_buffers(specification, stream, is_layout);
+      prepare_buffers(specification, stream, dense_reference_output);
   tv::DeviceBuffer production_workspace(production->workspace_size());
   tv::DeviceBuffer reference_workspace(reference->workspace_size());
   production->prepare(production_buffers.bindings, stream.opaque());

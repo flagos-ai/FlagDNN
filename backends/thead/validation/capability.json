@@ -82174,7 +82174,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bfloat16_case10_4x8x65": {
           "status": "supported",
@@ -82210,7 +82210,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bfloat16_case11_2x4x8x16": {
           "status": "supported",
@@ -82246,7 +82246,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bfloat16_case1_4x6x8": {
           "status": "supported",
@@ -82282,7 +82282,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bfloat16_case2_3x5x7x2": {
           "status": "supported",
@@ -82318,7 +82318,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bfloat16_case3_1": {
           "status": "supported",
@@ -82354,7 +82354,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bfloat16_case4_17": {
           "status": "supported",
@@ -82390,7 +82390,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bfloat16_case5_3x7": {
           "status": "supported",
@@ -82426,7 +82426,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bfloat16_case6_2x3x9": {
           "status": "supported",
@@ -82462,7 +82462,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bfloat16_case7_1x8x16": {
           "status": "supported",
@@ -82498,7 +82498,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bfloat16_case8_3x5x7": {
           "status": "supported",
@@ -82534,7 +82534,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bfloat16_case9_2x16x31": {
           "status": "supported",
@@ -82570,7 +82570,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp16_case0_2x4x5": {
           "status": "supported",
@@ -82606,7 +82606,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp16_case10_4x8x65": {
           "status": "supported",
@@ -82642,7 +82642,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp16_case11_2x4x8x16": {
           "status": "supported",
@@ -82678,7 +82678,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp16_case1_4x6x8": {
           "status": "supported",
@@ -82714,7 +82714,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp16_case2_3x5x7x2": {
           "status": "supported",
@@ -82750,7 +82750,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp16_case3_1": {
           "status": "supported",
@@ -82786,7 +82786,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp16_case4_17": {
           "status": "supported",
@@ -82822,7 +82822,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp16_case5_3x7": {
           "status": "supported",
@@ -82858,7 +82858,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp16_case6_2x3x9": {
           "status": "supported",
@@ -82894,7 +82894,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp16_case7_1x8x16": {
           "status": "supported",
@@ -82930,7 +82930,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp16_case8_3x5x7": {
           "status": "supported",
@@ -82966,7 +82966,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp16_case9_2x16x31": {
           "status": "supported",
@@ -83002,13 +83002,13 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp32_case0_2x4x5": {
           "status": "supported",
-          "path": "stable_primitive",
+          "path": "backend_descriptor",
           "reference_plan": [
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)"
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)"
           ],
           "constraints": {
             "dtypes": [
@@ -83038,13 +83038,13 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp32_case10_4x8x65": {
           "status": "supported",
-          "path": "stable_primitive",
+          "path": "backend_descriptor",
           "reference_plan": [
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)"
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)"
           ],
           "constraints": {
             "dtypes": [
@@ -83074,13 +83074,13 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp32_case11_2x4x8x16": {
           "status": "supported",
-          "path": "stable_primitive",
+          "path": "backend_descriptor",
           "reference_plan": [
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)"
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)"
           ],
           "constraints": {
             "dtypes": [
@@ -83110,13 +83110,13 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp32_case1_4x6x8": {
           "status": "supported",
-          "path": "stable_primitive",
+          "path": "backend_descriptor",
           "reference_plan": [
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)"
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)"
           ],
           "constraints": {
             "dtypes": [
@@ -83146,13 +83146,13 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp32_case2_3x5x7x2": {
           "status": "supported",
-          "path": "stable_primitive",
+          "path": "backend_descriptor",
           "reference_plan": [
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)"
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)"
           ],
           "constraints": {
             "dtypes": [
@@ -83182,13 +83182,13 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp32_case3_1": {
           "status": "supported",
-          "path": "stable_primitive",
+          "path": "backend_descriptor",
           "reference_plan": [
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)"
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)"
           ],
           "constraints": {
             "dtypes": [
@@ -83218,13 +83218,13 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp32_case4_17": {
           "status": "supported",
-          "path": "stable_primitive",
+          "path": "backend_descriptor",
           "reference_plan": [
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)"
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)"
           ],
           "constraints": {
             "dtypes": [
@@ -83254,13 +83254,13 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp32_case5_3x7": {
           "status": "supported",
-          "path": "stable_primitive",
+          "path": "backend_descriptor",
           "reference_plan": [
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)"
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)"
           ],
           "constraints": {
             "dtypes": [
@@ -83290,13 +83290,13 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp32_case6_2x3x9": {
           "status": "supported",
-          "path": "stable_primitive",
+          "path": "backend_descriptor",
           "reference_plan": [
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)"
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)"
           ],
           "constraints": {
             "dtypes": [
@@ -83326,13 +83326,13 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp32_case7_1x8x16": {
           "status": "supported",
-          "path": "stable_primitive",
+          "path": "backend_descriptor",
           "reference_plan": [
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)"
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)"
           ],
           "constraints": {
             "dtypes": [
@@ -83362,13 +83362,13 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp32_case8_3x5x7": {
           "status": "supported",
-          "path": "stable_primitive",
+          "path": "backend_descriptor",
           "reference_plan": [
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)"
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)"
           ],
           "constraints": {
             "dtypes": [
@@ -83398,13 +83398,13 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_fp32_case9_2x16x31": {
           "status": "supported",
-          "path": "stable_primitive",
+          "path": "backend_descriptor",
           "reference_plan": [
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)"
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)"
           ],
           "constraints": {
             "dtypes": [
@@ -83434,14 +83434,14 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bool_case0_2x4x5": {
           "status": "supported",
           "path": "backend_descriptor",
           "reference_plan": [
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-input0-fp32)",
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)",
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output-bool)"
           ],
           "constraints": {
@@ -83472,14 +83472,14 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bool_case10_4x8x65": {
           "status": "supported",
           "path": "backend_descriptor",
           "reference_plan": [
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-input0-fp32)",
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)",
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output-bool)"
           ],
           "constraints": {
@@ -83510,14 +83510,14 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bool_case11_2x4x8x16": {
           "status": "supported",
           "path": "backend_descriptor",
           "reference_plan": [
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-input0-fp32)",
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)",
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output-bool)"
           ],
           "constraints": {
@@ -83548,14 +83548,14 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bool_case1_4x6x8": {
           "status": "supported",
           "path": "backend_descriptor",
           "reference_plan": [
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-input0-fp32)",
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)",
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output-bool)"
           ],
           "constraints": {
@@ -83586,14 +83586,14 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bool_case2_3x5x7x2": {
           "status": "supported",
           "path": "backend_descriptor",
           "reference_plan": [
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-input0-fp32)",
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)",
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output-bool)"
           ],
           "constraints": {
@@ -83624,14 +83624,14 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bool_case3_1": {
           "status": "supported",
           "path": "backend_descriptor",
           "reference_plan": [
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-input0-fp32)",
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)",
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output-bool)"
           ],
           "constraints": {
@@ -83662,14 +83662,14 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bool_case4_17": {
           "status": "supported",
           "path": "backend_descriptor",
           "reference_plan": [
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-input0-fp32)",
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)",
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output-bool)"
           ],
           "constraints": {
@@ -83700,14 +83700,14 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bool_case5_3x7": {
           "status": "supported",
           "path": "backend_descriptor",
           "reference_plan": [
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-input0-fp32)",
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)",
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output-bool)"
           ],
           "constraints": {
@@ -83738,14 +83738,14 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bool_case6_2x3x9": {
           "status": "supported",
           "path": "backend_descriptor",
           "reference_plan": [
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-input0-fp32)",
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)",
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output-bool)"
           ],
           "constraints": {
@@ -83776,14 +83776,14 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bool_case7_1x8x16": {
           "status": "supported",
           "path": "backend_descriptor",
           "reference_plan": [
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-input0-fp32)",
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)",
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output-bool)"
           ],
           "constraints": {
@@ -83814,14 +83814,14 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bool_case8_3x5x7": {
           "status": "supported",
           "path": "backend_descriptor",
           "reference_plan": [
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-input0-fp32)",
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)",
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output-bool)"
           ],
           "constraints": {
@@ -83852,14 +83852,14 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         },
         "slice_bool_case9_2x16x31": {
           "status": "supported",
           "path": "backend_descriptor",
           "reference_plan": [
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-input0-fp32)",
-            "acdnnTransformTensor(slice-segments,alpha=1,beta=0)",
+            "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)",
             "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output-bool)"
           ],
           "constraints": {
@@ -83890,7 +83890,7 @@
             }
           },
           "reason_code": "",
-          "detail": "Public case numerical comparison qualified on PPU ZW810E with PPU SDK 2.1.0-a5f865 against acDNN runtime 1400 on 2026-09-18; the full benchmark catalog was separately qualified with serial paired timing."
+          "detail": "Batched acDNN layout mapping with production output strides qualified on PPU ZW810E, SDK 2.1.0-a5f865, runtime 1400 on 2026-11-03; all 48 functional cases passed."
         }
       }
     },

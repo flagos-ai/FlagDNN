@@ -925,12 +925,14 @@ void run_catalog_contract(const std::string &catalog_path,
           {"transpose", "transpose_fp32_2x3x4",
            "acdnnTransformTensor(permuted-stride,alpha=1,beta=0)"},
           {"slice", "slice_fp32_case0_2x4x5",
-           "acdnnTransformTensor(slice-segments,alpha=1,beta=0)"},
+           "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)"},
       }};
   for (const auto &[operation, case_name, primitive] : layout_slices) {
     const CapabilityRecord &record = catalog.lookup(operation, case_name);
-    if (!executable(record) ||
-        record.path != ReferencePath::kStablePrimitive ||
+    const auto expected_path = operation == "slice"
+                                   ? ReferencePath::kBackendDescriptor
+                                   : ReferencePath::kStablePrimitive;
+    if (!executable(record) || record.path != expected_path ||
         record.reference_plan !=
             std::vector<std::string>{std::string(primitive)} ||
         !record.constraints.has_value() ||
@@ -938,6 +940,20 @@ void run_catalog_contract(const std::string &catalog_path,
       throw std::runtime_error(std::string(operation) +
                                " Layout capability slice mismatch");
     }
+  }
+  for (const auto &[name, record] : catalog.records().at("slice")) {
+    if (record.status == CapabilityStatus::kUnsupported) continue;
+    std::vector<std::string> expected_plan = {
+        "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,layout-map)"};
+    if (name.starts_with("slice_bool_")) {
+      expected_plan.insert(expected_plan.begin(),
+          "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-input0-fp32)");
+      expected_plan.push_back(
+          "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output-bool)");
+    }
+    if (record.path != ReferencePath::kBackendDescriptor ||
+        record.reference_plan != expected_plan)
+      throw std::runtime_error("Slice must use the batched layout reference");
   }
   const CapabilityRecord &converted_transpose =
       catalog.lookup("transpose", "transpose_bfloat16_2x3x4");

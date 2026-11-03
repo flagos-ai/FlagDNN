@@ -328,7 +328,8 @@ class AcdnnLayout final : public flagdnn::testing::LayoutExecutable {
       if (backend) {
         logical_dimensions = test_case_.output.dimensions;
         logical_input_strides.resize(rank);
-        logical_output_strides = contiguous_strides(logical_dimensions);
+        // Compare the same physical output layout as the FlagDNN Slice.
+        logical_output_strides = test_case_.output.strides;
         for (std::size_t axis = 0; axis < rank; ++axis) {
           const auto [start, limit] = test_case_.slices[axis];
           (void)limit;
@@ -569,9 +570,12 @@ class AcdnnConvertedLayout final : public flagdnn::testing::LayoutExecutable {
         test_case_.operation == flagdnn::testing::LayoutOperation::kTranspose &&
         !legacy_acdnn_transpose_descriptor_compatible(
             test_case_.input.dimensions, test_case_.permutation);
+    const bool slice =
+        test_case_.operation == flagdnn::testing::LayoutOperation::kSlice;
     const std::string layout_primitive =
-        segmented_layout ? std::string(kSegmentedTransposePrimitive)
-                         : expected_primitive(test_case_.operation);
+        slice ? std::string(kBackendLayoutPrimitive)
+              : segmented_layout ? std::string(kSegmentedTransposePrimitive)
+                                 : expected_primitive(test_case_.operation);
     const std::string output_primitive =
         boolean
             ? "acdnnBackendExecute(POINTWISE_IDENTITY_FWD,convert-output-bool)"
@@ -595,10 +599,9 @@ class AcdnnConvertedLayout final : public flagdnn::testing::LayoutExecutable {
     if (maximum_uid > std::numeric_limits<std::int64_t>::max() - 2) {
       throw std::overflow_error("converted Layout internal UID overflows");
     }
-    // Layout references write a dense output independently of the production
-    // view.
-    test_case_.output.strides =
-        contiguous_strides(test_case_.output.dimensions);
+    if (!slice)
+      test_case_.output.strides =
+          contiguous_strides(test_case_.output.dimensions);
     fp32_input_ = test_case_.input;
     fp32_input_.uid = maximum_uid + 1;
     fp32_input_.data_type = FLAGDNN_DATA_FLOAT32;
@@ -619,7 +622,8 @@ class AcdnnConvertedLayout final : public flagdnn::testing::LayoutExecutable {
     fp32_case.input = fp32_input_;
     fp32_case.output = fp32_output_;
     CapabilityRecord transpose_capability = capability;
-    transpose_capability.path = ReferencePath::kStablePrimitive;
+    transpose_capability.path = slice ? ReferencePath::kBackendDescriptor
+                                     : ReferencePath::kStablePrimitive;
     transpose_capability.reference_plan = {layout_primitive};
     transpose_ =
         std::make_unique<AcdnnLayout>(std::move(fp32_case),
