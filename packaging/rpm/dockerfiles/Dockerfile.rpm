@@ -13,13 +13,24 @@ RUN dnf install -y epel-release dnf-plugins-core \
 RUN python3 -m pip install --no-cache-dir \
     "pybind11==3.1.0" "torch==2.8.0" "triton==3.4.0"
 
+# libtriton-jit comes from packaging/rpm/local-deps/ when a build drops the
+# .rpm files there, otherwise from the FlagOS yum repository for the base
+# image's distribution (one repository per distribution: rhel9, fedora43,
+# openeuler2403, ...).
+ARG FLAGOS_YUM_BASE=https://resource.flagos.net/repository
 COPY packaging/rpm/local-deps/ /tmp/local-deps/
 RUN if ls /tmp/local-deps/libtriton-jit-nvidia*.rpm >/dev/null 2>&1; then \
         dnf install -y /tmp/local-deps/libtriton-jit-nvidia-[0-9]*.rpm \
           /tmp/local-deps/libtriton-jit-nvidia-devel-*.rpm; \
     else \
-        dnf config-manager --add-repo \
-          https://resource.flagos.net/repository/flagos-yum-hosted/; \
+        . /etc/os-release; \
+        case "${ID}" in \
+            fedora) suite="fedora${VERSION_ID}" ;; \
+            openEuler) suite="openeuler$(echo "${VERSION_ID}" | tr -d .)" ;; \
+            *) suite="rhel${VERSION_ID%%.*}" ;; \
+        esac; \
+        printf '[flagos]\nname=FlagOS\nbaseurl=%s\nenabled=1\ngpgcheck=0\n' \
+          "${FLAGOS_YUM_BASE}/flagos-yum-${suite}" > /etc/yum.repos.d/flagos.repo; \
         dnf install -y libtriton-jit-nvidia-devel; \
     fi \
     && dnf clean all
