@@ -13,13 +13,18 @@ RUN dnf install -y epel-release dnf-plugins-core \
 RUN python3 -m pip install --no-cache-dir \
     "pybind11==3.1.0" "torch==2.8.0" "triton==3.4.0"
 
+# Fallback source for libtriton-jit-nvidia when local-deps/ is empty: the
+# repository the package is published to (the yum repositories are per
+# distribution; this build image is EL9).
+ARG FLAGOS_YUM=https://resource.flagos.net/repository/flagos-yum-rhel9
+
 COPY packaging/rpm/local-deps/ /tmp/local-deps/
 RUN if ls /tmp/local-deps/libtriton-jit-nvidia*.rpm >/dev/null 2>&1; then \
         dnf install -y /tmp/local-deps/libtriton-jit-nvidia-[0-9]*.rpm \
           /tmp/local-deps/libtriton-jit-nvidia-devel-*.rpm; \
     else \
-        dnf config-manager --add-repo \
-          https://resource.flagos.net/repository/flagos-yum-hosted/; \
+        printf '[flagos]\nname=FlagOS\nbaseurl=%s\nenabled=1\ngpgcheck=0\n' \
+          "${FLAGOS_YUM}" > /etc/yum.repos.d/flagos.repo; \
         dnf install -y libtriton-jit-nvidia-devel; \
     fi \
     && dnf clean all
