@@ -18171,363 +18171,291 @@
       "cases": {
         "slice_bfloat16_case0_2x4x5": {
           "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7.6.5 TransformTensor silently leaves BF16 output unchanged",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
           "primitive_sequence": []
         },
         "slice_bfloat16_case10_4x8x65": {
           "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX 7 reference primitive does not support BF16; same dtype limitation as the existing qualified catalog",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
           "primitive_sequence": []
         },
         "slice_bfloat16_case11_2x4x8x16": {
           "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX 7 reference primitive does not support BF16; same dtype limitation as the existing qualified catalog",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
           "primitive_sequence": []
         },
         "slice_bfloat16_case1_4x6x8": {
           "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7.6.5 TransformTensor silently leaves BF16 output unchanged",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
           "primitive_sequence": []
         },
         "slice_bfloat16_case2_3x5x7x2": {
           "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX cuDNN 7.6.5 TransformTensor silently leaves BF16 output unchanged",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
           "primitive_sequence": []
         },
         "slice_bfloat16_case3_1": {
           "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX 7 reference primitive does not support BF16; same dtype limitation as the existing qualified catalog",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
           "primitive_sequence": []
         },
         "slice_bfloat16_case4_17": {
           "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX 7 reference primitive does not support BF16; same dtype limitation as the existing qualified catalog",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
           "primitive_sequence": []
         },
         "slice_bfloat16_case5_3x7": {
           "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX 7 reference primitive does not support BF16; same dtype limitation as the existing qualified catalog",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
           "primitive_sequence": []
         },
         "slice_bfloat16_case6_2x3x9": {
           "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX 7 reference primitive does not support BF16; same dtype limitation as the existing qualified catalog",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
           "primitive_sequence": []
         },
         "slice_bfloat16_case7_1x8x16": {
           "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX 7 reference primitive does not support BF16; same dtype limitation as the existing qualified catalog",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
           "primitive_sequence": []
         },
         "slice_bfloat16_case8_3x5x7": {
           "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX 7 reference primitive does not support BF16; same dtype limitation as the existing qualified catalog",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
           "primitive_sequence": []
         },
         "slice_bfloat16_case9_2x16x31": {
           "classification": "semantic_unsupported",
-          "reason": "DTYPE_UNSUPPORTED",
-          "detail": "CoreX 7 reference primitive does not support BF16; same dtype limitation as the existing qualified catalog",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
           "primitive_sequence": []
         },
         "slice_bool_case0_2x4x5": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "raw-byte storage and output padding compared against the CPU oracle and CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_bool_case10_4x8x65": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "raw-byte storage and output padding compared against the CPU oracle and CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_bool_case11_2x4x8x16": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "raw-byte storage and output padding compared against the CPU oracle and CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_bool_case1_4x6x8": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "raw-byte storage and output padding compared against the CPU oracle and CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_bool_case2_3x5x7x2": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "raw-byte storage and output padding compared against the CPU oracle and CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_bool_case3_1": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "raw-byte storage and output padding compared against the CPU oracle and CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_bool_case4_17": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "raw-byte storage and output padding compared against the CPU oracle and CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_bool_case5_3x7": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "raw-byte storage and output padding compared against the CPU oracle and CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_bool_case6_2x3x9": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "raw-byte storage and output padding compared against the CPU oracle and CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_bool_case7_1x8x16": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "raw-byte storage and output padding compared against the CPU oracle and CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_bool_case8_3x5x7": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "raw-byte storage and output padding compared against the CPU oracle and CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_bool_case9_2x16x31": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "raw-byte storage and output padding compared against the CPU oracle and CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp16_case0_2x4x5": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "qualified on BI-V150 against CoreX cuDNN 7.6.5",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp16_case10_4x8x65": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp16_case11_2x4x8x16": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp16_case1_4x6x8": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "qualified on BI-V150 against CoreX cuDNN 7.6.5",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp16_case2_3x5x7x2": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "qualified on BI-V150 against CoreX cuDNN 7.6.5",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp16_case3_1": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp16_case4_17": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp16_case5_3x7": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp16_case6_2x3x9": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp16_case7_1x8x16": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp16_case8_3x5x7": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp16_case9_2x16x31": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp32_case0_2x4x5": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "qualified on BI-V150 against CoreX cuDNN 7.6.5",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp32_case10_4x8x65": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp32_case11_2x4x8x16": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp32_case1_4x6x8": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "qualified on BI-V150 against CoreX cuDNN 7.6.5",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp32_case2_3x5x7x2": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "qualified on BI-V150 against CoreX cuDNN 7.6.5",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp32_case3_1": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp32_case4_17": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp32_case5_3x7": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp32_case6_2x3x9": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp32_case7_1x8x16": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp32_case8_3x5x7": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         },
         "slice_fp32_case9_2x16x31": {
-          "classification": "qualified_supported",
-          "reason": "",
-          "detail": "executed and compared against CoreX cuDNN 7.6.5 on BI-V150/CoreX 4.4.0 with the current shared case generator",
-          "primitive_sequence": [
-            "cudnnTransformTensor"
-          ]
+          "classification": "semantic_unsupported",
+          "reason": "NO_EXACT_CUDNN_PRIMITIVE",
+          "detail": "CoreX 4.4.0 has no exact native slice primitive. Strided cudnnTransformTensor returns incorrect data/padding; one transform per element is not a native slice reference. Use CPU correctness and NVIDIA equivalent performance.",
+          "primitive_sequence": []
         }
       }
     },

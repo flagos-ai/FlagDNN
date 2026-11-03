@@ -29,10 +29,8 @@ std::unique_ptr<flagdnn::testing::TestExecutable> build_layout_reference(
     test_case.permutation = specification.transpose.permutation;
     break;
   case Operation::kSlice:
-    test_case.operation = flagdnn::testing::LayoutOperation::kSlice;
-    test_case.slices = specification.slice.slices;
-    test_case.slice_strides = specification.slice.strides;
-    break;
+    throw flagdnn::benchmarking::BenchmarkUnsupportedError(
+        "NO_EXACT_CUDNN_PRIMITIVE");
   default:
     throw flagdnn::benchmarking::BenchmarkUnsupportedError(
         "NO_EXACT_CUDNN_PRIMITIVE");

@@ -912,6 +912,9 @@ EquivalentBaseline PerformanceBaseline::lookup(
             "Iluvatar architecture does not match the measured baseline");
 
     const auto& reference = document_.at("reference");
+    require(optional(reference.at("cases"), specification.name) != nullptr,
+            "missing NVIDIA reference timing; measure this exact case before "
+            "comparing performance");
     const auto& entry = reference.at("cases").at(specification.name);
     const bool supplement = optional(entry, "input_generation") != nullptr &&
         optional(entry, "measurement_id") != nullptr;

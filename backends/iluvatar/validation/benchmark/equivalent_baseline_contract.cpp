@@ -79,6 +79,47 @@ int main(int argc, char **argv) {
     if (added_core != 17)
       throw std::runtime_error("incomplete supplemented core catalog");
 
+    // Slice now uses CPU correctness and equivalent performance for every
+    // dtype. Only the explicitly excluded BOOL catalog may skip; missing
+    // in-scope measurements remain errors.
+    std::size_t slice_measured = 0, slice_excluded = 0;
+    for (auto spec :
+         flagdnn::iluvatar::validation::benchmark::shared_benchmark_cases(
+             "FLAGDNN_SLICE_BENCHMARK")) {
+      if (spec.tensors.front().data_type == FLAGDNN_DATA_BOOLEAN) {
+        if (b::supports_equivalent_baseline(spec))
+          throw std::runtime_error("unmeasured BOOL slice entered timing");
+        ++slice_excluded;
+        continue;
+      }
+      spec.name.resize(spec.name.size() - 7);
+      spec.benchmark = b::equivalent_benchmark_config(spec.operation);
+      const auto result = lookup(spec);
+      if (result.scale_metric != "hbm_copy")
+        throw std::runtime_error("slice equivalent metric changed");
+      ++slice_measured;
+      spec.slice.strides.back() += 1;
+      rejects([&] { (void)lookup(spec); });
+    }
+    if (slice_measured != 36 || slice_excluded != 12)
+      throw std::runtime_error("unexpected shared slice reference coverage");
+    std::size_t core_slices = 0;
+    for (auto spec : b::slice_benchmark_cases()) {
+      if (!b::supports_equivalent_baseline(spec))
+        throw std::runtime_error("missing slice reference became a silent skip");
+      rejects([&] { (void)lookup(spec); });
+      spec.benchmark = b::equivalent_benchmark_config(spec.operation);
+      const auto result = lookup(spec);
+      if (result.scale_metric != "hbm_copy" ||
+          result.reference_validation != "cpu_full")
+        throw std::runtime_error("supplemented Slice reference differs");
+      ++core_slices;
+      spec.slice.strides.back() += 1;
+      rejects([&] { (void)lookup(spec); });
+    }
+    if (core_slices != 12)
+      throw std::runtime_error("incomplete core Slice reference coverage");
+
     const auto original = cases.front();
     for (const auto name : {"different device", "Iluvatar BI-V100",
                             "Iluvatar BI-V150X", "Iluvatar BI-V150 OAM extra",

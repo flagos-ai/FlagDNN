@@ -4,7 +4,9 @@
 #include "benchmark/capability_contract.hpp"
 
 #include "benchmark/corex_cudnn_provider.hpp"
+#include "benchmark/shared_cases.hpp"
 #include "common/cases.hpp"
+#include "tensor_reference.hpp"
 
 #include <algorithm>
 #include <span>
@@ -148,7 +150,36 @@ void run_capability_contract() {
                      provider.capability(neg_strided_benchmark), false,
                      "LAYOUT_UNSUPPORTED");
   check_cases(provider, reshape_benchmark_cases(), no_bfloat16);
-  check_cases(provider, slice_benchmark_cases(), no_bfloat16);
+  const auto no_native_slice = [](const BenchmarkCase &) {
+    return std::pair<bool, std::string_view>{
+        false, "NO_EXACT_CUDNN_PRIMITIVE"};
+  };
+  check_cases(provider, slice_benchmark_cases(), no_native_slice);
+  const auto shared_slice = shared_benchmark_cases("FLAGDNN_SLICE_BENCHMARK");
+  check_cases(provider, shared_slice, no_native_slice);
+  // Neither direct builder may resurrect the scalar-copy reference if a
+  // caller bypasses capability selection.
+  for (const auto &spec : shared_slice) {
+    bool rejected = false;
+    try {
+      (void)provider.build(spec);
+    } catch (const BenchmarkUnsupportedError &error) {
+      rejected = std::string_view(error.what()) == "NO_EXACT_CUDNN_PRIMITIVE";
+    }
+    if (!rejected)
+      throw std::runtime_error("slice benchmark built a native reference");
+  }
+  for (const auto &spec : flagdnn::testing::make_layout_cases(
+           flagdnn::testing::LayoutOperation::kSlice)) {
+    bool rejected = false;
+    try {
+      (void)validation::make_classic_layout_reference(spec);
+    } catch (const std::invalid_argument &) {
+      rejected = true;
+    }
+    if (!rejected)
+      throw std::runtime_error("slice functional builder accepted scalar copies");
+  }
   check_cases(provider, transpose_benchmark_cases(), no_bfloat16);
 }
 

@@ -305,8 +305,7 @@ std::vector<std::string> primitive_sequence(std::string_view operation) {
     return {"cudnnBatchNormalizationForwardTraining"};
   if (operation == "batchnorm_inference")
     return {"cudnnBatchNormalizationForwardInference"};
-  if (operation == "reshape" || operation == "transpose" ||
-      operation == "slice")
+  if (operation == "reshape" || operation == "transpose")
     return {"cudnnTransformTensor"};
   return {};
 }
@@ -321,6 +320,10 @@ std::string skip_reason(std::string_view operation) {
 }
 
 std::string skip_detail(std::string_view operation) {
+  if (operation == "slice") {
+    return "CoreX strided cudnnTransformTensor does not implement slice; "
+           "per-element copies are not a native slice reference";
+  }
   if (operation == "sdpa_fp8" || operation == "sdpa_fp8_backward") {
     return "CoreX cudnn.h 7605 has no FP8 cudnnDataType_t";
   }

@@ -55,7 +55,8 @@ int run_layout_functional_test(int argc, char **argv,
       const auto expected = reference::cpu::evaluate_layout_bytes(
           parameters, values, width);
       functional::BuildExecutable reference;
-      if (test_case.input.data_type == FLAGDNN_DATA_BOOLEAN)
+      if (test_case.input.data_type == FLAGDNN_DATA_BOOLEAN &&
+          test_case.operation != LayoutOperation::kSlice)
         reference = [&] { return build_layout_reference(test_case); };
       suite.run_raw(
           {operation,
@@ -66,6 +67,16 @@ int run_layout_functional_test(int argc, char **argv,
           {values}, {expected}, reference);
       continue;
     }
+    functional::HostReference cpu_fallback;
+    if (test_case.operation == LayoutOperation::kSlice) {
+      const reference::cpu::LayoutParameters parameters{
+          operation, test_case.input.dimensions, test_case.output.dimensions,
+          test_case.permutation, test_case.slices, test_case.slice_strides};
+      cpu_fallback = [parameters](const auto &inputs) {
+        return std::vector<std::vector<float>>{
+            reference::cpu::evaluate_layout(parameters, inputs.at(0))};
+      };
+    }
     suite.run(
         {.operation = operation,
          .case_name = test_case.name,
@@ -74,7 +85,8 @@ int run_layout_functional_test(int argc, char **argv,
         [&suite, &test_case] {
           return build_flagdnn_layout(suite.handle(), test_case);
         },
-        [&test_case] { return build_layout_reference(test_case); });
+        [&test_case] { return build_layout_reference(test_case); },
+        {}, false, cpu_fallback);
   }
   return suite.finish();
 }

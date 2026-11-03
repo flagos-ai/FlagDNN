@@ -79,8 +79,7 @@ int main() {
     }
     for (const auto marker : {"FLAGDNN_IDENTITY_BENCHMARK",
                               "FLAGDNN_RESHAPE_BENCHMARK",
-                              "FLAGDNN_TRANSPOSE_BENCHMARK",
-                              "FLAGDNN_SLICE_BENCHMARK"}) {
+                              "FLAGDNN_TRANSPOSE_BENCHMARK"}) {
       std::size_t boolean_cases = 0;
       for (const auto &c : ivb::shared_benchmark_cases(marker)) {
         if (c.tensors.front().data_type != FLAGDNN_DATA_BOOLEAN)

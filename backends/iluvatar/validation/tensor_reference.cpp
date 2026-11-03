@@ -298,6 +298,11 @@ make_classic_reduction_reference(
 
 std::unique_ptr<flagdnn::testing::TestExecutable> make_classic_layout_reference(
     const flagdnn::testing::LayoutTestCase &test_case) {
+  if (test_case.operation == flagdnn::testing::LayoutOperation::kSlice) {
+    throw std::invalid_argument(
+        "CoreX cuDNN has no exact slice primitive; use CPU correctness "
+        "and NVIDIA equivalent performance, not per-element transforms");
+  }
   return std::make_unique<LayoutExecutable>(test_case);
 }
 
