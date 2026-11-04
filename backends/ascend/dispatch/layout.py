@@ -493,6 +493,20 @@ def _layout_kernel_configuration(
     else:
         raise ValueError(f"unknown layout operation: {operation!r}")
 
+    if (
+        operation == "reshape"
+        and _is_row_major_layout(input_dimensions, input_strides)
+        and _is_row_major_layout(output_dimensions, output_strides)
+    ):
+        block = min(2048, 1 << (elements - 1).bit_length())
+        return (
+            "layout_dense_copy_kernel",
+            {"input_ptr": pointer_type, "output_ptr": pointer_type, "n_elements": "i32"},
+            {"BLOCK_SIZE": block},
+            ((elements + block - 1) // block, 1, 1),
+            [("tensor", None), ("tensor", None), ("scalar_i32", "n_elements")],
+        )
+
     leading_input = 8 - len(logical_input_dimensions)
     leading_output = 8 - output_rank
     padded_input_dimensions = [1] * leading_input + logical_input_dimensions

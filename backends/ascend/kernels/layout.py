@@ -366,3 +366,15 @@ def layout_strided_copy_kernel(
 
     value = tl.load(input_ptr + input_offsets, mask=active, other=0.0)
     tl.store(output_ptr + output_offsets, value, mask=active)
+
+
+@triton.jit
+def layout_dense_copy_kernel(
+    input_ptr, output_ptr, n_elements, BLOCK_SIZE: tl.constexpr
+):
+    # The dispatcher only selects this for two logically contiguous tensors.
+    # Integer pointer signatures preserve every storage bit, including BOOL.
+    logical = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    active = logical < n_elements
+    value = tl.load(input_ptr + logical, active, other=0)
+    tl.store(output_ptr + logical, value, active)

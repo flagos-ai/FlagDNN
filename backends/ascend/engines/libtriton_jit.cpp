@@ -1680,8 +1680,12 @@ public:
             "Ascend prepared launch is incomplete",
             FLAGDNN_BACKEND_RESULT_INTERNAL_ERROR);
 
+    // rtKernelLaunch consumes only packed_size_ bytes. Initialize that entire
+    // ABI prefix (including alignment padding), rather than clearing the
+    // maximum 32 KiB argument capacity for every small kernel submission.
     alignas(std::uint64_t) std::array<std::byte, kMaximumPreparedArgumentBytes>
-        buffer{};
+        buffer;
+    std::fill_n(buffer.data(), packed_size_, std::byte{});
     void *sync_lock = nullptr;
     require(kernel_workspace_size >= kernel_workspace_size_ &&
                 (kernel_workspace_size_ == 0 || kernel_workspace != nullptr),

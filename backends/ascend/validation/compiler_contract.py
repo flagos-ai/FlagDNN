@@ -3,6 +3,7 @@
 from pathlib import Path
 import ast
 import importlib
+import math
 import importlib.util
 import re
 import subprocess
@@ -43,6 +44,106 @@ def tensor(uid, shape, dtype="float16"):
 
 
 class Contracts(unittest.TestCase):
+    def test_concatenate_row_windows_reject_interleaved_rows(self):
+        dispatch = importlib.import_module(package + ".dispatch.index")
+        output = tensor(1, [2, 257], "float32")
+        for strides, safe in [([514, 2], True), ([600, 2], True), ([1, 2], False)]:
+            output["strides"] = strides
+            self.assertEqual(dispatch._row_windows_disjoint(output), safe)
+        # A singleton leading dimension does not create a competing writer.
+        output["dimensions"] = [1, 257]
+        output["strides"] = [1, 2]
+        self.assertTrue(dispatch._row_windows_disjoint(output))
+
+    def test_gen_index_dense_axes_and_strided_fallback(self):
+        dispatch = importlib.import_module(package + ".dispatch.index")
+        for axis, inner, outer in [(0, 35, 1), (1, 7, 3), (2, 1, 15)]:
+            output = tensor(1, [3, 5, 7], "int32")
+            config = dispatch._index_kernel_configuration(
+                "gen_index", dict(axis=axis, n_elements=105), [output]
+            )
+            self.assertEqual(config[0], "gen_index_dense_kernel")
+            self.assertEqual((config[2]["INNER"], config[2]["OUTER"]), (inner, outer))
+            output["strides"] = [80, 15, 2]
+            fallback = dispatch._index_kernel_configuration(
+                "gen_index", dict(axis=axis, n_elements=105), [output]
+            )
+            self.assertEqual(fallback[0], "gen_index_kernel")
+        with self.assertRaises(ValueError):
+            dispatch._index_kernel_configuration(
+                "gen_index", dict(axis=0, n_elements=2**31 + 1),
+                [tensor(1, [2**31 + 1], "int32")],
+            )
+
+    def test_concatenate_row_launch_aliases_and_general_fallback(self):
+        dispatch = importlib.import_module(package + ".dispatch.index")
+        for count in [1, 2, 4, 5]:
+            inputs = [tensor(i + 1, [2, i + 3], "float32") for i in range(count)]
+            output = tensor(20, [2, sum(t["dimensions"][1] for t in inputs)], "float32")
+            group = dict(tensors=inputs + [output], input_uids=[t["uid"] for t in inputs],
+                         output_uids=[20], source_node_ids=[0],
+                         parameters=dict(axis=1, input_count=count,
+                                         n_elements=2 * output["dimensions"][1]))
+            groups = dispatch._expand_concatenate_group(group)
+            self.assertEqual(len(groups), 1 if count <= 4 else count)
+            if count <= 4:
+                config = dispatch._index_kernel_configuration(
+                    "concatenate", groups[0]["parameters"], groups[0]["tensors"]
+                )
+                self.assertEqual(config[0], "concatenate_rows_kernel")
+                self.assertEqual(config[3], (2, count, 1))
+                self.assertEqual(config[4], [("tensor_alias", min(i, count - 1)) for i in range(4)]
+                                 + [("tensor_alias", count)])
+                plan = dict(configuration=config, source="unary", tensors=group["tensors"],
+                            parameters=group["parameters"], stage_id=0, operation="concatenate",
+                            source_node_ids=[0], dependencies=[])
+                with tempfile.TemporaryDirectory() as directory, patch.object(
+                    emitter, "plan_graph", return_value=([plan], {}, 0)
+                ):
+                    stages, _ = emitter.emit({}, Path(directory), {"identity_sha256": "a" * 64})
+                self.assertEqual([a["uid"] for a in stages[0]["argument_sources"]],
+                                 [inputs[min(i, count - 1)]["uid"] for i in range(4)] + [20])
+            group["parameters"]["n_elements"] += 1
+            with self.assertRaises(ValueError):
+                dispatch._expand_concatenate_group(group)
+
+    def test_concatenate_flattened_grid_overflow_falls_back(self):
+        dispatch = importlib.import_module(package + ".dispatch.index")
+        # Each row dimension fits int32, but fusing four inputs would exceed
+        # the uint32 block count passed to rtKernelLaunch.
+        rows = 2**30
+        inputs = [tensor(i + 1, [rows, 1], "boolean") for i in range(4)]
+        output = tensor(20, [rows, 4], "boolean")
+        group = dict(tensors=inputs + [output], input_uids=[1, 2, 3, 4],
+                     output_uids=[20], source_node_ids=[0],
+                     parameters=dict(axis=1, input_count=4, n_elements=rows * 4))
+        groups = dispatch._expand_concatenate_group(group)
+        self.assertEqual(len(groups), 4)
+        for expanded in groups:
+            config = dispatch._index_kernel_configuration(
+                "concatenate", expanded["parameters"], expanded["tensors"]
+            )
+            self.assertEqual(config[0], "concatenate_copy_kernel")
+            self.assertLessEqual(math.prod(config[3]), 2**32 - 1)
+        with self.assertRaisesRegex(ValueError, "grid exceeds"):
+            dispatch._index_kernel_configuration(
+                "concatenate", {**group["parameters"], "_concatenate_rows": True},
+                group["tensors"],
+            )
+
+    def test_dense_reshape_storage_route_and_strided_fallback(self):
+        dispatch = importlib.import_module(package + ".dispatch.layout")
+        for dtype in ["boolean", "int32", "fp8_e4m3"]:
+            a, b = tensor(1, [2, 3], dtype), tensor(2, [6], dtype)
+            def config():
+                parameters = dict(input_rank=2, output_rank=1, reshape_mode=2, n_elements=6,
+                                  input_dimensions=a["dimensions"], input_strides=a["strides"],
+                                  output_dimensions=b["dimensions"], output_strides=b["strides"])
+                return dispatch._layout_kernel_configuration("reshape", parameters, [a, b])
+            self.assertEqual(config()[0], "layout_dense_copy_kernel")
+            b["strides"] = [2]
+            self.assertEqual(config()[0], "layout_strided_copy_kernel")
+
     def test_fp8_identity_emits_byte_pointers_without_enabling_fp8_math(self):
         dispatch = importlib.import_module(package + ".dispatch.extended")
         for dtype in ["fp8_e4m3", "fp8_e5m2", "fp8_e8m0"]:

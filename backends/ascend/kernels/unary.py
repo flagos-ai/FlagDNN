@@ -919,6 +919,25 @@ def activation_backward_strided_kernel(
 
 
 @triton.jit
+def gen_index_dense_kernel(
+    output_ptr,
+    N_ELEMENTS: tl.constexpr,
+    AXIS_EXTENT: tl.constexpr,
+    INNER: tl.constexpr,
+    OUTER: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+):
+    if triton.cdiv(N_ELEMENTS, BLOCK_SIZE) * BLOCK_SIZE <= 2147483648:
+        logical = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    else:
+        logical = tl.program_id(0).to(tl.int64) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    value = logical // INNER
+    if OUTER != 1:
+        value = value % AXIS_EXTENT
+    tl.store(output_ptr + logical, value.to(output_ptr.dtype.element_ty), logical < N_ELEMENTS)
+
+
+@triton.jit
 def gen_index_kernel(
     output_ptr,
     N_ELEMENTS: tl.constexpr,
@@ -969,6 +988,153 @@ def gen_index_kernel(
         value.to(output_ptr.dtype.element_ty),
         logical < N_ELEMENTS,
     )
+
+
+@triton.jit
+def _concatenate_row_copy(
+    input_ptr,
+    output_ptr,
+    SHAPE: tl.constexpr,
+    INPUT_STRIDES: tl.constexpr,
+    OUTPUT_STRIDES: tl.constexpr,
+    OUTPUT_BASE: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+    ROW_WINDOWS_DISJOINT: tl.constexpr,
+):
+    row = tl.program_id(0)
+    row_count: tl.constexpr = (
+        SHAPE[0] * SHAPE[1] * SHAPE[2] * SHAPE[3]
+        * SHAPE[4] * SHAPE[5] * SHAPE[6]
+    )
+    if row < row_count:
+        remaining = row.to(tl.int64)
+        source_base = remaining * 0
+        output_base = source_base + OUTPUT_BASE
+        for axis in tl.static_range(6, -1, -1):
+            coordinate = remaining % SHAPE[axis]
+            remaining = remaining // SHAPE[axis]
+            source_base += coordinate * INPUT_STRIDES[axis]
+            output_base += coordinate * OUTPUT_STRIDES[axis]
+        # Each store covers a full row window. Only use it when another
+        # row cannot occupy the padding that we read and preserve here.
+        if (ROW_WINDOWS_DISJOINT and SHAPE[7] >= 128
+                and INPUT_STRIDES[7] <= 2 and OUTPUT_STRIDES[7] <= 2):
+            if INPUT_STRIDES[7] == 2:
+                columns = tl.arange(0,2*BLOCK_SIZE)
+                packed = tl.load(input_ptr + source_base + columns, columns < 2*SHAPE[7]-1,other=0)
+                values, unused = tl.split(tl.reshape(packed,(BLOCK_SIZE,2)))
+            else:
+                columns = tl.arange(0,BLOCK_SIZE)
+                values = tl.load(input_ptr+source_base+columns,columns<SHAPE[7],other=0)
+            if OUTPUT_STRIDES[7] == 2:
+                columns = tl.arange(0,2*BLOCK_SIZE)
+                packed = tl.load(output_ptr+output_base+columns,columns<2*SHAPE[7]-1,other=0)
+                unused, holes = tl.split(tl.reshape(packed,(BLOCK_SIZE,2)))
+                values = tl.reshape(tl.join(values,holes),(2*BLOCK_SIZE,))
+                tl.store(output_ptr+output_base+columns,values,columns<2*SHAPE[7]-1)
+            else:
+                columns = tl.arange(0,BLOCK_SIZE)
+                tl.store(output_ptr+output_base+columns,values,columns<SHAPE[7])
+        else:
+            columns = tl.arange(0, BLOCK_SIZE)
+            value = tl.load(input_ptr + source_base + columns.to(tl.int64) * INPUT_STRIDES[7], columns < SHAPE[7], other=0)
+            tl.store(output_ptr + output_base + columns.to(tl.int64) * OUTPUT_STRIDES[7], value, columns < SHAPE[7])
+
+
+@triton.jit
+def concatenate_rows_kernel(
+    input0_ptr, input1_ptr, input2_ptr, input3_ptr, output_ptr,
+    AXIS: tl.constexpr, INPUT_COUNT: tl.constexpr,
+    DIM_0: tl.constexpr,
+    DIM_1: tl.constexpr,
+    DIM_2: tl.constexpr,
+    DIM_3: tl.constexpr,
+    DIM_4: tl.constexpr,
+    DIM_5: tl.constexpr,
+    DIM_6: tl.constexpr,
+    DIM_7: tl.constexpr,
+    EXTENT_0: tl.constexpr,
+    EXTENT_1: tl.constexpr,
+    EXTENT_2: tl.constexpr,
+    EXTENT_3: tl.constexpr,
+    INPUT0_STRIDE_0: tl.constexpr,
+    INPUT0_STRIDE_1: tl.constexpr,
+    INPUT0_STRIDE_2: tl.constexpr,
+    INPUT0_STRIDE_3: tl.constexpr,
+    INPUT0_STRIDE_4: tl.constexpr,
+    INPUT0_STRIDE_5: tl.constexpr,
+    INPUT0_STRIDE_6: tl.constexpr,
+    INPUT0_STRIDE_7: tl.constexpr,
+    INPUT1_STRIDE_0: tl.constexpr,
+    INPUT1_STRIDE_1: tl.constexpr,
+    INPUT1_STRIDE_2: tl.constexpr,
+    INPUT1_STRIDE_3: tl.constexpr,
+    INPUT1_STRIDE_4: tl.constexpr,
+    INPUT1_STRIDE_5: tl.constexpr,
+    INPUT1_STRIDE_6: tl.constexpr,
+    INPUT1_STRIDE_7: tl.constexpr,
+    INPUT2_STRIDE_0: tl.constexpr,
+    INPUT2_STRIDE_1: tl.constexpr,
+    INPUT2_STRIDE_2: tl.constexpr,
+    INPUT2_STRIDE_3: tl.constexpr,
+    INPUT2_STRIDE_4: tl.constexpr,
+    INPUT2_STRIDE_5: tl.constexpr,
+    INPUT2_STRIDE_6: tl.constexpr,
+    INPUT2_STRIDE_7: tl.constexpr,
+    INPUT3_STRIDE_0: tl.constexpr,
+    INPUT3_STRIDE_1: tl.constexpr,
+    INPUT3_STRIDE_2: tl.constexpr,
+    INPUT3_STRIDE_3: tl.constexpr,
+    INPUT3_STRIDE_4: tl.constexpr,
+    INPUT3_STRIDE_5: tl.constexpr,
+    INPUT3_STRIDE_6: tl.constexpr,
+    INPUT3_STRIDE_7: tl.constexpr,
+    OUTPUT_STRIDE_0: tl.constexpr,
+    OUTPUT_STRIDE_1: tl.constexpr,
+    OUTPUT_STRIDE_2: tl.constexpr,
+    OUTPUT_STRIDE_3: tl.constexpr,
+    OUTPUT_STRIDE_4: tl.constexpr,
+    OUTPUT_STRIDE_5: tl.constexpr,
+    OUTPUT_STRIDE_6: tl.constexpr,
+    OUTPUT_STRIDE_7: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+    ROW_WINDOWS_DISJOINT: tl.constexpr,
+):
+    pointers = (input0_ptr, input1_ptr, input2_ptr, input3_ptr)
+    extents: tl.constexpr = (EXTENT_0,EXTENT_1,EXTENT_2,EXTENT_3)
+    output_strides: tl.constexpr = (OUTPUT_STRIDE_0,OUTPUT_STRIDE_1,OUTPUT_STRIDE_2,OUTPUT_STRIDE_3,OUTPUT_STRIDE_4,OUTPUT_STRIDE_5,OUTPUT_STRIDE_6,OUTPUT_STRIDE_7)
+    input_strides: tl.constexpr = (
+        (
+            INPUT0_STRIDE_0, INPUT0_STRIDE_1, INPUT0_STRIDE_2, INPUT0_STRIDE_3,
+            INPUT0_STRIDE_4, INPUT0_STRIDE_5, INPUT0_STRIDE_6, INPUT0_STRIDE_7,
+        ),
+        (
+            INPUT1_STRIDE_0, INPUT1_STRIDE_1, INPUT1_STRIDE_2, INPUT1_STRIDE_3,
+            INPUT1_STRIDE_4, INPUT1_STRIDE_5, INPUT1_STRIDE_6, INPUT1_STRIDE_7,
+        ),
+        (
+            INPUT2_STRIDE_0, INPUT2_STRIDE_1, INPUT2_STRIDE_2, INPUT2_STRIDE_3,
+            INPUT2_STRIDE_4, INPUT2_STRIDE_5, INPUT2_STRIDE_6, INPUT2_STRIDE_7,
+        ),
+        (
+            INPUT3_STRIDE_0, INPUT3_STRIDE_1, INPUT3_STRIDE_2, INPUT3_STRIDE_3,
+            INPUT3_STRIDE_4, INPUT3_STRIDE_5, INPUT3_STRIDE_6, INPUT3_STRIDE_7,
+        ),
+    )
+    for part in tl.static_range(INPUT_COUNT):
+        if tl.program_id(1) == part:
+            shape: tl.constexpr = (
+                extents[part] if AXIS == 0 else DIM_0,
+                extents[part] if AXIS == 1 else DIM_1,
+                extents[part] if AXIS == 2 else DIM_2,
+                extents[part] if AXIS == 3 else DIM_3,
+                extents[part] if AXIS == 4 else DIM_4,
+                extents[part] if AXIS == 5 else DIM_5,
+                extents[part] if AXIS == 6 else DIM_6,
+                extents[part] if AXIS == 7 else DIM_7,
+            )
+            offsets: tl.constexpr = (0, EXTENT_0, EXTENT_0+EXTENT_1, EXTENT_0+EXTENT_1+EXTENT_2)
+            _concatenate_row_copy(pointers[part], output_ptr, shape, input_strides[part], output_strides, offsets[part]*output_strides[AXIS], BLOCK_SIZE, ROW_WINDOWS_DISJOINT)
 
 
 @triton.jit

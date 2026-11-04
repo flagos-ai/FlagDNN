@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 import math
-from .common import _has_non_overlapping_strides, _require_integer
+from .common import (
+    _has_non_overlapping_strides,
+    _is_row_major_contiguous,
+    _require_integer,
+)
 
 _STORAGE_POINTERS = {
     "float32": "*i32",
@@ -89,12 +93,74 @@ def _expand_concatenate_group(group):
         raise ValueError(
             "concatenate output axis is not the sum of its inputs"
         )
+    # Small row tiles preserve arbitrary strides while avoiding per-element
+    # rank decoding. Up to four inputs share one launch; larger concatenations
+    # keep the general per-input implementation.
+    rows = max(math.prod(t["dimensions"][:-1]) for t in inputs)
+    if (
+        len(inputs) <= 4
+        and max(t["dimensions"][-1] for t in inputs) <= 2048
+        and rows <= 2**31 - 1
+        # The runtime flattens all grid dimensions into one uint32 block count.
+        and rows * len(inputs) <= 2**32 - 1
+    ):
+        return [{**group, "parameters": {**parameters, "_concatenate_rows": True}}]
     return result
+
+
+def _row_windows_disjoint(tensor):
+    dimensions, strides = tensor["dimensions"], tensor["strides"]
+    span = 1 + (dimensions[-1] - 1) * strides[-1]
+    for stride, dimension in sorted(
+        (s, d) for s, d in zip(strides[:-1], dimensions[:-1]) if d > 1
+    ):
+        if stride < span:
+            return False
+        span += (dimension - 1) * stride
+    return True
+
+
+def _concatenate_rows_configuration(parameters, tensors):
+    # Validate the unexpanded graph exactly as the general path does.
+    _expand_concatenate_group({"parameters": parameters, "tensors": tensors})
+    inputs, output = tensors[:-1], tensors[-1]
+    if not 1 <= len(inputs) <= 4:
+        raise ValueError("concatenate row tile needs one to four inputs")
+    if max(t["dimensions"][-1] for t in inputs) > 2048:
+        raise ValueError("concatenate row tile is too wide")
+    rows = max(math.prod(t["dimensions"][:-1]) for t in inputs)
+    if rows > 2**31 - 1 or rows * len(inputs) > 2**32 - 1:
+        raise ValueError("concatenate row grid exceeds the device launch limit")
+    rank = len(output["dimensions"])
+    axis = parameters["axis"]
+    constants = {
+        "AXIS": 8 - rank + axis,
+        "INPUT_COUNT": len(inputs),
+        "ROW_WINDOWS_DISJOINT": _row_windows_disjoint(output),
+        "BLOCK_SIZE": 1 << (max(t["dimensions"][-1] for t in inputs) - 1).bit_length(),
+    }
+    constants.update(_shape_constants(output["dimensions"], output["strides"], "OUTPUT_STRIDE"))
+    for part in range(4):
+        source = inputs[min(part, len(inputs) - 1)]
+        constants[f"EXTENT_{part}"] = source["dimensions"][axis]
+        for i, stride in enumerate([0] * (8 - rank) + source["strides"]):
+            constants[f"INPUT{part}_STRIDE_{i}"] = stride
+    pointer = _STORAGE_POINTERS[output["data_type"]]
+    return (
+        "concatenate_rows_kernel",
+        {**{f"input{i}_ptr": pointer for i in range(4)}, "output_ptr": pointer},
+        constants,
+        (rows, len(inputs), 1),
+        [("tensor_alias", min(i, len(inputs) - 1)) for i in range(4)]
+        + [("tensor_alias", len(inputs))],
+    )
 
 
 def _index_kernel_configuration(operation, parameters, tensors):
     for tensor in tensors:
         _validate_tensor(tensor)
+    if operation == "concatenate" and parameters.get("_concatenate_rows") is True:
+        return _concatenate_rows_configuration(parameters, tensors)
     output = tensors[-1]
     block = 256
     elements = _require_integer(parameters, "n_elements", maximum=2**63 - 1)
@@ -116,6 +182,24 @@ def _index_kernel_configuration(operation, parameters, tensors):
             and output["dimensions"][axis] > 2**31
         ):
             raise ValueError("gen_index axis does not fit INT32")
+        if _is_row_major_contiguous(output):
+            # Avoid vector coordinate reconstruction for a linear output.
+            # A larger tile also keeps large ranges from launching hundreds
+            # of tiny programs on the NPU.
+            block = min(2048, 1 << (elements - 1).bit_length())
+            return (
+                "gen_index_dense_kernel",
+                {"output_ptr": "*i32" if output["data_type"] == "int32" else "*fp32"},
+                {
+                    "N_ELEMENTS": elements,
+                    "AXIS_EXTENT": output["dimensions"][axis],
+                    "INNER": math.prod(output["dimensions"][axis + 1:]),
+                    "OUTER": math.prod(output["dimensions"][:axis]),
+                    "BLOCK_SIZE": block,
+                },
+                ((elements + block - 1) // block, 1, 1),
+                [("tensor", None)],
+            )
         constants.update(
             _shape_constants(
                 output["dimensions"], output["strides"], "OUTPUT_STRIDE"
