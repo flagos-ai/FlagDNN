@@ -6,7 +6,7 @@
 
 Name:           libflagdnn-nvidia
 Version:        0.3.0
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        FlagDNN native graph runtime (NVIDIA backend)
 
 License:        Apache-2.0
@@ -16,7 +16,11 @@ Source0:        flag-dnn-%{version}.tar.gz
 BuildRequires:  cmake >= 3.23
 BuildRequires:  gcc-c++
 BuildRequires:  libtriton-jit-nvidia-devel >= 0.1.0-3
+%if 0%{?openEuler}
+BuildRequires:  python3-ninja
+%else
 BuildRequires:  ninja-build
+%endif
 BuildRequires:  patchelf
 BuildRequires:  python3-devel
 BuildRequires:  python3-pyyaml
@@ -44,9 +48,11 @@ C/C++ headers and CMake package files for applications using FlagDNN.
 PY3_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
 export PYTHONPATH=/usr/local/lib/python${PY3_VER}/site-packages:/usr/local/lib64/python${PY3_VER}/site-packages:$(python3 -c "import site; print(':'.join(site.getsitepackages()))")
 export PATH=/usr/local/bin:$PATH
-NVIDIA_LIBRARY_PATH=$(find /usr/local/lib/python${PY3_VER}/site-packages/nvidia -type d -name lib -printf '%%p:' 2>/dev/null)
+NVIDIA_LIBRARY_PATH=$(find /usr/local/lib/python${PY3_VER}/site-packages/nvidia -type d -name lib -printf '%%p:' 2>/dev/null || true)
 export LD_LIBRARY_PATH="${NVIDIA_LIBRARY_PATH}${LD_LIBRARY_PATH:-}"
-%cmake -GNinja \
+# Use portable CMake steps because openEuler 24.03 lacks cmake_build/install.
+%cmake -S . -B build-rpm -GNinja \
+    -DCMAKE_INSTALL_LIBDIR:PATH=%{_libdir} \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CUDA_FLAGS="-Xcompiler -fPIE" \
     -DFLAGDNN_BACKENDS=nvidia \
@@ -54,10 +60,10 @@ export LD_LIBRARY_PATH="${NVIDIA_LIBRARY_PATH}${LD_LIBRARY_PATH:-}"
     -DFLAGDNN_BUILD_TESTS=OFF \
     -DFLAGDNN_CODEGEN_PYTHON=/usr/bin/python3 \
     -DFLAGDNN_EXECUTION_ENGINE=libtriton_jit
-%cmake_build
+cmake --build build-rpm -- %{?_smp_mflags}
 
 %install
-%cmake_install
+DESTDIR=%{buildroot} cmake --install build-rpm
 find %{buildroot}%{_libdir} -name '*.so*' -type f \
     -exec patchelf --remove-rpath {} \;
 
@@ -82,6 +88,9 @@ test -f %{buildroot}%{_datadir}/flagdnn/kernels/registry.json
 %{_libdir}/cmake/FlagDNN/
 
 %changelog
+* Tue Nov 17 2026 FlagOS Contributors <contact@flagos.io> - 0.3.0-2
+- Support Fedora 43 and openEuler 24.03 with the matching TritonJIT build stack
+
 * Fri Sep 18 2026 FlagOS Contributors <contact@flagos.io> - 0.3.0-1
 - Align the packaging baseline with the 0.3.0 release line.
 
