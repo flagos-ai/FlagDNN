@@ -18,7 +18,7 @@ X-Build-Environment: The NVIDIA package is built in a CUDA container.
  PyTorch and Triton must match the installed libtriton-jit-nvidia package.
 
 Package: libflagdnn-nvidia
-Architecture: amd64
+Architecture: any
 Depends: ${misc:Depends},
          ${shlibs:Depends},
          libtriton-jit-nvidia (>= 0.1.0-3),
@@ -31,7 +31,7 @@ Description: FlagDNN native graph runtime (NVIDIA backend)
 
 Package: libflagdnn-nvidia-dev
 Section: libdevel
-Architecture: amd64
+Architecture: any
 Depends: ${misc:Depends},
          libflagdnn-nvidia (= ${binary:Version}),
          libtriton-jit-nvidia-dev (>= 0.1.0-3)
